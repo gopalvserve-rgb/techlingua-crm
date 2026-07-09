@@ -1,6 +1,6 @@
 # Nixpacks plan for the API service (repo root has no package.json — monorepo: api/ + web/)
 [phases.setup]
-nixPkgs = ["nodejs_22"]
+nixPkgs = ["nodejs_20"]
 
 [phases.build]
 cmds = ["cd api && npm ci && npm run build"]
