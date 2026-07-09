@@ -54,7 +54,7 @@ function leadRow(l: any): Cell[] {
 }
 
 interface Summary {
-  kpis: { total: number; today: number; won: number; won_today: number; hot: number; warm: number; cold: number; walkins: number };
+  kpis: { total: number; today: number; mtd: number; won: number; won_today: number; hot: number; warm: number; cold: number; walkins: number };
   by_stage: Array<{ stage_id: number; name: string; stage_type: string; sort_order: number; pipeline_id: number; ct: number }>;
   series: Array<{ day: string; leads: number; won: number }>;
   follow_ups: { due_today: number; overdue: number; pending: number; done_today: number; done_week: number; my_open: number };
@@ -409,7 +409,7 @@ function Followups() {
       <Kpis items={[
         { lab: 'Due today', val: String(sum.data?.due_today ?? '0'), ic: 'clock' },
         { lab: 'Overdue', val: String(sum.data?.overdue ?? '0'), ic: 'clock', tone: sum.data?.overdue > 0 ? 'down' : 'flat' },
-        { lab: 'Open', val: String(sum.data?.open ?? '0'), ic: 'cal' },
+        { lab: 'This week', val: String(sum.data?.this_week ?? '0'), ic: 'cal' },
         { lab: 'Done (wk)', val: String(sum.data?.done_week ?? '0'), ic: 'check' },
       ]} />
       <TableCard title="Upcoming follow-ups" cols={['Lead', 'Type', 'Owner', 'Due', 'Disposition']}
@@ -630,7 +630,7 @@ function Campaigns() {
     <>
       <Kpis items={[
         { lab: 'Active campaigns', val: String(ref.campaigns.filter((c) => c.is_active !== false).length), ic: 'bolt' },
-        { lab: 'Leads (total)', val: String(sum.data?.kpis.total ?? '0'), ic: 'leads' },
+        { lab: 'Leads (MTD)', val: String(sum.data?.kpis.mtd ?? '0'), ic: 'leads' },
         { lab: 'Avg CPL', val: '—', ic: 'rupee' },
         { lab: 'Best conv%', val: '—', ic: 'target' },
       ]} />
@@ -782,8 +782,8 @@ function Audit() {
       <Kpis items={[
         { lab: 'Activities today', val: String(todays.length), ic: 'bolt' },
         { lab: 'Edits', val: String(todays.filter((r) => r.action === 'update').length), ic: 'note' },
-        { lab: 'Creates', val: String(todays.filter((r) => r.action === 'create').length), ic: 'plus' },
-        { lab: 'Logins', val: String(todays.filter((r) => r.action === 'login').length), ic: 'users' },
+        { lab: 'Messages sent', val: '\u2014', ic: 'wa' },
+        { lab: 'Calls logged', val: '\u2014', ic: 'phone' },
       ]} />
       <TableCard title="Activity log — all users" cols={['Time', 'User', 'Module', 'Activity', 'Detail']}
         rows={rows.map((r) => [
@@ -801,27 +801,27 @@ function ActivityReports() {
   const { refreshTick } = useScreen();
   const logs = useFetch<any[]>('/audit-logs?limit=500', [refreshTick]);
   const rows = logs.data ?? [];
-  const byUser = new Map<string, { logins: number; followups: number; edits: number; creates: number }>();
+  const todays = rows.filter((r) => new Date(r.occurred_at).toDateString() === new Date().toDateString());
+  const byUser = new Map<string, { logins: number; followups: number; edits: number }>();
   rows.forEach((r) => {
     const nm = r.actor_name ?? 'System';
-    const u = byUser.get(nm) ?? { logins: 0, followups: 0, edits: 0, creates: 0 };
+    const u = byUser.get(nm) ?? { logins: 0, followups: 0, edits: 0 };
     if (r.action === 'login') u.logins++;
     else if (String(r.entity_type).includes('follow-ups')) u.followups++;
-    else if (r.action === 'update') u.edits++;
-    else if (r.action === 'create') u.creates++;
+    else if (r.action === 'update' || r.action === 'create') u.edits++;
     byUser.set(nm, u);
   });
   return (
     <>
       <Kpis items={[
-        { lab: 'Activities logged', val: String(rows.length), ic: 'bolt' },
+        { lab: 'Activities today', val: String(todays.length), ic: 'bolt' },
         { lab: 'Calls', val: '—', ic: 'calls' },
         { lab: 'WhatsApp', val: '—', ic: 'wa' },
         { lab: 'Edits logged', val: String(rows.filter((r) => r.action === 'update').length), ic: 'note' },
       ]} />
-      <TableCard title="User activity" cols={['User', 'Logins', 'Creates', 'Follow-ups', 'Edits']}
+      <TableCard title="User activity" cols={['User', 'Logins', 'Calls', 'Follow-ups', 'Edits']}
         rows={[...byUser.entries()].map(([nm, u]) => [
-          { node: <span className="nm">{nm}</span> } as Cell, String(u.logins), String(u.creates), String(u.followups), String(u.edits),
+          { node: <span className="nm">{nm}</span> } as Cell, String(u.logins), '\u2014', String(u.followups), String(u.edits),
         ])} empty="Activity accumulates as the team works" />
     </>
   );

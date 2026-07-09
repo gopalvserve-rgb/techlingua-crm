@@ -313,6 +313,7 @@ export class LeadsService {
     const kpis = await this.db.one(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE)::int AS today,
+              COUNT(*) FILTER (WHERE l.created_at >= date_trunc('month', now()))::int AS mtd,
               COUNT(*) FILTER (WHERE st.stage_type = 'won')::int AS won,
               COUNT(*) FILTER (WHERE st.stage_type = 'won' AND l.updated_at::date = CURRENT_DATE)::int AS won_today,
               COUNT(*) FILTER (WHERE l.temperature = 'hot')::int AS hot,

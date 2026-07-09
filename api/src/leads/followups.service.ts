@@ -64,6 +64,8 @@ export class FollowUpsService {
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at::date = CURRENT_DATE)::int AS due_today,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at < date_trunc('day', now()))::int AS overdue,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at::date = CURRENT_DATE)::int AS done_today,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at >= date_trunc('week', now())
+                               AND f.scheduled_at < date_trunc('week', now()) + interval '7 days')::int AS this_week,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at >= date_trunc('week', now()))::int AS done_week,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${params.length})::int AS my_open,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${params.length}

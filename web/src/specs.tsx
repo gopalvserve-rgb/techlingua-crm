@@ -212,6 +212,7 @@ export const APP: ModuleItem[] = [
       sub: 'Targets per counsellor / branch / vertical — admissions count & revenue, set monthly.',
       sprintNote: NOTE_S2,
       blocks: [
+        { type: 'hbars', title: 'Branch targets', rows: [], empty: 'Branch targets appear once monthly targets are set' },
         emptyTable('Counsellor targets', ['Counsellor', 'Admissions target', 'Achieved', 'Revenue target', 'Achieved', '%'], 'No targets set yet'),
       ] } },
     { id: 'counsellor', label: 'Counsellor Performance', spec: {
@@ -374,7 +375,9 @@ export const APP: ModuleItem[] = [
     { id: 'collection', label: 'Fee Collection', spec: {
       sub: 'Cash, UPI, Card, Net Banking, Cheque, Razorpay, PhonePe, PayU. Partial payments. Auto receipts.',
       actions: [['plus', 'Record payment', 'primary']], sprintNote: NOTE_S2,
-      blocks: [emptyTable('Recent collections', ['Receipt', 'Student', 'Amount', 'Mode', 'Branch', 'Status'], 'No payments recorded yet')] } },
+      blocks: [
+        { type: 'donut', title: 'Collection by mode', center: '\u2014', slices: [], empty: 'No payments recorded yet' },
+        emptyTable('Recent collections', ['Receipt', 'Student', 'Amount', 'Mode', 'Branch', 'Status'], 'No payments recorded yet')] } },
     { id: 'dues', label: 'Fee Dues', spec: {
       sub: 'Dues per student / installment, ageing buckets, automatic reminders (SMS/WhatsApp/email) & escalation.',
       sprintNote: NOTE_S2,
@@ -650,7 +653,8 @@ export const APP: ModuleItem[] = [
       sub: 'Custom roles — module, field & record-level. Partial roles instead of full modules.',
       actions: [['plus', 'New role', 'primary']] } },
     { id: 'courseconfig', label: 'Course Configuration', spec: { dyn: 'courses',
-      sub: 'Configure courses & fees. Approval step for fee changes.' } },
+      sub: 'Configure courses & fees. Approval step for fee changes.',
+      actions: [['plus', 'New course', 'primary']] } },
     { id: 'workflow', label: 'Workflow Automation', spec: {
       sub: 'Admin-built rules (same engine as Automation Journeys). Who can build them.',
       blocks: [{ type: 'caps', title: 'Workflow automation', items: [
