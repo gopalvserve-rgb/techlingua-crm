@@ -487,7 +487,7 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
   };
 
   return (
-    <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="add-scrim">
       <div className="add-modal">
         <div className="ah">
           <h3><Ic k="plus" />{spec.title}</h3>
@@ -588,7 +588,7 @@ export function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSav
   );
 
   return (
-    <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="add-scrim">
       <div className="add-modal">
         <div className="ah"><h3><Ic k="plus" />Create Campaign</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
         <div className="abody">

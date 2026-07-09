@@ -41,8 +41,13 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [leadId]);
 
   if (!lead) return (
-    <div className="modal-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="sheet"><div className="empty-note" style={{ marginTop: '40vh' }}>Loading lead…</div></div>
+    <div className="modal-scrim">
+      <div className="sheet">
+        <div className="sheet-head" style={{ borderBottom: 'none' }}>
+          <button className="x" onClick={onClose}><Ic k="x" /></button>
+        </div>
+        <div className="empty-note" style={{ marginTop: '36vh' }}>Loading lead…</div>
+      </div>
     </div>
   );
 
@@ -98,7 +103,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const notes = (lead.activities as Activity[]).filter((a) => a.type === 'note');
 
   return (
-    <div className="modal-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-scrim">
       <div className="sheet">
         <div className="sheet-head">
           <Avatar name={lead.full_name} size="lg" />

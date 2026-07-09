@@ -69,7 +69,7 @@ export function AddMasterModal({ type, onClose, onCreated }: {
   };
 
   return (
-    <div className="add-scrim" style={{ zIndex: 260 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="add-scrim" style={{ zIndex: 260 }}>
       <div className="add-modal" style={{ width: 440 }}>
         <div className="ah">
           <h3><Ic k="plus" />Add {label}</h3>
