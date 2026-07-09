@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
+import { AddMasterModal } from './mastermodal';
 import { Avatar, TempBadge } from './renderer';
-import { toast, useRef_ } from './refdata';
+import { toast, useRef_, Named } from './refdata';
 
 interface Stage { id: number; name: string; sort_order: number; stage_type: string }
 interface Activity { id: number; type: string; from_value: any; to_value: any; note: string | null; occurred_at: string; actor_name: string | null }
@@ -33,6 +34,8 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [noteText, setNoteText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [masterAdd, setMasterAdd] = useState<{ type: string; k: string } | null>(null);
+  const [extra, setExtra] = useState<Record<string, Named[]>>({});
 
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [leadId]);
@@ -78,6 +81,12 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   };
 
   const ed = (k: string) => (edits[k] !== undefined ? edits[k] : lead[k]) as any;
+  /** Master-bound select options + any value just added via ＋ Master (pre-reload). */
+  const withExtra = (k: string, opts: Named[]) =>
+    [...opts, ...(extra[k] ?? []).filter((e) => !opts.some((o) => Number(o.id) === Number(e.id)))];
+  /** ＋ Master link on master-bound lead fields — hidden without master.create. */
+  const mlink = (type: string, k: string) => (canUpdate && can('master.create')
+    ? <a className="mlink" onClick={() => setMasterAdd({ type, k })}>＋ Master</a> : null);
   const sel = (k: string, opts: Array<{ id: number; name: string }>, allowEmpty = true) => (
     <select value={ed(k) ?? ''} disabled={!canUpdate}
       onChange={(e) => setEdits((x) => ({ ...x, [k]: e.target.value ? Number(e.target.value) : null }))}>
@@ -133,11 +142,11 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                 {ref.users.length && can('lead.assign') ? sel('owner_id', ref.users) : <span>{lead.owner_name || 'Unassigned'}</span>}
               </div></div>
               <div className="f"><label>Source</label><div className="iv">{lead.source_name}</div></div>
-              <div className="f"><label>Course interest</label><div className="iv">
-                {ref.courses.length ? sel('course_id', ref.courses) : <span>{lead.course_name || '—'}</span>}
+              <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">
+                {ref.courses.length || extra['course_id']?.length ? sel('course_id', withExtra('course_id', ref.courses)) : <span>{lead.course_name || '—'}</span>}
               </div></div>
-              <div className="f"><label>Budget</label><div className="iv">
-                {ref.budgets.length ? sel('budget_id', ref.budgets) : <span>—</span>}
+              <div className="f"><label>Budget{mlink('budget', 'budget_id')}</label><div className="iv">
+                {ref.budgets.length || extra['budget_id']?.length ? sel('budget_id', withExtra('budget_id', ref.budgets)) : <span>—</span>}
               </div></div>
               <div className="f"><label>Temperature</label><div className="iv">
                 <select value={ed('temperature') ?? ''} disabled={!canUpdate}
@@ -151,8 +160,8 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                   <option value="low">Low</option><option value="med">Medium</option><option value="high">High</option>
                 </select>
               </div></div>
-              <div className="f"><label>Status</label><div className="iv">
-                {ref.statuses.length ? sel('status_id', ref.statuses, false) : <span>{lead.status_name || '—'}</span>}
+              <div className="f"><label>Status{mlink('status', 'status_id')}</label><div className="iv">
+                {ref.statuses.length || extra['status_id']?.length ? sel('status_id', withExtra('status_id', ref.statuses), false) : <span>{lead.status_name || '—'}</span>}
               </div></div>
               <div className="f"><label>Next follow-up</label><div className="iv">
                 <span>{fmtDT(lead.next_follow_up_at)}</span><Ic k="cal" />
@@ -217,6 +226,14 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           <button className="btn primary" onClick={saveEdits} disabled={busy || !canUpdate}>{checkS}Save changes</button>
         </div>
       </div>
+      {masterAdd && (
+        <AddMasterModal type={masterAdd.type} onClose={() => setMasterAdd(null)}
+          onCreated={(row) => {
+            setExtra((x) => ({ ...x, [masterAdd.k]: [...(x[masterAdd.k] ?? []), row] }));
+            setEdits((x) => ({ ...x, [masterAdd.k]: Number(row.id) })); // auto-select the new value
+            ref.reload();
+          }} />
+      )}
     </div>
   );
 }

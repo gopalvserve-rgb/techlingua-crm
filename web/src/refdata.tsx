@@ -55,11 +55,11 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('campaign.read'), () => api.get<Named[]>('/campaigns'), []),
         safe(can('source.read'), () => api.get<Named[]>('/sources'), []),
         safe(can('user.read'), () => api.get<Named[]>('/users'), []),
-        safe(can('master.read'), () => api.get<Named[]>('/masters/m_status'), []),
-        safe(can('master.read'), () => api.get<Named[]>('/masters/m_course'), []),
-        safe(can('master.read'), () => api.get<Named[]>('/masters/m_followup_type'), []),
-        safe(can('master.read'), () => api.get<Named[]>('/masters/m_disposition'), []),
-        safe(can('master.read'), () => api.get<Named[]>('/masters/m_budget'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/status'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/course'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/followup_type'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/disposition'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/budget'), []),
       ]);
       if (dead) return;
       setData({

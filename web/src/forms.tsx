@@ -5,7 +5,9 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
+import { useAuth } from './auth';
 import { Ic } from './icons';
+import { AddMasterModal } from './mastermodal';
 import { toast, useRef_, Named, RefData } from './refdata';
 
 export interface FormField {
@@ -259,7 +261,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<string>> = {
   },
 };
 SAVERS['students.courses'] = async (vals) => {
-  await api.post('/masters/m_course', {
+  await api.post('/masters/course', {
     name: need(vals['Course Name'], 'Course name is required'),
     code: need(vals['Course Code'], 'Course code is required'),
     meta: {
@@ -309,14 +311,35 @@ function LeadLookup({ value, onPick }: { value: string; onPick: (id: number | un
   );
 }
 
+/* -------------------- ＋ Master link wiring -------------------- */
+
+/** refdata src -> generic master type key (POST /api/masters/<type>). */
+const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
+  courses: 'course', statuses: 'status', followupTypes: 'followup_type',
+  dispositions: 'disposition', budgets: 'budget',
+};
+/** Hierarchy-bound srcs open their full add-form inline instead (not generic masters). */
+const SRC_FORM: Partial<Record<NonNullable<FormField['src']>, { form: string; perm: string }>> = {
+  branches: { form: 'admin.branches', perm: 'branch.create' },
+  verticals: { form: 'admin.verticals', perm: 'vertical.create' },
+  pipelines: { form: 'leads.pipelinemaster', perm: 'pipeline.create' },
+  sources: { form: 'leads.sources', perm: 'source.create' },
+  users: { form: 'admin.users', perm: 'user.create' },
+};
+
 /* ---------------------------- the modal ---------------------------- */
 
 export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClose: () => void; onSaved?: () => void }) {
   const ref = useRef_();
+  const { can } = useAuth();
   const spec = SPEC_FORMS[formKey];
   const wired = !!SAVERS[formKey];
   const [vals, setVals] = useState<Vals>({});
   const [ids, setIds] = useState<Ids>({});
+  const [masterAdd, setMasterAdd] = useState<{ type: string; field: string } | null>(null);
+  const [subForm, setSubForm] = useState<string | null>(null);
+  const [subCampaign, setSubCampaign] = useState(false);
+  const [extras, setExtras] = useState<Record<string, Named[]>>({});
   const [roles, setRoles] = useState<Named[]>([]);
   const [busy, setBusy] = useState(false);
   const needsRoles = useMemo(() => spec?.fields.some((f) => f.type === 'roleselect'), [spec]);
@@ -335,7 +358,8 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
     if (f.src === 'pipelines' && ids['Vertical']) list = list.filter((p) => Number(p.vertical_id) === ids['Vertical']);
     if (f.src === 'campaigns' && ids['Pipeline']) list = list.filter((c) => Number(c.pipeline_id) === ids['Pipeline']);
     if (f.src === 'sources' && ids['Campaign']) list = list.filter((s) => Number(s.campaign_id) === ids['Campaign']);
-    return list;
+    const fresh = (extras[f.label] ?? []).filter((e) => !list.some((o) => Number(o.id) === Number(e.id)));
+    return [...list, ...fresh];
   };
 
   const setField = (label: string, value: string, id?: number) => {
@@ -441,6 +465,27 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
   const isMaster = (f: FormField) => (f.type === 'select' || f.type === 'multiselect') &&
     (/master/i.test(f.hint || '') || /\b(course|vertical|pipeline|campaign|branch|source|stage|status|tag|batch|payment plan|payment terms|qualification|budget|designation|department|training mode)\b/i.test(f.label));
 
+  /** ＋ Master → inline add modal. Generic masters open <AddMasterModal>; hierarchy
+   *  fields open their full add-form; both hidden without the create permission. */
+  const masterLink = (f: FormField) => {
+    if (!isMaster(f)) return null;
+    const mt = f.src ? SRC_MASTER[f.src] : undefined;
+    const hf = f.src ? SRC_FORM[f.src] : undefined;
+    const isCamp = f.src === 'campaigns';
+    if (mt && !can('master.create')) return null;
+    if (hf && !can(hf.perm)) return null;
+    if (isCamp && !can('campaign.create')) return null;
+    return (
+      <a className="mlink" onClick={(e) => {
+        e.preventDefault();
+        if (mt) setMasterAdd({ type: mt, field: f.label });
+        else if (isCamp) setSubCampaign(true);
+        else if (hf) setSubForm(hf.form);
+        else toast('Manage master lists under Administration › Settings');
+      }}>＋ Master</a>
+    );
+  };
+
   return (
     <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="add-modal">
@@ -464,7 +509,7 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
                   <label>
                     {f.label}{f.req ? <> <span className="star">*</span></> : null}
                     {f.hint && !inField ? <span className="fhint">{f.hint}</span> : null}
-                    {isMaster(f) ? <a className="mlink" onClick={(e) => { e.preventDefault(); toast('Manage master lists under Administration › Settings'); }}>＋ Master</a> : null}
+                    {masterLink(f)}
                   </label>
                   {input(f)}
                 </div>
@@ -477,6 +522,16 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
           <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button>
         </div>
       </div>
+      {masterAdd && (
+        <AddMasterModal type={masterAdd.type} onClose={() => setMasterAdd(null)}
+          onCreated={(row) => {
+            setExtras((x) => ({ ...x, [masterAdd.field]: [...(x[masterAdd.field] ?? []), row] }));
+            setField(masterAdd.field, row.name, Number(row.id)); // auto-select the new value
+            ref.reload();
+          }} />
+      )}
+      {subForm && <AddModal formKey={subForm} onClose={() => setSubForm(null)} onSaved={() => ref.reload()} />}
+      {subCampaign && <CampaignModal onClose={() => setSubCampaign(false)} onSaved={() => ref.reload()} />}
     </div>
   );
 }
