@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 
 export interface TeamDto {
@@ -13,7 +14,21 @@ export interface TeamDto {
 
 @Injectable()
 export class TeamsService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly resolver: ScopeResolverService,
+    private readonly enforcer: ScopeEnforcerService,
+  ) {}
+
+  /** DEF-QA4-03: every body-referenced unit/user must be inside the caller's scope. */
+  private async assertRefs(scope: ResolvedScope, dto: Partial<TeamDto>, actorId?: number) {
+    await this.enforcer.assertRefInScope(scope, 'branch', dto.branch_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'vertical', dto.vertical_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'user', dto.leader_id, actorId);
+    for (const uid of dto.member_ids ?? []) {
+      await this.enforcer.assertRefInScope(scope, 'user', uid, actorId);
+    }
+  }
 
   async list(scope: ResolvedScope) {
     const params: unknown[] = [];
@@ -44,8 +59,9 @@ export class TeamsService {
     return { ...team, members };
   }
 
-  async create(dto: TeamDto, actorId: number) {
+  async create(dto: TeamDto, actorId: number, scope: ResolvedScope) {
     if (!dto?.name) throw new BadRequestException('name is required');
+    await this.assertRefs(scope, dto, actorId);
     const org = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
     return this.db.tx(async (c) => {
       const t = await c.query(
@@ -60,8 +76,9 @@ export class TeamsService {
     });
   }
 
-  async update(id: number, dto: Partial<TeamDto> & { is_active?: boolean }) {
+  async update(id: number, dto: Partial<TeamDto> & { is_active?: boolean }, scope: ResolvedScope, actorId?: number) {
     await this.get(id);
+    await this.assertRefs(scope, dto, actorId);
     return this.db.tx(async (c) => {
       const sets: string[] = [];
       const params: unknown[] = [];

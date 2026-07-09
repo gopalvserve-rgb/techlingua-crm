@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { FOLLOWUP_SCOPE_COLS } from './leads.service';
 
@@ -33,7 +34,11 @@ const FU_SELECT = `
 /** Follow-ups CRUD + today's/overdue lists. Scope flows through the lead path. */
 @Injectable()
 export class FollowUpsService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly resolver: ScopeResolverService,
+    private readonly enforcer: ScopeEnforcerService,
+  ) {}
 
   async list(scope: ResolvedScope, f: FollowUpFilters, userId: number) {
     const params: unknown[] = [];
@@ -79,8 +84,13 @@ export class FollowUpsService {
     );
   }
 
-  async create(dto: CreateFollowUpDto, actorId: number) {
+  async create(dto: CreateFollowUpDto, actorId: number, scope: ResolvedScope) {
     if (!dto?.lead_id || !dto?.scheduled_at) throw new BadRequestException('lead_id and scheduled_at are required');
+    // DEF-QA4-03: the body lead_id (and any explicit owner) must be inside the
+    // caller's scope — a scoped agent cannot attach follow-ups to foreign leads.
+    // Out-of-scope -> 404, consistent with the by-ID policy (no existence oracle).
+    await this.enforcer.assertRefInScope(scope, 'lead', dto.lead_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'user', dto.owner_id, actorId);
     const lead = await this.db.one<{ org_id: string; branch_id: string; owner_id: string | null }>(
       `SELECT org_id, branch_id, owner_id FROM lead WHERE id = $1 AND is_active`, [dto.lead_id],
     );
@@ -109,11 +119,20 @@ export class FollowUpsService {
     });
   }
 
-  async update(id: number, dto: Partial<CreateFollowUpDto> & { status?: string; complete?: boolean }, actorId: number) {
+  async update(
+    id: number,
+    dto: Partial<CreateFollowUpDto> & { status?: string; complete?: boolean },
+    actorId: number,
+    scope: ResolvedScope,
+  ) {
     const before = await this.db.one<Record<string, any>>(
       `SELECT f.*, l.org_id, l.branch_id FROM follow_up f JOIN lead l ON l.id = f.lead_id WHERE f.id = $1`, [id],
     );
     if (!before) throw new NotFoundException('follow_up not found');
+    // DEF-QA4-03: reassignment target must be inside the caller's scope.
+    if (dto.owner_id != null && Number(dto.owner_id) !== Number(before.owner_id ?? 0)) {
+      await this.enforcer.assertRefInScope(scope, 'user', Number(dto.owner_id), actorId);
+    }
     const sets: string[] = [];
     const params: unknown[] = [];
     const set = (col: string, val: unknown) => { params.push(val); sets.push(`${col} = $${params.length}`); };

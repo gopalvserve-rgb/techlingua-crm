@@ -77,3 +77,56 @@ describe('ScopeEnforcerService.assertInScope', () => {
     expect(db.one).not.toHaveBeenCalled();
   });
 });
+
+/** QA DEF-QA4-03 — body-referenced entity ids (follow-up lead_id, lead owner/campaign, ...). */
+describe('ScopeEnforcerService.assertRefInScope', () => {
+  const ownScope = (userId: number) => scope({ filters: [{ kind: 'own', userId }] });
+
+  it('skips null/undefined references (required-field validation stays in services)', async () => {
+    const { svc, db } = makeService(null);
+    await expect(svc.assertRefInScope(scope({}), 'lead', undefined)).resolves.toBeUndefined();
+    await expect(svc.assertRefInScope(scope({}), 'user', null)).resolves.toBeUndefined();
+    expect(db.one).not.toHaveBeenCalled();
+  });
+
+  it('passes without querying when scope is all', async () => {
+    const { svc, db } = makeService(null);
+    await expect(svc.assertRefInScope(scope({ all: true }), 'lead', 42)).resolves.toBeUndefined();
+    expect(db.one).not.toHaveBeenCalled();
+  });
+
+  it('404s when an own-scoped caller references a lead they do not own (FU-08)', async () => {
+    const { svc, db } = makeService(null); // no row inside scope
+    await expect(svc.assertRefInScope(ownScope(5), 'lead', 42, 5))
+      .rejects.toBeInstanceOf(NotFoundException);
+    const [sql, params] = db.one.mock.calls[0];
+    expect(sql).toContain('e.owner_id = $1');
+    expect(params).toEqual([5, 42]);
+  });
+
+  it('passes when the referenced lead IS inside the caller scope', async () => {
+    const { svc } = makeService({ ok: 1 });
+    await expect(svc.assertRefInScope(ownScope(5), 'lead', 42, 5)).resolves.toBeUndefined();
+  });
+
+  it('ALLOWS a reference when no filter maps onto the entity (own-scoped agent -> campaign)', async () => {
+    // Deliberate difference vs assertInScope: the caller's scope does not
+    // constrain that dimension, so lead creation stays possible for own-scoped agents.
+    const { svc, db } = makeService(null);
+    await expect(svc.assertRefInScope(ownScope(5), 'campaign', 3, 5)).resolves.toBeUndefined();
+    expect(db.one).not.toHaveBeenCalled();
+  });
+
+  it('404s when a branch-scoped caller references a campaign of another branch', async () => {
+    const { svc } = makeService(null);
+    await expect(svc.assertRefInScope(branchScope(1), 'campaign', 99))
+      .rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('user reference: requester referencing themself always passes the SQL union', async () => {
+    const { svc, db } = makeService({ ok: 1 });
+    await svc.assertRefInScope(ownScope(5), 'user', 5, 5);
+    const [sql] = db.one.mock.calls[0];
+    expect(sql).toContain('OR u.id =');
+  });
+});

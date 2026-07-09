@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { AssignmentDto, AssignmentsService } from './assignments.service';
-import { CurrentUser, RequirePermission, ScopedEntity } from '../rbac/rbac.decorators';
+import { CurrentScope, CurrentUser, RequirePermission, ScopedEntity } from '../rbac/rbac.decorators';
+import { ResolvedScope } from '../rbac/rbac.types';
 
 @Controller('assignments')
 export class AssignmentsController {
@@ -14,8 +15,8 @@ export class AssignmentsController {
 
   @Post()
   @RequirePermission('assignment.create')
-  create(@Body() dto: AssignmentDto, @CurrentUser() user: { id: number }) {
-    return this.assignments.create(dto, user.id);
+  create(@Body() dto: AssignmentDto, @CurrentUser() user: { id: number }, @CurrentScope() scope: ResolvedScope) {
+    return this.assignments.create(dto, user.id, scope);
   }
 
   @Delete(':id')

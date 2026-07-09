@@ -85,15 +85,46 @@ export class ScopeEnforcerService {
    * Throws NotFoundException (404) unless `id` of `kind` falls inside the resolved scope.
    * `requesterId` is used for the users entity (a user is always in their own scope,
    * mirroring the users-list semantics).
+   *
+   * STRICT variant (by-ID routes): if none of the caller's filters map onto the
+   * entity (e.g. an own-scoped grant touching an org-level master), access is DENIED.
    */
   async assertInScope(scope: ResolvedScope, kind: ScopedEntityKind, id: number, requesterId?: number): Promise<void> {
-    if (!scope || !scope.allowed) throw this.notFound(kind); // defensive; PermissionsGuard already 403s
-    if (scope.all) return;
+    const r = await this.check(scope, kind, id, requesterId);
+    if (r !== 'ok') throw this.notFound(kind);
+  }
+
+  /**
+   * Body-reference scope check (QA DEF-QA4-03): validates an entity id referenced in
+   * a request BODY (follow-up lead_id, lead owner_id/campaign_id/team_id, team
+   * member ids, assignment units, ...) against the caller's resolved scope. Same
+   * 404 policy as assertInScope, with ONE deliberate difference: when none of the
+   * caller's filters map onto the referenced entity kind (e.g. an 'own'-scoped
+   * counsellor referencing a campaign — campaigns have no owner column), the
+   * reference is ALLOWED: the caller's scope does not constrain that dimension,
+   * and denying would make lead creation impossible for own-scoped agents.
+   * By-ID route access keeps the strict deny (assertInScope). `null`/`undefined`
+   * ids are skipped — required-field validation stays in the services.
+   */
+  async assertRefInScope(
+    scope: ResolvedScope, kind: ScopedEntityKind, id: number | null | undefined, requesterId?: number,
+  ): Promise<void> {
+    if (id == null) return;
+    const r = await this.check(scope, kind, Number(id), requesterId);
+    if (r === 'miss') throw this.notFound(kind);
+  }
+
+  /** Shared core: 'ok' in scope · 'miss' out of scope/nonexistent · 'unmapped' scope has no filter for this kind. */
+  private async check(
+    scope: ResolvedScope, kind: ScopedEntityKind, id: number, requesterId?: number,
+  ): Promise<'ok' | 'miss' | 'unmapped'> {
+    if (!scope || !scope.allowed) return 'miss'; // defensive; PermissionsGuard already 403s
+    if (scope.all) return 'ok';
 
     // Masters are org-level (no branch/vertical columns). Consistent with the
-    // resolver's rule — entities lacking a scoped column DENY rather than widen —
-    // a non-'all' grant cannot touch a master by id.
-    if (kind === 'master') throw this.notFound(kind);
+    // resolver's rule — entities lacking a scoped column can't be narrowed —
+    // they are 'unmapped' for any non-'all' grant (strict deny for by-ID access).
+    if (kind === 'master') return 'unmapped';
 
     if (kind === 'user') {
       // Same semantics as UsersService.list: in scope if the target holds >=1 active
@@ -114,20 +145,19 @@ export class ScopeEnforcerService {
           LIMIT 1`,
         params,
       );
-      if (!row) throw this.notFound(kind);
-      return;
+      return row ? 'ok' : 'miss';
     }
 
     const def = ENTITY_SCOPE[kind];
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, def.cols, params);
-    if (where === '1=0') throw this.notFound(kind); // no filter maps onto this entity -> deny
+    if (where === '1=0') return 'unmapped'; // no filter maps onto this entity
     params.push(id);
     const row = await this.db.one(
       `SELECT 1 AS ok FROM ${def.from} WHERE ${def.idCol} = $${params.length} AND (${where}) LIMIT 1`,
       params,
     );
-    if (!row) throw this.notFound(kind);
+    return row ? 'ok' : 'miss';
   }
 
   private notFound(kind: ScopedEntityKind): NotFoundException {

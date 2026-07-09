@@ -34,11 +34,16 @@ export class LeadsController {
   activities(@Param('id', ParseIntPipe) id: number) { return this.leads.activities(id); }
 
   @Post() @RequirePermission('lead.create')
-  create(@Body() dto: CreateLeadDto, @CurrentUser() u: U) { return this.leads.create(dto, u.id); }
+  create(@Body() dto: CreateLeadDto, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.leads.create(dto, u.id, s);
+  }
 
   @Patch(':id') @RequirePermission('lead.update') @ScopedEntity('lead')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: Record<string, unknown>, @CurrentUser() u: U) {
-    return this.leads.update(id, dto, u.id);
+  update(
+    @Param('id', ParseIntPipe) id: number, @Body() dto: Record<string, unknown>,
+    @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
+  ) {
+    return this.leads.update(id, dto, u.id, s);
   }
 
   @Post(':id/notes') @RequirePermission('lead.update') @ScopedEntity('lead')
@@ -64,15 +69,17 @@ export class FollowUpsController {
   summary(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U) { return this.fu.summary(s, u.id); }
 
   @Post() @RequirePermission('followup.create')
-  create(@Body() dto: CreateFollowUpDto, @CurrentUser() u: U) { return this.fu.create(dto, u.id); }
+  create(@Body() dto: CreateFollowUpDto, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.fu.create(dto, u.id, s);
+  }
 
   @Patch(':id') @RequirePermission('followup.update') @ScopedEntity('follow_up')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Partial<CreateFollowUpDto> & { status?: string; complete?: boolean },
-    @CurrentUser() u: U,
+    @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
   ) {
-    return this.fu.update(id, dto, u.id);
+    return this.fu.update(id, dto, u.id, s);
   }
 
   @Delete(':id') @RequirePermission('followup.delete') @ScopedEntity('follow_up')

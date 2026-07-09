@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
+import { looksLikePhoneQuery, normalizePhone, phoneDigits } from '../common/phone.util';
 
 /**
  * Sprint 2 — minimal lead APIs backing the prototype-parity UI:
@@ -72,7 +74,11 @@ const LEAD_SELECT = `
 
 @Injectable()
 export class LeadsService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly resolver: ScopeResolverService,
+    private readonly enforcer: ScopeEnforcerService,
+  ) {}
 
   private async orgId(): Promise<number> {
     const row = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -96,8 +102,18 @@ export class LeadsService {
     if (f.source_id) eq('l.source_id', f.source_id);
     if (f.temperature) eq('l.temperature', f.temperature);
     if (f.q) {
-      params.push(`%${f.q.trim()}%`);
-      where.push(`(l.full_name ILIKE $${params.length} OR l.phone LIKE $${params.length} OR l.email ILIKE $${params.length})`);
+      const qt = f.q.trim();
+      params.push(`%${qt}%`);
+      const like = `$${params.length}`;
+      if (looksLikePhoneQuery(qt)) {
+        // DEF-QA4-05: numbers typed with spaces/dashes must still find the
+        // canonically stored phone — compare digits against digits.
+        params.push(`%${phoneDigits(qt)}%`);
+        where.push(`(l.full_name ILIKE ${like} OR l.email ILIKE ${like} OR l.phone LIKE ${like}
+                     OR regexp_replace(l.phone, '\D', '', 'g') LIKE $${params.length})`);
+      } else {
+        where.push(`(l.full_name ILIKE ${like} OR l.phone LIKE ${like} OR l.email ILIKE ${like})`);
+      }
     }
     const cond = where.join(' AND ');
     const total = await this.db.one<{ n: number }>(
@@ -148,13 +164,18 @@ export class LeadsService {
 
   // ---- create (manual / Quick Contact) -------------------------------------
 
-  async create(dto: CreateLeadDto, actorId: number) {
+  async create(dto: CreateLeadDto, actorId: number, scope: ResolvedScope) {
     if (!dto?.full_name?.trim() || !dto?.phone?.trim()) {
       throw new BadRequestException('full_name and phone are required');
     }
     if (!dto.campaign_id || !dto.source_id) {
       throw new BadRequestException('campaign_id and source_id are required (leads carry the full path)');
     }
+    // DEF-QA4-03: body-referenced entities must fall inside the creator's scope
+    // (out-of-scope -> 404, consistent with the by-ID policy).
+    await this.enforcer.assertRefInScope(scope, 'campaign', dto.campaign_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'source', dto.source_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'user', dto.owner_id, actorId);
     const org = await this.orgId();
     // derive the full path from the campaign — no client can produce an inconsistent path
     const camp = await this.db.one<{ branch_id: string; vertical_id: string; pipeline_id: string }>(
@@ -167,7 +188,9 @@ export class LeadsService {
     );
     if (!src) throw new BadRequestException('source does not belong to the campaign');
 
-    const phone = dto.phone.replace(/\s+/g, '');
+    // DEF-QA4-02: canonical form on write — spaces/dashes/parens stripped,
+    // +91/0091/leading-0 collapse to +91XXXXXXXXXX (see common/phone.util.ts).
+    const phone = normalizePhone(dto.phone) as string;
     const dup = await this.db.one<{ id: string }>(
       `SELECT id FROM lead WHERE phone = $1 AND is_active ORDER BY id LIMIT 1`, [phone],
     );
@@ -192,7 +215,7 @@ export class LeadsService {
          RETURNING *`,
         [org, Number(camp.branch_id), Number(camp.vertical_id), Number(camp.pipeline_id),
           dto.campaign_id, dto.source_id, dto.full_name.trim(), phone,
-          dto.email?.trim() || null, dto.alt_phone || null, statusId, stageId,
+          dto.email?.trim() || null, dto.alt_phone ? normalizePhone(dto.alt_phone) : null, statusId, stageId,
           dto.priority ?? 'med', dto.temperature ?? null, dto.score ?? 0,
           dto.owner_id ?? null, dto.next_follow_up_at ?? null, !!dup,
           dto.state_id ?? null, dto.city_id ?? null, dto.course_id ?? null,
@@ -216,9 +239,16 @@ export class LeadsService {
 
   // ---- update (stage/status/owner/priority/temperature/fields) -------------
 
-  async update(id: number, dto: Record<string, unknown>, actorId: number) {
+  async update(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
     const before = await this.db.one<Record<string, any>>(`SELECT * FROM lead WHERE id = $1`, [id]);
     if (!before) throw new NotFoundException('lead not found');
+    // DEF-QA4-03: body-referenced users/teams must be inside the caller's scope.
+    if (dto.owner_id != null && Number(dto.owner_id) !== Number(before.owner_id ?? 0)) {
+      await this.enforcer.assertRefInScope(scope, 'user', Number(dto.owner_id), actorId);
+    }
+    if (dto.team_id != null && Number(dto.team_id) !== Number(before.team_id ?? 0)) {
+      await this.enforcer.assertRefInScope(scope, 'team', Number(dto.team_id), actorId);
+    }
     const org = Number(before.org_id);
 
     const sets: string[] = [];
@@ -259,21 +289,34 @@ export class LeadsService {
 
     for (const col of LEAD_UPDATABLE) {
       if (dto[col] === undefined) continue;
-      const val = col === 'custom_fields' ? JSON.stringify(dto[col] ?? {}) : dto[col];
+      let val = col === 'custom_fields' ? JSON.stringify(dto[col] ?? {}) : dto[col];
+      // DEF-QA4-02: phones are normalised on write everywhere, not only on create
+      if ((col === 'phone' || col === 'alt_phone') && val != null) val = normalizePhone(String(val));
       if (col === 'priority' && !['low', 'med', 'high'].includes(String(val))) throw new BadRequestException('invalid priority');
       if (col === 'temperature' && val != null && !['hot', 'warm', 'cold'].includes(String(val))) throw new BadRequestException('invalid temperature');
       set(col, val as unknown);
       if (String(before[col] ?? '') !== String(dto[col] ?? '')) fieldChanges[col] = { from: before[col], to: dto[col] };
     }
     if (Object.keys(fieldChanges).length) activities.push({ type: 'field_change', from: null, to: fieldChanges });
-    if (!sets.length) throw new BadRequestException('nothing to update');
+
+    // DEF-QA4-04: a PATCH where every provided value equals the current one is a
+    // 200 no-op returning the current entity (kanban drag-to-same-column,
+    // double-save). 400 stays reserved for a body with nothing recognisable.
+    if (!sets.length && !dto.note) {
+      const recognised = ['stage_id', 'status_id', 'owner_id', 'team_id', 'note', ...LEAD_UPDATABLE];
+      const touched = recognised.some((k) => dto[k] !== undefined);
+      if (!touched) throw new BadRequestException('nothing to update');
+      return before;
+    }
 
     params.push(id);
     return this.db.tx(async (c) => {
-      const upd = await c.query(
-        `UPDATE lead SET ${sets.join(', ')}, last_activity_at = now(), updated_at = now()
-          WHERE id = $${params.length} RETURNING *`, params,
-      );
+      const upd = sets.length
+        ? await c.query(
+            `UPDATE lead SET ${sets.join(', ')}, last_activity_at = now(), updated_at = now()
+              WHERE id = $${params.length} RETURNING *`, params,
+          )
+        : { rows: [before] };
       for (const a of activities) {
         await c.query(
           `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value)

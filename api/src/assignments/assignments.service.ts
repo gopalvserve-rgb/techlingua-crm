@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
+import { ResolvedScope } from '../rbac/rbac.types';
 
 export interface AssignmentDto {
   user_id: number;
@@ -17,7 +19,7 @@ export interface AssignmentDto {
  */
 @Injectable()
 export class AssignmentsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, private readonly enforcer: ScopeEnforcerService) {}
 
   list(userId?: number) {
     const where = userId ? `WHERE ua.user_id = $1 AND ua.is_active` : `WHERE ua.is_active`;
@@ -61,8 +63,16 @@ export class AssignmentsService {
     }
   }
 
-  async create(dto: AssignmentDto, actorId: number) {
+  async create(dto: AssignmentDto, actorId: number, scope: ResolvedScope) {
     if (!dto?.user_id || !dto?.role_id) throw new BadRequestException('user_id and role_id are required');
+    // DEF-QA4-03: the target user and every referenced unit must be inside the
+    // caller's scope (roles are org-level, validated by FK).
+    await this.enforcer.assertRefInScope(scope, 'user', dto.user_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'branch', dto.branch_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'vertical', dto.vertical_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'pipeline', dto.pipeline_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'campaign', dto.campaign_id, actorId);
+    await this.enforcer.assertRefInScope(scope, 'team', dto.team_id, actorId);
     await this.validateUnits(dto);
     const rows = await this.db.query(
       `INSERT INTO user_assignment (user_id, role_id, branch_id, vertical_id, pipeline_id, campaign_id, team_id, created_by)

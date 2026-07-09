@@ -22,15 +22,15 @@ export class UsersController {
 
   @Post()
   @RequirePermission('user.create')
-  create(@Body() dto: CreateUserDto, @CurrentUser() user: { id: number }) {
-    return this.users.create(dto, user.id);
+  create(@Body() dto: CreateUserDto, @CurrentUser() user: { id: number }, @CurrentScope() scope: ResolvedScope) {
+    return this.users.create(dto, user.id, scope);
   }
 
   /** Bulk CSV import: body = { csv: "name,email,phone,password\n..." } */
   @Post('import')
   @RequirePermission('user.import')
-  importCsv(@Body() body: { csv?: string }, @CurrentUser() user: { id: number }) {
-    return this.users.importCsv(body?.csv ?? '', user.id);
+  importCsv(@Body() body: { csv?: string }, @CurrentUser() user: { id: number }, @CurrentScope() scope: ResolvedScope) {
+    return this.users.importCsv(body?.csv ?? '', user.id, scope);
   }
 
   @Patch(':id')

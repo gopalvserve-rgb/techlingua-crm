@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import * as bcrypt from 'bcryptjs';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 
 export interface CreateUserDto {
@@ -17,7 +18,11 @@ export interface CreateUserDto {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly resolver: ScopeResolverService,
+    private readonly enforcer: ScopeEnforcerService,
+  ) {}
 
   private async orgId(): Promise<number> {
     const row = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -62,8 +67,19 @@ export class UsersService {
     return { ...user, assignments };
   }
 
-  async create(dto: CreateUserDto, actorId: number) {
+  async create(dto: CreateUserDto, actorId: number, scope?: ResolvedScope) {
     if (!dto?.name || !dto?.email) throw new BadRequestException('name and email are required');
+    // DEF-QA4-03: units referenced by the new user's assignments must be inside
+    // the creator's scope (roles are org-level, validated by FK).
+    if (scope) {
+      for (const a of dto.assignments ?? []) {
+        await this.enforcer.assertRefInScope(scope, 'branch', a.branch_id, actorId);
+        await this.enforcer.assertRefInScope(scope, 'vertical', a.vertical_id, actorId);
+        await this.enforcer.assertRefInScope(scope, 'pipeline', a.pipeline_id, actorId);
+        await this.enforcer.assertRefInScope(scope, 'campaign', a.campaign_id, actorId);
+        await this.enforcer.assertRefInScope(scope, 'team', a.team_id, actorId);
+      }
+    }
     const org = await this.orgId();
     const dup = await this.db.one(`SELECT 1 FROM "user" WHERE lower(email)=lower($1)`, [dto.email]);
     if (dup) throw new ConflictException(`Email already exists: ${dto.email}`);
@@ -118,7 +134,7 @@ export class UsersService {
    * Bulk CSV import. Expected header: name,email,phone,password (password optional).
    * Returns per-row results; existing emails are skipped, not overwritten.
    */
-  async importCsv(csv: string, actorId: number) {
+  async importCsv(csv: string, actorId: number, scope?: ResolvedScope) {
     if (!csv?.trim()) throw new BadRequestException('csv body is required');
     const lines = csv.trim().split(/\r?\n/);
     const header = lines[0].split(',').map((h) => h.trim().toLowerCase());
@@ -137,7 +153,7 @@ export class UsersService {
           email,
           phone: col('phone') >= 0 ? cells[col('phone')] : undefined,
           password: col('password') >= 0 && cells[col('password')] ? cells[col('password')] : undefined,
-        }, actorId);
+        }, actorId, scope);
         results.push({ line: i + 1, email, ok: true, id: Number(created.id) });
       } catch (e: any) {
         results.push({ line: i + 1, email, ok: false, error: e.message });

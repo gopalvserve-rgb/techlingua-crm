@@ -22,14 +22,17 @@ export class TeamsController {
 
   @Post()
   @RequirePermission('team.create')
-  create(@Body() dto: TeamDto, @CurrentUser() user: { id: number }) {
-    return this.teams.create(dto, user.id);
+  create(@Body() dto: TeamDto, @CurrentUser() user: { id: number }, @CurrentScope() scope: ResolvedScope) {
+    return this.teams.create(dto, user.id, scope);
   }
 
   @Patch(':id')
   @RequirePermission('team.update')
   @ScopedEntity('team')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: Partial<TeamDto>) {
-    return this.teams.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number, @Body() dto: Partial<TeamDto>,
+    @CurrentUser() user: { id: number }, @CurrentScope() scope: ResolvedScope,
+  ) {
+    return this.teams.update(id, dto, scope, user.id);
   }
 }
