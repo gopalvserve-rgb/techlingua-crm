@@ -1,19 +1,13 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './auth';
-import { Shell } from './components/Shell';
-import { LoginPage } from './pages/Login';
-import { DashboardPage } from './pages/Dashboard';
-import { MastersPage } from './pages/Masters';
-import { UsersPage } from './pages/Users';
-import { TeamsPage } from './pages/Teams';
-import { RolesPage } from './pages/Roles';
-import { HierarchyPage } from './pages/Hierarchy';
-import { AuditPage } from './pages/Audit';
+import { Shell } from './Shell';
+import { LoginPage } from './Login';
+import { RefDataProvider } from './refdata';
 
 export default function App() {
   const { me, loading } = useAuth();
 
-  if (loading) return <div className="empty" style={{ paddingTop: '30vh' }}>Loading…</div>;
+  if (loading) return <div className="empty-note" style={{ paddingTop: '30vh' }}>Loading…</div>;
 
   if (!me) {
     return (
@@ -25,17 +19,11 @@ export default function App() {
   }
 
   return (
-    <Shell>
+    <RefDataProvider>
       <Routes>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/masters" element={<MastersPage />} />
-        <Route path="/users" element={<UsersPage />} />
-        <Route path="/teams" element={<TeamsPage />} />
-        <Route path="/roles" element={<RolesPage />} />
-        <Route path="/hierarchy" element={<HierarchyPage />} />
-        <Route path="/audit" element={<AuditPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/m/:mod/:sub" element={<Shell />} />
+        <Route path="*" element={<Navigate to="/m/dash/overview" replace />} />
       </Routes>
-    </Shell>
+    </RefDataProvider>
   );
 }

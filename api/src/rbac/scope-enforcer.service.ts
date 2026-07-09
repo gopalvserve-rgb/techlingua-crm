@@ -21,9 +21,9 @@ import { ResolvedScope, ScopeColumnMap } from './rbac.types';
 
 export type ScopedEntityKind =
   | 'branch' | 'vertical' | 'pipeline' | 'stage' | 'campaign' | 'source'
-  | 'team' | 'user' | 'assignment' | 'master';
+  | 'team' | 'user' | 'assignment' | 'master' | 'lead' | 'follow_up';
 
-interface EntityScopeDef {
+export interface EntityScopeDef {
   /** FROM clause; the scope-bearing alias must expose the path columns used in `cols`. */
   from: string;
   /** Column the :id route param matches. */
@@ -32,7 +32,23 @@ interface EntityScopeDef {
 }
 
 /** How each by-ID entity maps onto the hierarchy path (single registry). */
-const ENTITY_SCOPE: Record<Exclude<ScopedEntityKind, 'user' | 'master'>, EntityScopeDef> = {
+export const ENTITY_SCOPE: Record<Exclude<ScopedEntityKind, 'user' | 'master'>, EntityScopeDef> = {
+  // Sprint 2: leads carry the full path; follow-ups scope through their lead
+  // (own = the follow-up's owner, so agents always see their own follow-ups).
+  lead: {
+    from: 'lead e', idCol: 'e.id',
+    cols: {
+      owner: 'e.owner_id', team: 'e.team_id', branch: 'e.branch_id',
+      vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
+    },
+  },
+  follow_up: {
+    from: 'follow_up fu JOIN lead e ON e.id = fu.lead_id', idCol: 'fu.id',
+    cols: {
+      owner: 'fu.owner_id', team: 'e.team_id', branch: 'e.branch_id',
+      vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
+    },
+  },
   branch: { from: 'branch e', idCol: 'e.id', cols: { branch: 'e.id' } },
   vertical: { from: 'vertical e', idCol: 'e.id', cols: { branch: 'e.branch_id', vertical: 'e.id' } },
   pipeline: {

@@ -127,8 +127,10 @@ async function seed(c: PoolClient) {
   for (const { module, actions } of PERMISSION_CATALOG) {
     for (const action of actions) {
       const key = `${module}.${action}`;
+      // idempotent: migration 007 may have pre-seeded lead/followup permissions
       const r = await c.query(
-        `INSERT INTO permission (key, module, action) VALUES ($1,$2,$3) RETURNING id`,
+        `INSERT INTO permission (key, module, action) VALUES ($1,$2,$3)
+         ON CONFLICT (key) DO UPDATE SET module = EXCLUDED.module RETURNING id`,
         [key, module, action],
       );
       permIds.set(key, r.rows[0].id);

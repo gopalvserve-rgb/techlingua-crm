@@ -10,6 +10,7 @@ import { AssignmentsModule } from './assignments/assignments.module';
 import { HierarchyModule } from './hierarchy/hierarchy.module';
 import { MastersModule } from './masters/masters.module';
 import { AuditModule } from './audit/audit.module';
+import { LeadsModule } from './leads/leads.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -28,6 +29,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     HierarchyModule,
     MastersModule,
     AuditModule,
+    LeadsModule,
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

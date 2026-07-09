@@ -1,0 +1,596 @@
+/**
+ * Add-record forms — field specs ported verbatim from the prototype's SPEC_FORMS,
+ * with live master/hierarchy dropdowns and wired saves where APIs exist.
+ * Unwired forms render exactly but tell the user which sprint makes them live.
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { api } from './api';
+import { Ic } from './icons';
+import { toast, useRef_, Named, RefData } from './refdata';
+
+export interface FormField {
+  label: string; type?: string; req?: boolean; opts?: string[] | null; hint?: string;
+  /** refdata source for id-valued selects (enables cascading + wired saves) */
+  src?: keyof Pick<RefData, 'branches' | 'verticals' | 'pipelines' | 'campaigns' | 'sources' | 'users' | 'courses' | 'followupTypes' | 'dispositions' | 'statuses' | 'budgets'>;
+}
+export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src']): FormField =>
+  ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src });
+
+const _BR = ['—'], _VERT = ['—'], _PIPE = ['—'], _COURSE = ['—'], _USERS = ['—'];
+const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
+
+export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> = {
+  'leads.all': { title: 'Add Lead', fields: [
+    F('Name', 'text', 1), F('Mobile Number', 'tel', 1, 0, 'de-dup key'), F('Alternate Number', 'tel'), F('WhatsApp Number', 'tel'), F('Email ID', 'email'),
+    F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'),
+    F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'), F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
+    F('Course', 'select', 0, 0, 'master', 'courses'), F('Training Mode', 'select', 0, ['Online', 'Offline', 'Hybrid', 'Bootcamp']), F('Course Fee', 'number'), F('City / Location', 'text'),
+    F('Lead Owner / Assigned Counsellor', 'select', 0, 0, 'Users', 'users'), F('Lead Stage / Status', 'select', 0, 0, 'default: New', 'statuses'),
+    F('Next Follow-up Date', 'datetime'), F('Created On', 'auto', 0, 0, 'Auto-stamped · edit permission by Admin'), F('Remarks / Notes', 'textarea')] },
+  'dash.walkins': { title: 'Add Walk-in', fields: [
+    F('Name', 'text', 1), F('Mobile Number', 'tel', 1, 0, 'de-dup key'), F('Alternate Number', 'tel'), F('WhatsApp Number', 'tel'), F('Email ID', 'email'),
+    F('Branch', 'select', 1, 0, 'auto if desk is Branch-locked', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped'),
+    F('Purpose of Visit', 'select', 1, ['Admission enquiry', 'Fee query', 'Document submission', 'Other']), F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
+    F('Course Fee', 'number'), F('How did you hear about us?', 'select', 0, ['Google Ads', 'Meta', 'Referral', 'Walk-in', 'Hoarding'], 'Lead Source master'),
+    F('Counsellor Assigned', 'select', 1, 0, 'Users', 'users'), F('Convert to Lead', 'checkbox'), F('Remarks', 'textarea')] },
+  'dash.referrals': { title: 'Add Referral', fields: [
+    F('Referrer Type', 'select', 1, ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner']), F('Referrer Name', 'lookup', 1, 0, 'Student / Employee master'),
+    F('Referrer Contact Number', 'tel', 1), F('Referred Person Name', 'text', 1), F('Referred Person Contact Number', 'tel', 1, 0, 'de-dup key'),
+    F('Referred Person WhatsApp Number', 'tel'), F('Referred Person Email', 'email'), F('Relationship to Referrer', 'text'),
+    F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Campaign', 'select', 0, 0, 'filtered by Vertical', 'campaigns'),
+    F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'), F('Incentive / Reward Applicable', 'text', 0, 0, 'auto-computed'),
+    F('Referral Status', 'select', 1, ['Pending', 'Converted', 'Rewarded', 'Rejected'])] },
+  'leads.sources': { title: 'Add Lead Source', fields: [
+    F('Source Name', 'text', 1), F('Campaign', 'select', 1, 0, 'parent link', 'campaigns'),
+    F('Source Category', 'select', 1, ['meta', 'google', 'justdial', 'indiamart', 'form', 'sheet', 'webhook', 'walkin', 'referral', 'manual'], 'channel'),
+    F('Cost per Lead (if fixed/paid)', 'number'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+  'leads.pipelinemaster': { title: 'Add Pipeline', fields: [
+    F('Pipeline Name', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
+    F('Pipeline Code', 'text', 1, 0, 'e.g. ADM'), F('Pipeline Stages', 'table', 0, 0, 'Default stage set added — edit after create'), F('Pipeline Owner', 'select', 0, 0, 'Users', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+  'perf.closure': { title: 'Record Sales Closure', fields: [
+    F('Lead / Walk-in Reference', 'leadlookup', 1, 0, 'Search lead / walk-in'), F('Branch / Vertical / Pipeline / Campaign', 'auto', 1, 0, 'Auto-pulled from Lead'),
+    F('Course Finalised', 'select', 1, 0, 'Course master · filtered by Vertical', 'courses'), F('Batch Preference', 'select', 0, _PIPE, 'filtered by Course'),
+    F('Closure Status', 'select', 1, ['Won', 'Lost']), F('Reason (if Lost)', 'select', 0, ['Price', 'Location', 'Timing', 'Competitor', 'Other']),
+    F('Final Closure Amount', 'number', 1), F('Payment Plan Selected', 'select', 1, _PLAN, 'Payment Plan master'),
+    F('Sales Owner / Counsellor', 'select', 1, 0, 'auto-filled', 'users'), F('Closure Date', 'date', 1)] },
+  'perf.quotes': { title: 'Add Quotation', fields: [
+    F('Quotation Number', 'auto', 1, 0, 'Auto-generated'), F('Lead / Walk-in Reference', 'leadlookup', 1), F('Branch', 'auto', 1, 0, 'Auto-pulled from Lead'), F('Vertical', 'auto', 1, 0, 'Auto-pulled from Lead'),
+    F('Course & Batch', 'select', 1, 0, 'filtered', 'courses'), F('Standard Fee Amount', 'number', 1, 0, 'auto from Course'), F('Discount / Scholarship Applied', 'lookup', 0, 0, 'Discount / Scholarship master'),
+    F('Final Quoted Amount', 'number', 1, 0, 'auto-computed'), F('Payment Terms Proposed', 'select', 1, _PLAN, 'Payment Plan master'), F('Validity Date', 'date', 1),
+    F('Prepared By', 'select', 1, 0, 'auto-filled', 'users'), F('Status', 'select', 1, ['Draft', 'Sent', 'Accepted', 'Expired'])] },
+  'perf.targets': { title: 'Add Target', fields: [
+    F('Target Owner', 'select', 1, ['Individual (Counsellor)', 'Team', 'Branch']), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
+    F('Pipeline', 'select', 0, 0, 'filtered by Vertical', 'pipelines'), F('Target Period', 'select', 1, ['Month', 'Quarter', 'Year']), F('Target Type', 'select', 1, ['Leads Generated', 'Admissions', 'Revenue']),
+    F('Target Value', 'number', 1), F('Achieved Value', 'auto', 1, 0, 'Auto-computed from closures')] },
+  'students.all': { title: 'Add Student', fields: [
+    F('Student Name', 'text', 1), F('Date of Birth', 'date', 1), F('Gender', 'select', 0, ['Male', 'Female', 'Other']), F('Mobile Number', 'tel', 1), F('Alternate Number', 'tel'), F('WhatsApp Number', 'tel'),
+    F('Email ID', 'email'), F('Address', 'textarea'), F('Parent / Guardian Name', 'text', 1), F('Parent / Guardian Contact', 'tel', 1),
+    F('Branch', 'auto', 1, 0, 'Auto-filled from Lead'), F('Vertical', 'auto', 1, 0, 'Auto-filled from Lead'), F('Course', 'select', 1, 0, 'filtered', 'courses'), F('Course Fee', 'number', 1),
+    F('Payment Plan', 'select', 1, _PLAN, 'Payment Plan master'), F('Converted From (Lead/Walk-in)', 'leadlookup', 0, 0, 'auto-linked'), F('Previous Education / Qualification', 'text'),
+    F('Photo & ID Proof', 'file'), F('Student ID', 'auto', 1, 0, 'Auto-generated')] },
+  'students.admissions': { title: 'Add Admission', fields: [
+    F('Student', 'lookup', 1, 0, 'Student master'), F('Branch', 'auto', 1, 0, 'Auto-filled from Student'), F('Vertical', 'select', 1, 0, 'filtered', 'verticals'), F('Course', 'select', 1, 0, 'filtered by Vertical', 'courses'),
+    F('Batch', 'select', 1, _PIPE, 'filtered by Course · seat-checked'), F('Admission Number', 'auto', 1, 0, 'Auto-generated'), F('Admission Date', 'date', 1),
+    F('Fee Plan / Payment Plan', 'select', 1, _PLAN, 'Payment Plan master'), F('Counsellor / Admission Owner', 'auto', 1, 0, 'Auto-filled from Sales Closure'),
+    F('Documents Submitted', 'file', 1, 0, 'checklist / upload'), F('Admission Status', 'select', 1, ['Confirmed', 'Provisional', 'Cancelled'])] },
+  'students.courses': { title: 'Add Course', fields: [
+    F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Vertical', 'select', 0, 0, 'master', 'verticals'), F('Applicable Branch(es)', 'select', 0, 0, 'multi-select · master', 'branches'),
+    F('Duration', 'number', 0, 0, 'weeks / months'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), F('Training Mode', 'select', 0, ['Online', 'Offline', 'Hybrid', 'Bootcamp']), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+  'students.batches': { title: 'Add Batch', fields: [
+    F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
+    F('Start Date', 'date', 1), F('End Date', 'date', 1), F('Class Timing', 'text', 1), F('Capacity (Max Seats)', 'number', 1), F('Trainer / Faculty Assigned', 'select', 0, 0, 'Employee master', 'users'),
+    F('Mode', 'select', 1, ['Online', 'Offline', 'Hybrid']), F('Status', 'select', 1, ['Upcoming', 'Ongoing', 'Completed', 'Cancelled'])] },
+  'finance.invoices': { title: 'Add Invoice', fields: [
+    F('Invoice Number', 'auto', 1, 0, 'Auto-generated'), F('Student', 'lookup', 1, 0, 'Student master'), F('Branch', 'auto', 1, 0, 'Auto-filled from Admission'), F('Vertical', 'select', 1, 0, 'invoice created & numbered per vertical', 'verticals'), F('Course / Batch', 'auto', 1, 0, 'Auto-filled from Admission'),
+    F('Invoice Date', 'date', 1), F('Total Amount', 'number', 1), F('Tax / GST Amount', 'number', 1, 0, 'auto-computed'), F('Discount / Scholarship Applied', 'number', 0, 0, 'auto from Quotation'),
+    F('Net Payable Amount', 'number', 1, 0, 'auto-computed'), F('Due Date', 'date', 1), F('Payment Status', 'select', 1, ['Unpaid', 'Partially Paid', 'Paid'])] },
+  'finance.collection': { title: 'Record Payment', fields: [
+    F('Student', 'lookup', 1, 0, 'Student master'), F('Invoice Reference', 'lookup', 1, 0, 'Invoice master'), F('Amount Collected', 'number', 1), F('Payment Mode', 'select', 1, ['Cash', 'Card', 'UPI', 'Bank Transfer', 'Cheque']),
+    F('Transaction / Reference ID', 'text', 0, 0, 'digital/bank only'), F('Receipt Number', 'auto', 1, 0, 'Auto-generated'), F('Collected By', 'select', 1, 0, 'auto-filled', 'users'),
+    F('Collection Date', 'date', 1, 0, 'auto-filled'), F('Balance Remaining', 'auto', 1, 0, 'Auto-computed')] },
+  'finance.plans': { title: 'Add Payment Plan', fields: [
+    F('Payment Plan Name', 'text', 1), F('Applicable Course(s)', 'select', 0, 0, 'multi-select · master', 'courses'), F('Total Fee Amount', 'number', 1), F('Number of Instalments', 'number', 1),
+    F('Instalment Schedule', 'table', 1, 0, 'Instalment # · Amount · Due date'), F('Late Fee Rule', 'text', 0, 0, 'amount/% + grace period'), F('Branch / Vertical Applicability', 'select', 0, 0, undefined, 'branches')] },
+  'finance.scholar': { title: 'Add Scholarship', fields: [
+    F('Scholarship Name', 'text', 1), F('Scholarship Type', 'select', 1, ['Merit-based', 'Need-based', 'Sibling', 'Staff Ward']), F('Eligibility Criteria', 'textarea', 1), F('Discount Value', 'number', 1, 0, '% or flat'),
+    F('Applicable Course / Vertical', 'select', 1, 0, 'multi-select', 'courses'), F('Branch', 'select', 0, 0, 'multi-select', 'branches'), F('Validity From', 'date', 1), F('Validity To', 'date', 1), F('Approved By', 'select', 1, 0, 'Users', 'users')] },
+  'finance.discounts': { title: 'Add Discount', fields: [
+    F('Discount Name / Reason', 'text', 1), F('Discount Type', 'select', 1, ['Flat Amount', 'Percentage']), F('Discount Value', 'number', 1), F('Applicable Course / Batch', 'select', 1, 0, undefined, 'courses'),
+    F('Branch / Vertical', 'auto', 1, 0, 'Auto-filled from Quotation'), F('Approval Required / Approved By', 'select', 1, 0, 'Users', 'users'), F('Validity', 'date')] },
+  'finance.refunds': { title: 'Add Refund', fields: [
+    F('Student', 'lookup', 1, 0, 'Student master'), F('Invoice / Payment Reference', 'lookup', 1), F('Refund Amount', 'number', 1), F('Reason for Refund', 'select', 1, ['Course Cancelled', 'Duplicate Payment', 'Dissatisfaction', 'Other']),
+    F('Branch', 'auto', 1, 0, 'Auto-filled from Invoice'), F('Refund Mode', 'select', 1, ['Bank Transfer', 'Original Payment Mode', 'Cheque']), F('Approved By', 'select', 1, 0, 'Users', 'users'),
+    F('Refund Date', 'date', 1), F('Status', 'select', 1, ['Requested', 'Approved', 'Processed', 'Rejected'])] },
+  'hr.directory': { title: 'Add Employee', fields: [
+    F('Employee Name', 'text', 1), F('Employee ID', 'auto', 1, 0, 'Auto-generated'), F('Mobile Number', 'tel', 1), F('Email', 'email', 1), F('Designation', 'select', 1, ['Counsellor', 'Trainer', 'Front Desk', 'Manager'], 'master'),
+    F('Department', 'select', 1, ['Sales', 'Academics', 'Finance', 'Admin', 'Marketing']), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 0, 0, 'multi-select · filtered by Branch', 'verticals'),
+    F('Reporting Manager', 'select', 0, 0, 'Employee master', 'users'), F('Date of Joining', 'date', 1), F('System Role / Access Level', 'select', 0, ['Admin', 'Branch Manager', 'Counsellor', 'Front Desk', 'Finance'], 'links to Add User'),
+    F('Status', 'select', 1, ['Active', 'On Leave', 'Relieved'])] },
+  'admin.branches': { title: 'Add Branch', fields: [
+    F('Branch Name', 'text', 1), F('Branch Code', 'text', 1, 0, 'used in IDs / invoice #'), F('Branch Type', 'select', 0, ['Company Branch', 'Franchise Branch'], 'Franchise → links to Franchise module'), F('Address', 'textarea'), F('City', 'text'), F('State', 'text'), F('Contact Number', 'tel'), F('Branch Email', 'email'),
+    F('Branch Head', 'select', 0, 0, 'Employee master', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+  'admin.verticals': { title: 'Add Vertical', fields: [
+    F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+  'admin.users': { title: 'Add User', fields: [
+    F('Full Name', 'text', 1, 0, 'Employee master'), F('Email ID', 'email', 1), F('Mobile Number', 'tel'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
+    F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'select', 0, 0, 'blank = org-wide', 'branches'),
+    F('Vertical Access', 'select', 0, 0, 'filtered by Branch', 'verticals'), F('Status', 'select', 0, ['Active', 'Suspended', 'Deactivated'])] },
+  'fran.partners': { title: 'Add Franchise Partner', fields: [
+    F('Franchise ID', 'auto', 1, 0, 'Auto-generated'), F('Legal Name', 'text', 1), F('Brand Name', 'text'), F('Owner', 'text', 1), F('Mobile', 'tel', 1), F('Email', 'email'),
+    F('Branch / Territory', 'text'), F('Status', 'select', 0, ['Onboarding', 'Active', 'Inactive']), F('KYC Documents', 'file')] },
+  'fran.agreements': { title: 'Add Agreement', fields: [
+    F('Agreement No', 'auto', 1, 0, 'Auto-generated'), F('Franchise', 'lookup', 1), F('Royalty Model', 'select', 0, ['Fixed', 'Percentage', 'Hybrid', 'Minimum']), F('Franchise Fee', 'number'),
+    F('Start Date', 'date'), F('End Date', 'date'), F('Territory', 'text'), F('Signed PDF', 'file')] },
+  'leads.followups': { title: 'Add Follow-up', fields: [
+    F('Lead', 'leadlookup', 1, 0, 'Search lead'), F('Type', 'select', 1, 0, 'master', 'followupTypes'), F('Disposition', 'select', 0, 0, 'master', 'dispositions'),
+    F('Next Follow-up Date', 'datetime', 1), F('Remarks', 'textarea')] },
+  'dash.mytasks': { title: 'Add Task', fields: [
+    F('Title', 'text', 1), F('Task Type', 'select', 0, 0, 'master', 'followupTypes'), F('Related Lead', 'leadlookup', 1, 0, 'Search lead'), F('Assigned To', 'select', 0, 0, 'Users', 'users'),
+    F('Due Date', 'datetime', 1), F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea')] },
+};
+SPEC_FORMS['dash.quickcontact'] = { ...SPEC_FORMS['leads.all'], title: 'Quick Add Lead' };
+SPEC_FORMS['leads.branch'] = { ...SPEC_FORMS['admin.branches'] };
+SPEC_FORMS['leads.vertical'] = { ...SPEC_FORMS['admin.verticals'] };
+SPEC_FORMS['admin.verticalmgmt'] = { ...SPEC_FORMS['admin.verticals'] };
+SPEC_FORMS['admin.pipelines'] = { ...SPEC_FORMS['leads.pipelinemaster'] };
+SPEC_FORMS['admin.courseconfig'] = { ...SPEC_FORMS['students.courses'], title: 'Configure Course' };
+SPEC_FORMS['leads.pipeline'] = { ...SPEC_FORMS['leads.all'] };
+
+export const MULTI_ADD: Record<string, Array<[string, string]>> = {
+  'admin.branches': [['Add Branch', 'admin.branches'], ['Add Vertical', 'admin.verticals']],
+  'leads.branch': [['Add Branch', 'admin.branches'], ['Add Vertical', 'admin.verticals']],
+};
+
+/** Derive "Add X" entity name from a submenu label (ported from prototype). */
+export function entFromLabel(label: string): string {
+  const map: Record<string, string> = {
+    'Pipeline (Kanban)': 'Lead', Kanban: 'Lead', Leads: 'Lead', 'All Leads': 'Lead', 'Lead Sources': 'Source',
+    'Counsellor Performance': 'Counsellor', 'Message Templates': 'Template', 'Study Material': 'Material',
+    'Student Management': 'Student', 'All Students': 'Student', 'Auto-Assignment': 'Rule', 'Duplicate Rules': 'Rule',
+    'SLA & TAT': 'Rule', 'Custom Fields': 'Field', 'Tests & Scores': 'Test', 'Agreements & Renewals': 'Agreement',
+    'Targets & Performance': 'Target', 'Branches & Verticals': 'Branch', 'Branch Management': 'Branch',
+    'Vertical Management': 'Vertical', 'Pipeline Management': 'Pipeline', Branch: 'Branch', Vertical: 'Vertical',
+    Pipeline: 'Pipeline', Campaign: 'Campaign', 'Follow-ups': 'Follow-up', 'Monthly Targets': 'Target',
+    'Sale Closure': 'Closure', 'Employee Directory': 'Employee',
+  };
+  if (map[label]) return map[label];
+  let l = label.replace(/^All\s+/, '').replace(/\s*\(.*\)/, '').split('&')[0].split('·')[0].trim();
+  if (/ies$/.test(l)) l = l.replace(/ies$/, 'y');
+  else if (/(ches|shes|sses|xes)$/.test(l)) l = l.replace(/es$/, '');
+  else if (/s$/.test(l)) l = l.replace(/s$/, '');
+  return l;
+}
+
+/* ------------------------- wired save adapters ------------------------- */
+
+type Vals = Record<string, string>;
+type Ids = Record<string, number | undefined>;
+
+const need = (v: string | number | undefined, msg: string) => {
+  if (v === undefined || v === '' || v === null) { toast(msg, true); throw new Error(msg); }
+  return v;
+};
+
+const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<string>> = {
+  'leads.all': async (vals, ids) => {
+    await api.post('/leads', {
+      full_name: need(vals['Name'], 'Name is required'),
+      phone: need(vals['Mobile Number'], 'Mobile Number is required'),
+      alt_phone: vals['Alternate Number'] || undefined,
+      email: vals['Email ID'] || undefined,
+      campaign_id: need(ids['Campaign'], 'Pick a Campaign (Branch › Vertical › Pipeline › Campaign)'),
+      source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
+      course_id: ids['Course'],
+      owner_id: ids['Lead Owner / Assigned Counsellor'],
+      status_id: ids['Lead Stage / Status'],
+      next_follow_up_at: vals['Next Follow-up Date'] || undefined,
+      note: vals['Remarks / Notes'] || undefined,
+      custom_fields: vals['Training Mode'] || vals['City / Location'] || vals['Course Fee']
+        ? { training_mode: vals['Training Mode'] || undefined, city: vals['City / Location'] || undefined, course_fee: vals['Course Fee'] || undefined }
+        : undefined,
+    });
+    return 'Lead added';
+  },
+  'leads.followups': async (vals, ids) => {
+    await api.post('/follow-ups', {
+      lead_id: need(ids['Lead'], 'Pick a lead'),
+      type_id: ids['Type'],
+      disposition_id: ids['Disposition'],
+      scheduled_at: need(vals['Next Follow-up Date'], 'Follow-up date is required'),
+      notes: vals['Remarks'] || undefined,
+    });
+    return 'Follow-up scheduled';
+  },
+  'dash.mytasks': async (vals, ids) => {
+    await api.post('/follow-ups', {
+      lead_id: need(ids['Related Lead'], 'Pick the related lead'),
+      type_id: ids['Task Type'],
+      owner_id: ids['Assigned To'],
+      scheduled_at: need(vals['Due Date'], 'Due date is required'),
+      notes: [vals['Title'], vals['Description']].filter(Boolean).join(' — ') || undefined,
+    });
+    return 'Task created';
+  },
+  'admin.branches': async (vals) => {
+    await api.post('/branches', {
+      name: need(vals['Branch Name'], 'Branch name is required'),
+      code: need(vals['Branch Code'], 'Branch code is required'),
+      address: vals['Address'] || undefined,
+    });
+    return 'Branch created';
+  },
+  'admin.verticals': async (vals, ids) => {
+    await api.post('/verticals', {
+      branch_id: need(ids['Branch'], 'Pick a branch'),
+      name: need(vals['Vertical Name'], 'Vertical name is required'),
+      code: need(vals['Vertical Code'], 'Vertical code is required'),
+    });
+    return 'Vertical created';
+  },
+  'leads.pipelinemaster': async (vals, ids) => {
+    await api.post('/pipelines', {
+      vertical_id: need(ids['Vertical'], 'Pick a vertical'),
+      name: need(vals['Pipeline Name'], 'Pipeline name is required'),
+      code: need(vals['Pipeline Code'], 'Pipeline code is required'),
+    });
+    return 'Pipeline created (default stages added)';
+  },
+  'leads.sources': async (vals, ids) => {
+    await api.post('/sources', {
+      campaign_id: need(ids['Campaign'], 'Pick a campaign'),
+      name: need(vals['Source Name'], 'Source name is required'),
+      channel: vals['Source Category'] || 'manual',
+    });
+    return 'Source connected';
+  },
+  'admin.users': async (vals, ids) => {
+    await api.post('/users', {
+      name: need(vals['Full Name'], 'Name is required'),
+      email: need(vals['Email ID'], 'Email is required'),
+      phone: vals['Mobile Number'] || undefined,
+      password: need(vals['Password / Login Method'], 'Password is required'),
+      assignments: ids['System Role'] ? [{
+        role_id: ids['System Role'],
+        branch_id: ids['Branch Access'] ?? null,
+        vertical_id: ids['Vertical Access'] ?? null,
+      }] : [],
+    });
+    return 'User created';
+  },
+};
+SAVERS['students.courses'] = async (vals) => {
+  await api.post('/masters/m_course', {
+    name: need(vals['Course Name'], 'Course name is required'),
+    code: need(vals['Course Code'], 'Course code is required'),
+    meta: {
+      mode: vals['Training Mode'] || undefined,
+      duration: vals['Duration'] || undefined,
+      fee: vals['Standard Fee'] || undefined,
+    },
+  });
+  return 'Course added to the master';
+};
+SAVERS['admin.courseconfig'] = SAVERS['students.courses'];
+SAVERS['dash.quickcontact'] = SAVERS['leads.all'];
+SAVERS['leads.pipeline'] = SAVERS['leads.all'];
+SAVERS['leads.branch'] = SAVERS['admin.branches'];
+SAVERS['leads.vertical'] = SAVERS['admin.verticals'];
+SAVERS['admin.verticalmgmt'] = SAVERS['admin.verticals'];
+SAVERS['admin.pipelines'] = SAVERS['leads.pipelinemaster'];
+
+/* ------------------------------ inputs ------------------------------ */
+
+function LeadLookup({ value, onPick }: { value: string; onPick: (id: number | undefined, label: string) => void }) {
+  const [q, setQ] = useState(value);
+  const [opts, setOpts] = useState<Array<{ id: number; full_name: string; phone: string }>>([]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (q.trim().length < 2) { setOpts([]); return; }
+      api.get<{ rows: any[] }>(`/leads?q=${encodeURIComponent(q.trim())}&limit=8`)
+        .then((r) => setOpts(r.rows)).catch(() => setOpts([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  return (
+    <div>
+      <input className="ainp" placeholder="Search lead by name / phone…" value={q}
+        onChange={(e) => { setQ(e.target.value); onPick(undefined, e.target.value); }} />
+      {opts.length > 0 && (
+        <div className="card" style={{ marginTop: 4, maxHeight: 150, overflowY: 'auto' }}>
+          {opts.map((o) => (
+            <div className="lrow" key={o.id} style={{ cursor: 'pointer', padding: '8px 12px' }}
+              onClick={() => { setQ(`${o.full_name} · ${o.phone}`); setOpts([]); onPick(o.id, o.full_name); }}>
+              <div className="gr"><div className="t1">{o.full_name}</div><div className="t2 mono">{o.phone}</div></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------- the modal ---------------------------- */
+
+export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClose: () => void; onSaved?: () => void }) {
+  const ref = useRef_();
+  const spec = SPEC_FORMS[formKey];
+  const wired = !!SAVERS[formKey];
+  const [vals, setVals] = useState<Vals>({});
+  const [ids, setIds] = useState<Ids>({});
+  const [roles, setRoles] = useState<Named[]>([]);
+  const [busy, setBusy] = useState(false);
+  const needsRoles = useMemo(() => spec?.fields.some((f) => f.type === 'roleselect'), [spec]);
+
+  useEffect(() => {
+    if (needsRoles) api.get<Named[]>('/roles').then(setRoles).catch(() => setRoles([]));
+  }, [needsRoles]);
+
+  if (!spec) return null;
+
+  const srcOptions = (f: FormField): Named[] => {
+    let list: Named[] = (ref as any)[f.src!] ?? [];
+    // cascade by parent selection where the hierarchy applies
+    if (f.src === 'verticals' && ids['Branch']) list = list.filter((v) => Number(v.branch_id) === ids['Branch']);
+    if (f.src === 'verticals' && ids['Branch Access']) list = list.filter((v) => Number(v.branch_id) === ids['Branch Access']);
+    if (f.src === 'pipelines' && ids['Vertical']) list = list.filter((p) => Number(p.vertical_id) === ids['Vertical']);
+    if (f.src === 'campaigns' && ids['Pipeline']) list = list.filter((c) => Number(c.pipeline_id) === ids['Pipeline']);
+    if (f.src === 'sources' && ids['Campaign']) list = list.filter((s) => Number(s.campaign_id) === ids['Campaign']);
+    return list;
+  };
+
+  const setField = (label: string, value: string, id?: number) => {
+    setVals((x) => ({ ...x, [label]: value }));
+    setIds((x) => ({ ...x, [label]: id }));
+  };
+
+  const save = async () => {
+    if (!wired) {
+      toast("This module's backend lands in a later sprint — the form is final but nothing was saved yet.");
+      onClose();
+      return;
+    }
+    setBusy(true);
+    try {
+      const msg = await SAVERS[formKey](vals, ids);
+      toast(msg);
+      onSaved?.();
+      onClose();
+    } catch (e: any) {
+      if (e?.message && !String(e.message).includes('required') && !String(e.message).includes('Pick')) toast(e.message, true);
+    } finally { setBusy(false); }
+  };
+
+  const input = (f: FormField) => {
+    const t = f.type || 'text';
+    const v = vals[f.label] ?? '';
+    if (t === 'select' && f.src) {
+      const list = srcOptions(f);
+      return (
+        <select className="ainp" value={ids[f.label] ?? ''}
+          onChange={(e) => {
+            const id = e.target.value ? Number(e.target.value) : undefined;
+            const nm = list.find((o) => Number(o.id) === id)?.name ?? '';
+            setField(f.label, nm, id);
+          }}>
+          <option value="">Select…</option>
+          {list.map((o) => <option key={o.id} value={o.id}>{o.name}{o.branch_name ? ` · ${o.branch_name}` : ''}</option>)}
+        </select>
+      );
+    }
+    if (t === 'roleselect') {
+      return (
+        <select className="ainp" value={ids[f.label] ?? ''}
+          onChange={(e) => setField(f.label, '', e.target.value ? Number(e.target.value) : undefined)}>
+          <option value="">Select…</option>
+          {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select>
+      );
+    }
+    if (t === 'select' || t === 'multiselect') {
+      return (
+        <select className="ainp" value={v} onChange={(e) => setField(f.label, e.target.value)}>
+          <option value="">Select…</option>
+          {(f.opts || []).map((o) => <option key={o}>{o}</option>)}
+        </select>
+      );
+    }
+    if (t === 'leadlookup') return <LeadLookup value={v} onPick={(id, label) => setField(f.label, label, id)} />;
+    if (t === 'date') return <input className="ainp" type="date" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    if (t === 'datetime') return <input className="ainp" type="datetime-local" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    if (t === 'number') return <input className="ainp" type="number" placeholder="0" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    if (t === 'password') return <input className="ainp" type="password" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    if (t === 'tel') {
+      const isWa = /whatsapp/i.test(f.label);
+      return (
+        <div className="inpwrap">
+          <input className="ainp" type="tel" placeholder="+91 " value={v} onChange={(e) => setField(f.label, e.target.value)} />
+          <button className={`verify ${isWa ? 'wa' : ''}`} title="Verify"
+            onClick={(e) => { e.preventDefault(); toast(`${isWa ? 'WhatsApp' : 'Number'} verification lands with the messaging integration (Sprint 3)`); }}>
+            <Ic k={isWa ? 'wa' : 'check'} w={isWa ? 2 : 2.6} />
+          </button>
+        </div>
+      );
+    }
+    if (t === 'email') return <input className="ainp" type="email" placeholder="name@email.com" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    if (t === 'textarea') return <textarea className="ainp" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    if (t === 'file') return <input className="ainp" type="file" style={{ padding: '7px 10px' }} />;
+    if (t === 'checkbox') return (
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: 'var(--text-muted)', padding: '5px 0' }}>
+        <input type="checkbox" style={{ accentColor: 'var(--primary)', width: 16, height: 16 }}
+          checked={v === '1'} onChange={(e) => setField(f.label, e.target.checked ? '1' : '')} /> One-click promote to Lead
+      </label>
+    );
+    if (t === 'lookup') return (
+      <div className="ainp" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, color: 'var(--text-dim)' }}>
+        <span>{f.hint || 'Search…'}</span><Ic k="search" />
+      </div>
+    );
+    if (t === 'auto') return (
+      <div className="ainp" style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-dim)', background: 'var(--surface-3)' }}>
+        <Ic k="bolt" /><span>{f.hint || 'Auto-generated'}</span>
+      </div>
+    );
+    if (t === 'table') return (
+      <div className="ainp" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-dim)' }}>
+        <span>{f.hint || 'Add rows'}</span><span style={{ color: 'var(--primary)', fontWeight: 600 }}>+ Add row</span>
+      </div>
+    );
+    return <input className="ainp" type="text" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+  };
+
+  const isMaster = (f: FormField) => (f.type === 'select' || f.type === 'multiselect') &&
+    (/master/i.test(f.hint || '') || /\b(course|vertical|pipeline|campaign|branch|source|stage|status|tag|batch|payment plan|payment terms|qualification|budget|designation|department|training mode)\b/i.test(f.label));
+
+  return (
+    <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="add-modal">
+        <div className="ah">
+          <h3><Ic k="plus" />{spec.title}</h3>
+          <button className="ax" onClick={onClose}><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          {!wired && (
+            <div className="notice"><Ic k="bolt" />
+              <div><b>Design-final form.</b> This module's backend lands in a later sprint — fields are final but saving is not yet live.</div>
+            </div>
+          )}
+          <div className="form-grid">
+            {spec.fields.map((f) => {
+              const t = f.type || 'text';
+              const span2 = t === 'textarea' || t === 'table';
+              const inField = t === 'auto' || t === 'lookup' || t === 'table';
+              return (
+                <div className={`fld ${span2 ? 'span2' : ''}`} key={f.label}>
+                  <label>
+                    {f.label}{f.req ? <> <span className="star">*</span></> : null}
+                    {f.hint && !inField ? <span className="fhint">{f.hint}</span> : null}
+                    {isMaster(f) ? <a className="mlink" onClick={(e) => { e.preventDefault(); toast('Manage master lists under Administration › Settings'); }}>＋ Master</a> : null}
+                  </label>
+                  {input(f)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------- NeoDove campaign modal ---------------------- */
+
+const DIST_OPTS = [
+  ['On Demand', 'on_demand', 'Leads stay unassigned until a user assigns it to themselves or clicks Start Calling — then the system assigns ten leads at a time.'],
+  ['Equal', 'equal', 'Distributes leads equally among all agents in the campaign, ensuring fair allocation.'],
+  ['Conditional', 'conditional', 'Assigns leads based on set conditions, ensuring the right leads go to the right agents.'],
+] as const;
+const DUP_SCOPES = [['Within This Campaign', 'this_campaign'], ['Within This Pipeline', 'this_pipeline'], ['All Campaigns (Global)', 'global']] as const;
+const DUP_ACTIONS = [['Ignore Duplicate', 'ignore'], ['Merge Duplicate', 'merge'], ['Create Duplicate Leads', 'create'], ['Merge Duplicate & Reopen Closed Leads', 'merge_and_reopen']] as const;
+
+export function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
+  const ref = useRef_();
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [branchId, setBranchId] = useState<number>();
+  const [verticalId, setVerticalId] = useState<number>();
+  const [pipelineId, setPipelineId] = useState<number>();
+  const [dist, setDist] = useState<'on_demand' | 'equal' | 'conditional'>('conditional');
+  const [priority, setPriority] = useState('med');
+  const [dupScope, setDupScope] = useState<string>('this_campaign');
+  const [dupAction, setDupAction] = useState<string>('ignore');
+  const [busy, setBusy] = useState(false);
+
+  const verticals = ref.verticals.filter((v) => !branchId || Number(v.branch_id) === branchId);
+  const pipelines = ref.pipelines.filter((p) => !verticalId || Number(p.vertical_id) === verticalId);
+
+  const save = async () => {
+    if (!vals['name']?.trim()) return toast('Campaign Name is required', true);
+    if (!pipelineId) return toast('Pick Branch › Vertical › Pipeline', true);
+    setBusy(true);
+    try {
+      await api.post('/campaigns', {
+        pipeline_id: pipelineId,
+        name: vals['name'].trim(),
+        utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
+        cost: vals['cost'] ? Number(vals['cost']) : 0,
+        priority,
+        distribution_config: { mode: dist, batch_size: 10, agent_user_ids: [], round_robin_scope: 'campaign', conditions: [] },
+        duplicacy_config: { check_scope: dupScope, match_key: 'phone', on_duplicate: dupAction, open_reassign_same_user: true },
+      });
+      toast('Campaign created');
+      onSaved?.(); onClose();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  const txt = (k: string, ph = '') => (
+    <input className="ainp" placeholder={ph} value={vals[k] ?? ''} onChange={(e) => setVals((x) => ({ ...x, [k]: e.target.value }))} />
+  );
+  const sel = (opts: string[], v: string, set: (x: string) => void) => (
+    <select className="ainp" value={v} onChange={(e) => set(e.target.value)}>{opts.map((o) => <option key={o}>{o}</option>)}</select>
+  );
+
+  return (
+    <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="add-modal">
+        <div className="ah"><h3><Ic k="plus" />Create Campaign</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld"><label>Campaign Name <span className="star">*</span></label>{txt('name')}</div>
+            <div className="fld"><label>Branch <span className="star">*</span><span className="fhint">master</span></label>
+              <select className="ainp" value={branchId ?? ''} onChange={(e) => { setBranchId(e.target.value ? Number(e.target.value) : undefined); setVerticalId(undefined); setPipelineId(undefined); }}>
+                <option value="">Select…</option>{ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select></div>
+            <div className="fld"><label>Vertical <span className="star">*</span><span className="fhint">filtered by Branch</span></label>
+              <select className="ainp" value={verticalId ?? ''} onChange={(e) => { setVerticalId(e.target.value ? Number(e.target.value) : undefined); setPipelineId(undefined); }}>
+                <option value="">Select…</option>{verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select></div>
+            <div className="fld"><label>Pipeline <span className="star">*</span><span className="fhint">filtered by Vertical</span></label>
+              <select className="ainp" value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
+                <option value="">Select…</option>{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select></div>
+            <div className="fld"><label>Campaign Type <span className="star">*</span></label>{sel(['Digital', 'Print', 'Event', 'Referral Drive', 'Tele-calling'], vals['type'] ?? 'Digital', (x) => setVals((s) => ({ ...s, type: x })))}</div>
+            <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? 'Meta', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
+            <div className="fld"><label>Start Date <span className="star">*</span></label><input className="ainp" type="date" value={vals['start'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, start: e.target.value }))} /></div>
+            <div className="fld"><label>End Date</label><input className="ainp" type="date" value={vals['end'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, end: e.target.value }))} /></div>
+            <div className="fld"><label>Campaign Budget / Spend</label>{txt('cost', '₹')}</div>
+            <div className="fld"><label>UTM / Tracking Code<span className="fhint">digital only</span></label>{txt('utm', 'utm_campaign')}</div>
+          </div>
+          <div className="sechead">Lead Distribution</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {DIST_OPTS.map(([t, key, d]) => (
+              <label className={`distopt ${dist === key ? 'sel' : ''}`} key={key} onClick={() => setDist(key)}>
+                <input type="radio" name="dist" checked={dist === key} readOnly />
+                <div><div className="dt">{t}</div><div className="dd">{d}</div></div>
+              </label>
+            ))}
+          </div>
+          <button className="setcond" onClick={() => toast('Condition builder lands with the distribution engine (Sprint 3)')}>
+            <Ic k="filter" />Set Conditions
+          </button>
+          <div className="sechead">Additional Settings</div>
+          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', padding: 0 }}>
+            <div className="fld"><label>Priority</label>
+              <select className="ainp" value={priority} onChange={(e) => setPriority(e.target.value)}>
+                <option value="low">Low</option><option value="med">Medium</option><option value="high">High</option>
+              </select></div>
+            <div className="fld"><label>Check for Duplicates</label>
+              <select className="ainp" value={dupScope} onChange={(e) => setDupScope(e.target.value)}>
+                {DUP_SCOPES.map(([t, k]) => <option key={k} value={k}>{t}</option>)}
+              </select></div>
+            <div className="fld"><label>If Duplicate Found</label>
+              <select className="ainp" value={dupAction} onChange={(e) => setDupAction(e.target.value)}>
+                {DUP_ACTIONS.map(([t, k]) => <option key={k} value={k}>{t}</option>)}
+              </select></div>
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
