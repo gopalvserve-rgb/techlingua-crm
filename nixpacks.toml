@@ -1,0 +1,9 @@
+# Nixpacks plan for the API service (repo root has no package.json — monorepo: api/ + web/)
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.build]
+cmds = ["cd api && npm ci && npm run build"]
+
+[start]
+cmd = "cd api && node dist/database/migrate.js && node dist/main.js"
