@@ -7,7 +7,7 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
 import {
-  Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge,
+  Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { APP } from './specs';
@@ -891,6 +891,259 @@ function Sitemap() {
   );
 }
 
+/* ----------------------------- error logs ----------------------------- */
+/* Administration › Error Logs — sanctioned client-approved addition ("show all
+   errors, issues and highlight bugs"). Grouped by fingerprint by default;
+   open errors row-tinted red, warnings amber, resolved muted. */
+
+interface ErrSummary {
+  errors_today: number; warnings_today: number; open_count: number; open_errors: number;
+  resolved_week: number; top_path_7d: { path: string; count: number } | null;
+  trend: Array<{ day: string; errors: number; warnings: number }>;
+}
+
+const errLevelBadge = (level: string): Cell =>
+  ({ b: level === 'error' ? ['Error', 'b-hot'] : ['Warning', 'b-amber'] });
+const errStatusBadge = (open: boolean): Cell =>
+  ({ b: open ? ['Open', 'b-rose'] : ['Resolved', 'b-green'] });
+const errRowClass = (level: string, open: boolean) =>
+  !open ? 'row-res' : level === 'error' ? 'row-err' : 'row-warn';
+
+function ErrTrendCard({ trend }: { trend: Array<{ day: string; errors: number; warnings: number }> }) {
+  const max = Math.max(1, ...trend.map((t) => Math.max(Number(t.errors), Number(t.warnings))));
+  const quiet = trend.every((t) => !Number(t.errors) && !Number(t.warnings));
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3><Ic k="analytics" />Errors &amp; warnings — last 14 days</h3>
+        <div className="legend">
+          <span className="li"><span className="sw" style={{ background: 'var(--danger)' }} />Errors</span>
+          <span className="li"><span className="sw" style={{ background: 'var(--amber)' }} />Warnings</span>
+        </div>
+      </div>
+      <div className="card-pad">
+        {quiet ? <div className="empty-note">No errors or warnings in the last 14 days — the system is healthy</div> : (
+          <>
+            <div className="bars">
+              {trend.map((t, i) => (
+                <div className="col" key={i}>
+                  <div className="bar" style={{ height: `${(Number(t.errors) / max) * 130}px`, background: 'var(--danger)' }} title={`${t.errors} errors`} />
+                  <div className="bar alt" style={{ height: `${(Number(t.warnings) / max) * 130}px`, background: 'var(--amber)' }} title={`${t.warnings} warnings`} />
+                </div>
+              ))}
+            </div>
+            <div className="bars-x">{trend.map((t, i) => <span key={i}>{new Date(t.day).getDate()}</span>)}</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ErrorDetailModal({ row, grouped, onClose, onChanged }: {
+  row: any; grouped: boolean; onClose: () => void; onChanged: () => void;
+}) {
+  const { can } = useAuth();
+  const manage = can('errorlog.manage');
+  const id = Number(grouped ? row.last_id : row.id);
+  const [detail, setDetail] = useState<any>(null);
+  const [occ, setOcc] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get<any>(`/error-logs/${id}`).then(setDetail).catch((e) => { toast(e.message, true); onClose(); });
+    api.get<{ rows: any[] }>(`/error-logs?fingerprint=${encodeURIComponent(row.fingerprint)}&limit=20`)
+      .then((r) => setOcc(r.rows ?? [])).catch(() => setOcc([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const act = async (fn: () => Promise<unknown>, msg: string) => {
+    setBusy(true);
+    try { await fn(); toast(msg); onChanged(); onClose(); }
+    catch (e: any) { toast(e.message, true); }
+    finally { setBusy(false); }
+  };
+  const setOne = (status: string) =>
+    act(() => api.patch(`/error-logs/${id}`, { status }), status === 'resolved' ? 'Marked resolved' : 'Reopened');
+  const setGroup = (status: string) =>
+    act(() => api.patch('/error-logs/resolve-group', { fingerprint: row.fingerprint, status }),
+      status === 'resolved' ? 'Group resolved' : 'Group reopened');
+
+  const d = detail;
+  const openNow = d?.status === 'open';
+  const groupOpen = occ.some((o) => o.status === 'open');
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ width: 760 }}>
+        <div className="ah">
+          <h3><Ic k="shield" />{d ? (d.level === 'error' ? 'Error' : 'Warning') : 'Loading…'} detail</h3>
+          <button className="ax" onClick={onClose}><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          {!d ? <div className="empty-note">Loading…</div> : (
+            <>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+                {renderCell(errLevelBadge(d.level))}
+                {renderCell(errStatusBadge(openNow))}
+                {d.status_code ? <span className="bdg b-gray mono">{d.status_code}</span> : null}
+                <span className="bdg b-indigo">{d.source === 'web' ? 'Web' : 'API'}</span>
+                {grouped ? <span className="bdg b-cyan">{row.count} occurrence{Number(row.count) === 1 ? '' : 's'}</span> : null}
+              </div>
+              <div className="sheet-sec">
+                <h5>Message</h5>
+                <div style={{ fontSize: 13.5, fontWeight: 600, wordBreak: 'break-word' }}>{d.message}</div>
+              </div>
+              <div className="sheet-sec">
+                <h5>Request context</h5>
+                <div className="errctx">
+                  <span className="k">When</span><span className="v mono">{new Date(d.occurred_at).toLocaleString('en-IN')}</span>
+                  <span className="k">Endpoint</span><span className="v mono">{d.method ? `${d.method} ` : ''}{d.path || '—'}</span>
+                  <span className="k">User</span><span className="v">{d.user_name || 'Anonymous / system'}</span>
+                  <span className="k">IP</span><span className="v mono">{d.ip || '—'}</span>
+                  <span className="k">Agent</span><span className="v" style={{ fontSize: 11.5 }}>{d.user_agent || '—'}</span>
+                  <span className="k">Fingerprint</span><span className="v mono" style={{ fontSize: 11 }}>{d.fingerprint}</span>
+                  {d.status === 'resolved' ? (<>
+                    <span className="k">Resolved</span>
+                    <span className="v">{d.resolved_by_name || '—'} · {d.resolved_at ? new Date(d.resolved_at).toLocaleString('en-IN') : ''}</span>
+                  </>) : null}
+                </div>
+              </div>
+              {d.stack ? (
+                <div className="sheet-sec">
+                  <h5>Stack trace</h5>
+                  <pre className="stack-pre">{d.stack}</pre>
+                </div>
+              ) : null}
+              {d.meta ? (
+                <div className="sheet-sec">
+                  <h5>Meta (redacted)</h5>
+                  <pre className="stack-pre" style={{ maxHeight: 140 }}>{JSON.stringify(d.meta, null, 2)}</pre>
+                </div>
+              ) : null}
+              <div className="sheet-sec">
+                <h5>Occurrences ({occ.length}{occ.length === 20 ? '+' : ''})</h5>
+                <TableCard cols={['Time', 'Code', 'User', 'Status']}
+                  rows={occ.map((o) => [
+                    { mono: fmtDT(o.occurred_at), dim: true } as Cell,
+                    o.status_code ? { mono: String(o.status_code) } as Cell : '—',
+                    o.user_name || '—',
+                    errStatusBadge(o.status === 'open'),
+                  ])} empty="No occurrences" />
+              </div>
+            </>
+          )}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Close</button>
+          {manage && d && grouped && Number(row.count) > 1 ? (
+            groupOpen
+              ? <button className="btn" disabled={busy} onClick={() => setGroup('resolved')}><Ic k="check" />Resolve all ({occ.filter((o) => o.status === 'open').length || row.open_count})</button>
+              : <button className="btn" disabled={busy} onClick={() => setGroup('open')}><Ic k="refresh" />Reopen group</button>
+          ) : null}
+          {manage && d ? (
+            openNow
+              ? <button className="btn primary" disabled={busy} onClick={() => setOne('resolved')}><Ic k="check" />Mark resolved</button>
+              : <button className="btn primary" disabled={busy} onClick={() => setOne('open')}><Ic k="refresh" />Reopen</button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ErrorLogs() {
+  const { refreshTick } = useScreen();
+  const [grouped, setGrouped] = useState(true);
+  const [f, setF] = useState<{ level?: string; source?: string; status?: string; from?: string; to?: string; q: string }>({ q: '' });
+  const [tick, setTick] = useState(0);
+  const [sel, setSel] = useState<any | null>(null);
+
+  const params = new URLSearchParams();
+  if (f.level) params.set('level', f.level);
+  if (f.source) params.set('source', f.source);
+  if (f.status) params.set('status', f.status);
+  if (f.from) params.set('from', f.from);
+  if (f.to) params.set('to', f.to);
+  if (f.q.trim()) params.set('q', f.q.trim());
+  if (grouped) params.set('grouped', 'true');
+  params.set('limit', '100');
+
+  const sum = useFetch<ErrSummary>('/error-logs/summary', [refreshTick, tick]);
+  const data = useFetch<{ total: number; rows: any[] }>(`/error-logs?${params.toString()}`, [refreshTick, tick]);
+  const rows = data.data?.rows ?? [];
+  const bump = () => setTick((t) => t + 1);
+
+  const chip = (label: string, icon: string, value: string | undefined, opts: Array<[string, string]>, set: (v?: string) => void) => (
+    <div className="fchip" key={label}>
+      <Ic k={icon} />{label}
+      <select value={value ?? ''} onChange={(e) => set(e.target.value || undefined)}>
+        <option value="">All</option>
+        {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </div>
+  );
+  const dateInp = (label: string, value: string | undefined, set: (v?: string) => void) => (
+    <div className="fchip" key={label}>
+      <Ic k="cal" />{label}
+      <input type="date" value={value ?? ''} onChange={(e) => set(e.target.value || undefined)}
+        style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} />
+    </div>
+  );
+
+  const cols = grouped
+    ? ['Severity', 'Count', 'Message', 'Path', 'Source', 'Code', 'Last seen', 'Status', 'User']
+    : ['Severity', 'Message', 'Path', 'Source', 'Code', 'Time', 'Status', 'User'];
+  const rowCells = (r: any): Cell[] => {
+    const open = grouped ? Number(r.open_count) > 0 : r.status === 'open';
+    const cells: Cell[] = [errLevelBadge(r.level)];
+    if (grouped) cells.push({ node: <b>{r.count}</b> });
+    cells.push(
+      { node: <span className="nm" style={{ fontSize: 12.5, wordBreak: 'break-word' }}>{String(r.message ?? '').slice(0, 120)}</span> },
+      { mono: r.path || '—', dim: true },
+      { b: [r.source === 'web' ? 'Web' : 'API', 'b-indigo'] },
+      r.status_code ? { mono: String(r.status_code) } as Cell : '—',
+      { mono: fmtDT(grouped ? r.last_seen : r.occurred_at), dim: true },
+      errStatusBadge(open),
+      r.user_name || '—',
+    );
+    return cells;
+  };
+
+  const k = sum.data;
+  return (
+    <>
+      <Kpis items={[
+        { lab: 'Errors today', val: String(k?.errors_today ?? 0), ic: 'clock' },
+        { lab: 'Open issues', val: String(k?.open_count ?? 0), ic: 'shield', delta: k?.open_errors ? `${k.open_errors} bugs open` : undefined, tone: k?.open_errors ? 'down' : 'flat' },
+        { lab: 'Warnings today', val: String(k?.warnings_today ?? 0), ic: 'rupee' },
+        { lab: 'Resolved this week', val: String(k?.resolved_week ?? 0), ic: 'check' },
+      ]} />
+      <ErrTrendCard trend={k?.trend ?? []} />
+      <div className="filters">
+        {chip('Level', 'bolt', f.level, [['error', 'Error'], ['warning', 'Warning']], (v) => setF((x) => ({ ...x, level: v })))}
+        {chip('Source', 'grid', f.source, [['api', 'API'], ['web', 'Web']], (v) => setF((x) => ({ ...x, source: v })))}
+        {chip('Status', 'shield', f.status, [['open', 'Open'], ['resolved', 'Resolved']], (v) => setF((x) => ({ ...x, status: v })))}
+        {dateInp('From', f.from, (v) => setF((x) => ({ ...x, from: v })))}
+        {dateInp('To', f.to, (v) => setF((x) => ({ ...x, to: v })))}
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search message / path…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
+        <button className="fchip" style={{ marginLeft: 'auto', cursor: 'pointer', color: grouped ? 'var(--primary)' : 'var(--text-muted)', borderColor: grouped ? 'var(--primary)' : undefined }}
+          onClick={() => setGrouped((g) => !g)}>
+          <Ic k={grouped ? 'grid' : 'list'} />{grouped ? 'Grouped' : 'All events'}
+        </button>
+      </div>
+      <TableCard title={grouped ? 'Error groups' : 'Error events'} icon="shield"
+        more={`${data.data?.total ?? 0} ${grouped ? 'groups' : 'events'}`}
+        cols={cols} rows={rows.map(rowCells)}
+        rowClass={(i) => errRowClass(rows[i].level, grouped ? Number(rows[i].open_count) > 0 : rows[i].status === 'open')}
+        empty="No errors captured — the system is healthy"
+        onRowClick={(i) => setSel(rows[i])} />
+      {sel && (
+        <ErrorDetailModal row={sel} grouped={grouped} onClose={() => setSel(null)} onChanged={bump} />
+      )}
+    </>
+  );
+}
+
 /* ------------------------------ registry ------------------------------ */
 
 export const DYN: Record<string, () => JSX.Element> = {
@@ -914,6 +1167,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   users: Users,
   roles: Roles,
   audit: Audit,
+  errorLogs: ErrorLogs,
   activityReports: ActivityReports,
   funnelAnalytics: FunnelAnalytics,
   workTasks: WorkTasks,

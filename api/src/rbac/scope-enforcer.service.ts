@@ -21,7 +21,7 @@ import { ResolvedScope, ScopeColumnMap } from './rbac.types';
 
 export type ScopedEntityKind =
   | 'branch' | 'vertical' | 'pipeline' | 'stage' | 'campaign' | 'source'
-  | 'team' | 'user' | 'assignment' | 'master' | 'lead' | 'follow_up';
+  | 'team' | 'user' | 'assignment' | 'master' | 'lead' | 'follow_up' | 'error_log';
 
 export interface EntityScopeDef {
   /** FROM clause; the scope-bearing alias must expose the path columns used in `cols`. */
@@ -32,7 +32,7 @@ export interface EntityScopeDef {
 }
 
 /** How each by-ID entity maps onto the hierarchy path (single registry). */
-export const ENTITY_SCOPE: Record<Exclude<ScopedEntityKind, 'user' | 'master'>, EntityScopeDef> = {
+export const ENTITY_SCOPE: Record<Exclude<ScopedEntityKind, 'user' | 'master' | 'error_log'>, EntityScopeDef> = {
   // Sprint 2: leads carry the full path; follow-ups scope through their lead
   // (own = the follow-up's owner, so agents always see their own follow-ups).
   lead: {
@@ -121,10 +121,10 @@ export class ScopeEnforcerService {
     if (!scope || !scope.allowed) return 'miss'; // defensive; PermissionsGuard already 403s
     if (scope.all) return 'ok';
 
-    // Masters are org-level (no branch/vertical columns). Consistent with the
+    // Masters & error logs are org-level (no branch/vertical columns). Consistent with the
     // resolver's rule — entities lacking a scoped column can't be narrowed —
     // they are 'unmapped' for any non-'all' grant (strict deny for by-ID access).
-    if (kind === 'master') return 'unmapped';
+    if (kind === 'master' || kind === 'error_log') return 'unmapped';
 
     if (kind === 'user') {
       // Same semantics as UsersService.list: in scope if the target holds >=1 active

@@ -1,6 +1,7 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 import { DatabaseService } from '../database/database.service';
+import { redact } from './redact';
 
 const METHOD_ACTION: Record<string, string> = {
   POST: 'create',
@@ -8,9 +9,6 @@ const METHOD_ACTION: Record<string, string> = {
   PATCH: 'update',
   DELETE: 'delete',
 };
-
-/** Body keys never persisted to the audit trail. */
-const SENSITIVE_KEYS = ['password', 'password_hash', 'new_password', 'csv'];
 
 /**
  * Global interceptor writing every successful mutating request to audit_log.
@@ -49,6 +47,7 @@ export class AuditInterceptor implements NestInterceptor {
 
   private actionFor(req: any): string | null {
     const path: string = req.path ?? req.url ?? '';
+    if (path.startsWith('/api/errors')) return null; // client error reports are not user actions
     if (path.includes('/auth/login')) return 'login';
     const base = METHOD_ACTION[req.method];
     if (!base) return null;
@@ -65,11 +64,7 @@ export class AuditInterceptor implements NestInterceptor {
 
   private sanitize(obj: unknown): unknown {
     if (!obj || typeof obj !== 'object') return obj;
-    const clone: Record<string, unknown> = { ...(obj as Record<string, unknown>) };
-    for (const k of Object.keys(clone)) {
-      if (SENSITIVE_KEYS.some((s) => k.toLowerCase().includes(s))) clone[k] = '[redacted]';
-    }
-    return clone;
+    return redact(obj); // shared key-based redaction (common/redact.ts)
   }
 
   private num(v: unknown): number | null {

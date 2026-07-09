@@ -64,9 +64,11 @@ export function Kpis({ items, cols = 4 }: { items: KpiItem[]; cols?: number }) {
   );
 }
 
-export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list' }: {
+export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
+  /** optional per-row tint class (e.g. error-log severity highlighting) */
+  rowClass?: (rowIndex: number) => string | undefined;
 }) {
   return (
     <div className="card">
@@ -83,7 +85,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
             {rows.length === 0 ? (
               <tr><td className="empty" colSpan={cols.length}>{empty || 'No records yet'}</td></tr>
             ) : rows.map((r, ri) => (
-              <tr key={ri} onClick={onRowClick ? () => onRowClick(ri) : undefined}
+              <tr key={ri} className={rowClass?.(ri) || undefined} onClick={onRowClick ? () => onRowClick(ri) : undefined}
                 style={onRowClick ? { cursor: 'pointer' } : undefined}>
                 {r.map((c, ci) => <td key={ci}>{renderCell(c)}</td>)}
               </tr>

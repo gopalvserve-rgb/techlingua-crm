@@ -688,6 +688,9 @@ export const APP: ModuleItem[] = [
     { id: 'audit', label: 'Audit Logs', spec: { dyn: 'audit',
       sub: 'Every user action across CRM & ERP — work done, edits, updates, messages, emails & calls. Filter by type, user, module & date.',
       actions: [['export', 'Export', 'ghost']] } },
+    // Sanctioned addition (client-approved, not in the prototype nav) — see design spec §Sanctioned additions.
+    { id: 'errorlogs', label: 'Error Logs', spec: { dyn: 'errorLogs',
+      sub: 'Every captured error & issue across API and web — grouped by root cause, bugs highlighted by severity, with stack traces and a resolve workflow.' } },
     { id: 'settings', label: 'Settings', spec: {
       sub: 'Org settings, numbering series, templates, business hours, holidays, SMTP & notifications.',
       blocks: [{ type: 'cfg', title: 'Organisation settings', rows: [

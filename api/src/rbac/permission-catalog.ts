@@ -26,6 +26,7 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'master', label: 'Masters', actions: ['read', 'create', 'update', 'deactivate'] },
   { module: 'custom_field', label: 'Custom Fields', actions: ['read', 'create', 'update', 'deactivate'] },
   { module: 'audit', label: 'Audit Logs', actions: ['read', 'export'] },
+  { module: 'errorlog', label: 'Error Logs', actions: ['read', 'manage'] },
   { module: 'report', label: 'Reports', actions: ['read', 'export'] },
   { module: 'settings', label: 'Settings', actions: ['read', 'update'] },
 ];

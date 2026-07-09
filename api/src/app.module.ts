@@ -10,6 +10,7 @@ import { AssignmentsModule } from './assignments/assignments.module';
 import { HierarchyModule } from './hierarchy/hierarchy.module';
 import { MastersModule } from './masters/masters.module';
 import { AuditModule } from './audit/audit.module';
+import { ErrorLogModule } from './errorlog/error-log.module';
 import { LeadsModule } from './leads/leads.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
@@ -29,6 +30,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     HierarchyModule,
     MastersModule,
     AuditModule,
+    ErrorLogModule,
     LeadsModule,
   ],
   providers: [
