@@ -3,7 +3,11 @@
 nixPkgs = ["nodejs_20"]
 
 [phases.build]
-cmds = ["cd api && npm ci && npm run build"]
+cmds = [
+  "cd web && npm ci && npm run build",
+  "rm -rf api/public && mkdir -p api/public && cp -r web/dist/. api/public/",
+  "cd api && npm ci && npm run build"
+]
 
 [start]
 cmd = "cd api && node dist/database/migrate.js && node dist/main.js"
