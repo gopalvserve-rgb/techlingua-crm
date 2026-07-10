@@ -20,19 +20,21 @@ export const MASTER_LABELS: Record<string, string> = {
 const suggestCode = (name: string) =>
   name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24);
 
-export function AddMasterModal({ type, onClose, onCreated }: {
+export function AddMasterModal({ type, onClose, onCreated, initial }: {
   type: string;
   onClose: () => void;
-  /** Fires with the created row so the caller can inject + auto-select it. */
+  /** Fires with the created/updated row so the caller can inject + auto-select it. */
   onCreated: (row: Named) => void;
+  /** UAT edit mode: prefill and PATCH instead of POST. */
+  initial?: Named;
 }) {
   const label = MASTER_LABELS[type] ?? type;
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [codeTouched, setCodeTouched] = useState(false);
+  const [name, setName] = useState(initial?.name ?? '');
+  const [code, setCode] = useState(initial?.code ?? '');
+  const [codeTouched, setCodeTouched] = useState(!!initial);
   const [parentType, setParentType] = useState<string | null>(type === 'city' ? 'state' : null);
   const [parents, setParents] = useState<Named[]>([]);
-  const [parentId, setParentId] = useState<number>();
+  const [parentId, setParentId] = useState<number | undefined>(initial?.parent_id ? Number(initial.parent_id) : undefined);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -52,12 +54,15 @@ export function AddMasterModal({ type, onClose, onCreated }: {
     if (parentType && !parentId) return setErr(`Pick a ${MASTER_LABELS[parentType] ?? parentType}`);
     setBusy(true); setErr(null);
     try {
-      const row = await api.post<Named>(`/masters/${type}`, {
+      const body = {
         name: name.trim(),
         code: code.trim() || undefined,
         parent_id: parentType ? parentId : undefined,
-      });
-      toast(`${label} "${row.name}" added to the master`);
+      };
+      const row = initial
+        ? await api.patch<Named>(`/masters/${type}/${initial.id}`, body)
+        : await api.post<Named>(`/masters/${type}`, body);
+      toast(initial ? `${label} "${row.name}" updated` : `${label} "${row.name}" added to the master`);
       onCreated(row);
       onClose();
     } catch (e: any) {
@@ -72,7 +77,7 @@ export function AddMasterModal({ type, onClose, onCreated }: {
     <div className="add-scrim" style={{ zIndex: 260 }}>
       <div className="add-modal" style={{ width: 440 }}>
         <div className="ah">
-          <h3><Ic k="plus" />Add {label}</h3>
+          <h3><Ic k={initial ? 'pencil' : 'plus'} />{initial ? `Edit ${label}` : `Add ${label}`}</h3>
           <button className="ax" onClick={onClose}><Ic k="x" /></button>
         </div>
         <div className="abody">

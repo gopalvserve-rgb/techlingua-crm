@@ -168,7 +168,7 @@ export function entFromLabel(label: string): string {
 type Vals = Record<string, string>;
 type Ids = Record<string, number | undefined>;
 
-const need = (v: string | number | undefined, msg: string) => {
+export const need = (v: string | number | undefined, msg: string) => {
   if (v === undefined || v === '' || v === null) { toast(msg, true); throw new Error(msg); }
   return v;
 };
@@ -329,13 +329,25 @@ const SRC_FORM: Partial<Record<NonNullable<FormField['src']>, { form: string; pe
 
 /* ---------------------------- the modal ---------------------------- */
 
-export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClose: () => void; onSaved?: () => void }) {
+/** Edit mode (UAT): prefill the same spec form, lock non-editable fields, submit PATCH. */
+export interface EditSpec {
+  title: string;
+  initialVals?: Vals;
+  initialIds?: Ids;
+  /** field labels rendered read-only (not part of the PATCH whitelist) */
+  lock?: string[];
+  submit: (vals: Vals, ids: Ids) => Promise<string>;
+}
+
+export function AddModal({ formKey, onClose, onSaved, edit }: {
+  formKey: string; onClose: () => void; onSaved?: () => void; edit?: EditSpec;
+}) {
   const ref = useRef_();
   const { can } = useAuth();
   const spec = SPEC_FORMS[formKey];
-  const wired = !!SAVERS[formKey];
-  const [vals, setVals] = useState<Vals>({});
-  const [ids, setIds] = useState<Ids>({});
+  const wired = !!SAVERS[formKey] || !!edit;
+  const [vals, setVals] = useState<Vals>(edit?.initialVals ?? {});
+  const [ids, setIds] = useState<Ids>(edit?.initialIds ?? {});
   const [masterAdd, setMasterAdd] = useState<{ type: string; field: string } | null>(null);
   const [subForm, setSubForm] = useState<string | null>(null);
   const [subCampaign, setSubCampaign] = useState(false);
@@ -375,7 +387,7 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
     }
     setBusy(true);
     try {
-      const msg = await SAVERS[formKey](vals, ids);
+      const msg = await (edit ? edit.submit(vals, ids) : SAVERS[formKey](vals, ids));
       toast(msg);
       onSaved?.();
       onClose();
@@ -387,6 +399,14 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
   const input = (f: FormField) => {
     const t = f.type || 'text';
     const v = vals[f.label] ?? '';
+    if (edit?.lock?.includes(f.label)) {
+      return (
+        <div className="ainp" style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-dim)', background: 'var(--surface-3)' }}
+          title="Not editable here">
+          <span>{v || '—'}</span>
+        </div>
+      );
+    }
     if (t === 'select' && f.src) {
       const list = srcOptions(f);
       return (
@@ -469,6 +489,7 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
    *  fields open their full add-form; both hidden without the create permission. */
   const masterLink = (f: FormField) => {
     if (!isMaster(f)) return null;
+    if (edit?.lock?.includes(f.label)) return null;
     const mt = f.src ? SRC_MASTER[f.src] : undefined;
     const hf = f.src ? SRC_FORM[f.src] : undefined;
     const isCamp = f.src === 'campaigns';
@@ -490,7 +511,7 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
     <div className="add-scrim">
       <div className="add-modal">
         <div className="ah">
-          <h3><Ic k="plus" />{spec.title}</h3>
+          <h3><Ic k={edit ? 'pencil' : 'plus'} />{edit ? edit.title : spec.title}</h3>
           <button className="ax" onClick={onClose}><Ic k="x" /></button>
         </div>
         <div className="abody">
@@ -519,7 +540,7 @@ export function AddModal({ formKey, onClose, onSaved }: { formKey: string; onClo
         </div>
         <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button>
+          <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />{edit ? 'Save changes' : 'Save'}</button>
         </div>
       </div>
       {masterAdd && (
@@ -546,16 +567,22 @@ const DIST_OPTS = [
 const DUP_SCOPES = [['Within This Campaign', 'this_campaign'], ['Within This Pipeline', 'this_pipeline'], ['All Campaigns (Global)', 'global']] as const;
 const DUP_ACTIONS = [['Ignore Duplicate', 'ignore'], ['Merge Duplicate', 'merge'], ['Create Duplicate Leads', 'create'], ['Merge Duplicate & Reopen Closed Leads', 'merge_and_reopen']] as const;
 
-export function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
+/** `initial` switches the same NeoDove modal into edit mode (PATCH /campaigns/:id, path locked). */
+export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => void; onSaved?: () => void; initial?: any }) {
   const ref = useRef_();
-  const [vals, setVals] = useState<Record<string, string>>({});
-  const [branchId, setBranchId] = useState<number>();
-  const [verticalId, setVerticalId] = useState<number>();
-  const [pipelineId, setPipelineId] = useState<number>();
-  const [dist, setDist] = useState<'on_demand' | 'equal' | 'conditional'>('conditional');
-  const [priority, setPriority] = useState('med');
-  const [dupScope, setDupScope] = useState<string>('this_campaign');
-  const [dupAction, setDupAction] = useState<string>('ignore');
+  const [vals, setVals] = useState<Record<string, string>>(() => (initial ? {
+    name: String(initial.name ?? ''),
+    utm: String((initial.utm as any)?.utm_campaign ?? ''),
+    cost: initial.cost != null && Number(initial.cost) !== 0 ? String(initial.cost) : '',
+  } : {} as Record<string, string>));
+  const [branchId, setBranchId] = useState<number | undefined>(initial ? Number(initial.branch_id) : undefined);
+  const [verticalId, setVerticalId] = useState<number | undefined>(initial ? Number(initial.vertical_id) : undefined);
+  const [pipelineId, setPipelineId] = useState<number | undefined>(initial ? Number(initial.pipeline_id) : undefined);
+  const [dist, setDist] = useState<'on_demand' | 'equal' | 'conditional'>(
+    (initial?.distribution_config as any)?.mode ?? 'conditional');
+  const [priority, setPriority] = useState(initial?.priority ?? 'med');
+  const [dupScope, setDupScope] = useState<string>((initial?.duplicacy_config as any)?.check_scope ?? 'this_campaign');
+  const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
   const [busy, setBusy] = useState(false);
 
   const verticals = ref.verticals.filter((v) => !branchId || Number(v.branch_id) === branchId);
@@ -564,18 +591,49 @@ export function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSav
   const save = async () => {
     if (!vals['name']?.trim()) return toast('Campaign Name is required', true);
     if (!pipelineId) return toast('Pick Branch › Vertical › Pipeline', true);
+    // Build a validator-clean NeoDove config: `conditions` may only be sent in
+    // conditional mode and must be non-empty there (kept from the saved config).
+    const prevDist = (initial?.distribution_config as any) ?? {};
+    const distribution_config: Record<string, unknown> = {
+      mode: dist,
+      batch_size: prevDist.batch_size ?? 10,
+      round_robin_scope: prevDist.round_robin_scope ?? 'campaign',
+      ...(Array.isArray(prevDist.agent_user_ids) ? { agent_user_ids: prevDist.agent_user_ids } : {}),
+    };
+    if (dist === 'conditional') {
+      const conds = Array.isArray(prevDist.conditions) ? prevDist.conditions : [];
+      if (!conds.length) {
+        return toast('Conditional distribution needs at least one condition — pick On Demand or Equal until the condition builder lands (Sprint 3)', true);
+      }
+      distribution_config.conditions = conds;
+    }
+    const prevDup = (initial?.duplicacy_config as any) ?? {};
+    const duplicacy_config = {
+      check_scope: dupScope,
+      match_key: prevDup.match_key ?? 'phone',
+      on_duplicate: dupAction,
+      open_reassign_same_user: prevDup.open_reassign_same_user ?? true,
+    };
     setBusy(true);
     try {
-      await api.post('/campaigns', {
-        pipeline_id: pipelineId,
-        name: vals['name'].trim(),
-        utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
-        cost: vals['cost'] ? Number(vals['cost']) : 0,
-        priority,
-        distribution_config: { mode: dist, batch_size: 10, agent_user_ids: [], round_robin_scope: 'campaign', conditions: [] },
-        duplicacy_config: { check_scope: dupScope, match_key: 'phone', on_duplicate: dupAction, open_reassign_same_user: true },
-      });
-      toast('Campaign created');
+      if (initial) {
+        await api.patch(`/campaigns/${initial.id}`, {
+          name: vals['name'].trim(),
+          utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
+          cost: vals['cost'] ? Number(vals['cost']) : 0,
+          priority, distribution_config, duplicacy_config,
+        });
+        toast('Campaign updated');
+      } else {
+        await api.post('/campaigns', {
+          pipeline_id: pipelineId,
+          name: vals['name'].trim(),
+          utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
+          cost: vals['cost'] ? Number(vals['cost']) : 0,
+          priority, distribution_config, duplicacy_config,
+        });
+        toast('Campaign created');
+      }
       onSaved?.(); onClose();
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
@@ -590,22 +648,25 @@ export function CampaignModal({ onClose, onSaved }: { onClose: () => void; onSav
   return (
     <div className="add-scrim">
       <div className="add-modal">
-        <div className="ah"><h3><Ic k="plus" />Create Campaign</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="ah"><h3><Ic k={initial ? 'pencil' : 'plus'} />{initial ? 'Edit Campaign' : 'Create Campaign'}</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
         <div className="abody">
           <div className="form-grid">
             <div className="fld"><label>Campaign Name <span className="star">*</span></label>{txt('name')}</div>
-            <div className="fld"><label>Branch <span className="star">*</span><span className="fhint">master</span></label>
-              <select className="ainp" value={branchId ?? ''} onChange={(e) => { setBranchId(e.target.value ? Number(e.target.value) : undefined); setVerticalId(undefined); setPipelineId(undefined); }}>
+            <div className="fld"><label>Branch <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'master'}</span></label>
+              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.branch_name ?? ref.branches.find((b) => Number(b.id) === branchId)?.name ?? '—'}</div>
+                : <select className="ainp" value={branchId ?? ''} onChange={(e) => { setBranchId(e.target.value ? Number(e.target.value) : undefined); setVerticalId(undefined); setPipelineId(undefined); }}>
                 <option value="">Select…</option>{ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select></div>
-            <div className="fld"><label>Vertical <span className="star">*</span><span className="fhint">filtered by Branch</span></label>
-              <select className="ainp" value={verticalId ?? ''} onChange={(e) => { setVerticalId(e.target.value ? Number(e.target.value) : undefined); setPipelineId(undefined); }}>
+              </select>}</div>
+            <div className="fld"><label>Vertical <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Branch'}</span></label>
+              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.vertical_name ?? ref.verticals.find((v) => Number(v.id) === verticalId)?.name ?? '—'}</div>
+                : <select className="ainp" value={verticalId ?? ''} onChange={(e) => { setVerticalId(e.target.value ? Number(e.target.value) : undefined); setPipelineId(undefined); }}>
                 <option value="">Select…</option>{verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select></div>
-            <div className="fld"><label>Pipeline <span className="star">*</span><span className="fhint">filtered by Vertical</span></label>
-              <select className="ainp" value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
+              </select>}</div>
+            <div className="fld"><label>Pipeline <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Vertical'}</span></label>
+              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.pipeline_name ?? ref.pipelines.find((p) => Number(p.id) === pipelineId)?.name ?? '—'}</div>
+                : <select className="ainp" value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
                 <option value="">Select…</option>{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select></div>
+              </select>}</div>
             <div className="fld"><label>Campaign Type <span className="star">*</span></label>{sel(['Digital', 'Print', 'Event', 'Referral Drive', 'Tele-calling'], vals['type'] ?? 'Digital', (x) => setVals((s) => ({ ...s, type: x })))}</div>
             <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? 'Meta', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
             <div className="fld"><label>Start Date <span className="star">*</span></label><input className="ainp" type="date" value={vals['start'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, start: e.target.value }))} /></div>

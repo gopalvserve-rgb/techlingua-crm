@@ -11,7 +11,9 @@ export class HierarchyController {
 
   // ---- branches ----
   @Get('branches') @RequirePermission('branch.read')
-  listBranches(@CurrentScope() s: ResolvedScope) { return this.h.listBranches(s); }
+  listBranches(@CurrentScope() s: ResolvedScope, @Query('include_inactive') inc?: string) {
+    return this.h.listBranches(s, inc === '1' || inc === 'true');
+  }
 
   @Post('branches') @RequirePermission('branch.create')
   createBranch(@Body() dto: any, @CurrentUser() u: U) { return this.h.createBranch(dto, u.id); }
@@ -21,8 +23,8 @@ export class HierarchyController {
 
   // ---- verticals ----
   @Get('verticals') @RequirePermission('vertical.read')
-  listVerticals(@CurrentScope() s: ResolvedScope, @Query('branch_id') branchId?: string) {
-    return this.h.listVerticals(s, branchId ? Number(branchId) : undefined);
+  listVerticals(@CurrentScope() s: ResolvedScope, @Query('branch_id') branchId?: string, @Query('include_inactive') inc?: string) {
+    return this.h.listVerticals(s, branchId ? Number(branchId) : undefined, inc === '1' || inc === 'true');
   }
 
   @Post('verticals') @RequirePermission('vertical.create')
@@ -33,8 +35,8 @@ export class HierarchyController {
 
   // ---- pipelines & stages ----
   @Get('pipelines') @RequirePermission('pipeline.read')
-  listPipelines(@CurrentScope() s: ResolvedScope, @Query('vertical_id') verticalId?: string) {
-    return this.h.listPipelines(s, verticalId ? Number(verticalId) : undefined);
+  listPipelines(@CurrentScope() s: ResolvedScope, @Query('vertical_id') verticalId?: string, @Query('include_inactive') inc?: string) {
+    return this.h.listPipelines(s, verticalId ? Number(verticalId) : undefined, inc === '1' || inc === 'true');
   }
 
   @Post('pipelines') @RequirePermission('pipeline.create')
@@ -56,8 +58,8 @@ export class HierarchyController {
 
   // ---- campaigns ----
   @Get('campaigns') @RequirePermission('campaign.read')
-  listCampaigns(@CurrentScope() s: ResolvedScope, @Query('pipeline_id') pipelineId?: string) {
-    return this.h.listCampaigns(s, pipelineId ? Number(pipelineId) : undefined);
+  listCampaigns(@CurrentScope() s: ResolvedScope, @Query('pipeline_id') pipelineId?: string, @Query('include_inactive') inc?: string) {
+    return this.h.listCampaigns(s, pipelineId ? Number(pipelineId) : undefined, inc === '1' || inc === 'true');
   }
 
   @Post('campaigns') @RequirePermission('campaign.create')
@@ -68,8 +70,8 @@ export class HierarchyController {
 
   // ---- sources ----
   @Get('sources') @RequirePermission('source.read')
-  listSources(@CurrentScope() s: ResolvedScope, @Query('campaign_id') campaignId?: string) {
-    return this.h.listSources(s, campaignId ? Number(campaignId) : undefined);
+  listSources(@CurrentScope() s: ResolvedScope, @Query('campaign_id') campaignId?: string, @Query('include_inactive') inc?: string) {
+    return this.h.listSources(s, campaignId ? Number(campaignId) : undefined, inc === '1' || inc === 'true');
   }
 
   @Post('sources') @RequirePermission('source.create')

@@ -53,6 +53,8 @@ export const I: Record<string, string> = {
   up: '<path d="M7 17L17 7M17 7H9M17 7v8"/>',
   down: '<path d="M7 7l10 10M17 17H9M17 17V9"/>',
   logout: '<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>',
+  eye: '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
+  pencil: '<path d="M17 3a2.8 2.8 0 014 4L7.5 20.5 2 22l1.5-5.5z"/>',
 };
 
 /** Inline SVG icon, mirrors the prototype's svg() helper. */

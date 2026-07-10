@@ -5,6 +5,40 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 
+export interface UserListFilters {
+  q?: string;
+  role_id?: number;
+  branch_id?: number;
+  status?: 'active' | 'disabled';
+}
+
+/**
+ * UAT: server-side users-list filters (search / role / branch / status).
+ * Pure SQL-fragment builder so it unit-tests without a DB. Appends to `params`
+ * and returns ` AND …` clauses that compose with the scope WHERE.
+ */
+export function buildUserFilters(f: UserListFilters, params: unknown[]): string {
+  let sql = '';
+  if (f.q?.trim()) {
+    params.push(`%${f.q.trim()}%`);
+    sql += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
+  }
+  if (f.role_id) {
+    params.push(f.role_id);
+    sql += ` AND EXISTS (SELECT 1 FROM user_assignment fa WHERE fa.user_id = u.id AND fa.is_active AND fa.role_id = $${params.length})`;
+  }
+  if (f.branch_id) {
+    params.push(f.branch_id);
+    sql += ` AND EXISTS (SELECT 1 FROM user_assignment fb WHERE fb.user_id = u.id AND fb.is_active AND fb.branch_id = $${params.length})`;
+  }
+  if (f.status) {
+    if (!['active', 'disabled'].includes(f.status)) throw new BadRequestException('invalid status filter');
+    params.push(f.status);
+    sql += ` AND u.status = $${params.length}`;
+  }
+  return sql;
+}
+
 export interface CreateUserDto {
   name: string;
   email: string;
@@ -34,19 +68,24 @@ export class UsersService {
    * Users are branch/vertical-scoped THROUGH their assignments, so scoped listers
    * see users who hold at least one assignment inside their scope (plus themselves).
    */
-  async list(scope: ResolvedScope, requesterId: number) {
+  async list(scope: ResolvedScope, requesterId: number, filters: UserListFilters = {}) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, {
       owner: 'u.id', team: 'tm.team_id', branch: 'ua.branch_id',
       vertical: 'ua.vertical_id', pipeline: 'ua.pipeline_id', campaign: 'ua.campaign_id',
     }, params);
     params.push(requesterId);
+    const scopeWhere = `((${where}) OR u.id = $${params.length})`;
+    const filterSql = buildUserFilters(filters, params);
     return this.db.query(
-      `SELECT DISTINCT u.id, u.name, u.email, u.phone, u.status, u.created_at
+      `SELECT DISTINCT u.id, u.name, u.email, u.phone, u.status, u.created_at,
+              (SELECT COALESCE(string_agg(DISTINCT r.name, ', '), '')
+                 FROM user_assignment ra JOIN role r ON r.id = ra.role_id
+                WHERE ra.user_id = u.id AND ra.is_active) AS role_names
          FROM "user" u
          LEFT JOIN user_assignment ua ON ua.user_id = u.id AND ua.is_active
          LEFT JOIN team_member tm ON tm.user_id = u.id
-        WHERE (${where}) OR u.id = $${params.length}
+        WHERE ${scopeWhere}${filterSql}
         ORDER BY u.name`,
       params,
     );
@@ -64,7 +103,15 @@ export class UsersService {
         WHERE ua.user_id = $1 AND ua.is_active ORDER BY ua.id`,
       [id],
     );
-    return { ...user, assignments };
+    const teams = await this.db.query(
+      `SELECT t.id, t.name, (t.leader_id = $1) AS is_leader
+         FROM team t
+        WHERE t.is_active AND (t.leader_id = $1 OR EXISTS (
+              SELECT 1 FROM team_member tm WHERE tm.team_id = t.id AND tm.user_id = $1))
+        ORDER BY t.name`,
+      [id],
+    );
+    return { ...user, assignments, teams };
   }
 
   async create(dto: CreateUserDto, actorId: number, scope?: ResolvedScope) {

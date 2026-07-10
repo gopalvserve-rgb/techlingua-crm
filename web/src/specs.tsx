@@ -655,6 +655,9 @@ export const APP: ModuleItem[] = [
     { id: 'courseconfig', label: 'Course Configuration', spec: { dyn: 'courses',
       sub: 'Configure courses & fees. Approval step for fee changes.',
       actions: [['plus', 'New course', 'primary']] } },
+    // Sanctioned addition (UAT: "edit option for Course master and all masters") — see design spec §Sanctioned additions.
+    { id: 'masters', label: 'Masters', spec: { dyn: 'mastersAdmin',
+      sub: 'Every dropdown master in one place — add, edit, view and activate/deactivate values (states, cities, sources, courses, statuses, tags & more).' } },
     { id: 'workflow', label: 'Workflow Automation', spec: {
       sub: 'Admin-built rules (same engine as Automation Journeys). Who can build them.',
       blocks: [{ type: 'caps', title: 'Workflow automation', items: [

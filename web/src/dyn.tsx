@@ -10,6 +10,12 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { AddModal, CampaignModal, need } from './forms';
+import { AddMasterModal, MASTER_LABELS } from './mastermodal';
+import { RoleModal } from './rolemodal';
+import {
+  ConfirmModal, DetailModal, IncInactiveChip, KV, Section, fmtFull, rowActions, toggleCell,
+} from './rowactions';
 import { APP } from './specs';
 
 export interface ScreenCtxT {
@@ -52,6 +58,11 @@ function leadRow(l: any): Cell[] {
     { node: <span className="mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span> },
   ];
 }
+
+const nameOf = (list: Array<{ id: number; name: string }>, id: unknown) =>
+  (id == null ? null : list.find((x) => Number(x.id) === Number(id))?.name ?? null);
+
+const statusBadge = (active: boolean): Cell => ({ b: [active ? 'Active' : 'Inactive', active ? 'b-green' : 'b-gray'] });
 
 interface Summary {
   kpis: { total: number; today: number; mtd: number; won: number; won_today: number; hot: number; warm: number; cold: number; walkins: number };
@@ -354,6 +365,8 @@ function QuickContact() {
 
 function LeadsAll() {
   const { openLead, refreshTick } = useScreen();
+  const { can } = useAuth();
+  const canEditLead = can('lead.update');
   const ref = useRef_();
   const [f, setF] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number; q: string }>({ q: '' });
   const params = new URLSearchParams();
@@ -385,8 +398,11 @@ function LeadsAll() {
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         <div className="fchip" style={{ marginLeft: 'auto', color: 'var(--primary)', borderColor: 'var(--primary)' }}><Ic k="intel" />AI sort: Hot first</div>
       </div>
-      <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={LEAD_COLS}
-        rows={(data.data?.rows ?? []).map(leadRow)}
+      <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']}
+        rows={(data.data?.rows ?? []).map((l) => [...leadRow(l), rowActions({
+          onView: () => openLead(Number(l.id)),
+          onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,
+        })])}
         empty="No leads in scope yet — add a lead or connect a source"
         onRowClick={(i) => openLead(Number(data.data!.rows[i].id))} />
     </>
@@ -412,8 +428,9 @@ function Followups() {
         { lab: 'This week', val: String(sum.data?.this_week ?? '0'), ic: 'cal' },
         { lab: 'Done (wk)', val: String(sum.data?.done_week ?? '0'), ic: 'check' },
       ]} />
-      <TableCard title="Upcoming follow-ups" cols={['Lead', 'Type', 'Owner', 'Due', 'Disposition']}
-        rows={rows.map((r) => r.row)} empty="No follow-ups scheduled yet"
+      <TableCard title="Upcoming follow-ups" cols={['Lead', 'Type', 'Owner', 'Due', 'Disposition', 'Actions']}
+        rows={rows.map((r) => [...r.row, rowActions({ onView: () => openLead(r.leadId) })])}
+        empty="No follow-ups scheduled yet"
         onRowClick={(i) => openLead(rows[i].leadId)} />
     </>
   );
@@ -517,24 +534,85 @@ function Scoring() {
 }
 
 function Sources() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const ref = useRef_();
+  const [inc, setInc] = useState(false);
+  const list = useFetch<any[]>(`/sources${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canEdit = can('source.update');
+  const after = () => { list.reload(); ref.reload(); bump(); };
   const CAPTURE: Record<string, [string, string]> = {
-    meta: ['Auto · webhook', 'b-green'], google: ['Auto · webhook', 'b-green'], justdial: ['Auto · API', 'b-green'],
-    indiamart: ['Auto · API', 'b-green'], form: ['Auto', 'b-green'], webhook: ['Auto', 'b-green'],
+    meta: ['Auto \u00b7 webhook', 'b-green'], google: ['Auto \u00b7 webhook', 'b-green'], justdial: ['Auto \u00b7 API', 'b-green'],
+    indiamart: ['Auto \u00b7 API', 'b-green'], form: ['Auto', 'b-green'], webhook: ['Auto', 'b-green'],
     sheet: ['Manual / bulk', 'b-amber'], walkin: ['Manual', 'b-gray'], referral: ['Manual', 'b-gray'], manual: ['Manual', 'b-gray'],
   };
-  const rows: Cell[][] = ref.sources.map((s) => {
-    const cap = CAPTURE[s.channel as string] ?? ['Manual', 'b-gray'];
-    return [
-      { node: <span className="nm">{s.name}</span> },
-      { b: cap },
-      '—',
-      '—',
-      { b: s.webhook_token ? ['Live', 'b-green'] : ['Manual', 'b-gray'] },
-    ];
-  });
-  return <TableCard title="Connected sources" cols={['Source', 'Capture', 'This month', 'Cost/lead', 'Status']}
-    rows={rows} empty="No sources connected yet — add one per campaign" />;
+  return (
+    <>
+      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <TableCard title="Connected sources" cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
+        rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
+        rows={rows.map((so) => {
+          const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
+          return [
+            { node: <span className="nm">{so.name}</span> } as Cell,
+            String(so.campaign_name ?? '\u2014'),
+            { b: cap } as Cell,
+            '\u2014',
+            '\u2014',
+            toggleCell({
+              active: so.is_active !== false, name: so.name, entity: 'Source', canToggle: canEdit,
+              onToggle: async (next) => { await api.patch(`/sources/${so.id}`, { is_active: next }); after(); },
+            }),
+            rowActions({ onView: () => setView(so), onEdit: canEdit ? () => setEdit(so) : undefined }),
+          ];
+        })} empty="No sources connected yet \u2014 add one per campaign" />
+      {view && (
+        <DetailModal title={`Source \u2014 ${view.name}`} icon="leads" onClose={() => setView(null)}>
+          <Section title="Details">
+            <KV rows={[
+              ['Name', view.name],
+              ['Campaign', view.campaign_name ?? '\u2014'],
+              ['Channel', <span className="mono">{view.channel ?? 'manual'}</span>],
+              ['Status', renderCell(statusBadge(view.is_active !== false))],
+              ['Webhook', view.webhook_token
+                ? <>{renderCell({ b: ['Live', 'b-green'] })} <span className="mono sub" style={{ fontSize: 11 }}>{view.webhook_token}</span></>
+                : renderCell({ b: ['Manual capture', 'b-gray'] })],
+            ]} />
+          </Section>
+          <Section title="Record">
+            <KV rows={[
+              ['Created', fmtFull(view.created_at)],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Updated', fmtFull(view.updated_at)],
+            ]} />
+          </Section>
+        </DetailModal>
+      )}
+      {edit && (
+        <AddModal formKey="leads.sources" onClose={() => setEdit(null)} onSaved={after}
+          edit={{
+            title: `Edit Source \u2014 ${edit.name}`,
+            initialVals: {
+              'Source Name': edit.name ?? '', 'Campaign': edit.campaign_name ?? '',
+              'Source Category': edit.channel ?? 'manual',
+              'Status': edit.is_active === false ? 'Inactive' : 'Active',
+            },
+            lock: ['Campaign', 'Cost per Lead (if fixed/paid)'],
+            submit: async (vals) => {
+              await api.patch(`/sources/${edit.id}`, {
+                name: need(vals['Source Name'], 'Source name is required'),
+                channel: vals['Source Category'] || 'manual',
+                is_active: vals['Status'] !== 'Inactive',
+              });
+              return 'Source updated';
+            },
+          }} />
+      )}
+    </>
+  );
 }
 
 function Sla() {
@@ -552,7 +630,17 @@ function Sla() {
 }
 
 function Branches() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const ref = useRef_();
+  const [inc, setInc] = useState(false);
+  const list = useFetch<any[]>(`/branches${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canEdit = can('branch.update');
+  const after = () => { list.reload(); ref.reload(); bump(); };
+
   const nodes = [{
     label: 'Tech Lingua LLP', tag: 'Org', icon: 'branch',
     children: ref.branches.map((b) => ({
@@ -566,139 +654,642 @@ function Branches() {
   return (
     <>
       <Blocks blocks={[{ type: 'tree', title: 'Hierarchy', nodes }]} />
-      <TableCard title="Branches" cols={['Branch', 'Code', 'City', 'Verticals', 'Status']}
-        rows={ref.branches.map((b) => [
+      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <TableCard title="Branches" cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
+        rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
+        rows={rows.map((b) => [
           { node: <span className="nm">{b.name}</span> } as Cell,
-          { mono: String(b.code ?? '—') } as Cell,
-          String(b.city_name ?? '—'),
-          String(b.vertical_count ?? ref.verticals.filter((v) => Number(v.branch_id) === Number(b.id)).length),
-          { b: [b.is_active === false ? 'Inactive' : 'Active', b.is_active === false ? 'b-gray' : 'b-green'] } as Cell,
+          { mono: String(b.code ?? '\u2014') } as Cell,
+          String(b.city_name ?? '\u2014'),
+          String(b.vertical_count ?? 0),
+          toggleCell({
+            active: b.is_active !== false, name: b.name, entity: 'Branch', canToggle: canEdit,
+            onToggle: async (next) => { await api.patch(`/branches/${b.id}`, { is_active: next }); after(); },
+          }),
+          rowActions({ onView: () => setView(b), onEdit: canEdit ? () => setEdit(b) : undefined }),
         ])} empty="No branches yet" />
+      {view && (
+        <DetailModal title={`Branch \u2014 ${view.name}`} icon="branch" onClose={() => setView(null)}>
+          <Section title="Details">
+            <KV rows={[
+              ['Name', view.name],
+              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
+              ['Status', renderCell(statusBadge(view.is_active !== false))],
+              ['City', view.city_name ?? '\u2014'],
+              ['State', view.state_name ?? '\u2014'],
+              ['Address', view.address || '\u2014'],
+              ['Verticals', String(view.vertical_count ?? 0)],
+            ]} />
+          </Section>
+          <Section title="Record">
+            <KV rows={[
+              ['Created', fmtFull(view.created_at)],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Updated', fmtFull(view.updated_at)],
+            ]} />
+          </Section>
+        </DetailModal>
+      )}
+      {edit && (
+        <AddModal formKey="admin.branches" onClose={() => setEdit(null)} onSaved={after}
+          edit={{
+            title: `Edit Branch \u2014 ${edit.name}`,
+            initialVals: {
+              'Branch Name': edit.name ?? '', 'Branch Code': edit.code ?? '',
+              'Address': edit.address ?? '', 'City': edit.city_name ?? '', 'State': edit.state_name ?? '',
+              'Status': edit.is_active === false ? 'Inactive' : 'Active',
+            },
+            lock: ['Branch Type', 'City', 'State', 'Contact Number', 'Branch Email', 'Branch Head'],
+            submit: async (vals) => {
+              await api.patch(`/branches/${edit.id}`, {
+                name: need(vals['Branch Name'], 'Branch name is required'),
+                code: need(vals['Branch Code'], 'Branch code is required'),
+                address: vals['Address'] || null,
+                is_active: vals['Status'] !== 'Inactive',
+              });
+              return 'Branch updated';
+            },
+          }} />
+      )}
     </>
   );
 }
 
 function Verticals() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const ref = useRef_();
-  return <TableCard title="Verticals" cols={['Vertical', 'Branch', 'Head', 'SMTP Domain', 'Status']}
-    rows={ref.verticals.map((v) => [
-      { node: <span className="nm">{v.name}</span> } as Cell,
-      String(v.branch_name ?? '—'),
-      '—',
-      { mono: String((v.smtp_config as any)?.domain ?? (v.smtp_config as any)?.host ?? '—') } as Cell,
-      { b: [v.is_active === false ? 'Inactive' : 'Active', v.is_active === false ? 'b-gray' : 'b-green'] } as Cell,
-    ])} empty="No verticals yet" />;
+  const [inc, setInc] = useState(false);
+  const list = useFetch<any[]>(`/verticals${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canEdit = can('vertical.update');
+  const after = () => { list.reload(); ref.reload(); bump(); };
+  return (
+    <>
+      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <TableCard title="Verticals" cols={['Vertical', 'Branch', 'Head', 'SMTP Domain', 'Status', 'Actions']}
+        rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
+        rows={rows.map((v) => [
+          { node: <span className="nm">{v.name}</span> } as Cell,
+          String(v.branch_name ?? '\u2014'),
+          '\u2014',
+          { mono: String((v.smtp_config as any)?.domain ?? (v.smtp_config as any)?.host ?? '\u2014') } as Cell,
+          toggleCell({
+            active: v.is_active !== false, name: v.name, entity: 'Vertical', canToggle: canEdit,
+            onToggle: async (next) => { await api.patch(`/verticals/${v.id}`, { is_active: next }); after(); },
+          }),
+          rowActions({ onView: () => setView(v), onEdit: canEdit ? () => setEdit(v) : undefined }),
+        ])} empty="No verticals yet" />
+      {view && (
+        <DetailModal title={`Vertical \u2014 ${view.name}`} icon="grid" onClose={() => setView(null)}>
+          <Section title="Details">
+            <KV rows={[
+              ['Name', view.name],
+              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
+              ['Branch', view.branch_name ?? '\u2014'],
+              ['Status', renderCell(statusBadge(view.is_active !== false))],
+              ['Pipelines', String(view.pipeline_count ?? 0)],
+              ['SMTP Domain', <span className="mono">{String((view.smtp_config as any)?.domain ?? (view.smtp_config as any)?.host ?? '\u2014')}</span>],
+              ['Gateway', Object.keys((view.gateway_config as any) ?? {}).length ? 'Configured' : 'Not configured'],
+            ]} />
+          </Section>
+          <Section title="Record">
+            <KV rows={[
+              ['Created', fmtFull(view.created_at)],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Updated', fmtFull(view.updated_at)],
+            ]} />
+          </Section>
+        </DetailModal>
+      )}
+      {edit && (
+        <AddModal formKey="admin.verticals" onClose={() => setEdit(null)} onSaved={after}
+          edit={{
+            title: `Edit Vertical \u2014 ${edit.name}`,
+            initialVals: {
+              'Vertical Name': edit.name ?? '', 'Vertical Code': edit.code ?? '',
+              'Branch': edit.branch_name ?? '', 'Status': edit.is_active === false ? 'Inactive' : 'Active',
+            },
+            lock: ['Branch', 'Vertical Head', 'Description'],
+            submit: async (vals) => {
+              await api.patch(`/verticals/${edit.id}`, {
+                name: need(vals['Vertical Name'], 'Vertical name is required'),
+                code: need(vals['Vertical Code'], 'Vertical code is required'),
+                is_active: vals['Status'] !== 'Inactive',
+              });
+              return 'Vertical updated';
+            },
+          }} />
+      )}
+    </>
+  );
+}
+
+const STAGE_TYPES: Array<[string, string]> = [['open', 'Open'], ['won', 'Won'], ['lost', 'Lost']];
+const stageTypeBadge = (t: string): Cell =>
+  ({ b: [STAGE_TYPES.find(([k]) => k === t)?.[1] ?? t, t === 'won' ? 'b-green' : t === 'lost' ? 'b-rose' : 'b-cyan'] });
+
+function StageEditModal({ stage, onClose, onSaved }: { stage: any; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(stage.name ?? '');
+  const [type, setType] = useState(stage.stage_type ?? 'open');
+  const [active, setActive] = useState(stage.is_active !== false);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!name.trim()) return toast('Stage name is required', true);
+    setBusy(true);
+    try {
+      await api.patch(`/stages/${stage.id}`, { name: name.trim(), stage_type: type, is_active: active });
+      toast(`Stage "${name.trim()}" updated`);
+      onSaved(); onClose();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim" style={{ zIndex: 280 }}>
+      <div className="add-modal" style={{ width: 420 }}>
+        <div className="ah"><h3><Ic k="pencil" />Edit Stage \u2014 {stage.name}</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr', padding: 0 }}>
+            <div className="fld"><label>Stage Name <span className="star">*</span></label>
+              <input className="ainp" autoFocus value={name} onChange={(e) => setName(e.target.value)} /></div>
+            <div className="fld"><label>Stage Type</label>
+              <select className="ainp" value={type} onChange={(e) => setType(e.target.value)}>
+                {STAGE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select></div>
+            <div className="fld"><label>Status</label>
+              <select className="ainp" value={active ? 'Active' : 'Inactive'} onChange={(e) => setActive(e.target.value === 'Active')}>
+                <option>Active</option><option>Inactive</option>
+              </select></div>
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save changes</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PipelineView({ pipeline, onClose, onChanged }: { pipeline: any; onClose: () => void; onChanged: () => void }) {
+  const { can } = useAuth();
+  const ref = useRef_();
+  const [tick, setTick] = useState(0);
+  const stages = useFetch<any[]>(`/pipelines/${pipeline.id}/stages`, [tick]);
+  const [editStage, setEditStage] = useState<any | null>(null);
+  const canEdit = can('pipeline.update');
+  const bumped = () => { setTick((t) => t + 1); onChanged(); };
+  return (
+    <DetailModal title={`Pipeline \u2014 ${pipeline.name}`} icon="list" width={640} onClose={onClose}>
+      <Section title="Details">
+        <KV rows={[
+          ['Name', pipeline.name],
+          ['Code', <span className="mono">{pipeline.code ?? '\u2014'}</span>],
+          ['Branch', pipeline.branch_name ?? '\u2014'],
+          ['Vertical', pipeline.vertical_name ?? '\u2014'],
+          ['Status', renderCell(statusBadge(pipeline.is_active !== false))],
+        ]} />
+      </Section>
+      <Section title={`Stages (${(stages.data ?? []).length})`}>
+        <TableCard cols={canEdit ? ['#', 'Stage', 'Type', 'Status', 'Actions'] : ['#', 'Stage', 'Type', 'Status']}
+          rows={(stages.data ?? []).map((st, i) => {
+            const cells: Cell[] = [
+              { mono: String(i + 1), dim: true },
+              { node: <span className="nm">{st.name}</span> },
+              stageTypeBadge(st.stage_type),
+              statusBadge(st.is_active !== false),
+            ];
+            if (canEdit) cells.push(rowActions({ onEdit: () => setEditStage(st) }));
+            return cells;
+          })} empty="No stages yet" />
+      </Section>
+      <Section title="Record">
+        <KV rows={[
+          ['Created', fmtFull(pipeline.created_at)],
+          ['Created by', nameOf(ref.users, pipeline.created_by) ?? '\u2014'],
+          ['Updated', fmtFull(pipeline.updated_at)],
+        ]} />
+      </Section>
+      {editStage && <StageEditModal stage={editStage} onClose={() => setEditStage(null)} onSaved={bumped} />}
+    </DetailModal>
+  );
 }
 
 function Pipelines() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const ref = useRef_();
+  const [inc, setInc] = useState(false);
+  const list = useFetch<any[]>(`/pipelines${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canEdit = can('pipeline.update');
+  const after = () => { list.reload(); ref.reload(); bump(); };
   const [stagesBy, setStagesBy] = useState<Record<number, string>>({});
   useEffect(() => {
     let dead = false;
-    Promise.all(ref.pipelines.map((p) =>
+    Promise.all(rows.map((p) =>
       api.get<any[]>(`/pipelines/${p.id}/stages`)
-        .then((st) => [Number(p.id), st.filter((s) => s.is_active !== false).map((s) => s.name).join(' → ')] as const)
-        .catch(() => [Number(p.id), '—'] as const),
+        .then((st) => [Number(p.id), st.filter((x) => x.is_active !== false).map((x) => x.name).join(' \u2192 ')] as const)
+        .catch(() => [Number(p.id), '\u2014'] as const),
     )).then((pairs) => { if (!dead) setStagesBy(Object.fromEntries(pairs)); });
     return () => { dead = true; };
-  }, [ref.pipelines]);
-  return <TableCard title="Pipelines" cols={['Pipeline', 'Branch', 'Vertical', 'Stages', 'Status']}
-    rows={ref.pipelines.map((p) => [
-      { node: <span className="nm">{p.name}</span> } as Cell,
-      String(p.branch_name ?? '—'),
-      String(p.vertical_name ?? '—'),
-      stagesBy[Number(p.id)] ?? '…',
-      { b: [p.is_active === false ? 'Inactive' : 'Active', p.is_active === false ? 'b-gray' : 'b-green'] } as Cell,
-    ])} empty="No pipelines yet" />;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.data]);
+  return (
+    <>
+      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <TableCard title="Pipelines" cols={['Pipeline', 'Branch', 'Vertical', 'Stages', 'Status', 'Actions']}
+        rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
+        rows={rows.map((pl) => [
+          { node: <span className="nm">{pl.name}</span> } as Cell,
+          String(pl.branch_name ?? '\u2014'),
+          String(pl.vertical_name ?? '\u2014'),
+          stagesBy[Number(pl.id)] ?? '\u2026',
+          toggleCell({
+            active: pl.is_active !== false, name: pl.name, entity: 'Pipeline', canToggle: canEdit,
+            onToggle: async (next) => { await api.patch(`/pipelines/${pl.id}`, { is_active: next }); after(); },
+          }),
+          rowActions({ onView: () => setView(pl), onEdit: canEdit ? () => setEdit(pl) : undefined }),
+        ])} empty="No pipelines yet" />
+      {view && <PipelineView pipeline={view} onClose={() => setView(null)} onChanged={after} />}
+      {edit && (
+        <AddModal formKey="leads.pipelinemaster" onClose={() => setEdit(null)} onSaved={after}
+          edit={{
+            title: `Edit Pipeline \u2014 ${edit.name}`,
+            initialVals: {
+              'Pipeline Name': edit.name ?? '', 'Pipeline Code': edit.code ?? '',
+              'Branch': edit.branch_name ?? '', 'Vertical': edit.vertical_name ?? '',
+              'Status': edit.is_active === false ? 'Inactive' : 'Active',
+            },
+            lock: ['Branch', 'Vertical', 'Pipeline Stages', 'Pipeline Owner'],
+            submit: async (vals) => {
+              await api.patch(`/pipelines/${edit.id}`, {
+                name: need(vals['Pipeline Name'], 'Pipeline name is required'),
+                code: need(vals['Pipeline Code'], 'Pipeline code is required'),
+                is_active: vals['Status'] !== 'Inactive',
+              });
+              return 'Pipeline updated';
+            },
+          }} />
+      )}
+    </>
+  );
+}
+
+const DIST_LABEL: Record<string, string> = { on_demand: 'On Demand', equal: 'Equal', conditional: 'Conditional' };
+const DIST_DESC: Record<string, string> = {
+  on_demand: 'Leads stay unassigned until an agent picks them up (Start Calling assigns ten at a time).',
+  equal: 'Distributes leads equally among all agents in the campaign.',
+  conditional: 'Assigns leads to agents based on configured conditions.',
+};
+const DUP_SCOPE_LABEL: Record<string, string> = { this_campaign: 'Within this campaign', this_pipeline: 'Within this pipeline', global: 'All campaigns (global)' };
+const DUP_ACTION_LABEL: Record<string, string> = {
+  ignore: 'Ignore duplicate', merge: 'Merge duplicate', create: 'Create duplicate leads', merge_and_reopen: 'Merge & reopen closed leads',
+};
+const PRIORITY_LABEL: Record<string, string> = { low: 'Low', med: 'Medium', high: 'High' };
+
+function CampaignView({ campaign, leadCount, onClose }: { campaign: any; leadCount: number; onClose: () => void }) {
+  const ref = useRef_();
+  const dist = (campaign.distribution_config as any) ?? {};
+  const dup = (campaign.duplicacy_config as any) ?? {};
+  const utm = (campaign.utm as any) ?? {};
+  const utmPairs = Object.entries(utm).filter(([, v]) => v != null && v !== '');
+  const cost = Number(campaign.cost ?? 0);
+  const srcs = ref.sources.filter((x) => Number(x.campaign_id) === Number(campaign.id));
+  return (
+    <DetailModal title={`Campaign \u2014 ${campaign.name}`} icon="bolt" width={660} onClose={onClose}>
+      <Section title="Overview">
+        <KV rows={[
+          ['Name', campaign.name],
+          ['Path', `${campaign.branch_name ?? '\u2014'} \u203a ${campaign.vertical_name ?? '\u2014'} \u203a ${campaign.pipeline_name ?? '\u2014'}`],
+          ['Status', renderCell(statusBadge(campaign.is_active !== false))],
+          ['Priority', PRIORITY_LABEL[campaign.priority] ?? campaign.priority ?? '\u2014'],
+          ['Spend', cost ? `\u20b9${cost.toLocaleString('en-IN')}` : '\u2014'],
+          ['Leads', String(leadCount)],
+          ['Cost / lead', cost && leadCount ? `\u20b9${Math.round(cost / leadCount).toLocaleString('en-IN')}` : '\u2014'],
+          ['Sources', srcs.length ? srcs.map((x) => x.name).join(', ') : 'None connected'],
+          ['UTM', utmPairs.length ? <span className="mono" style={{ fontSize: 11.5 }}>{utmPairs.map(([k, v]) => `${k}=${v}`).join(' \u00b7 ')}</span> : '\u2014'],
+        ]} />
+      </Section>
+      <Section title="Lead distribution (NeoDove)">
+        <KV rows={[
+          ['Mode', <>{renderCell({ b: [DIST_LABEL[dist.mode] ?? dist.mode ?? '\u2014', 'b-indigo'] })}<div className="sub" style={{ marginTop: 4, fontSize: 11.5 }}>{DIST_DESC[dist.mode] ?? ''}</div></>],
+          ['Batch size', String(dist.batch_size ?? '\u2014')],
+          ['Agents', Array.isArray(dist.agent_user_ids) && dist.agent_user_ids.length ? `${dist.agent_user_ids.length} assigned` : 'All campaign agents'],
+          ['Round robin', dist.round_robin_scope ?? '\u2014'],
+          ['Conditions', Array.isArray(dist.conditions) && dist.conditions.length ? `${dist.conditions.length} rule(s)` : 'None'],
+        ]} />
+      </Section>
+      <Section title="Duplicacy rules (NeoDove)">
+        <KV rows={[
+          ['Check scope', DUP_SCOPE_LABEL[dup.check_scope] ?? dup.check_scope ?? '\u2014'],
+          ['Match key', <span className="mono">{dup.match_key ?? 'phone'}</span>],
+          ['On duplicate', DUP_ACTION_LABEL[dup.on_duplicate] ?? dup.on_duplicate ?? '\u2014'],
+          ['Open lead \u2192 same user', dup.open_reassign_same_user ? 'Yes' : 'No'],
+        ]} />
+      </Section>
+      <Section title="Record">
+        <KV rows={[
+          ['Created', fmtFull(campaign.created_at)],
+          ['Created by', nameOf(ref.users, campaign.created_by) ?? '\u2014'],
+          ['Updated', fmtFull(campaign.updated_at)],
+        ]} />
+      </Section>
+    </DetailModal>
+  );
 }
 
 function Campaigns() {
-  const { refreshTick } = useScreen();
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const ref = useRef_();
   const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
+  const [inc, setInc] = useState(false);
+  const list = useFetch<any[]>(`/campaigns${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canEdit = can('campaign.update');
+  const after = () => { list.reload(); ref.reload(); bump(); };
   const [counts, setCounts] = useState<Record<number, number>>({});
   useEffect(() => {
     let dead = false;
-    Promise.all(ref.campaigns.map((c) =>
+    Promise.all(rows.map((c) =>
       api.get<{ total: number }>(`/leads?campaign_id=${c.id}&limit=1`)
         .then((r) => [Number(c.id), r.total] as const).catch(() => [Number(c.id), 0] as const),
     )).then((pairs) => { if (!dead) setCounts(Object.fromEntries(pairs)); });
     return () => { dead = true; };
-  }, [ref.campaigns, refreshTick]);
-  const DIST: Record<string, string> = { on_demand: 'On demand', equal: 'Equal', conditional: 'Conditional' };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.data, refreshTick]);
   return (
     <>
       <Kpis items={[
-        { lab: 'Active campaigns', val: String(ref.campaigns.filter((c) => c.is_active !== false).length), ic: 'bolt' },
+        { lab: 'Active campaigns', val: String(rows.filter((c) => c.is_active !== false).length), ic: 'bolt' },
         { lab: 'Leads (MTD)', val: String(sum.data?.kpis.mtd ?? '0'), ic: 'leads' },
-        { lab: 'Avg CPL', val: '—', ic: 'rupee' },
-        { lab: 'Best conv%', val: '—', ic: 'target' },
+        { lab: 'Avg CPL', val: '\u2014', ic: 'rupee' },
+        { lab: 'Best conv%', val: '\u2014', ic: 'target' },
       ]} />
-      <TableCard title="Campaigns" cols={['Campaign', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Conv%', 'Assign rule']}
-        rows={ref.campaigns.map((c) => {
-          const src = ref.sources.find((s) => Number(s.campaign_id) === Number(c.id));
-          const utm = (c.utm as any)?.utm_campaign ?? (c.utm as any)?.utm_source ?? '—';
+      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <TableCard title="Campaigns" cols={['Campaign', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
+        rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
+        rows={rows.map((c) => {
+          const src = ref.sources.find((x) => Number(x.campaign_id) === Number(c.id));
+          const utm = (c.utm as any)?.utm_campaign ?? (c.utm as any)?.utm_source ?? '\u2014';
           const leads = counts[Number(c.id)] ?? 0;
           const cost = Number(c.cost ?? 0);
           return [
             { node: <span className="nm">{c.name}</span> } as Cell,
-            String(c.pipeline_name ?? '—'),
-            src ? ({ b: [src.name, 'b-indigo'] } as Cell) : '—',
-            { mono: utm === '—' ? '—' : `utm=${utm}`, dim: true } as Cell,
-            cost ? `₹${cost.toLocaleString('en-IN')}` : '—',
+            String(c.pipeline_name ?? '\u2014'),
+            src ? ({ b: [src.name, 'b-indigo'] } as Cell) : '\u2014',
+            { mono: utm === '\u2014' ? '\u2014' : `utm=${utm}`, dim: true } as Cell,
+            cost ? `\u20b9${cost.toLocaleString('en-IN')}` : '\u2014',
             String(leads),
-            cost && leads ? ({ mono: `₹${Math.round(cost / leads)}` } as Cell) : '—',
-            '—',
-            DIST[(c.distribution_config as any)?.mode] ?? '—',
+            cost && leads ? ({ mono: `\u20b9${Math.round(cost / leads)}` } as Cell) : '\u2014',
+            DIST_LABEL[(c.distribution_config as any)?.mode] ?? '\u2014',
+            toggleCell({
+              active: c.is_active !== false, name: c.name, entity: 'Campaign', canToggle: canEdit,
+              onToggle: async (next) => { await api.patch(`/campaigns/${c.id}`, { is_active: next }); after(); },
+            }),
+            rowActions({ onView: () => setView(c), onEdit: canEdit ? () => setEdit(c) : undefined }),
           ];
-        })} empty="No campaigns yet — create one to start pulling leads" />
+        })} empty="No campaigns yet \u2014 create one to start pulling leads" />
+      {view && <CampaignView campaign={view} leadCount={counts[Number(view.id)] ?? 0} onClose={() => setView(null)} />}
+      {edit && <CampaignModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
     </>
   );
 }
 
 function Courses() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const ref = useRef_();
-  return <TableCard title="Course master" cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches']}
-    rows={ref.courses.map((c) => [
-      { mono: String(c.code ?? '—') } as Cell,
-      { node: <span className="nm">{c.name}</span> } as Cell,
-      String((c.meta as any)?.vertical ?? 'All'),
-      String((c.meta as any)?.mode ?? '—'),
-      String((c.meta as any)?.duration ?? '—'),
-      String((c.meta as any)?.fee ?? '—'),
-      'All',
-    ])} empty="No courses in the master yet" />;
+  const [inc, setInc] = useState(false);
+  const list = useFetch<any[]>(`/masters/course${inc ? '?all=1' : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canEdit = can('master.update');
+  const after = () => { list.reload(); ref.reload(); bump(); };
+  return (
+    <>
+      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <TableCard title="Course master" cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
+        rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
+        rows={rows.map((c) => [
+          { mono: String(c.code ?? '\u2014') } as Cell,
+          { node: <span className="nm">{c.name}</span> } as Cell,
+          String((c.meta as any)?.vertical ?? 'All'),
+          String((c.meta as any)?.mode ?? '\u2014'),
+          String((c.meta as any)?.duration ?? '\u2014'),
+          String((c.meta as any)?.fee ?? '\u2014'),
+          'All',
+          toggleCell({
+            active: c.is_active !== false, name: c.name, entity: 'Course', canToggle: canEdit,
+            onToggle: async (next) => { await api.patch(`/masters/course/${c.id}`, { is_active: next }); after(); },
+          }),
+          rowActions({ onView: () => setView(c), onEdit: canEdit ? () => setEdit(c) : undefined }),
+        ])} empty="No courses in the master yet" />
+      {view && (
+        <DetailModal title={`Course \u2014 ${view.name}`} icon="book" onClose={() => setView(null)}>
+          <Section title="Details">
+            <KV rows={[
+              ['Name', view.name],
+              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
+              ['Training mode', String((view.meta as any)?.mode ?? '\u2014')],
+              ['Duration', String((view.meta as any)?.duration ?? '\u2014')],
+              ['Standard fee', String((view.meta as any)?.fee ?? '\u2014')],
+              ['Status', renderCell(statusBadge(view.is_active !== false))],
+            ]} />
+          </Section>
+          <Section title="Record">
+            <KV rows={[
+              ['Created', fmtFull(view.created_at)],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Updated', fmtFull(view.updated_at)],
+            ]} />
+          </Section>
+        </DetailModal>
+      )}
+      {edit && (
+        <AddModal formKey="students.courses" onClose={() => setEdit(null)} onSaved={after}
+          edit={{
+            title: `Edit Course \u2014 ${edit.name}`,
+            initialVals: {
+              'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
+              'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
+              'Standard Fee': (edit.meta as any)?.fee ?? '',
+              'Status': edit.is_active === false ? 'Inactive' : 'Active',
+            },
+            lock: ['Vertical', 'Applicable Branch(es)', 'Eligibility Criteria'],
+            submit: async (vals) => {
+              await api.patch(`/masters/course/${edit.id}`, {
+                name: need(vals['Course Name'], 'Course name is required'),
+                code: need(vals['Course Code'], 'Course code is required'),
+                meta: {
+                  ...(edit.meta as any ?? {}),
+                  mode: vals['Training Mode'] || undefined,
+                  duration: vals['Duration'] || undefined,
+                  fee: vals['Standard Fee'] || undefined,
+                },
+                is_active: vals['Status'] !== 'Inactive',
+              });
+              return 'Course updated';
+            },
+          }} />
+      )}
+    </>
+  );
+}
+
+function UserView({ user, onClose }: { user: any; onClose: () => void }) {
+  const ref = useRef_();
+  const [d, setD] = useState<any>(null);
+  useEffect(() => {
+    api.get<any>(`/users/${user.id}`).then(setD).catch((e) => { toast(e.message, true); onClose(); });
+  }, [user.id, onClose]);
+  const scopeOf = (a: any) => {
+    const bits = [nameOf(ref.branches, a.branch_id), nameOf(ref.verticals, a.vertical_id),
+      nameOf(ref.pipelines, a.pipeline_id), nameOf(ref.campaigns, a.campaign_id)].filter(Boolean);
+    return bits.length ? bits.join(' \u203a ') : 'Org-wide';
+  };
+  return (
+    <DetailModal title={`User \u2014 ${user.name}`} icon="users" width={620} onClose={onClose}>
+      {!d ? <div className="empty-note">Loading\u2026</div> : (
+        <>
+          <Section title="Profile">
+            <KV rows={[
+              ['Name', d.name],
+              ['Email', <span className="mono">{d.email}</span>],
+              ['Phone', d.phone ? <span className="mono">{d.phone}</span> : '\u2014'],
+              ['Status', renderCell(statusBadge(d.status !== 'disabled'))],
+              ['MFA', d.mfa_enabled ? 'Enabled' : 'Off'],
+            ]} />
+          </Section>
+          <Section title={`Assignments (${(d.assignments ?? []).length})`}>
+            <TableCard cols={['Role', 'Scope']}
+              rows={(d.assignments ?? []).map((a: any) => [
+                { b: [a.role_name, 'b-indigo'] } as Cell,
+                scopeOf(a),
+              ])} empty="No role assignments" />
+          </Section>
+          <Section title={`Teams (${(d.teams ?? []).length})`}>
+            {(d.teams ?? []).length === 0 ? <div className="empty-note">Not part of any team</div> : (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {(d.teams ?? []).map((t: any) => (
+                  <span key={t.id} className={`bdg ${t.is_leader ? 'b-green' : 'b-cyan'}`}>{t.name}{t.is_leader ? ' \u00b7 leader' : ''}</span>
+                ))}
+              </div>
+            )}
+          </Section>
+          <Section title="Record">
+            <KV rows={[['Created', fmtFull(d.created_at)]]} />
+          </Section>
+        </>
+      )}
+    </DetailModal>
+  );
 }
 
 function Users() {
-  const { refreshTick } = useScreen();
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const ref = useRef_();
+  const roles = useFetch<any[]>(can('role.read') ? '/roles' : null, []);
+  const [f, setF] = useState<{ role?: number; branch?: number; status?: string; q: string }>({ q: '' });
+  const params = new URLSearchParams();
+  if (f.role) params.set('role_id', String(f.role));
+  if (f.branch) params.set('branch_id', String(f.branch));
+  if (f.status) params.set('status', f.status);
+  if (f.q.trim()) params.set('q', f.q.trim());
+  const qs = params.toString();
+  const list = useFetch<any[]>(`/users${qs ? `?${qs}` : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canEdit = can('user.update');
+  const after = () => { list.reload(); ref.reload(); bump(); };
+
   const [details, setDetails] = useState<Record<number, any>>({});
   useEffect(() => {
     let dead = false;
-    Promise.all(ref.users.map((u) =>
+    Promise.all(rows.map((u) =>
       api.get<any>(`/users/${u.id}`).then((d) => [Number(u.id), d] as const).catch(() => [Number(u.id), null] as const),
     )).then((pairs) => { if (!dead) setDetails(Object.fromEntries(pairs)); });
     return () => { dead = true; };
-  }, [ref.users, refreshTick]);
-  const nameOf = (list: Array<{ id: number; name: string }>, id: unknown) =>
-    id == null ? null : list.find((x) => Number(x.id) === Number(id))?.name ?? null;
-  return <TableCard title="Users" cols={['User', 'Role', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status']}
-    rows={ref.users.map((u) => {
-      const d = details[Number(u.id)];
-      const a = d?.assignments?.[0];
-      const scopeBits = a ? [nameOf(ref.branches, a.branch_id), nameOf(ref.verticals, a.vertical_id), nameOf(ref.pipelines, a.pipeline_id)].filter(Boolean) : [];
-      return [
-        { node: (
-          <div className="cell-u"><Avatar name={u.name} />
-            <div><div className="nm">{u.name}</div><div className="sub">{u.email}</div></div>
-          </div>) } as Cell,
-        a?.role_name ?? (d ? '—' : '…'),
-        scopeBits.length ? scopeBits.join(' · ') : a ? 'Org-wide' : '—',
-        '—',
-        { b: [u.status === 'disabled' ? 'Disabled' : 'Active', u.status === 'disabled' ? 'b-gray' : 'b-green'] } as Cell,
-      ];
-    })} empty="No users visible in your scope" />;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list.data, refreshTick]);
+
+  const chip = (label: string, icon: string, value: number | undefined, opts: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
+    <div className="fchip" key={label}>
+      <Ic k={icon} />{label}
+      <select value={value ?? ''} onChange={(e) => set(e.target.value ? Number(e.target.value) : undefined)}>
+        <option value="">All</option>
+        {opts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="filters">
+        {chip('Role', 'shield', f.role, roles.data ?? [], (v) => setF((x) => ({ ...x, role: v })))}
+        {chip('Branch', 'branch', f.branch, ref.branches, (v) => setF((x) => ({ ...x, branch: v })))}
+        <div className="fchip"><Ic k="users" />Status
+          <select value={f.status ?? ''} onChange={(e) => setF((x) => ({ ...x, status: e.target.value || undefined }))}>
+            <option value="">All</option><option value="active">Active</option><option value="disabled">Inactive</option>
+          </select>
+        </div>
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email\u2026" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
+        <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="users" /><b>{rows.length}</b> users</div>
+      </div>
+      <TableCard title="Users" cols={['User', 'Role', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status', 'Actions']}
+        rowClass={(i) => (rows[i].status === 'disabled' ? 'row-inactive' : undefined)}
+        rows={rows.map((u) => {
+          const d = details[Number(u.id)];
+          const a = d?.assignments?.[0];
+          const scopeBits = a ? [nameOf(ref.branches, a.branch_id), nameOf(ref.verticals, a.vertical_id), nameOf(ref.pipelines, a.pipeline_id)].filter(Boolean) : [];
+          return [
+            { node: (
+              <div className="cell-u"><Avatar name={u.name} />
+                <div><div className="nm">{u.name}</div><div className="sub">{u.email}</div></div>
+              </div>) } as Cell,
+            u.role_names || (d ? '\u2014' : '\u2026'),
+            scopeBits.length ? scopeBits.join(' \u00b7 ') : a ? 'Org-wide' : '\u2014',
+            '\u2014',
+            toggleCell({
+              active: u.status !== 'disabled', name: u.name, entity: 'User', canToggle: canEdit,
+              onToggle: async (next) => { await api.patch(`/users/${u.id}`, { status: next ? 'active' : 'disabled' }); after(); },
+            }),
+            rowActions({ onView: () => setView(u), onEdit: canEdit ? () => setEdit(u) : undefined }),
+          ];
+        })} empty="No users match the current filters" />
+      {view && <UserView user={view} onClose={() => setView(null)} />}
+      {edit && (
+        <AddModal formKey="admin.users" onClose={() => setEdit(null)} onSaved={after}
+          edit={{
+            title: `Edit User \u2014 ${edit.name}`,
+            initialVals: {
+              'Full Name': edit.name ?? '', 'Email ID': edit.email ?? '', 'Mobile Number': edit.phone ?? '',
+              'System Role': edit.role_names ?? '',
+              'Status': edit.status === 'disabled' ? 'Deactivated' : 'Active',
+            },
+            lock: ['Email ID', 'System Role', 'Branch Access', 'Vertical Access'],
+            submit: async (vals) => {
+              await api.patch(`/users/${edit.id}`, {
+                name: need(vals['Full Name'], 'Name is required'),
+                phone: vals['Mobile Number'] || null,
+                ...(vals['Password / Login Method'] ? { password: vals['Password / Login Method'] } : {}),
+                status: vals['Status'] === 'Active' ? 'active' : 'disabled',
+              });
+              return 'User updated';
+            },
+          }} />
+      )}
+    </>
+  );
 }
 
 const MATRIX_ROWS: Array<[string, string[]]> = [
@@ -711,9 +1302,13 @@ const MATRIX_ROWS: Array<[string, string[]]> = [
 const MATRIX_ROLES = ['Super Admin', 'Branch Manager', 'Counsellor', 'Accountant', 'Trainer'];
 
 function Roles() {
-  const { refreshTick } = useScreen();
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
   const roles = useFetch<any[]>('/roles', [refreshTick]);
   const [grants, setGrants] = useState<Record<string, any[]>>({});
+  const [modal, setModal] = useState<{ roleId?: number; readOnly?: boolean } | null>(null);
+  const canEdit = can('role.update');
+  const after = () => { roles.reload(); bump(); };
   useEffect(() => {
     if (!roles.data) return;
     let dead = false;
@@ -730,7 +1325,7 @@ function Roles() {
     return g.some((x) => x.record_scope === 'all') ? 'y' : 'p';
   };
   const pm = (v: string, i: number) => (
-    <td key={i}><span className={`pm ${v}`}>{v === 'y' ? '✓' : v === 'p' ? '◐' : '–'}</span></td>
+    <td key={i}><span className={`pm ${v}`}>{v === 'y' ? '\u2713' : v === 'p' ? '\u25d0' : '\u2013'}</span></td>
   );
 
   return (
@@ -747,23 +1342,36 @@ function Roles() {
             </tbody>
           </table>
           <div className="legend" style={{ marginTop: 14 }}>
-            <span className="li"><span className="pm y">✓</span> Full</span>
-            <span className="li"><span className="pm p">◐</span> Partial / scoped</span>
-            <span className="li"><span className="pm n">–</span> No access</span>
+            <span className="li"><span className="pm y">\u2713</span> Full</span>
+            <span className="li"><span className="pm p">\u25d0</span> Partial / scoped</span>
+            <span className="li"><span className="pm n">\u2013</span> No access</span>
           </div>
         </div>
       </div>
-      <TableCard title="Roles" cols={['Role', 'Type', 'Permissions', 'Users', 'Status']}
+      <TableCard title="Roles" cols={['Role', 'Type', 'Permissions', 'Users', 'Status', 'Actions']}
+        rowClass={(i) => ((roles.data ?? [])[i]?.is_active === false ? 'row-inactive' : undefined)}
         rows={(roles.data ?? []).map((r) => [
           { node: <span className="nm">{r.name}</span> } as Cell,
           { b: [r.is_system ? 'System' : 'Custom', r.is_system ? 'b-indigo' : 'b-cyan'] } as Cell,
           String(r.permission_count ?? 0),
           String(r.user_count ?? 0),
-          { b: [r.is_active === false ? 'Inactive' : 'Active', r.is_active === false ? 'b-gray' : 'b-green'] } as Cell,
+          toggleCell({
+            active: r.is_active !== false, name: r.name, entity: 'Role',
+            canToggle: canEdit && !r.is_system,
+            onToggle: async (next) => { await api.patch(`/roles/${r.id}`, { is_active: next }); after(); },
+          }),
+          rowActions({
+            onView: () => setModal({ roleId: Number(r.id), readOnly: true }),
+            onEdit: canEdit && !r.is_system ? () => setModal({ roleId: Number(r.id) }) : undefined,
+          }),
         ])} empty="No roles" />
       <Blocks blocks={[{ type: 'caps', title: 'Permission depth', items: [
         { t: 'Module-level', d: 'View/create/edit/delete/export' }, { t: 'Field-level', d: 'Hide sensitive fields' },
         { t: 'Record-level', d: 'Scoped by Branch/Pipeline/Campaign' }, { t: 'Manager partial', d: 'Live-monitor, view-only or edit' }] }]} />
+      {modal && (
+        <RoleModal roleId={modal.roleId} readOnly={modal.readOnly}
+          onClose={() => setModal(null)} onSaved={after} />
+      )}
     </>
   );
 }
@@ -772,6 +1380,7 @@ function Audit() {
   const { refreshTick } = useScreen();
   const logs = useFetch<any[]>('/audit-logs?limit=100', [refreshTick]);
   const rows = logs.data ?? [];
+  const [sel, setSel] = useState<any | null>(null);
   const todays = rows.filter((r) => new Date(r.occurred_at).toDateString() === new Date().toDateString());
   const ACT: Record<string, [string, string]> = {
     create: ['Create', 'b-green'], update: ['Update', 'b-cyan'], delete: ['Delete', 'b-rose'],
@@ -785,14 +1394,41 @@ function Audit() {
         { lab: 'Messages sent', val: '\u2014', ic: 'wa' },
         { lab: 'Calls logged', val: '\u2014', ic: 'phone' },
       ]} />
-      <TableCard title="Activity log — all users" cols={['Time', 'User', 'Module', 'Activity', 'Detail']}
+      <TableCard title="Activity log \u2014 all users" cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
         rows={rows.map((r) => [
           { mono: new Date(r.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), dim: true } as Cell,
           r.actor_name ?? 'System',
-          String(r.entity_type ?? '—'),
+          String(r.entity_type ?? '\u2014'),
           { b: ACT[r.action] ?? [r.action, 'b-gray'] } as Cell,
-          r.entity_id ? `#${r.entity_id}` : '—',
-        ])} empty="No audit entries yet" />
+          r.entity_id ? `#${r.entity_id}` : '\u2014',
+          rowActions({ onView: () => setSel(r) }),
+        ])} empty="No audit entries yet"
+        onRowClick={(i) => setSel(rows[i])} />
+      {sel && (
+        <DetailModal title={`Audit \u2014 ${sel.action} ${sel.entity_type ?? ''} ${sel.entity_id ? `#${sel.entity_id}` : ''}`} icon="shield" width={640} onClose={() => setSel(null)}>
+          <Section title="Event">
+            <KV rows={[
+              ['When', fmtFull(sel.occurred_at)],
+              ['Actor', sel.actor_name ?? 'System'],
+              ['Action', renderCell({ b: ACT[sel.action] ?? [sel.action, 'b-gray'] })],
+              ['Module', String(sel.entity_type ?? '\u2014')],
+              ['Record', sel.entity_id ? `#${sel.entity_id}` : '\u2014'],
+              ['IP', sel.ip ? <span className="mono">{sel.ip}</span> : '\u2014'],
+              ['Agent', sel.user_agent ? <span style={{ fontSize: 11.5 }}>{sel.user_agent}</span> : '\u2014'],
+            ]} />
+          </Section>
+          {sel.before ? (
+            <Section title="Before">
+              <pre className="stack-pre" style={{ maxHeight: 160 }}>{JSON.stringify(sel.before, null, 2)}</pre>
+            </Section>
+          ) : null}
+          {sel.after ? (
+            <Section title="After">
+              <pre className="stack-pre" style={{ maxHeight: 160 }}>{JSON.stringify(sel.after, null, 2)}</pre>
+            </Section>
+          ) : null}
+        </DetailModal>
+      )}
     </>
   );
 }
@@ -1144,6 +1780,90 @@ function ErrorLogs() {
   );
 }
 
+/* --------------------------- masters admin ----------------------------- */
+/* Administration › Masters — sanctioned client-approved addition (UAT item 6:
+   "edit option for Course master AND all masters"). One screen manages every
+   generic master list (add / edit / view / activate-deactivate). */
+
+function MastersAdmin() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
+  const ref = useRef_();
+  const types = useFetch<Array<{ type: string; label: string; parent: string | null }>>('/masters', []);
+  const [type, setType] = useState('course');
+  const [inc, setInc] = useState(false);
+  const list = useFetch<any[]>(`/masters/${type}${inc ? '?all=1' : ''}`, [refreshTick]);
+  const rows = list.data ?? [];
+  const [add, setAdd] = useState(false);
+  const [edit, setEdit] = useState<any | null>(null);
+  const [view, setView] = useState<any | null>(null);
+  const canEdit = can('master.update');
+  const label = MASTER_LABELS[type] ?? types.data?.find((t) => t.type === type)?.label ?? type;
+  const hasParent = !!types.data?.find((t) => t.type === type)?.parent;
+  const after = () => { list.reload(); ref.reload(); bump(); };
+  const cols = ['Name', 'Code', ...(hasParent ? ['Parent'] : []), 'Sort', 'Status', 'Actions'];
+  return (
+    <>
+      <div className="filters">
+        <div className="fchip"><Ic k="cfg" />Master
+          <select value={type} onChange={(e) => { setType(e.target.value); }}>
+            {(types.data ?? []).map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
+          </select>
+        </div>
+        <IncInactiveChip on={inc} set={setInc} />
+        <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> values</div>
+      </div>
+      <TableCard title={`${label} master`} icon="cfg"
+        more={can('master.create')
+          ? <a className="mlink" style={{ cursor: 'pointer' }} onClick={() => setAdd(true)}>＋ Add {label.replace(/s$/, '')}</a>
+          : undefined}
+        cols={cols}
+        rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
+        rows={rows.map((m) => {
+          const cells: Cell[] = [
+            { node: <span className="nm">{m.name}</span> },
+            { mono: String(m.code ?? '\u2014') },
+          ];
+          if (hasParent) cells.push(String(m.parent_name ?? '\u2014'));
+          cells.push(
+            { mono: String(m.sort_order ?? 0), dim: true },
+            toggleCell({
+              active: m.is_active !== false, name: m.name, entity: label.replace(/s$/, ''), canToggle: canEdit,
+              onToggle: async (next) => { await api.patch(`/masters/${type}/${m.id}`, { is_active: next }); after(); },
+            }),
+            rowActions({ onView: () => setView(m), onEdit: canEdit ? () => setEdit(m) : undefined }),
+          );
+          return cells;
+        })} empty={`No ${label.toLowerCase()} yet`} />
+      {add && <AddMasterModal type={type} onClose={() => setAdd(false)} onCreated={after} />}
+      {edit && <AddMasterModal type={type} initial={edit} onClose={() => setEdit(null)} onCreated={after} />}
+      {view && (
+        <DetailModal title={`${label.replace(/s$/, '')} \u2014 ${view.name}`} icon="cfg" onClose={() => setView(null)}>
+          <Section title="Details">
+            <KV rows={[
+              ['Name', view.name],
+              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
+              hasParent ? ['Parent', String(view.parent_name ?? '\u2014')] : null,
+              ['Sort order', String(view.sort_order ?? 0)],
+              ['Status', renderCell(statusBadge(view.is_active !== false))],
+              Object.keys((view.meta as any) ?? {}).length
+                ? ['Meta', <pre className="stack-pre" style={{ maxHeight: 120 }}>{JSON.stringify(view.meta, null, 2)}</pre>]
+                : null,
+            ]} />
+          </Section>
+          <Section title="Record">
+            <KV rows={[
+              ['Created', fmtFull(view.created_at)],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Updated', fmtFull(view.updated_at)],
+            ]} />
+          </Section>
+        </DetailModal>
+      )}
+    </>
+  );
+}
+
 /* ------------------------------ registry ------------------------------ */
 
 export const DYN: Record<string, () => JSX.Element> = {
@@ -1164,6 +1884,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   pipelines: Pipelines,
   campaigns: Campaigns,
   courses: Courses,
+  mastersAdmin: MastersAdmin,
   users: Users,
   roles: Roles,
   audit: Audit,

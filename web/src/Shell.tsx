@@ -9,6 +9,7 @@ import { Blocks } from './renderer';
 import { DYN, ScreenCtx } from './dyn';
 import { AddModal, CampaignModal, MULTI_ADD, SPEC_FORMS, entFromLabel } from './forms';
 import { LeadSheet } from './leadsheet';
+import { RoleModal } from './rolemodal';
 import { toast, useRef_, Toaster } from './refdata';
 
 const addLike = (l: string) => /^(add|new|record|create|quick add)/i.test(l);
@@ -135,11 +136,13 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
   const [leadId, setLeadId] = useState<number | null>(null);
   const [addKey, setAddKey] = useState<string | null>(null);
   const [campaignOpen, setCampaignOpen] = useState(false);
+  const [roleOpen, setRoleOpen] = useState(false);
   const [tick, setTick] = useState(0);
 
   const key = `${screen.mod.id}.${screen.sub.id}`;
   const openAdd = (formKey: string) => {
     if (formKey === 'leads.campaigns') { setCampaignOpen(true); return; }
+    if (formKey === 'admin.roles') { setRoleOpen(true); return; }
     if (SPEC_FORMS[formKey]) setAddKey(formKey);
     else toast('This form goes live with its module backend in a later sprint');
   };
@@ -151,13 +154,14 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
   if (multi) {
     acts = acts.filter((a) => !addLike(a[1]));
     [...multi].reverse().forEach(([label]) => acts.unshift(['plus', label, 'primary']));
-  } else if (!acts.some((a) => addLike(a[1])) && hasForm && spec.tag !== 'p2' && key !== 'map.all') {
+  } else if (!acts.some((a) => addLike(a[1])) && hasForm && spec.tag !== 'p2' && key !== 'map.all' && key !== 'admin.masters') {
     acts.unshift(['plus', `Add ${entFromLabel(screen.sub.label)}`, 'primary']);
   }
 
   const onAction = (label: string) => {
     if (addLike(label)) {
       if (key === 'leads.campaigns') return setCampaignOpen(true);
+      if (key === 'admin.roles') return setRoleOpen(true);
       const override = multi?.find(([l]) => l === label)?.[1];
       const formKey = override
         || (SPEC_FORMS[key] ? key : label.toLowerCase().includes('lead') ? 'leads.all' : label.toLowerCase().includes('task') ? 'dash.mytasks' : key);
@@ -204,6 +208,7 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
       {leadId != null && <LeadSheet leadId={leadId} onClose={() => setLeadId(null)} onChanged={() => setTick((t) => t + 1)} />}
       {addKey && <AddModal formKey={addKey} onClose={() => setAddKey(null)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}
       {campaignOpen && <CampaignModal onClose={() => setCampaignOpen(false)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}
+      {roleOpen && <RoleModal onClose={() => setRoleOpen(false)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}
     </ScreenCtx.Provider>
   );
 }
