@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
@@ -136,21 +136,153 @@ export class HierarchyService {
     );
   }
 
-  async createStage(pipelineId: number, dto: { name: string; stage_type?: string; sort_order?: number; is_default?: boolean }, actorId: number) {
+  /** Stage tags (configurator chips: Cold / Warm / Hot / free text).
+   *  Trimmed, case-insensitively deduped, each <= 40 chars, max 20 per stage. */
+  static normalizeTags(input: unknown): string[] {
+    if (input == null) return [];
+    if (!Array.isArray(input)) throw new BadRequestException('tags must be an array of strings');
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const t of input) {
+      if (typeof t !== 'string') throw new BadRequestException('tags must be an array of strings');
+      const v = t.trim();
+      if (!v) continue;
+      if (v.length > 40) throw new BadRequestException('each tag must be 40 characters or fewer');
+      const k = v.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(v);
+    }
+    if (out.length > 20) throw new BadRequestException('a stage can carry at most 20 tags');
+    return out;
+  }
+
+  /**
+   * Create a stage. Stage-configurator insert-at-position: when `after_stage_id`
+   * is present, the stage lands directly after that stage (`null` = head of the
+   * flow) and every later stage is reindexed (+1) in the same transaction so
+   * sort_order stays contiguous. Without it, behaviour is unchanged (append, or
+   * an explicit `sort_order`).
+   */
+  async createStage(
+    pipelineId: number,
+    dto: { name: string; stage_type?: string; sort_order?: number; is_default?: boolean; tags?: unknown; after_stage_id?: number | null },
+    actorId: number,
+  ) {
     if (!dto?.name) throw new BadRequestException('name is required');
     const type = dto.stage_type ?? 'open';
     if (!['open', 'won', 'lost'].includes(type)) throw new BadRequestException('stage_type must be open|won|lost');
+    const tags = HierarchyService.normalizeTags(dto.tags);
+
+    if (dto.after_stage_id !== undefined) {
+      let newSort = 0;
+      if (dto.after_stage_id !== null) {
+        const after = await this.db.one<{ pipeline_id: string; sort_order: number }>(
+          `SELECT pipeline_id, sort_order FROM pipeline_stage WHERE id = $1`, [dto.after_stage_id],
+        );
+        if (!after || Number(after.pipeline_id) !== Number(pipelineId)) {
+          throw new BadRequestException('after_stage_id must reference a stage of the same pipeline');
+        }
+        newSort = Number(after.sort_order) + 1;
+      }
+      return this.db.tx(async (c) => {
+        await c.query(
+          `UPDATE pipeline_stage SET sort_order = sort_order + 1, updated_at = now()
+            WHERE pipeline_id = $1 AND sort_order >= $2`, [pipelineId, newSort],
+        );
+        if (dto.is_default) {
+          await c.query(
+            `UPDATE pipeline_stage SET is_default = FALSE, updated_at = now() WHERE pipeline_id = $1 AND is_default`,
+            [pipelineId],
+          );
+        }
+        const ins = await c.query(
+          `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, tags, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+          [pipelineId, dto.name.trim(), newSort, type, dto.is_default ?? false, JSON.stringify(tags), actorId],
+        );
+        return ins.rows[0];
+      });
+    }
+
+    if (dto.is_default) {
+      await this.db.query(
+        `UPDATE pipeline_stage SET is_default = FALSE, updated_at = now() WHERE pipeline_id = $1 AND is_default`,
+        [pipelineId],
+      );
+    }
     const rows = await this.db.query(
-      `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, created_by)
-       VALUES ($1,$2,COALESCE($3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM pipeline_stage WHERE pipeline_id=$1)),$4,$5,$6)
+      `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, tags, created_by)
+       VALUES ($1,$2,COALESCE($3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM pipeline_stage WHERE pipeline_id=$1)),$4,$5,$6,$7)
        RETURNING *`,
-      [pipelineId, dto.name.trim(), dto.sort_order ?? null, type, dto.is_default ?? false, actorId],
+      [pipelineId, dto.name.trim(), dto.sort_order ?? null, type, dto.is_default ?? false, JSON.stringify(tags), actorId],
     );
     return rows[0];
   }
 
-  updateStage(id: number, dto: Record<string, unknown>) {
-    return this.genericUpdate('pipeline_stage', id, dto, ['name', 'sort_order', 'stage_type', 'is_default', 'is_active']);
+  async updateStage(id: number, dto: Record<string, unknown>) {
+    if (dto.stage_type !== undefined && !['open', 'won', 'lost'].includes(String(dto.stage_type))) {
+      throw new BadRequestException('stage_type must be open|won|lost');
+    }
+    if (dto.tags !== undefined) dto = { ...dto, tags: HierarchyService.normalizeTags(dto.tags) };
+    if (dto.is_default === true) {
+      // a pipeline keeps exactly one default landing stage
+      const st = await this.db.one<{ pipeline_id: string }>(`SELECT pipeline_id FROM pipeline_stage WHERE id = $1`, [id]);
+      if (!st) throw new NotFoundException('pipeline_stage not found');
+      await this.db.query(
+        `UPDATE pipeline_stage SET is_default = FALSE, updated_at = now() WHERE pipeline_id = $1 AND is_default AND id <> $2`,
+        [Number(st.pipeline_id), id],
+      );
+    }
+    return this.genericUpdate('pipeline_stage', id, dto, ['name', 'sort_order', 'stage_type', 'is_default', 'tags', 'is_active']);
+  }
+
+  /**
+   * Hard-delete a stage. Guard: any lead still referencing the stage blocks the
+   * delete with 409 (rename/deactivate instead, or move the leads first).
+   * Remaining stages are compacted so sort_order stays contiguous.
+   */
+  async deleteStage(id: number) {
+    const st = await this.db.one<{ id: string; pipeline_id: string; name: string; sort_order: number }>(
+      `SELECT id, pipeline_id, name, sort_order FROM pipeline_stage WHERE id = $1`, [id],
+    );
+    if (!st) throw new NotFoundException('pipeline_stage not found');
+    const ref = await this.db.one<{ ct: number }>(`SELECT COUNT(*)::int AS ct FROM lead WHERE stage_id = $1`, [id]);
+    if (ref && Number(ref.ct) > 0) {
+      throw new ConflictException(
+        `Cannot delete stage "${st.name}" — ${ref.ct} lead(s) are currently in it. ` +
+        `Move those leads to another stage first, or mark the stage Inactive instead.`,
+      );
+    }
+    return this.db.tx(async (c) => {
+      await c.query(`DELETE FROM pipeline_stage WHERE id = $1`, [id]);
+      await c.query(
+        `UPDATE pipeline_stage SET sort_order = sort_order - 1, updated_at = now()
+          WHERE pipeline_id = $1 AND sort_order > $2`, [Number(st.pipeline_id), st.sort_order],
+      );
+      return { deleted: true, id: Number(st.id), name: st.name };
+    });
+  }
+
+  /** Reorder every stage of a pipeline (future drag). `order` must be a permutation of the pipeline's stage ids. */
+  async reorderStages(pipelineId: number, order: unknown) {
+    if (!Array.isArray(order) || order.length === 0 || order.some((x) => !Number.isFinite(Number(x)))) {
+      throw new BadRequestException('order must be a non-empty array of stage ids');
+    }
+    const ids = order.map(Number);
+    const existing = await this.db.query<{ id: string }>(`SELECT id FROM pipeline_stage WHERE pipeline_id = $1`, [pipelineId]);
+    const have = existing.map((r) => Number(r.id)).sort((a, b) => a - b).join(',');
+    const got = [...ids].sort((a, b) => a - b).join(',');
+    if (!existing.length || have !== got) {
+      throw new BadRequestException('order must contain every stage id of the pipeline exactly once');
+    }
+    return this.db.tx(async (c) => {
+      for (let i = 0; i < ids.length; i++) {
+        await c.query(`UPDATE pipeline_stage SET sort_order = $1, updated_at = now() WHERE id = $2`, [i, ids[i]]);
+      }
+      const rows = await c.query(`SELECT * FROM pipeline_stage WHERE pipeline_id = $1 ORDER BY sort_order`, [pipelineId]);
+      return rows.rows;
+    });
   }
 
   // ---- campaigns ----------------------------------------------------------

@@ -12,7 +12,11 @@ import { Cell } from './renderer';
 
 /* ------------------------- view / edit buttons ------------------------- */
 
-export function rowActions(opts: { onView?: () => void; onEdit?: () => void }): Cell {
+export function rowActions(opts: {
+  onView?: () => void; onEdit?: () => void;
+  /** additional icon buttons (e.g. pipeline "Stages" configurator) */
+  extra?: Array<{ k: string; title: string; onClick: () => void }>;
+}): Cell {
   return { node: (
     <span className="rowact" onClick={(e) => e.stopPropagation()}>
       {opts.onView && (
@@ -21,6 +25,9 @@ export function rowActions(opts: { onView?: () => void; onEdit?: () => void }): 
       {opts.onEdit && (
         <button className="ract" title="Edit" onClick={opts.onEdit}><Ic k="pencil" w={2.1} /></button>
       )}
+      {(opts.extra ?? []).map((x) => (
+        <button className="ract" key={x.title} title={x.title} onClick={x.onClick}><Ic k={x.k} w={2.1} /></button>
+      ))}
     </span>
   ) };
 }

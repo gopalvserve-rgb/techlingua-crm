@@ -17,6 +17,7 @@ import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
 import { APP } from './specs';
+import { StageConfigurator } from './stageconfig';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -443,7 +444,7 @@ function Kanban() {
   const ref = useRef_();
   const [pipelineId, setPipelineId] = useState<number>();
   const pid = pipelineId ?? (ref.pipelines[0] ? Number(ref.pipelines[0].id) : undefined);
-  const stages = useFetch<any[]>(pid ? `/pipelines/${pid}/stages` : null, [pid]);
+  const stages = useFetch<any[]>(pid ? `/pipelines/${pid}/stages` : null, [pid, refreshTick]);
   const leads = useFetch<{ total: number; rows: any[] }>(pid ? `/leads?pipeline_id=${pid}&limit=300` : '/leads?limit=300', [pid, refreshTick]);
 
   // group leads by stage (falls back to stage names on rows when stages can't be listed)
@@ -832,7 +833,9 @@ function StageEditModal({ stage, onClose, onSaved }: { stage: any; onClose: () =
   );
 }
 
-function PipelineView({ pipeline, onClose, onChanged }: { pipeline: any; onClose: () => void; onChanged: () => void }) {
+function PipelineView({ pipeline, onClose, onChanged, onConfigure }: {
+  pipeline: any; onClose: () => void; onChanged: () => void; onConfigure?: () => void;
+}) {
   const { can } = useAuth();
   const ref = useRef_();
   const [tick, setTick] = useState(0);
@@ -841,7 +844,10 @@ function PipelineView({ pipeline, onClose, onChanged }: { pipeline: any; onClose
   const canEdit = can('pipeline.update');
   const bumped = () => { setTick((t) => t + 1); onChanged(); };
   return (
-    <DetailModal title={`Pipeline \u2014 ${pipeline.name}`} icon="list" width={640} onClose={onClose}>
+    <DetailModal title={`Pipeline \u2014 ${pipeline.name}`} icon="list" width={640} onClose={onClose}
+      footer={onConfigure
+        ? <button className="btn primary" onClick={onConfigure}><Ic k="cfg" />Stage Configurator</button>
+        : undefined}>
       <Section title="Details">
         <KV rows={[
           ['Name', pipeline.name],
@@ -885,6 +891,7 @@ function Pipelines() {
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
+  const [config, setConfig] = useState<any | null>(null); // stage configurator (client mockup)
   const canEdit = can('pipeline.update');
   const after = () => { list.reload(); ref.reload(); bump(); };
   const [stagesBy, setStagesBy] = useState<Record<number, string>>({});
@@ -898,6 +905,9 @@ function Pipelines() {
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [list.data]);
+  if (config) {
+    return <StageConfigurator pipeline={config} onBack={() => { setConfig(null); after(); }} afterChange={after} />;
+  }
   return (
     <>
       <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
@@ -912,9 +922,13 @@ function Pipelines() {
             active: pl.is_active !== false, name: pl.name, entity: 'Pipeline', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/pipelines/${pl.id}`, { is_active: next }); after(); },
           }),
-          rowActions({ onView: () => setView(pl), onEdit: canEdit ? () => setEdit(pl) : undefined }),
+          rowActions({
+            onView: () => setView(pl), onEdit: canEdit ? () => setEdit(pl) : undefined,
+            extra: [{ k: 'cfg', title: 'Stages (configurator)', onClick: () => setConfig(pl) }],
+          }),
         ])} empty="No pipelines yet" />
-      {view && <PipelineView pipeline={view} onClose={() => setView(null)} onChanged={after} />}
+      {view && <PipelineView pipeline={view} onClose={() => setView(null)} onChanged={after}
+        onConfigure={() => { setConfig(view); setView(null); }} />}
       {edit && (
         <AddModal formKey="leads.pipelinemaster" onClose={() => setEdit(null)} onSaved={after}
           edit={{

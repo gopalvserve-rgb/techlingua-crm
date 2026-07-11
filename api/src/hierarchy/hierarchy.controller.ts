@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { HierarchyService } from './hierarchy.service';
 import { CurrentScope, CurrentUser, RequirePermission, ScopedEntity } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
@@ -55,6 +55,14 @@ export class HierarchyController {
 
   @Patch('stages/:id') @RequirePermission('pipeline.update') @ScopedEntity('stage')
   updateStage(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.h.updateStage(id, dto); }
+
+  // hard delete is guarded: 409 when any lead still sits in the stage
+  @Delete('stages/:id') @RequirePermission('pipeline.update') @ScopedEntity('stage')
+  deleteStage(@Param('id', ParseIntPipe) id: number) { return this.h.deleteStage(id); }
+
+  // full reorder (future drag): body { order: number[] } — a permutation of the pipeline's stage ids
+  @Put('pipelines/:id/stages/order') @RequirePermission('pipeline.update') @ScopedEntity('pipeline')
+  reorderStages(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.h.reorderStages(id, dto?.order); }
 
   // ---- campaigns ----
   @Get('campaigns') @RequirePermission('campaign.read')
