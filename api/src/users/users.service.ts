@@ -88,7 +88,7 @@ export class UsersService {
          FROM "user" u
          LEFT JOIN user_assignment ua ON ua.user_id = u.id AND ua.is_active
          LEFT JOIN team_member tm ON tm.user_id = u.id
-        WHERE ${scopeWhere}${filterSql}
+        WHERE u.deleted_at IS NULL AND ${scopeWhere}${filterSql}
         ORDER BY u.name`,
       params,
     );
@@ -96,7 +96,7 @@ export class UsersService {
 
   async get(id: number) {
     const user = await this.db.one(
-      `SELECT id, name, email, phone, status, mfa_enabled, created_at FROM "user" WHERE id = $1`, [id],
+      `SELECT id, name, email, phone, status, mfa_enabled, created_at FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [id],
     );
     if (!user) throw new NotFoundException('User not found');
     const assignments = await this.db.query(

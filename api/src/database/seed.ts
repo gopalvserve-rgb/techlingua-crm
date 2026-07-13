@@ -172,6 +172,7 @@ async function seed(c: PoolClient) {
   // Branch Manager: everything inside the branch except org/role administration
   await grant('Branch Manager', [
     'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.assign', 'lead.transfer', 'lead.export',
+    'lead.delete', 'followup.delete', // soft delete: leads/follow-ups only (migration 015)
     'followup.read', 'followup.create', 'followup.update',
     'user.read', 'team.read', 'team.create', 'team.update',
     'branch.read', 'vertical.read', 'pipeline.read', 'campaign.read', 'campaign.create', 'campaign.update',

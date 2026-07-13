@@ -19,7 +19,7 @@ export class RolesService {
       `SELECT r.id, r.name, r.is_system, r.is_custom, r.description, r.is_active,
               (SELECT COUNT(*)::int FROM role_permission rp WHERE rp.role_id = r.id) AS permission_count,
               (SELECT COUNT(DISTINCT ua.user_id)::int FROM user_assignment ua WHERE ua.role_id = r.id AND ua.is_active) AS user_count
-         FROM role r ORDER BY r.is_system DESC, r.name`,
+         FROM role r WHERE r.deleted_at IS NULL ORDER BY r.is_system DESC, r.name`,
     );
   }
 
@@ -36,7 +36,7 @@ export class RolesService {
   }
 
   async getRole(id: number) {
-    const role = await this.db.one(`SELECT * FROM role WHERE id = $1`, [id]);
+    const role = await this.db.one(`SELECT * FROM role WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!role) throw new NotFoundException('Role not found');
     const grants = await this.db.query(
       `SELECT p.key AS permission_key, p.module, p.action, rp.record_scope, rp.field_scope
@@ -59,7 +59,7 @@ export class RolesService {
   }
 
   async updateRole(id: number, dto: Partial<RoleDto> & { is_active?: boolean }) {
-    const role = await this.db.one<{ is_system: boolean }>(`SELECT is_system FROM role WHERE id = $1`, [id]);
+    const role = await this.db.one<{ is_system: boolean }>(`SELECT is_system FROM role WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!role) throw new NotFoundException('Role not found');
     if (role.is_system && dto.name !== undefined) {
       throw new BadRequestException('System roles cannot be renamed');
@@ -84,8 +84,15 @@ export class RolesService {
    */
   async setMatrix(roleId: number, entries: MatrixEntry[]) {
     if (!Array.isArray(entries)) throw new BadRequestException('entries[] required');
-    const role = await this.db.one(`SELECT id FROM role WHERE id = $1`, [roleId]);
+    const role = await this.db.one<{ id: string; is_system: boolean }>(
+      `SELECT id, is_system FROM role WHERE id = $1 AND deleted_at IS NULL`, [roleId],
+    );
     if (!role) throw new NotFoundException('Role not found');
+    // OBS-01 (backlog #17): system-role matrices are locked at the API level, not
+    // just hidden in the UI — a direct PUT gets a clear 400.
+    if (role.is_system) {
+      throw new BadRequestException('System role permission matrices are locked and cannot be modified');
+    }
     const valid: RecordScope[] = ['own', 'team', 'branch', 'vertical', 'pipeline', 'campaign', 'all'];
 
     return this.db.tx(async (c) => {

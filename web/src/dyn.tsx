@@ -17,6 +17,7 @@ import { RoleModal } from './rolemodal';
 import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
+import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { StageConfigurator } from './stageconfig';
 
@@ -80,14 +81,18 @@ function leadRow(l: any): Cell[] {
         <div><div className="nm">{l.full_name}</div><div className="sub mono">{l.phone}</div></div>
       </div>) },
     l.course_name || '—',
-    `${l.vertical_name} · ${l.pipeline_name}`,
-    { b: [l.source_name || '—', 'b-indigo'] },
+    `${dn(l.vertical_name, l.vertical_deleted)} · ${dn(l.pipeline_name, l.pipeline_deleted)}`,
+    { b: [dn(l.source_name, l.source_deleted) || '—', 'b-indigo'] },
     { node: <TempBadge temperature={l.temperature} score={l.score} /> },
     l.owner_name || 'Unassigned',
     { b: [l.stage_name || '—', l.stage_type === 'won' ? 'b-green' : l.stage_type === 'lost' ? 'b-rose' : 'b-cyan'] },
     { node: <span className="mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span> },
   ];
 }
+
+/** Soft delete: display joins keep deleted ancestors; suffix them "(deleted)". */
+const dn = (name: string | null | undefined, deleted?: boolean) =>
+  (name ? `${name}${deleted ? ' (deleted)' : ''}` : name ?? '—');
 
 const nameOf = (list: Array<{ id: number; name: string }>, id: unknown) =>
   (id == null ? null : list.find((x) => Number(x.id) === Number(id))?.name ?? null);
@@ -414,9 +419,10 @@ function QuickContact() {
 }
 
 function LeadsAll() {
-  const { openLead, refreshTick } = useScreen();
+  const { openLead, refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const canEditLead = can('lead.update');
+  const canDeleteLead = can('lead.delete');
   const ref = useRef_();
   const [f, setF] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number; q: string }>({ q: '' });
   const params = new URLSearchParams();
@@ -427,6 +433,7 @@ function LeadsAll() {
   if (f.q.trim()) params.set('q', f.q.trim());
   params.set('limit', '100');
   const data = useFetch<{ total: number; rows: any[] }>(`/leads?${params.toString()}`, [refreshTick]);
+  const del = useDelete('Lead', '/leads', () => bump());
 
   const chip = (label: string, icon: string, value: number | undefined, list: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
     <div className="fchip" key={label}>
@@ -452,9 +459,11 @@ function LeadsAll() {
         rows={(data.data?.rows ?? []).map((l) => [...leadRow(l), rowActions({
           onView: () => openLead(Number(l.id)),
           onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,
+          onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
         })])}
         empty="No leads in scope yet — add a lead or connect a source"
         onRowClick={(i) => openLead(Number(data.data!.rows[i].id))} />
+      {del.deleteModal}
     </>
   );
 }
@@ -463,11 +472,13 @@ function Followups() {
   const { openLead, refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const canEdit = can('followup.update');
+  const canDelete = can('followup.delete');
+  const del = useDelete('Follow-up', '/follow-ups', () => bump());
   const [prio, setPrio] = useState<string>('');
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
   const list = useFetch<any[]>(`/follow-ups?limit=100${prio ? `&priority=${prio}` : ''}`, [prio, refreshTick]);
-  const rows = (list.data ?? []).map((fx) => ({ leadId: fx.lead_id, row: [
-    { node: <span className="nm">{fx.lead_name}</span> } as Cell,
+  const rows = (list.data ?? []).map((fx) => ({ leadId: fx.lead_id, id: Number(fx.id), name: `${fx.lead_name}${fx.lead_deleted ? ' (deleted)' : ''} · ${fmtDT(fx.scheduled_at)}`, row: [
+    { node: <span className="nm">{dn(fx.lead_name, fx.lead_deleted)}</span> } as Cell,
     { b: [fx.type_name || 'Follow-up', fx.type_name === 'WhatsApp' ? 'b-green' : 'b-indigo'] } as Cell,
     { node: <PrioSelect id={Number(fx.id)} value={fx.priority} onChanged={bump} disabled={!canEdit} /> } as Cell,
     fx.owner_name || '—',
@@ -490,9 +501,13 @@ function Followups() {
         </div>
       </div>
       <TableCard title="Upcoming follow-ups" cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Disposition', 'Actions']}
-        rows={rows.map((r) => [...r.row, rowActions({ onView: () => openLead(r.leadId) })])}
+        rows={rows.map((r) => [...r.row, rowActions({
+          onView: () => openLead(r.leadId),
+          onDelete: canDelete ? () => del.openDelete(r.id, r.name) : undefined,
+        })])}
         empty="No follow-ups scheduled yet"
         onRowClick={(i) => openLead(rows[i].leadId)} />
+      {del.deleteModal}
     </>
   );
 }
@@ -604,6 +619,7 @@ function Sources() {
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('source.update');
+  const del = useDelete('Source', '/sources', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   const CAPTURE: Record<string, [string, string]> = {
     meta: ['Auto \u00b7 webhook', 'b-green'], google: ['Auto \u00b7 webhook', 'b-green'], justdial: ['Auto \u00b7 API', 'b-green'],
@@ -627,9 +643,13 @@ function Sources() {
               active: so.is_active !== false, name: so.name, entity: 'Source', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/sources/${so.id}`, { is_active: next }); after(); },
             }),
-            rowActions({ onView: () => setView(so), onEdit: canEdit ? () => setEdit(so) : undefined }),
+            rowActions({
+              onView: () => setView(so), onEdit: canEdit ? () => setEdit(so) : undefined,
+              onDelete: can('source.delete') ? () => del.openDelete(Number(so.id), so.name) : undefined,
+            }),
           ];
         })} empty="No sources connected yet \u2014 add one per campaign" />
+      {del.deleteModal}
       {view && (
         <DetailModal title={`Source \u2014 ${view.name}`} icon="leads" onClose={() => setView(null)}>
           <Section title="Details">
@@ -700,6 +720,7 @@ function Branches() {
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('branch.update');
+  const del = useDelete('Branch', '/branches', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
 
   const nodes = [{
@@ -727,8 +748,12 @@ function Branches() {
             active: b.is_active !== false, name: b.name, entity: 'Branch', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/branches/${b.id}`, { is_active: next }); after(); },
           }),
-          rowActions({ onView: () => setView(b), onEdit: canEdit ? () => setEdit(b) : undefined }),
+          rowActions({
+            onView: () => setView(b), onEdit: canEdit ? () => setEdit(b) : undefined,
+            onDelete: can('branch.delete') ? () => del.openDelete(Number(b.id), b.name) : undefined,
+          }),
         ])} empty="No branches yet" />
+      {del.deleteModal}
       {view && (
         <DetailModal title={`Branch \u2014 ${view.name}`} icon="branch" onClose={() => setView(null)}>
           <Section title="Details">
@@ -786,6 +811,7 @@ function Verticals() {
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('vertical.update');
+  const del = useDelete('Vertical', '/verticals', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   return (
     <>
@@ -801,8 +827,12 @@ function Verticals() {
             active: v.is_active !== false, name: v.name, entity: 'Vertical', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/verticals/${v.id}`, { is_active: next }); after(); },
           }),
-          rowActions({ onView: () => setView(v), onEdit: canEdit ? () => setEdit(v) : undefined }),
+          rowActions({
+            onView: () => setView(v), onEdit: canEdit ? () => setEdit(v) : undefined,
+            onDelete: can('vertical.delete') ? () => del.openDelete(Number(v.id), v.name) : undefined,
+          }),
         ])} empty="No verticals yet" />
+      {del.deleteModal}
       {view && (
         <DetailModal title={`Vertical \u2014 ${view.name}`} icon="grid" onClose={() => setView(null)}>
           <Section title="Details">
@@ -953,6 +983,7 @@ function Pipelines() {
   const [edit, setEdit] = useState<any | null>(null);
   const [config, setConfig] = useState<any | null>(null); // stage configurator (client mockup)
   const canEdit = can('pipeline.update');
+  const del = useDelete('Pipeline', '/pipelines', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   const [stagesBy, setStagesBy] = useState<Record<number, string>>({});
   useEffect(() => {
@@ -984,9 +1015,11 @@ function Pipelines() {
           }),
           rowActions({
             onView: () => setView(pl), onEdit: canEdit ? () => setEdit(pl) : undefined,
+            onDelete: can('pipeline.delete') ? () => del.openDelete(Number(pl.id), pl.name) : undefined,
             extra: [{ k: 'cfg', title: 'Stages (configurator)', onClick: () => setConfig(pl) }],
           }),
         ])} empty="No pipelines yet" />
+      {del.deleteModal}
       {view && <PipelineView pipeline={view} onClose={() => setView(null)} onChanged={after}
         onConfigure={() => { setConfig(view); setView(null); }} />}
       {edit && (
@@ -1087,6 +1120,7 @@ function Campaigns() {
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('campaign.update');
+  const del = useDelete('Campaign', '/campaigns', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   const [counts, setCounts] = useState<Record<number, number>>({});
   useEffect(() => {
@@ -1127,9 +1161,13 @@ function Campaigns() {
               active: c.is_active !== false, name: c.name, entity: 'Campaign', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/campaigns/${c.id}`, { is_active: next }); after(); },
             }),
-            rowActions({ onView: () => setView(c), onEdit: canEdit ? () => setEdit(c) : undefined }),
+            rowActions({
+              onView: () => setView(c), onEdit: canEdit ? () => setEdit(c) : undefined,
+              onDelete: can('campaign.delete') ? () => del.openDelete(Number(c.id), c.name) : undefined,
+            }),
           ];
         })} empty="No campaigns yet \u2014 create one to start pulling leads" />
+      {del.deleteModal}
       {view && <CampaignView campaign={view} leadCount={counts[Number(view.id)] ?? 0} onClose={() => setView(null)} />}
       {edit && <CampaignModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
     </>
@@ -1146,6 +1184,7 @@ function Courses() {
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('master.update');
+  const del = useDelete('Course', '/masters/course', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   return (
     <>
@@ -1164,8 +1203,12 @@ function Courses() {
             active: c.is_active !== false, name: c.name, entity: 'Course', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/masters/course/${c.id}`, { is_active: next }); after(); },
           }),
-          rowActions({ onView: () => setView(c), onEdit: canEdit ? () => setEdit(c) : undefined }),
+          rowActions({
+            onView: () => setView(c), onEdit: canEdit ? () => setEdit(c) : undefined,
+            onDelete: can('master.delete') ? () => del.openDelete(Number(c.id), c.name) : undefined,
+          }),
         ])} empty="No courses in the master yet" />
+      {del.deleteModal}
       {view && (
         <DetailModal title={`Course \u2014 ${view.name}`} icon="book" onClose={() => setView(null)}>
           <Section title="Details">
@@ -1284,6 +1327,8 @@ function Users() {
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('user.update');
+  const { me } = useAuth();
+  const del = useDelete('User', '/users', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
 
   const [details, setDetails] = useState<Record<number, any>>({});
@@ -1337,9 +1382,14 @@ function Users() {
               active: u.status !== 'disabled', name: u.name, entity: 'User', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/users/${u.id}`, { status: next ? 'active' : 'disabled' }); after(); },
             }),
-            rowActions({ onView: () => setView(u), onEdit: canEdit ? () => setEdit(u) : undefined }),
+            rowActions({
+              onView: () => setView(u), onEdit: canEdit ? () => setEdit(u) : undefined,
+              // self-delete is refused by the API (400); hide the button for yourself
+              onDelete: can('user.delete') && Number(u.id) !== Number(me?.user.id) ? () => del.openDelete(Number(u.id), u.name) : undefined,
+            }),
           ];
         })} empty="No users match the current filters" />
+      {del.deleteModal}
       {view && <UserView user={view} onClose={() => setView(null)} />}
       {edit && (
         <AddModal formKey="admin.users" onClose={() => setEdit(null)} onSaved={after}
@@ -1382,6 +1432,7 @@ function Roles() {
   const [grants, setGrants] = useState<Record<string, any[]>>({});
   const [modal, setModal] = useState<{ roleId?: number; readOnly?: boolean } | null>(null);
   const canEdit = can('role.update');
+  const del = useDelete('Role', '/roles', () => { roles.reload(); bump(); });
   const after = () => { roles.reload(); bump(); };
   useEffect(() => {
     if (!roles.data) return;
@@ -1437,8 +1488,11 @@ function Roles() {
           rowActions({
             onView: () => setModal({ roleId: Number(r.id), readOnly: true }),
             onEdit: canEdit && !r.is_system ? () => setModal({ roleId: Number(r.id) }) : undefined,
+            // system roles are not deletable (API 400) — no button on them
+            onDelete: can('role.delete') && !r.is_system ? () => del.openDelete(Number(r.id), r.name) : undefined,
           }),
         ])} empty="No roles" />
+      {del.deleteModal}
       <Blocks blocks={[{ type: 'caps', title: 'Permission depth', items: [
         { t: 'Module-level', d: 'View/create/edit/delete/export' }, { t: 'Field-level', d: 'Hide sensitive fields' },
         { t: 'Record-level', d: 'Scoped by Branch/Pipeline/Campaign' }, { t: 'Manager partial', d: 'Live-monitor, view-only or edit' }] }]} />
@@ -1875,6 +1929,7 @@ function MastersAdmin() {
   const label = MASTER_LABELS[type] ?? types.data?.find((t) => t.type === type)?.label ?? type;
   const hasParent = !!types.data?.find((t) => t.type === type)?.parent;
   const after = () => { list.reload(); ref.reload(); bump(); };
+  const del = useDelete(label.replace(/s$/, ''), `/masters/${type}`, after);
   const cols = ['Name', 'Code', ...(hasParent ? ['Parent'] : []), 'Sort', 'Status', 'Actions'];
   return (
     <>
@@ -1905,10 +1960,14 @@ function MastersAdmin() {
               active: m.is_active !== false, name: m.name, entity: label.replace(/s$/, ''), canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/masters/${type}/${m.id}`, { is_active: next }); after(); },
             }),
-            rowActions({ onView: () => setView(m), onEdit: canEdit ? () => setEdit(m) : undefined }),
+            rowActions({
+              onView: () => setView(m), onEdit: canEdit ? () => setEdit(m) : undefined,
+              onDelete: can('master.delete') ? () => del.openDelete(Number(m.id), m.name) : undefined,
+            }),
           );
           return cells;
         })} empty={`No ${label.toLowerCase()} yet`} />
+      {del.deleteModal}
       {add && <AddMasterModal type={type} onClose={() => setAdd(false)} onCreated={after} />}
       {edit && <AddMasterModal type={type} initial={edit} onClose={() => setEdit(null)} onCreated={after} />}
       {view && (
@@ -1933,6 +1992,99 @@ function MastersAdmin() {
             ]} />
           </Section>
         </DetailModal>
+      )}
+    </>
+  );
+}
+
+/* --------------------------- deleted items ----------------------------- */
+/* Administration › Deleted Items — sanctioned addition (soft-delete client
+   request; noted in the parity spec). Per-entity tabs, restore with confirm;
+   a 409 (deleted ancestor) is surfaced verbatim. */
+
+function DeletedItems() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
+  const allowed = can('deleted.manage');
+  const entities = useFetch<Array<{ key: string; label: string }>>(allowed ? '/deleted-items/entities' : null, []);
+  const [entity, setEntity] = useState('branch');
+  const [tick, setTick] = useState(0);
+  const list = useFetch<{ entity: string; label: string; rows: any[] }>(
+    allowed ? `/deleted-items?entity=${encodeURIComponent(entity)}` : null, [entity, tick, refreshTick]);
+  const rows = list.data?.rows ?? [];
+  const [confirmRow, setConfirmRow] = useState<any | null>(null);
+  const [impactRow, setImpactRow] = useState<any | null>(null);
+  const [impact, setImpact] = useState<ImpactReport | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const label = list.data?.label ?? entities.data?.find((e) => e.key === entity)?.label ?? entity;
+  const pathFor = (id: number) => (entity.startsWith('master:')
+    ? `/masters/${entity.slice(7)}/${id}` : {
+      branch: `/branches/${id}`, vertical: `/verticals/${id}`, pipeline: `/pipelines/${id}`,
+      campaign: `/campaigns/${id}`, source: `/sources/${id}`, lead: `/leads/${id}`,
+      follow_up: `/follow-ups/${id}`, user: `/users/${id}`, team: `/teams/${id}`, role: `/roles/${id}`,
+    }[entity] ?? `/${entity}s/${id}`);
+
+  useEffect(() => {
+    if (!impactRow) { setImpact(null); return; }
+    setImpact(null);
+    api.get<ImpactReport>(`${pathFor(Number(impactRow.id))}/impact`).then(setImpact).catch((e) => { toast(e.message, true); setImpactRow(null); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [impactRow]);
+
+  const restore = async (row: any) => {
+    setBusy(true);
+    try {
+      await api.post(`${pathFor(Number(row.id))}/restore`);
+      toast(`${label} "${row.name}" restored`);
+      setConfirmRow(null); setTick((t) => t + 1); bump();
+    } catch (e: any) {
+      // 409 = an ancestor in the path is still deleted — surface the message clearly
+      toast(e.message, true);
+    } finally { setBusy(false); }
+  };
+
+  if (!allowed) {
+    return <div className="notice"><Ic k="shield" /><div>Deleted Items needs the <b>Deleted Items · manage</b> permission (Super Admin / Org Admin).</div></div>;
+  }
+  return (
+    <>
+      <div className="filters">
+        <div className="fchip"><Ic k="trash" />Entity
+          <select value={entity} onChange={(e) => setEntity(e.target.value)}>
+            {(entities.data ?? [{ key: 'branch', label: 'Branch' }]).map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}
+          </select>
+        </div>
+        <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> deleted</div>
+      </div>
+      <TableCard title={`Deleted ${label.toLowerCase()}s`} icon="trash"
+        cols={['Name', 'Deleted at', 'Deleted by', 'Actions']}
+        rows={rows.map((r) => [
+          { node: <span className="nm">{r.name}</span> } as Cell,
+          { mono: fmtFull(r.deleted_at), dim: true } as Cell,
+          r.deleted_by_name ?? '—',
+          rowActions({
+            onView: () => setImpactRow(r),
+            extra: [{ k: 'restore', title: 'Restore', onClick: () => setConfirmRow(r) }],
+          }),
+        ])}
+        empty={`No deleted ${label.toLowerCase()}s — everything is live`} />
+      {impactRow && (
+        <DetailModal title={`Impact — ${impactRow.name}`} icon="trash" width={560} onClose={() => setImpactRow(null)}>
+          {!impact ? <div className="empty-note">Loading impact…</div> : (
+            <>
+              <div className="page-sub" style={{ marginBottom: 10 }}>
+                {impact.total_associations} association{impact.total_associations === 1 ? '' : 's'} — all kept intact when this {label.toLowerCase()} was deleted.
+              </div>
+              <ImpactList report={impact} />
+            </>
+          )}
+        </DetailModal>
+      )}
+      {confirmRow && (
+        <ConfirmModal title={`Restore ${label.toLowerCase()}`} confirmLabel="Restore" busy={busy}
+          body={<>Restore {label.toLowerCase()} <b>{confirmRow.name}</b>? It returns to lists, dropdowns and reports immediately. If a parent in its path is still deleted, the restore is refused until the parent is restored first.</>}
+          onConfirm={() => restore(confirmRow)} onClose={() => setConfirmRow(null)} />
       )}
     </>
   );
@@ -1963,6 +2115,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   roles: Roles,
   audit: Audit,
   errorLogs: ErrorLogs,
+  deletedItems: DeletedItems,
   activityReports: ActivityReports,
   funnelAnalytics: FunnelAnalytics,
   workTasks: WorkTasks,

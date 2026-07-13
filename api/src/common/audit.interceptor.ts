@@ -55,6 +55,7 @@ export class AuditInterceptor implements NestInterceptor {
     const base = METHOD_ACTION[req.method];
     if (!base) return null;
     if (path.includes('/permissions')) return 'permission_change';
+    if (path.endsWith('/restore')) return 'restore'; // soft-delete restore (POST)
     return base;
   }
 

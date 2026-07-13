@@ -1,6 +1,6 @@
-import { BadRequestException, HttpException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { OtpService } from './otp.service';
+import { OTP_GENERIC_MESSAGE, OtpService } from './otp.service';
 import { SMS_NOT_CONFIGURED_MSG, SmsService } from './sms.provider';
 
 /**
@@ -36,6 +36,7 @@ describe('OtpService.request', () => {
     const svc = new OtpService(db as any, devSms);
     const res = await svc.request('98111 00001');
     expect(res.ok).toBe(true);
+    expect(res.message).toBe(OTP_GENERIC_MESSAGE);
     expect(res.expires_in_sec).toBe(300);
     const ins = db.queries.find((q) => q.sql.includes('INSERT INTO auth_otp'))!;
     expect(ins).toBeDefined();
@@ -45,11 +46,33 @@ describe('OtpService.request', () => {
     expect(String(audit.params[2])).toContain('otp_requested');
   });
 
-  it('unknown / inactive mobile -> 404 + audit', async () => {
+  // Backlog (c) — user-enumeration hardening: with a configured gateway the
+  // response is IDENTICAL for registered and unregistered mobiles.
+  it('unregistered mobile -> generic 200, same shape as registered, nothing persisted', async () => {
     const db = makeDb({ onOne: () => null });
     const svc = new OtpService(db as any, devSms);
-    await expect(svc.request('9999999999')).rejects.toBeInstanceOf(NotFoundException);
-    expect(db.queries.some((q) => q.sql.includes('audit_log'))).toBe(true);
+    const res = await svc.request('9999999999');
+    expect(res).toEqual({ ok: true, message: OTP_GENERIC_MESSAGE, expires_in_sec: 300 });
+    expect(db.queries.some((q) => q.sql.includes('INSERT INTO auth_otp'))).toBe(false);
+    expect(db.queries.some((q) => q.sql.includes('audit_log'))).toBe(true); // rejection audited server-side
+  });
+
+  it('registered vs unregistered responses are byte-identical (no oracle)', async () => {
+    const reg = new OtpService(makeDb({ onOne: (sql) => (sql.includes('FROM "user"') ? USER : null) }) as any, devSms);
+    const unreg = new OtpService(makeDb({ onOne: () => null }) as any, devSms);
+    const a = await reg.request('9811100001');
+    const b = await unreg.request('9999999999');
+    expect(JSON.stringify(Object.keys(a).sort())).toBe(JSON.stringify(Object.keys(b).sort()));
+    expect(a.message).toBe(b.message);
+    expect(a.ok).toBe(b.ok);
+  });
+
+  it('unregistered mobile is throttled like a registered one (60s, in-memory)', async () => {
+    const svc = new OtpService(makeDb({ onOne: () => null }) as any, devSms);
+    await svc.request('9999999998');
+    const err = await svc.request('9999999998').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect((err as HttpException).getStatus()).toBe(429);
   });
 
   it('resend inside 60s -> 429 throttle', async () => {
@@ -79,6 +102,15 @@ describe('OtpService.request', () => {
     expect(err).toBeInstanceOf(ServiceUnavailableException);
     expect((err as ServiceUnavailableException).message).toBe(SMS_NOT_CONFIGURED_MSG);
     expect(db.queries.some((q) => q.sql.includes('INSERT INTO auth_otp'))).toBe(false);
+  });
+
+  // Backlog (c): the 503 must be uniform — an unregistered mobile gets the SAME
+  // 503 while the gateway is unconfigured (registration is never consulted first).
+  it('no gateway + UNREGISTERED mobile -> the same uniform 503', async () => {
+    const svc = new OtpService(makeDb({ onOne: () => null }) as any, notConfiguredSms);
+    const err = await svc.request('9999999997').catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableException);
+    expect((err as ServiceUnavailableException).message).toBe(SMS_NOT_CONFIGURED_MSG);
   });
 
   it('rejects junk mobile input with 400', async () => {

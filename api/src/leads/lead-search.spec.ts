@@ -13,8 +13,16 @@ describe('buildLeadSearch', () => {
 
   it('text query -> name + email + phone LIKE on one param', () => {
     const { sql, params } = build('asha');
-    expect(sql).toBe('(l.full_name ILIKE $1 OR l.email ILIKE $1 OR l.phone LIKE $1)');
+    expect(sql).toBe('(l.full_name ILIKE $1 OR lower(l.email) LIKE lower($1) OR l.phone LIKE $1)');
     expect(params).toEqual(['%asha%']);
+  });
+
+  // OBS backlog (b): the email clause must be sargable against the
+  // lower(email) index from migration 014 (trgm GIN or btree fallback).
+  it('email clause uses lower(email) LIKE lower(...) so the lower(email) index applies', () => {
+    const { sql } = build('someone@example.com');
+    expect(sql).toContain('lower(l.email) LIKE lower(');
+    expect(sql).not.toContain('l.email ILIKE');
   });
 
   it('email fragment stays a plain ILIKE (no digit clause)', () => {

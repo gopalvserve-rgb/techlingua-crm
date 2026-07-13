@@ -14,6 +14,8 @@ import { Cell } from './renderer';
 
 export function rowActions(opts: {
   onView?: () => void; onEdit?: () => void;
+  /** soft delete (RBAC-gated by the caller) — opens the impact-preview modal */
+  onDelete?: () => void;
   /** additional icon buttons (e.g. pipeline "Stages" configurator) */
   extra?: Array<{ k: string; title: string; onClick: () => void }>;
 }): Cell {
@@ -28,6 +30,9 @@ export function rowActions(opts: {
       {(opts.extra ?? []).map((x) => (
         <button className="ract" key={x.title} title={x.title} onClick={x.onClick}><Ic k={x.k} w={2.1} /></button>
       ))}
+      {opts.onDelete && (
+        <button className="ract" title="Delete" style={{ color: 'var(--danger)' }} onClick={opts.onDelete}><Ic k="trash" w={2.1} /></button>
+      )}
     </span>
   ) };
 }

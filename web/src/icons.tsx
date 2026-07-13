@@ -16,6 +16,8 @@ export const I: Record<string, string> = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/>',
   fran: '<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/>',
+  restore: '<path d="M3 7v6h6"/><path d="M3 13a9 9 0 103-7.7L3 7"/>',
   cal: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   filter: '<path d="M22 3H2l8 9.5V19l4 2v-8.5z"/>',
   export: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>',

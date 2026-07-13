@@ -45,7 +45,7 @@ export class MastersService {
     const t = this.table(type);
     return this.db.query(
       `SELECT m.*, p.name AS parent_name FROM ${t} m LEFT JOIN ${MASTER_TYPES[type].parent ? this.table(MASTER_TYPES[type].parent!) : t} p ON p.id = m.parent_id
-        ${includeInactive ? '' : 'WHERE m.is_active'}
+        WHERE m.deleted_at IS NULL${includeInactive ? '' : ' AND m.is_active'}
         ORDER BY m.sort_order, m.name`,
     );
   }
@@ -77,7 +77,7 @@ export class MastersService {
     if (!sets.length) throw new BadRequestException('nothing to update');
     params.push(id);
     const rows = await this.db.query(
-      `UPDATE ${t} SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} RETURNING *`, params,
+      `UPDATE ${t} SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params,
     );
     if (!rows.length) throw new NotFoundException(`${type} #${id} not found`);
     return rows[0];

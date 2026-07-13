@@ -43,17 +43,17 @@ export class TeamsService {
          LEFT JOIN branch b ON b.id = t.branch_id
          LEFT JOIN vertical v ON v.id = t.vertical_id
          LEFT JOIN "user" u ON u.id = t.leader_id
-        WHERE ${where}
+        WHERE t.deleted_at IS NULL AND ${where}
         ORDER BY t.name`,
       params,
     );
   }
 
   async get(id: number) {
-    const team = await this.db.one(`SELECT * FROM team WHERE id = $1`, [id]);
+    const team = await this.db.one(`SELECT * FROM team WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!team) throw new NotFoundException('Team not found');
     const members = await this.db.query(
-      `SELECT u.id, u.name, u.email FROM team_member tm JOIN "user" u ON u.id = tm.user_id WHERE tm.team_id = $1`,
+      `SELECT u.id, u.name, u.email FROM team_member tm JOIN "user" u ON u.id = tm.user_id WHERE tm.team_id = $1 AND u.deleted_at IS NULL`,
       [id],
     );
     return { ...team, members };

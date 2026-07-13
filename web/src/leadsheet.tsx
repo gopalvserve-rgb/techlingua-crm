@@ -113,7 +113,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             <div className="mt">{lead.course_name || 'Course TBD'} · <span className="mono">{lead.phone}</span></div>
             <div style={{ marginTop: 7, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <TempBadge temperature={lead.temperature} score={lead.score} />
-              <span className="bdg b-indigo">{lead.vertical_name} · {lead.pipeline_name}</span>
+              <span className="bdg b-indigo">{lead.vertical_name}{lead.vertical_deleted ? ' (deleted)' : ''} · {lead.pipeline_name}{lead.pipeline_deleted ? ' (deleted)' : ''}</span>
               {lead.is_duplicate && <span className="bdg b-rose">Duplicate</span>}
             </div>
           </div>
@@ -152,7 +152,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                   ? <PhoneInput value={String(ed('phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, phone: v }))} />
                   : <div className="iv"><span className="mono">{lead.phone}</span></div>}
               </div>
-              <div className="f"><label>Source</label><div className="iv">{lead.source_name}</div></div>
+              <div className="f"><label>Source</label><div className="iv">{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">
                 {ref.courses.length || extra['course_id']?.length ? sel('course_id', withExtra('course_id', ref.courses)) : <span>{lead.course_name || '—'}</span>}
               </div>
@@ -187,7 +187,9 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                 <span>{fmtDT(lead.next_follow_up_at)}</span><Ic k="cal" />
               </div></div>
               <div className="f s2"><label>Path</label><div className="iv">
-                <span>{lead.branch_name} › {lead.vertical_name} › {lead.pipeline_name} › {lead.campaign_name}</span>
+                <span>
+                  {lead.branch_name}{lead.branch_deleted ? ' (deleted)' : ''} › {lead.vertical_name}{lead.vertical_deleted ? ' (deleted)' : ''} › {lead.pipeline_name}{lead.pipeline_deleted ? ' (deleted)' : ''} › {lead.campaign_name}{lead.campaign_deleted ? ' (deleted)' : ''}
+                </span>
               </div></div>
             </div>
           </div>

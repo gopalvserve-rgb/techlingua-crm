@@ -29,6 +29,9 @@ export interface EntityScopeDef {
   /** Column the :id route param matches. */
   idCol: string;
   cols: ScopeColumnMap;
+  /** Soft delete (015): extra live-rows condition; deleted rows fall out of
+   *  scoping lookups so scoped by-ID access to them 404s like nonexistent ids. */
+  alive?: string;
 }
 
 /** How each by-ID entity maps onto the hierarchy path (single registry). */
@@ -36,38 +39,39 @@ export const ENTITY_SCOPE: Record<Exclude<ScopedEntityKind, 'user' | 'master' | 
   // Sprint 2: leads carry the full path; follow-ups scope through their lead
   // (own = the follow-up's owner, so agents always see their own follow-ups).
   lead: {
-    from: 'lead e', idCol: 'e.id',
+    from: 'lead e', idCol: 'e.id', alive: 'e.deleted_at IS NULL',
     cols: {
       owner: 'e.owner_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
     },
   },
   follow_up: {
-    from: 'follow_up fu JOIN lead e ON e.id = fu.lead_id', idCol: 'fu.id',
+    from: 'follow_up fu JOIN lead e ON e.id = fu.lead_id', idCol: 'fu.id', alive: 'fu.deleted_at IS NULL',
     cols: {
       owner: 'fu.owner_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
     },
   },
-  branch: { from: 'branch e', idCol: 'e.id', cols: { branch: 'e.id' } },
-  vertical: { from: 'vertical e', idCol: 'e.id', cols: { branch: 'e.branch_id', vertical: 'e.id' } },
+  branch: { from: 'branch e', idCol: 'e.id', alive: 'e.deleted_at IS NULL', cols: { branch: 'e.id' } },
+  vertical: { from: 'vertical e', idCol: 'e.id', alive: 'e.deleted_at IS NULL', cols: { branch: 'e.branch_id', vertical: 'e.id' } },
   pipeline: {
-    from: 'pipeline e', idCol: 'e.id',
+    from: 'pipeline e', idCol: 'e.id', alive: 'e.deleted_at IS NULL',
     cols: { branch: 'e.branch_id', vertical: 'e.vertical_id', pipeline: 'e.id' },
   },
   stage: {
     from: 'pipeline_stage st JOIN pipeline e ON e.id = st.pipeline_id', idCol: 'st.id',
+    alive: 'e.deleted_at IS NULL',
     cols: { branch: 'e.branch_id', vertical: 'e.vertical_id', pipeline: 'e.id' },
   },
   campaign: {
-    from: 'campaign e', idCol: 'e.id',
+    from: 'campaign e', idCol: 'e.id', alive: 'e.deleted_at IS NULL',
     cols: { branch: 'e.branch_id', vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.id' },
   },
   source: {
-    from: 'source e', idCol: 'e.id',
+    from: 'source e', idCol: 'e.id', alive: 'e.deleted_at IS NULL',
     cols: { branch: 'e.branch_id', vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id' },
   },
-  team: { from: 'team e', idCol: 'e.id', cols: { team: 'e.id', branch: 'e.branch_id', vertical: 'e.vertical_id' } },
+  team: { from: 'team e', idCol: 'e.id', alive: 'e.deleted_at IS NULL', cols: { team: 'e.id', branch: 'e.branch_id', vertical: 'e.vertical_id' } },
   assignment: {
     from: 'user_assignment e', idCol: 'e.id',
     cols: {
@@ -141,7 +145,7 @@ export class ScopeEnforcerService {
         `SELECT 1 AS ok FROM "user" u
            LEFT JOIN user_assignment ua ON ua.user_id = u.id AND ua.is_active
            LEFT JOIN team_member tm ON tm.user_id = u.id
-          WHERE u.id = $${idIdx} AND ((${where}) OR u.id = $${params.length})
+          WHERE u.id = $${idIdx} AND u.deleted_at IS NULL AND ((${where}) OR u.id = $${params.length})
           LIMIT 1`,
         params,
       );
@@ -153,8 +157,9 @@ export class ScopeEnforcerService {
     const where = this.resolver.buildScopeWhere(scope, def.cols, params);
     if (where === '1=0') return 'unmapped'; // no filter maps onto this entity
     params.push(id);
+    const alive = def.alive ? ` AND ${def.alive}` : '';
     const row = await this.db.one(
-      `SELECT 1 AS ok FROM ${def.from} WHERE ${def.idCol} = $${params.length} AND (${where}) LIMIT 1`,
+      `SELECT 1 AS ok FROM ${def.from} WHERE ${def.idCol} = $${params.length}${alive} AND (${where}) LIMIT 1`,
       params,
     );
     return row ? 'ok' : 'miss';

@@ -694,6 +694,9 @@ export const APP: ModuleItem[] = [
     // Sanctioned addition (client-approved, not in the prototype nav) — see design spec §Sanctioned additions.
     { id: 'errorlogs', label: 'Error Logs', spec: { dyn: 'errorLogs',
       sub: 'Every captured error & issue across API and web — grouped by root cause, bugs highlighted by severity, with stack traces and a resolve workflow.' } },
+    // Sanctioned addition (soft-delete client request) — see design spec §Sanctioned additions.
+    { id: 'deleted', label: 'Deleted Items', spec: { dyn: 'deletedItems',
+      sub: 'Soft-deleted records across every module — deleted rows are hidden from lists, dropdowns & KPIs while their children stay intact. Review impact and restore (Super Admin / Org Admin).' } },
     { id: 'settings', label: 'Settings', spec: {
       sub: 'Org settings, numbering series, templates, business hours, holidays, SMTP & notifications.',
       blocks: [{ type: 'cfg', title: 'Organisation settings', rows: [

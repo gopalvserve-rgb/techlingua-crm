@@ -40,7 +40,7 @@ export class JwtAuthGuard implements CanActivate {
 
     const userId = Number(payload.sub);
     const row = await this.db.one<{ status: string }>(
-      `SELECT status FROM "user" WHERE id = $1`, [userId],
+      `SELECT status FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [userId],
     );
     if (!row || row.status !== 'active') {
       throw new UnauthorizedException('User is inactive');

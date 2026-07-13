@@ -31,9 +31,9 @@ export class HierarchyService {
     const where = this.resolver.buildScopeWhere(scope, { branch: 'b.id' }, params);
     return this.db.query(
       `SELECT b.*, s.name AS state_name, c.name AS city_name,
-              (SELECT COUNT(*)::int FROM vertical v WHERE v.branch_id = b.id AND v.is_active) AS vertical_count
+              (SELECT COUNT(*)::int FROM vertical v WHERE v.branch_id = b.id AND v.is_active AND v.deleted_at IS NULL) AS vertical_count
          FROM branch b LEFT JOIN state s ON s.id = b.state_id LEFT JOIN city c ON c.id = b.city_id
-        WHERE ${where}${HierarchyService.activeFilter('b', includeInactive)} ORDER BY b.name`,
+        WHERE ${where} AND b.deleted_at IS NULL${HierarchyService.activeFilter('b', includeInactive)} ORDER BY b.name`,
       params,
     );
   }
@@ -59,16 +59,16 @@ export class HierarchyService {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, params);
     let sql = `SELECT v.*, b.name AS branch_name,
-                      (SELECT COUNT(*)::int FROM pipeline p WHERE p.vertical_id = v.id AND p.is_active) AS pipeline_count
+                      (SELECT COUNT(*)::int FROM pipeline p WHERE p.vertical_id = v.id AND p.is_active AND p.deleted_at IS NULL) AS pipeline_count
                  FROM vertical v JOIN branch b ON b.id = v.branch_id
-                WHERE ${where}${HierarchyService.activeFilter('v', includeInactive)}`;
+                WHERE ${where} AND v.deleted_at IS NULL${HierarchyService.activeFilter('v', includeInactive)}`;
     if (branchId) { params.push(branchId); sql += ` AND v.branch_id = $${params.length}`; }
     return this.db.query(sql + ` ORDER BY v.name`, params);
   }
 
   async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object }, actorId: number) {
     if (!dto?.branch_id || !dto?.name || !dto?.code) throw new BadRequestException('branch_id, name and code are required');
-    const branch = await this.db.one<{ org_id: string }>(`SELECT org_id FROM branch WHERE id = $1`, [dto.branch_id]);
+    const branch = await this.db.one<{ org_id: string }>(`SELECT org_id FROM branch WHERE id = $1 AND deleted_at IS NULL`, [dto.branch_id]);
     if (!branch) throw new NotFoundException('branch not found');
     const rows = await this.db.query(
       `INSERT INTO vertical (org_id, branch_id, name, code, smtp_config, gateway_config, created_by)
@@ -92,7 +92,7 @@ export class HierarchyService {
     }, params);
     let sql = `SELECT p.*, v.name AS vertical_name, b.name AS branch_name
                  FROM pipeline p JOIN vertical v ON v.id = p.vertical_id JOIN branch b ON b.id = p.branch_id
-                WHERE ${where}${HierarchyService.activeFilter('p', includeInactive)}`;
+                WHERE ${where} AND p.deleted_at IS NULL${HierarchyService.activeFilter('p', includeInactive)}`;
     if (verticalId) { params.push(verticalId); sql += ` AND p.vertical_id = $${params.length}`; }
     return this.db.query(sql + ` ORDER BY p.name`, params);
   }
@@ -100,7 +100,7 @@ export class HierarchyService {
   async createPipeline(dto: { vertical_id: number; name: string; code: string }, actorId: number) {
     if (!dto?.vertical_id || !dto?.name || !dto?.code) throw new BadRequestException('vertical_id, name and code are required');
     const v = await this.db.one<{ org_id: string; branch_id: string }>(
-      `SELECT org_id, branch_id FROM vertical WHERE id = $1`, [dto.vertical_id],
+      `SELECT org_id, branch_id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [dto.vertical_id],
     );
     if (!v) throw new NotFoundException('vertical not found');
     return this.db.tx(async (c) => {
@@ -295,7 +295,7 @@ export class HierarchyService {
     let sql = `SELECT c.*, p.name AS pipeline_name, v.name AS vertical_name, b.name AS branch_name
                  FROM campaign c JOIN pipeline p ON p.id = c.pipeline_id
                  JOIN vertical v ON v.id = c.vertical_id JOIN branch b ON b.id = c.branch_id
-                WHERE ${where}${HierarchyService.activeFilter('c', includeInactive)}`;
+                WHERE ${where} AND c.deleted_at IS NULL${HierarchyService.activeFilter('c', includeInactive)}`;
     if (pipelineId) { params.push(pipelineId); sql += ` AND c.pipeline_id = $${params.length}`; }
     return this.db.query(sql + ` ORDER BY c.name`, params);
   }
@@ -310,7 +310,7 @@ export class HierarchyService {
     const dist = dto.distribution_config != null ? validateDistributionConfig(dto.distribution_config) : null;
     const dup = dto.duplicacy_config != null ? validateDuplicacyConfig(dto.duplicacy_config) : null;
     const p = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string }>(
-      `SELECT org_id, branch_id, vertical_id FROM pipeline WHERE id = $1`, [dto.pipeline_id],
+      `SELECT org_id, branch_id, vertical_id FROM pipeline WHERE id = $1 AND deleted_at IS NULL`, [dto.pipeline_id],
     );
     if (!p) throw new NotFoundException('pipeline not found');
     const rows = await this.db.query(
@@ -347,7 +347,7 @@ export class HierarchyService {
     let sql = `SELECT s.*, c.name AS campaign_name, ms.name AS master_source_name
                  FROM source s JOIN campaign c ON c.id = s.campaign_id
                  LEFT JOIN m_source ms ON ms.id = s.master_source_id
-                WHERE ${where}${HierarchyService.activeFilter('s', includeInactive)}`;
+                WHERE ${where} AND s.deleted_at IS NULL${HierarchyService.activeFilter('s', includeInactive)}`;
     if (campaignId) { params.push(campaignId); sql += ` AND s.campaign_id = $${params.length}`; }
     return this.db.query(sql + ` ORDER BY s.name`, params);
   }
@@ -357,7 +357,7 @@ export class HierarchyService {
   }, actorId: number) {
     if (!dto?.campaign_id || !dto?.name) throw new BadRequestException('campaign_id and name are required');
     const c = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string; pipeline_id: string }>(
-      `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1`, [dto.campaign_id],
+      `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [dto.campaign_id],
     );
     if (!c) throw new NotFoundException('campaign not found');
     const channel = dto.channel ?? 'manual';
@@ -392,7 +392,7 @@ export class HierarchyService {
     if (!sets.length) throw new BadRequestException('nothing to update');
     params.push(id);
     const rows = await this.db.query(
-      `UPDATE ${table} SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} RETURNING *`, params,
+      `UPDATE ${table} SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params,
     );
     if (!rows.length) throw new NotFoundException(`${table} not found`);
     return rows[0];

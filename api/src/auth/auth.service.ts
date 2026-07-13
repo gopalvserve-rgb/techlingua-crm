@@ -24,11 +24,11 @@ export class AuthService {
   async login(identifier: string, password: string) {
     const user = identifier.includes('@')
       ? await this.db.one<UserRow>(
-          `SELECT id, name, email, phone, password_hash, status FROM "user" WHERE lower(email) = lower($1)`,
+          `SELECT id, name, email, phone, password_hash, status FROM "user" WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
           [identifier],
         )
       : await this.db.one<UserRow>(
-          `SELECT id, name, email, phone, password_hash, status FROM "user" WHERE phone = $1`,
+          `SELECT id, name, email, phone, password_hash, status FROM "user" WHERE phone = $1 AND deleted_at IS NULL`,
           [normalizePhone(identifier)],
         );
     if (!user || user.status !== 'active' || !user.password_hash) {
@@ -51,7 +51,7 @@ export class AuthService {
   /** Profile + effective permission keys (used by the web app to hide nav/actions). */
   async me(userId: number) {
     const user = await this.db.one(
-      `SELECT id, name, email, phone, status FROM "user" WHERE id = $1`, [userId],
+      `SELECT id, name, email, phone, status FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [userId],
     );
     const grants = await this.rbacData.loadUserGrants(userId);
     const heldRoleIds = new Set(grants.assignments.map((a) => a.roleId));

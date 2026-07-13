@@ -1,8 +1,8 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { DatabaseService } from '../database/database.service';
 import { normalizePhone } from '../common/phone.util';
-import { SmsService } from './sms.provider';
+import { SMS_NOT_CONFIGURED_MSG, SmsService } from './sms.provider';
 
 /**
  * OTP login (client update #1 — mobile-first auth).
@@ -16,6 +16,10 @@ import { SmsService } from './sms.provider';
 export const OTP_TTL_MS = 5 * 60 * 1000;
 export const OTP_MAX_ATTEMPTS = 3;
 export const OTP_RESEND_THROTTLE_MS = 60 * 1000;
+/** Enumeration hardening (backlog c): registered and unregistered mobiles get the
+ *  SAME response shape/status — nothing in the API discloses whether a mobile
+ *  belongs to an account. */
+export const OTP_GENERIC_MESSAGE = 'If this mobile is registered, an OTP has been sent';
 
 export interface OtpUser { id: number; name: string; email: string | null; phone: string; status: string }
 
@@ -40,28 +44,54 @@ export class OtpService {
     const phone = normalizePhone(mobile);
     if (!phone || phone.replace(/\D/g, '').length < 8) throw new BadRequestException('a valid mobile number is required');
     const user = await this.db.one<OtpUser>(
-      `SELECT id, name, email, phone, status FROM "user" WHERE phone = $1`, [phone],
+      `SELECT id, name, email, phone, status FROM "user" WHERE phone = $1 AND deleted_at IS NULL`, [phone],
     );
     return { phone, user: user && user.status === 'active' ? user : null };
   }
 
-  /** Generate + store + send an OTP. Throttled to one send per phone per 60s. */
+  /** In-memory last-request marker so the 60s resend throttle behaves the SAME
+   *  for unregistered mobiles (which have no auth_otp rows) as for registered
+   *  ones — otherwise the throttle itself becomes an enumeration oracle. */
+  private readonly lastRequestAt = new Map<string, number>(); // per-instance == per-process (Nest singleton)
+
+  /**
+   * Generate + store + send an OTP. Enumeration-hardened (backlog c):
+   *  - gateway unconfigured -> 503 uniformly, REGARDLESS of registration;
+   *  - gateway configured   -> generic 200 for registered AND unregistered
+   *    mobiles (identical shape); the SMS only goes out to registered ones.
+   *  - 60s resend throttle applies uniformly per phone.
+   */
   async request(mobile: string) {
     const { phone, user } = await this.userByMobile(mobile);
-    if (!user) {
-      await this.audit(null, 'otp_request_rejected', { phone, reason: 'no active user' });
-      throw new NotFoundException('No active user with this mobile number');
-    }
+
+    // uniform 60s resend throttle (in-memory covers unregistered phones; the
+    // auth_otp check below keeps it durable across restarts for registered ones)
+    const lastMem = this.lastRequestAt.get(phone);
     const last = await this.db.one<{ created_at: string }>(
       `SELECT created_at FROM auth_otp WHERE phone = $1 ORDER BY created_at DESC LIMIT 1`, [phone],
     );
-    if (last && Date.now() - new Date(last.created_at).getTime() < OTP_RESEND_THROTTLE_MS) {
-      await this.audit(user.id, 'otp_request_throttled', { phone });
+    const lastAt = Math.max(lastMem ?? 0, last ? new Date(last.created_at).getTime() : 0);
+    if (lastAt && Date.now() - lastAt < OTP_RESEND_THROTTLE_MS) {
+      await this.audit(user?.id ?? null, 'otp_request_throttled', { phone });
       throw new HttpException('Please wait 60 seconds before requesting another OTP', 429);
     }
-    // resolve the SMS gateway BEFORE persisting — while no gateway is configured
-    // the request must fail with a clear 503 and leave no dangling code behind.
+
+    // gateway availability is decided BEFORE registration is consulted — while
+    // no gateway is configured EVERY request 503s identically (no oracle), and
+    // no dangling code is left behind.
     const provider = await this.sms.provider();
+    if (provider.name === 'not_configured') {
+      await this.audit(user?.id ?? null, 'otp_request_unavailable', { phone, reason: 'sms gateway not configured' });
+      throw new ServiceUnavailableException(SMS_NOT_CONFIGURED_MSG);
+    }
+
+    this.lastRequestAt.set(phone, Date.now());
+    if (!user) {
+      // same response as the success path — do NOT reveal that the mobile is unknown
+      await this.audit(null, 'otp_request_rejected', { phone, reason: 'no active user' });
+      return { ok: true, message: OTP_GENERIC_MESSAGE, expires_in_sec: OTP_TTL_MS / 1000 };
+    }
+
     const code = String(Math.floor(100000 + Math.random() * 900000)); // 6 digits
     await provider.send(phone, `${code} is your Tech Lingua CRM login code. Valid for 5 minutes.`);
     const hash = await bcrypt.hash(code, 10);
@@ -71,7 +101,7 @@ export class OtpService {
       [user.id, phone, hash],
     );
     await this.audit(user.id, 'otp_requested', { phone, provider: provider.name });
-    return { ok: true, message: 'OTP sent', expires_in_sec: OTP_TTL_MS / 1000 };
+    return { ok: true, message: OTP_GENERIC_MESSAGE, expires_in_sec: OTP_TTL_MS / 1000 };
   }
 
   /** Verify a code. Returns the user for AuthService to mint the JWT. */

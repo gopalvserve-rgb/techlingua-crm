@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { CreateLeadDto, LeadsService } from './leads.service';
 import { CreateFollowUpDto, FollowUpsService } from './followups.service';
 import { CurrentScope, CurrentUser, RequirePermission, ScopedEntity } from '../rbac/rbac.decorators';
@@ -84,6 +84,6 @@ export class FollowUpsController {
     return this.fu.update(id, dto, u.id, s);
   }
 
-  @Delete(':id') @RequirePermission('followup.delete') @ScopedEntity('follow_up')
-  remove(@Param('id', ParseIntPipe) id: number) { return this.fu.remove(id); }
+  // DELETE /follow-ups/:id now lives in SoftDeleteController (central registry:
+  // impact preview + deleted_at/deleted_by + restore).
 }

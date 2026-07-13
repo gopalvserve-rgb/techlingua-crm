@@ -34,7 +34,8 @@ const FU_SELECT = `
          f.status, f.priority, f.remind_at, f.notes, f.created_at, f.created_by,
          ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name, cu.name AS creator_name,
          l.full_name AS lead_name, l.phone AS lead_phone, l.temperature, l.score,
-         co.name AS course_name, st.name AS stage_name, b.name AS branch_name, v.name AS vertical_name
+         co.name AS course_name, st.name AS stage_name, b.name AS branch_name, v.name AS vertical_name,
+         (l.deleted_at IS NOT NULL) AS lead_deleted
     FROM follow_up f
     JOIN lead l ON l.id = f.lead_id
     LEFT JOIN m_followup_type ft ON ft.id = f.type_id
@@ -58,7 +59,7 @@ export class FollowUpsService {
   async list(scope: ResolvedScope, f: FollowUpFilters, userId: number) {
     const params: unknown[] = [];
     const where: string[] = [this.resolver.buildScopeWhere(scope, FOLLOWUP_SCOPE_COLS, params),
-      'f.is_active', 'l.is_active'];
+      'f.deleted_at IS NULL', 'f.is_active', 'l.is_active'];
     if (f.lead_id) { params.push(f.lead_id); where.push(`f.lead_id = $${params.length}`); }
     if (f.owner_id) { params.push(f.owner_id); where.push(`f.owner_id = $${params.length}`); }
     if (f.mine) { params.push(userId); where.push(`f.owner_id = $${params.length}`); }
@@ -110,7 +111,8 @@ export class FollowUpsService {
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.created_by = $${params.length}
                                AND f.completed_at >= date_trunc('week', now()))::int AS reported_done_week
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
-        WHERE (${w}) AND f.is_active AND l.is_active`, params,
+        WHERE (${w}) AND f.is_active AND l.is_active
+          AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, params,
     );
   }
 
@@ -122,7 +124,7 @@ export class FollowUpsService {
     await this.enforcer.assertRefInScope(scope, 'lead', dto.lead_id, actorId);
     await this.enforcer.assertRefInScope(scope, 'user', dto.owner_id, actorId);
     const lead = await this.db.one<{ org_id: string; branch_id: string; owner_id: string | null }>(
-      `SELECT org_id, branch_id, owner_id FROM lead WHERE id = $1 AND is_active`, [dto.lead_id],
+      `SELECT org_id, branch_id, owner_id FROM lead WHERE id = $1 AND is_active AND deleted_at IS NULL`, [dto.lead_id],
     );
     if (!lead) throw new NotFoundException('lead not found');
     const owner = dto.owner_id ?? (lead.owner_id ? Number(lead.owner_id) : actorId);
@@ -157,7 +159,7 @@ export class FollowUpsService {
     scope: ResolvedScope,
   ) {
     const before = await this.db.one<Record<string, any>>(
-      `SELECT f.*, l.org_id, l.branch_id FROM follow_up f JOIN lead l ON l.id = f.lead_id WHERE f.id = $1`, [id],
+      `SELECT f.*, l.org_id, l.branch_id FROM follow_up f JOIN lead l ON l.id = f.lead_id WHERE f.id = $1 AND f.deleted_at IS NULL`, [id],
     );
     if (!before) throw new NotFoundException('follow_up not found');
     // DEF-QA4-03: reassignment target must be inside the caller's scope.
@@ -199,12 +201,4 @@ export class FollowUpsService {
     });
   }
 
-  /** Soft delete. */
-  async remove(id: number) {
-    const rows = await this.db.query(
-      `UPDATE follow_up SET is_active = FALSE, updated_at = now() WHERE id = $1 RETURNING id`, [id],
-    );
-    if (!rows.length) throw new NotFoundException('follow_up not found');
-    return { ok: true };
-  }
 }

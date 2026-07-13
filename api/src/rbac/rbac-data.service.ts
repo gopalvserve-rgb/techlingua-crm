@@ -14,7 +14,7 @@ export class RbacDataService {
     }>(
       `SELECT ua.role_id, ua.branch_id, ua.vertical_id, ua.pipeline_id, ua.campaign_id, ua.team_id
          FROM user_assignment ua
-         JOIN role r ON r.id = ua.role_id AND r.is_active
+         JOIN role r ON r.id = ua.role_id AND r.is_active AND r.deleted_at IS NULL
         WHERE ua.user_id = $1 AND ua.is_active`,
       [userId],
     );
@@ -33,7 +33,7 @@ export class RbacDataService {
     const teams = await this.db.query<{ id: string }>(
       `SELECT tm.team_id AS id FROM team_member tm WHERE tm.user_id = $1
        UNION
-       SELECT t.id FROM team t WHERE t.leader_id = $1 AND t.is_active`,
+       SELECT t.id FROM team t WHERE t.leader_id = $1 AND t.is_active AND t.deleted_at IS NULL`,
       [userId],
     );
 

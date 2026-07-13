@@ -38,7 +38,10 @@ export function buildLeadSearch(q: string, params: unknown[]): string {
   const qt = q.trim();
   params.push(`%${qt}%`);
   const like = `$${params.length}`;
-  const clauses = [`l.full_name ILIKE ${like}`, `l.email ILIKE ${like}`, `l.phone LIKE ${like}`];
+  // OBS backlog (b): the email index is on lower(email) (migration 014); the
+  // query must match it — lower(email) LIKE lower(...) hits idx_lead_email_trgm
+  // (or the btree fallback) where a bare `email ILIKE` cannot use it.
+  const clauses = [`l.full_name ILIKE ${like}`, `lower(l.email) LIKE lower(${like})`, `l.phone LIKE ${like}`];
   if (looksLikePhoneQuery(qt)) {
     // country-agnostic digit-contains: compare digits against digits, with the
     // 00/trunk-0 dialing prefixes of the QUERY stripped as extra variants
@@ -81,7 +84,10 @@ const LEAD_SELECT = `
          b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
          c.name AS campaign_name, s.name AS source_name,
          st.name AS stage_name, st.stage_type, ms.name AS status_name,
-         u.name AS owner_name, co.name AS course_name, ci.name AS city_name
+         u.name AS owner_name, co.name AS course_name, ci.name AS city_name,
+         (b.deleted_at IS NOT NULL) AS branch_deleted, (v.deleted_at IS NOT NULL) AS vertical_deleted,
+         (p.deleted_at IS NOT NULL) AS pipeline_deleted, (c.deleted_at IS NOT NULL) AS campaign_deleted,
+         (s.deleted_at IS NOT NULL) AS source_deleted
     FROM lead l
     JOIN branch b   ON b.id = l.branch_id
     JOIN vertical v ON v.id = l.vertical_id
@@ -112,7 +118,7 @@ export class LeadsService {
 
   async list(scope: ResolvedScope, f: LeadFilters) {
     const params: unknown[] = [];
-    const where: string[] = [this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, params), 'l.is_active'];
+    const where: string[] = [this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, params), 'l.deleted_at IS NULL', 'l.is_active'];
     const eq = (col: string, val: unknown) => { params.push(val); where.push(`${col} = $${params.length}`); };
     if (f.branch_id) eq('l.branch_id', f.branch_id);
     if (f.vertical_id) eq('l.vertical_id', f.vertical_id);
@@ -140,7 +146,7 @@ export class LeadsService {
   }
 
   async get(id: number) {
-    const lead = await this.db.one(`${LEAD_SELECT} WHERE l.id = $1`, [id]);
+    const lead = await this.db.one(`${LEAD_SELECT} WHERE l.id = $1 AND l.deleted_at IS NULL`, [id]);
     if (!lead) throw new NotFoundException('lead not found');
     // stages of the lead's pipeline (for the stage stepper) — no extra permission needed
     const stages = await this.db.query(
@@ -155,7 +161,7 @@ export class LeadsService {
          LEFT JOIN m_followup_type ft ON ft.id = f.type_id
          LEFT JOIN m_disposition d ON d.id = f.disposition_id
          LEFT JOIN "user" u ON u.id = f.owner_id
-        WHERE f.lead_id = $1 AND f.is_active
+        WHERE f.lead_id = $1 AND f.is_active AND f.deleted_at IS NULL
         ORDER BY f.scheduled_at DESC`,
       [id],
     );
@@ -188,11 +194,11 @@ export class LeadsService {
     const org = await this.orgId();
     // derive the full path from the campaign — no client can produce an inconsistent path
     const camp = await this.db.one<{ branch_id: string; vertical_id: string; pipeline_id: string }>(
-      `SELECT branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND is_active`, [dto.campaign_id],
+      `SELECT branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND is_active AND deleted_at IS NULL`, [dto.campaign_id],
     );
     if (!camp) throw new NotFoundException('campaign not found');
     const src = await this.db.one<{ id: string }>(
-      `SELECT id FROM source WHERE id = $1 AND (campaign_id = $2 OR campaign_id IS NULL)`,
+      `SELECT id FROM source WHERE id = $1 AND deleted_at IS NULL AND (campaign_id = $2 OR campaign_id IS NULL)`,
       [dto.source_id, dto.campaign_id],
     );
     if (!src) throw new BadRequestException('source does not belong to the campaign');
@@ -201,7 +207,7 @@ export class LeadsService {
     // +91/0091/leading-0 collapse to +91XXXXXXXXXX (see common/phone.util.ts).
     const phone = normalizePhone(dto.phone) as string;
     const dup = await this.db.one<{ id: string }>(
-      `SELECT id FROM lead WHERE phone = $1 AND is_active ORDER BY id LIMIT 1`, [phone],
+      `SELECT id FROM lead WHERE phone = $1 AND is_active AND deleted_at IS NULL ORDER BY id LIMIT 1`, [phone],
     );
     // default stage: the pipeline's default (or first) stage
     const defStage = await this.db.one<{ id: string }>(
@@ -249,7 +255,7 @@ export class LeadsService {
   // ---- update (stage/status/owner/priority/temperature/fields) -------------
 
   async update(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
-    const before = await this.db.one<Record<string, any>>(`SELECT * FROM lead WHERE id = $1`, [id]);
+    const before = await this.db.one<Record<string, any>>(`SELECT * FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!before) throw new NotFoundException('lead not found');
     // DEF-QA4-03: body-referenced users/teams must be inside the caller's scope.
     if (dto.owner_id != null && Number(dto.owner_id) !== Number(before.owner_id ?? 0)) {
@@ -288,7 +294,7 @@ export class LeadsService {
     if (dto.owner_id !== undefined && Number(dto.owner_id ?? 0) !== Number(before.owner_id ?? 0)) {
       const ownerId = dto.owner_id == null ? null : Number(dto.owner_id);
       if (ownerId != null) {
-        const u = await this.db.one(`SELECT id FROM "user" WHERE id = $1 AND status = 'active'`, [ownerId]);
+        const u = await this.db.one(`SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [ownerId]);
         if (!u) throw new BadRequestException('unknown owner');
       }
       set('owner_id', ownerId);
@@ -347,7 +353,7 @@ export class LeadsService {
   /** Append a free-text note to the timeline. */
   async addNote(id: number, note: string, actorId: number) {
     if (!note?.trim()) throw new BadRequestException('note is required');
-    const lead = await this.db.one<{ org_id: string; branch_id: string }>(`SELECT org_id, branch_id FROM lead WHERE id = $1`, [id]);
+    const lead = await this.db.one<{ org_id: string; branch_id: string }>(`SELECT org_id, branch_id FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!lead) throw new NotFoundException('lead not found');
     await this.db.query(
       `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, note) VALUES ($1,$2,$3,$4,'note',$5)`,
@@ -376,21 +382,21 @@ export class LeadsService {
          LEFT JOIN pipeline_stage st ON st.id = l.stage_id
          LEFT JOIN source so ON so.id = l.source_id
          LEFT JOIN m_source ms ON ms.id = so.master_source_id
-        WHERE (${w}) AND l.is_active`, p1.slice(),
+        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL`, p1.slice(),
     );
     const byStage = await this.db.query(
       `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, st.pipeline_id, COUNT(l.id)::int AS ct
          FROM lead l JOIN pipeline_stage st ON st.id = l.stage_id
-        WHERE (${w}) AND l.is_active
+        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL
         GROUP BY st.id, st.name, st.stage_type, st.sort_order, st.pipeline_id
         ORDER BY st.sort_order`, p1.slice(),
     );
     const series = await this.db.query(
       `SELECT d::date AS day,
               (SELECT COUNT(*)::int FROM lead l
-                WHERE (${w}) AND l.is_active AND l.created_at::date = d::date) AS leads,
+                WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL AND l.created_at::date = d::date) AS leads,
               (SELECT COUNT(*)::int FROM lead l JOIN pipeline_stage st ON st.id = l.stage_id
-                WHERE (${w}) AND l.is_active AND st.stage_type = 'won'
+                WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL AND st.stage_type = 'won'
                   AND l.updated_at::date = d::date) AS won
          FROM generate_series(CURRENT_DATE - 13, CURRENT_DATE, '1 day') d
         ORDER BY d`, p1.slice(),
@@ -409,7 +415,7 @@ export class LeadsService {
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at >= date_trunc('week', now()))::int AS done_week,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${p2.length})::int AS my_open
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
-        WHERE (${wf}) AND f.is_active`, p2,
+        WHERE (${wf}) AND f.is_active AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, p2,
     );
     return { kpis, by_stage: byStage, series, follow_ups: fu };
   }
