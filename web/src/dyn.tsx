@@ -20,6 +20,7 @@ import {
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { StageConfigurator } from './stageconfig';
+import LeadImport from './leadimport';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -2185,6 +2186,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   quickStats: QuickStats,
   calendar: Calendar,
   leadsAll: LeadsAll,
+  leadImport: LeadImport,
   followups: Followups,
   kanban: Kanban,
   scoring: Scoring,

@@ -7,7 +7,12 @@ import { AppModule } from './app.module';
 import { config } from './config';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // bodyParser:false -> we register express.json ourselves with a bigger limit:
+  // bulk CSV import posts the file as text in the body (see ingestion/import.service.ts,
+  // MAX_CSV_BYTES = 5 MB). Express's 100 KB default would 413 every real import.
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app.use(express.json({ limit: '8mb' }));
+  app.use(express.urlencoded({ limit: '8mb', extended: true }));
   app.setGlobalPrefix('api');
   app.enableCors({ origin: config.webOrigin, credentials: true });
 

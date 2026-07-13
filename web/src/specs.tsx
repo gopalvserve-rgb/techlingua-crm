@@ -134,6 +134,8 @@ export const APP: ModuleItem[] = [
     { id: 'all', label: 'Leads', spec: { dyn: 'leadsAll',
       sub: 'Full lead table — every lead tagged Branch › Vertical › Pipeline › Campaign › Source.',
       actions: [['filter', 'Filters', 'ghost'], ['plus', 'Add lead', 'primary']] } },
+    { id: 'import', label: 'Import Leads', spec: { dyn: 'leadImport',
+      sub: 'Bulk-import leads from a CSV — map your columns, preview every row, then import. Duplicates and assignment follow the campaign\u2019s own rules.' } },
     { id: 'followups', label: 'Follow-ups', spec: { dyn: 'followups',
       sub: 'All scheduled follow-ups across leads — call, WhatsApp, email, visit. Overdue highlighted.',
       actions: [['plus', 'Add follow-up', 'primary'], ['filter', 'Filters', 'ghost']] } },

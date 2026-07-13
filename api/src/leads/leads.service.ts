@@ -1,6 +1,7 @@
-import { DistributionConfig, matchCondition, pickFromPool } from './distribution.util';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
+import { IngestPayload } from '../ingestion/ingestion.types';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -107,6 +108,7 @@ export class LeadsService {
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
     private readonly enforcer: ScopeEnforcerService,
+    private readonly ingestion: LeadIngestionService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -178,37 +180,20 @@ export class LeadsService {
     );
   }
 
-  /**
-   * Field context the conditional rules evaluate against: raw DTO scalars,
-   * *_id columns, custom_fields keys, PLUS resolved master names so rules can
-   * say { field: 'course', value: 'IELTS' } (NeoDove-style) as well as
-   * { field: 'course_id', value: 12 }.
-   */
-  private async buildConditionContext(dto: CreateLeadDto): Promise<Record<string, unknown>> {
-    const ctx: Record<string, unknown> = {
-      ...(dto.custom_fields ?? {}),
-      full_name: dto.full_name, phone: dto.phone, email: dto.email ?? null,
-      priority: dto.priority ?? 'med', temperature: dto.temperature ?? null, score: dto.score ?? 0,
-      source_id: dto.source_id, state_id: dto.state_id ?? null, city_id: dto.city_id ?? null,
-      course_id: dto.course_id ?? null, qualification_id: dto.qualification_id ?? null,
-      budget_id: dto.budget_id ?? null,
-    };
-    const row = await this.db.one<Record<string, unknown>>(
-      `SELECT (SELECT name FROM m_course        WHERE id = $1) AS course,
-              (SELECT name FROM m_qualification WHERE id = $2) AS qualification,
-              (SELECT name FROM m_budget        WHERE id = $3) AS budget,
-              (SELECT name FROM city            WHERE id = $4) AS city,
-              (SELECT name FROM state           WHERE id = $5) AS state,
-              (SELECT name FROM source          WHERE id = $6) AS source`,
-      [dto.course_id ?? null, dto.qualification_id ?? null, dto.budget_id ?? null,
-        dto.city_id ?? null, dto.state_id ?? null, dto.source_id ?? null],
-    );
-    for (const [k, v] of Object.entries(row ?? {})) if (v != null) ctx[k] = v;
-    return ctx;
-  }
-
   // ---- create (manual / Quick Contact) -------------------------------------
 
+  /**
+   * The interactive "Add lead" entry point. Validation + RBAC live here; the
+   * CRUX (phone normalisation, duplicate detection, the campaign distribution
+   * engine, activity + audit, idempotency) is delegated to the ONE shared
+   * LeadIngestionService that every capture channel uses — see
+   * ingestion/ingestion.types.ts for the contract.
+   *
+   * duplicate_policy = 'always_create': a human deliberately adding a lead must
+   * never be swallowed by a campaign's `ignore` rule — the lead is created and
+   * FLAGGED (unchanged, client-verified behaviour). Automated channels pass
+   * 'campaign' and obey duplicacy_config.on_duplicate.
+   */
   async create(dto: CreateLeadDto, actorId: number, scope: ResolvedScope) {
     if (!dto?.full_name?.trim() || !dto?.phone?.trim()) {
       throw new BadRequestException('full_name and phone are required');
@@ -221,111 +206,22 @@ export class LeadsService {
     await this.enforcer.assertRefInScope(scope, 'campaign', dto.campaign_id, actorId);
     await this.enforcer.assertRefInScope(scope, 'source', dto.source_id, actorId);
     await this.enforcer.assertRefInScope(scope, 'user', dto.owner_id, actorId);
-    const org = await this.orgId();
-    // derive the full path from the campaign — no client can produce an inconsistent path
-    const camp = await this.db.one<{ branch_id: string; vertical_id: string; pipeline_id: string; distribution_config: DistributionConfig | null }>(
-      `SELECT branch_id, vertical_id, pipeline_id, distribution_config FROM campaign WHERE id = $1 AND is_active AND deleted_at IS NULL`, [dto.campaign_id],
-    );
-    if (!camp) throw new NotFoundException('campaign not found');
-    const src = await this.db.one<{ id: string }>(
-      `SELECT id FROM source WHERE id = $1 AND deleted_at IS NULL AND (campaign_id = $2 OR campaign_id IS NULL)`,
-      [dto.source_id, dto.campaign_id],
-    );
-    if (!src) throw new BadRequestException('source does not belong to the campaign');
 
-    // DEF-QA4-02: canonical form on write — spaces/dashes/parens stripped,
-    // +91/0091/leading-0 collapse to +91XXXXXXXXXX (see common/phone.util.ts).
-    const phone = normalizePhone(dto.phone) as string;
-    const dup = await this.db.one<{ id: string }>(
-      `SELECT id FROM lead WHERE phone = $1 AND is_active AND deleted_at IS NULL ORDER BY id LIMIT 1`, [phone],
-    );
-    // default stage: the pipeline's default (or first) stage
-    const defStage = await this.db.one<{ id: string }>(
-      `SELECT id FROM pipeline_stage WHERE pipeline_id = $1 AND is_active
-        ORDER BY is_default DESC, sort_order ASC LIMIT 1`, [Number(camp.pipeline_id)],
-    );
-    const stageId = dto.stage_id ?? (defStage ? Number(defStage.id) : null);
-    const defStatus = await this.db.one<{ id: string }>(
-      `SELECT id FROM m_status WHERE org_id = $1 AND code = 'NEW'`, [org],
-    );
-    const statusId = dto.status_id ?? (defStatus ? Number(defStatus.id) : null);
-
-    // ---- NeoDove distribution engine (agent pool) ---------------------------
-    // Explicit owner wins; otherwise the campaign's distribution_config decides:
-    // equal -> round-robin across agent_user_ids; conditional -> first matching
-    // rule's assign_to_user_ids; on_demand -> stays unassigned.
-    let autoPool: number[] = [];
-    let autoNote: string | null = null;
-    if (dto.owner_id == null) {
-      const dist = (camp.distribution_config ?? {}) as DistributionConfig;
-      if (dist.mode === 'equal' && Array.isArray(dist.agent_user_ids) && dist.agent_user_ids.length) {
-        autoPool = dist.agent_user_ids.map(Number);
-        autoNote = 'auto-assigned: equal round-robin';
-      } else if (dist.mode === 'conditional' && Array.isArray(dist.conditions) && dist.conditions.length) {
-        const ctx = await this.buildConditionContext(dto);
-        const hit = matchCondition(dist.conditions, ctx);
-        if (hit) {
-          autoPool = hit.rule.assign_to_user_ids.map(Number);
-          autoNote = `auto-assigned: condition #${hit.index + 1} (${hit.rule.field} ${hit.rule.op ?? 'equals'} ${JSON.stringify(hit.rule.value)})`;
-        }
-      }
-      if (autoPool.length) {
-        // pool hygiene at assignment time: skip users disabled/deleted since the
-        // campaign was configured, keeping the configured order for the rotation
-        const live = await this.db.query<{ id: string }>(
-          `SELECT id FROM "user" WHERE id = ANY($1::bigint[]) AND status = 'active' AND deleted_at IS NULL`, [autoPool],
-        );
-        const liveSet = new Set(live.map((r) => Number(r.id)));
-        autoPool = autoPool.filter((id) => liveSet.has(id));
-      }
-    }
-
-    return this.db.tx(async (c) => {
-      let ownerId: number | null = dto.owner_id ?? null;
-      let assignNote: string | null = null;
-      if (ownerId == null && autoPool.length) {
-        // Monotonic cursor bump; `% pool.length` is applied at pick time
-        // (pickFromPool), so pool edits between leads can never break the
-        // rotation — the next lead continues over the CURRENT pool.
-        const cur = await c.query(
-          `INSERT INTO campaign_distribution_state (campaign_id, last_agent_idx) VALUES ($1, 0)
-           ON CONFLICT (campaign_id)
-           DO UPDATE SET last_agent_idx = campaign_distribution_state.last_agent_idx + 1, updated_at = now()
-           RETURNING last_agent_idx`,
-          [dto.campaign_id],
-        );
-        ownerId = pickFromPool(autoPool, Number(cur.rows[0].last_agent_idx));
-        assignNote = autoNote;
-      }
-      const ins = await c.query(
-        `INSERT INTO lead (org_id, branch_id, vertical_id, pipeline_id, campaign_id, source_id,
-                           full_name, phone, email, alt_phone, status_id, stage_id, priority, temperature, score,
-                           owner_id, next_follow_up_at, last_activity_at, is_duplicate,
-                           state_id, city_id, course_id, qualification_id, budget_id, custom_fields, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now(),$18,$19,$20,$21,$22,$23,$24,$25)
-         RETURNING *`,
-        [org, Number(camp.branch_id), Number(camp.vertical_id), Number(camp.pipeline_id),
-          dto.campaign_id, dto.source_id, dto.full_name.trim(), phone,
-          dto.email?.trim() || null, dto.alt_phone ? normalizePhone(dto.alt_phone) : null, statusId, stageId,
-          dto.priority ?? 'med', dto.temperature ?? null, dto.score ?? 0,
-          ownerId, dto.next_follow_up_at ?? null, !!dup,
-          dto.state_id ?? null, dto.city_id ?? null, dto.course_id ?? null,
-          dto.qualification_id ?? null, dto.budget_id ?? null,
-          JSON.stringify(dto.custom_fields ?? {}), actorId],
-      );
-      const lead = ins.rows[0];
-      const log = (type: string, from: unknown, to: unknown, note?: string | null) => c.query(
-        `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value, note)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [lead.id, org, lead.branch_id, actorId, type,
-          from == null ? null : JSON.stringify(from), to == null ? null : JSON.stringify(to), note ?? null],
-      );
-      await log('create', null, { source_id: dto.source_id, campaign_id: dto.campaign_id },
-        dup ? `Duplicate phone — matches lead #${dup.id}` : (dto.note ?? null));
-      if (ownerId) await log('assign', null, { owner_id: ownerId }, assignNote);
-      if (dto.note && !dup) { /* note already stored on create */ }
-      return { ...lead, duplicate_of: dup ? Number(dup.id) : null };
+    const payload: IngestPayload = {
+      full_name: dto.full_name, phone: dto.phone, email: dto.email, alt_phone: dto.alt_phone,
+      state: dto.state_id, city: dto.city_id, course: dto.course_id,
+      qualification: dto.qualification_id, budget: dto.budget_id,
+      status: dto.status_id, stage: dto.stage_id,
+      priority: dto.priority, temperature: dto.temperature, score: dto.score,
+      next_follow_up_at: dto.next_follow_up_at, note: dto.note,
+      custom_fields: dto.custom_fields,
+    };
+    const { outcome, lead } = await this.ingestion.ingestAndReturn(payload, {
+      channel: 'manual', campaign_id: dto.campaign_id, source_id: dto.source_id,
+      actor_id: actorId, owner_id: dto.owner_id ?? null, duplicate_policy: 'always_create',
     });
+    if (!lead) throw new BadRequestException(outcome.reason ?? 'lead could not be created');
+    return { ...lead, duplicate_of: outcome.duplicate_of ?? null };
   }
 
   // ---- update (stage/status/owner/priority/temperature/fields) -------------

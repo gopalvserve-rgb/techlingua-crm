@@ -154,7 +154,7 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
   if (multi) {
     acts = acts.filter((a) => !addLike(a[1]));
     [...multi].reverse().forEach(([label]) => acts.unshift(['plus', label, 'primary']));
-  } else if (!acts.some((a) => addLike(a[1])) && hasForm && spec.tag !== 'p2' && key !== 'map.all' && key !== 'admin.masters') {
+  } else if (!acts.some((a) => addLike(a[1])) && hasForm && spec.tag !== 'p2' && key !== 'map.all' && key !== 'admin.masters' && key !== 'leads.import') {
     acts.unshift(['plus', `Add ${entFromLabel(screen.sub.label)}`, 'primary']);
   }
 
