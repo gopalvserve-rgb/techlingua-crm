@@ -7,7 +7,7 @@ import { AddMasterModal } from './mastermodal';
 import { AddModal } from './forms';
 import { PhoneInput } from './phonefield';
 import { Avatar, TempBadge } from './renderer';
-import { toast, useRef_, Named } from './refdata';
+import { toast, useRef_, Named, selectableUsers } from './refdata';
 
 interface Stage { id: number; name: string; sort_order: number; stage_type: string }
 interface Activity { id: number; type: string; from_value: any; to_value: any; note: string | null; occurred_at: string; actor_name: string | null }
@@ -148,7 +148,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             <h5>Lead details</h5>
             <div className="kv">
               <div className="f"><label>Owner</label><div className="iv">
-                {ref.users.length && can('lead.assign') ? sel('owner_id', ref.users) : <span>{lead.owner_name || 'Unassigned'}</span>}
+                {ref.users.length && can('lead.assign') ? sel('owner_id', selectableUsers(ref.users, ed('owner_id') ?? lead.owner_id)) : <span>{lead.owner_name || 'Unassigned'}</span>}
               </div></div>
               <div className="f"><label>Phone</label>
                 {canUpdate

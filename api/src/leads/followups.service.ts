@@ -131,6 +131,8 @@ export class FollowUpsService {
     await this.enforcer.assertRefInScope(scope, 'user', dto.owner_id, actorId);
     // client update #5 — Report To: same scope rules as owner, plus a real-active-user check.
     await this.enforcer.assertRefInScope(scope, 'user', dto.report_to_id, actorId);
+    // DEF-1: an explicitly named task owner must be an ACTIVE user (400 otherwise).
+    if (dto.owner_id != null) await this.assertActiveUser(dto.owner_id, 'owner_id');
     const reportTo = await this.resolveReportTo(dto.report_to_id);
     const lead = await this.db.one<{ org_id: string; branch_id: string; owner_id: string | null }>(
       `SELECT org_id, branch_id, owner_id FROM lead WHERE id = $1 AND is_active AND deleted_at IS NULL`, [dto.lead_id],
@@ -175,6 +177,8 @@ export class FollowUpsService {
     if (dto.owner_id != null && Number(dto.owner_id) !== Number(before.owner_id ?? 0)) {
       await this.enforcer.assertRefInScope(scope, 'user', Number(dto.owner_id), actorId);
     }
+    // DEF-1: reassignment target must also be an ACTIVE user (400 otherwise).
+    if (dto.owner_id != null) await this.assertActiveUser(dto.owner_id, 'owner_id');
     // client update #5 — Report To may be changed (or cleared with null); same scope check as owner.
     if (dto.report_to_id != null && Number(dto.report_to_id) !== Number(before.report_to_id ?? 0)) {
       await this.enforcer.assertRefInScope(scope, 'user', Number(dto.report_to_id), actorId);
@@ -216,17 +220,31 @@ export class FollowUpsService {
   }
 
   /**
+   * DEF-1 — the ONE place that answers "is this user assignable?" (task owner + Report To).
+   *
+   * The deactivation flag on "user" is `status` ('active' | 'disabled') — that is what
+   * Users > deactivate writes and what auth.service.ts checks at login. The legacy
+   * `is_active` boolean is never written to FALSE, so guarding on it was a no-op and let
+   * a disabled user be assigned. Guard on `status` (soft-delete check stays).
+   */
+  private async assertActiveUser(id: number, field: 'owner_id' | 'report_to_id'): Promise<void> {
+    const n = Number(id);
+    if (!Number.isInteger(n) || n <= 0) throw new BadRequestException(`invalid ${field}`);
+    const u = await this.db.one<{ id: string }>(
+      `SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [n],
+    );
+    if (!u) throw new BadRequestException(`${field} must be an active user`);
+  }
+
+  /**
    * client update #5 — validate an incoming report_to_id: null/undefined clears it,
-   * anything else must be a real, active, non-deleted user (400 otherwise).
+   * anything else must be a real, active (status='active'), non-deleted user (400 otherwise).
    */
   private async resolveReportTo(id: number | null | undefined): Promise<number | null> {
     if (id === undefined || id === null || (id as unknown as string) === '') return null;
     const n = Number(id);
     if (!Number.isInteger(n) || n <= 0) throw new BadRequestException('invalid report_to_id');
-    const u = await this.db.one<{ id: string }>(
-      `SELECT id FROM "user" WHERE id = $1 AND is_active AND deleted_at IS NULL`, [n],
-    );
-    if (!u) throw new BadRequestException('report_to_id must be an active user');
+    await this.assertActiveUser(n, 'report_to_id');
     return n;
   }
 }

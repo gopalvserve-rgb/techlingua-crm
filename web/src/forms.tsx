@@ -10,7 +10,7 @@ import { Ic } from './icons';
 import { UserPicker } from './userpicker';
 import { AddMasterModal } from './mastermodal';
 import { PhoneInput } from './phonefield';
-import { toast, useRef_, Named, RefData } from './refdata';
+import { toast, useRef_, Named, RefData, selectableUsers } from './refdata';
 
 export interface FormField {
   label: string; type?: string; req?: boolean; opts?: string[] | null; hint?: string;
@@ -409,6 +409,8 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
 
   const srcOptions = (f: FormField): Named[] => {
     let list: Named[] = (ref as any)[f.src!] ?? [];
+    // DEF-1: never offer a deactivated user — but keep the one already selected (edit/prefill).
+    if (f.src === 'users') list = selectableUsers(list, ids[f.label] ?? null);
     // cascade by parent selection where the hierarchy applies
     if (f.src === 'verticals' && ids['Branch']) list = list.filter((v) => Number(v.branch_id) === ids['Branch']);
     if (f.src === 'verticals' && ids['Branch Access']) list = list.filter((v) => Number(v.branch_id) === ids['Branch Access']);

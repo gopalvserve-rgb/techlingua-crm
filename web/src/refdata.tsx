@@ -31,6 +31,15 @@ const EMPTY: RefData = {
   loaded: false, reload: () => undefined,
 };
 
+/**
+ * DEF-1 — deactivated users (status = 'disabled') must never be OFFERED in a picker:
+ * the API rejects them as task owner / Report To (400), so they cannot be selectable.
+ * A user already stored on the record being edited stays in the list (pass `keep`) so an
+ * existing task still renders the name of a since-disabled user instead of going blank.
+ */
+export const selectableUsers = (users: Named[], keep?: number | string | null): Named[] =>
+  users.filter((u) => u.status !== 'disabled' || (keep != null && Number(u.id) === Number(keep)));
+
 const Ctx = createContext<RefData>(EMPTY);
 export const useRef_ = () => useContext(Ctx);
 
