@@ -87,7 +87,14 @@ export class UsersService {
                 WHERE ra.user_id = u.id AND ra.is_active) AS role_names,
               (SELECT COALESCE(string_agg(DISTINCT b.name, ', '), '')
                  FROM user_assignment ba JOIN branch b ON b.id = ba.branch_id
-                WHERE ba.user_id = u.id AND ba.is_active) AS branch_names
+                WHERE ba.user_id = u.id AND ba.is_active) AS branch_names,
+              -- DEF-2: the Edit User form prefills System Role / Branch / Vertical Access
+              (SELECT pa.role_id FROM user_assignment pa
+                WHERE pa.user_id = u.id AND pa.is_active ORDER BY pa.id LIMIT 1) AS role_id,
+              (SELECT pa.branch_id FROM user_assignment pa
+                WHERE pa.user_id = u.id AND pa.is_active ORDER BY pa.id LIMIT 1) AS branch_id,
+              (SELECT pa.vertical_id FROM user_assignment pa
+                WHERE pa.user_id = u.id AND pa.is_active ORDER BY pa.id LIMIT 1) AS vertical_id
          FROM "user" u
          LEFT JOIN user_assignment ua ON ua.user_id = u.id AND ua.is_active
          LEFT JOIN team_member tm ON tm.user_id = u.id
@@ -164,7 +171,17 @@ export class UsersService {
     });
   }
 
-  async update(id: number, dto: Partial<CreateUserDto> & { status?: 'active' | 'disabled' }) {
+  /**
+   * DEF-2: the Edit User form must be able to change everything the Add User form
+   * shows — including Email ID and the role / branch / vertical assignment. Passing
+   * `assignments` REPLACES the user's active assignment set (omit it to leave as-is).
+   */
+  async update(
+    id: number,
+    dto: Partial<CreateUserDto> & { status?: 'active' | 'disabled' },
+    actorId?: number,
+    scope?: ResolvedScope,
+  ) {
     await this.get(id);
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -177,18 +194,59 @@ export class UsersService {
       if (clash) throw new ConflictException(`Mobile number already exists: ${phone}`);
       set('phone', phone);
     }
+    if (dto.email !== undefined) {
+      const email = dto.email?.trim() ? dto.email.trim().toLowerCase() : null;
+      if (email) {
+        const clash = await this.db.one(`SELECT 1 FROM "user" WHERE lower(email) = lower($1) AND id <> $2`, [email, id]);
+        if (clash) throw new ConflictException(`Email already exists: ${email}`);
+      }
+      set('email', email);
+    }
     if (dto.status !== undefined) {
       if (!['active', 'disabled'].includes(dto.status)) throw new BadRequestException('invalid status');
       set('status', dto.status);
     }
     if (dto.password) set('password_hash', await bcrypt.hash(dto.password, 10));
-    if (!sets.length) throw new BadRequestException('nothing to update');
-    params.push(id);
-    const rows = await this.db.query(
-      `UPDATE "user" SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length}
-       RETURNING id, name, email, phone, status`, params,
-    );
-    return rows[0];
+
+    // assignment replacement is scope-checked exactly like create()
+    if (dto.assignments !== undefined && scope) {
+      for (const a of dto.assignments) {
+        await this.enforcer.assertRefInScope(scope, 'branch', a.branch_id, actorId ?? id);
+        await this.enforcer.assertRefInScope(scope, 'vertical', a.vertical_id, actorId ?? id);
+        await this.enforcer.assertRefInScope(scope, 'pipeline', a.pipeline_id, actorId ?? id);
+        await this.enforcer.assertRefInScope(scope, 'campaign', a.campaign_id, actorId ?? id);
+        await this.enforcer.assertRefInScope(scope, 'team', a.team_id, actorId ?? id);
+      }
+    }
+    if (!sets.length && dto.assignments === undefined) throw new BadRequestException('nothing to update');
+
+    return this.db.tx(async (c) => {
+      let row: Record<string, unknown> | undefined;
+      if (sets.length) {
+        params.push(id);
+        const res = await c.query(
+          `UPDATE "user" SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length}
+           RETURNING id, name, email, phone, status`, params,
+        );
+        row = res.rows[0];
+      }
+      if (dto.assignments !== undefined) {
+        await c.query(`UPDATE user_assignment SET is_active = FALSE WHERE user_id = $1`, [id]);
+        for (const a of dto.assignments) {
+          await c.query(
+            `INSERT INTO user_assignment (user_id, role_id, branch_id, vertical_id, pipeline_id, campaign_id, team_id, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [id, a.role_id, a.branch_id ?? null, a.vertical_id ?? null,
+              a.pipeline_id ?? null, a.campaign_id ?? null, a.team_id ?? null, actorId ?? id],
+          );
+        }
+      }
+      if (row) return row;
+      const res = await c.query(
+        `SELECT id, name, email, phone, status FROM "user" WHERE id = $1`, [id],
+      );
+      return res.rows[0];
+    });
   }
 
   /** Soft delete: disable login + hide from pickers. */

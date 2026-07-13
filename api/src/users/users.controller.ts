@@ -46,8 +46,11 @@ export class UsersController {
   @Patch(':id')
   @RequirePermission('user.update')
   @ScopedEntity('user')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: Partial<CreateUserDto>) {
-    return this.users.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number, @Body() dto: Partial<CreateUserDto>,
+    @CurrentUser() user: { id: number }, @CurrentScope() scope: ResolvedScope,
+  ) {
+    return this.users.update(id, dto, user.id, scope);
   }
 
   @Patch(':id/deactivate')

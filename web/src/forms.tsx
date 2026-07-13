@@ -15,7 +15,7 @@ import { toast, useRef_, Named, RefData, selectableUsers } from './refdata';
 export interface FormField {
   label: string; type?: string; req?: boolean; opts?: string[] | null; hint?: string;
   /** refdata source for id-valued selects (enables cascading + wired saves) */
-  src?: keyof Pick<RefData, 'branches' | 'verticals' | 'pipelines' | 'campaigns' | 'sources' | 'users' | 'courses' | 'followupTypes' | 'dispositions' | 'statuses' | 'budgets'>;
+  src?: keyof Pick<RefData, 'branches' | 'verticals' | 'pipelines' | 'campaigns' | 'sources' | 'users' | 'courses' | 'followupTypes' | 'dispositions' | 'statuses' | 'budgets' | 'states' | 'cities'>;
   /** client update #5 (Task module only) — render the logged-in user as "Myself",
    *  pinned to the top of the user list and selected by default. Scoped per field,
    *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
@@ -118,7 +118,8 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Reporting Manager', 'select', 0, 0, 'Employee master', 'users'), F('Date of Joining', 'date', 1), F('System Role / Access Level', 'select', 0, ['Admin', 'Branch Manager', 'Counsellor', 'Front Desk', 'Finance'], 'links to Add User'),
     F('Status', 'select', 1, ['Active', 'On Leave', 'Relieved'])] },
   'admin.branches': { title: 'Add Branch', fields: [
-    F('Branch Name', 'text', 1), F('Branch Code', 'text', 1, 0, 'used in IDs / invoice #'), F('Branch Type', 'select', 0, ['Company Branch', 'Franchise Branch'], 'Franchise → links to Franchise module'), F('Address', 'textarea'), F('City', 'text'), F('State', 'text'), F('Contact Number', 'tel'), F('Branch Email', 'email'),
+    F('Branch Name', 'text', 1), F('Branch Code', 'text', 1, 0, 'used in IDs / invoice #'), F('Branch Type', 'select', 0, ['Company Branch', 'Franchise Branch'], 'Franchise → links to Franchise module'), F('Address', 'textarea'),
+    F('State', 'select', 0, 0, 'master', 'states'), F('City', 'select', 0, 0, 'filtered by State', 'cities'), F('Contact Number', 'tel'), F('Branch Email', 'email'),
     F('Branch Head', 'select', 0, 0, 'Employee master', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.verticals': { title: 'Add Vertical', fields: [
     F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
@@ -231,11 +232,17 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
     });
     return 'Task created';
   },
-  'admin.branches': async (vals) => {
+  'admin.branches': async (vals, ids) => {
     await api.post('/branches', {
       name: need(vals['Branch Name'], 'Branch name is required'),
       code: need(vals['Branch Code'], 'Branch code is required'),
       address: vals['Address'] || undefined,
+      branch_type: vals['Branch Type'] || undefined,
+      state_id: ids['State'] ?? undefined,
+      city_id: ids['City'] ?? undefined,
+      contact_number: vals['Contact Number'] || undefined,
+      email: vals['Branch Email'] || undefined,
+      head_user_id: ids['Branch Head'] ?? undefined,
     });
     return 'Branch created';
   },
@@ -244,6 +251,8 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       branch_id: need(ids['Branch'], 'Pick a branch'),
       name: need(vals['Vertical Name'], 'Vertical name is required'),
       code: need(vals['Vertical Code'], 'Vertical code is required'),
+      head_user_id: ids['Vertical Head'] ?? undefined,
+      description: vals['Description'] || undefined,
     });
     return 'Vertical created';
   },
@@ -252,6 +261,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       vertical_id: need(ids['Vertical'], 'Pick a vertical'),
       name: need(vals['Pipeline Name'], 'Pipeline name is required'),
       code: need(vals['Pipeline Code'], 'Pipeline code is required'),
+      owner_user_id: ids['Pipeline Owner'] ?? undefined,
     });
     return 'Pipeline created (default stages added)';
   },
@@ -260,6 +270,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       campaign_id: need(ids['Campaign'], 'Pick a campaign'),
       name: need(vals['Source Name'], 'Source name is required'),
       channel: vals['Source Category'] || 'manual',
+      cost_per_lead: vals['Cost per Lead (if fixed/paid)'] || 0,
     });
     return 'Source connected';
   },
@@ -278,7 +289,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
     return 'User created';
   },
 };
-SAVERS['students.courses'] = async (vals) => {
+SAVERS['students.courses'] = async (vals, ids) => {
   const row = await api.post<Named>('/masters/course', {
     name: need(vals['Course Name'], 'Course name is required'),
     code: need(vals['Course Code'], 'Course code is required'),
@@ -286,6 +297,9 @@ SAVERS['students.courses'] = async (vals) => {
       mode: vals['Training Mode'] || undefined,
       duration: vals['Duration'] || undefined,
       fee: vals['Standard Fee'] || undefined,
+      vertical_id: ids['Vertical'] ?? undefined,
+      branch_id: ids['Applicable Branch(es)'] ?? undefined,
+      eligibility: vals['Eligibility Criteria'] || undefined,
     },
   });
   return { msg: `Course "${row.name}" added to the master`, row };
@@ -334,7 +348,7 @@ function LeadLookup({ value, onPick }: { value: string; onPick: (id: number | un
 /** refdata src -> generic master type key (POST /api/masters/<type>). */
 const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
   courses: 'course', statuses: 'status', followupTypes: 'followup_type',
-  dispositions: 'disposition', budgets: 'budget',
+  dispositions: 'disposition', budgets: 'budget', states: 'state', cities: 'city',
 };
 /** Masters whose dedicated management screen has a richer form: ＋ Master opens that
  *  full form (client: adding a Course from a lead must show all course fields,
@@ -358,8 +372,12 @@ export interface EditSpec {
   title: string;
   initialVals?: Vals;
   initialIds?: Ids;
-  /** field labels rendered read-only (not part of the PATCH whitelist) */
+  /** field labels rendered read-only (not part of the PATCH whitelist).
+   *  DEF-2: reserve this for genuinely immutable fields (hierarchy parent links).
+   *  Never use it to hide a field the backend simply does not persist yet. */
   lock?: string[];
+  /** labels whose "required" star is dropped in edit mode (e.g. Password = leave blank to keep) */
+  optional?: string[];
   submit: (vals: Vals, ids: Ids) => Promise<string>;
 }
 
@@ -417,6 +435,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (f.src === 'pipelines' && ids['Vertical']) list = list.filter((p) => Number(p.vertical_id) === ids['Vertical']);
     if (f.src === 'campaigns' && ids['Pipeline']) list = list.filter((c) => Number(c.pipeline_id) === ids['Pipeline']);
     if (f.src === 'sources' && ids['Campaign']) list = list.filter((s) => Number(s.campaign_id) === ids['Campaign']);
+    if (f.src === 'cities' && ids['State']) list = list.filter((c) => Number(c.parent_id) === ids['State']);
     const fresh = (extras[f.label] ?? []).filter((e) => !list.some((o) => Number(o.id) === Number(e.id)));
     let out = [...list, ...fresh];
     // client update #5 — Task module: the logged-in user shows as "Myself", pinned first.
@@ -607,7 +626,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
               return (
                 <div className={`fld ${span2 ? 'span2' : ''}`} key={f.label}>
                   <label>
-                    {f.label}{f.req ? <> <span className="star">*</span></> : null}
+                    {f.label}{f.req && !edit?.optional?.includes(f.label) ? <> <span className="star">*</span></> : null}
                     {f.hint && !inField ? <span className="fhint">{f.hint}</span> : null}
                     {masterLink(f)}
                   </label>

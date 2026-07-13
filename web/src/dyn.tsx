@@ -682,13 +682,17 @@ function Sources() {
             initialVals: {
               'Source Name': edit.name ?? '', 'Campaign': edit.campaign_name ?? '',
               'Source Category': edit.channel ?? 'manual',
+              'Cost per Lead (if fixed/paid)': edit.cost_per_lead != null && Number(edit.cost_per_lead) !== 0
+                ? String(Number(edit.cost_per_lead)) : '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            lock: ['Campaign', 'Cost per Lead (if fixed/paid)'],
+            // only the parent link is immutable (DEF-2)
+            lock: ['Campaign'],
             submit: async (vals) => {
               await api.patch(`/sources/${edit.id}`, {
                 name: need(vals['Source Name'], 'Source name is required'),
                 channel: vals['Source Category'] || 'manual',
+                cost_per_lead: vals['Cost per Lead (if fixed/paid)'] || 0,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Source updated';
@@ -712,6 +716,9 @@ function Sla() {
     ]} />
   );
 }
+
+/** DB enum -> the prototype's Branch Type labels (and back, in HierarchyService.branchType). */
+const BRANCH_TYPE_LABEL: Record<string, string> = { company: 'Company Branch', franchise: 'Franchise Branch' };
 
 function Branches() {
   const { refreshTick, bump } = useScreen();
@@ -763,10 +770,14 @@ function Branches() {
             <KV rows={[
               ['Name', view.name],
               ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
+              ['Type', BRANCH_TYPE_LABEL[String(view.branch_type ?? '')] ?? '\u2014'],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
               ['City', view.city_name ?? '\u2014'],
               ['State', view.state_name ?? '\u2014'],
               ['Address', view.address || '\u2014'],
+              ['Contact Number', view.contact_number || '\u2014'],
+              ['Branch Email', view.email || '\u2014'],
+              ['Branch Head', view.head_name || '\u2014'],
               ['Verticals', String(view.vertical_count ?? 0)],
             ]} />
           </Section>
@@ -783,17 +794,32 @@ function Branches() {
         <AddModal formKey="admin.branches" onClose={() => setEdit(null)} onSaved={after}
           edit={{
             title: `Edit Branch \u2014 ${edit.name}`,
+            // DEF-2: every field the Add Branch form shows is editable here and prefilled.
             initialVals: {
               'Branch Name': edit.name ?? '', 'Branch Code': edit.code ?? '',
-              'Address': edit.address ?? '', 'City': edit.city_name ?? '', 'State': edit.state_name ?? '',
+              'Branch Type': BRANCH_TYPE_LABEL[String(edit.branch_type ?? '')] ?? '',
+              'Address': edit.address ?? '',
+              'State': edit.state_name ?? '', 'City': edit.city_name ?? '',
+              'Contact Number': edit.contact_number ?? '', 'Branch Email': edit.email ?? '',
+              'Branch Head': edit.head_name ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            lock: ['Branch Type', 'City', 'State', 'Contact Number', 'Branch Email', 'Branch Head'],
-            submit: async (vals) => {
+            initialIds: {
+              'State': edit.state_id ? Number(edit.state_id) : undefined,
+              'City': edit.city_id ? Number(edit.city_id) : undefined,
+              'Branch Head': edit.head_user_id ? Number(edit.head_user_id) : undefined,
+            },
+            submit: async (vals, ids) => {
               await api.patch(`/branches/${edit.id}`, {
                 name: need(vals['Branch Name'], 'Branch name is required'),
                 code: need(vals['Branch Code'], 'Branch code is required'),
+                branch_type: vals['Branch Type'] || null,
                 address: vals['Address'] || null,
+                state_id: ids['State'] ?? null,
+                city_id: ids['City'] ?? null,
+                contact_number: vals['Contact Number'] || null,
+                email: vals['Branch Email'] || null,
+                head_user_id: ids['Branch Head'] ?? null,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Branch updated';
@@ -864,13 +890,19 @@ function Verticals() {
             title: `Edit Vertical \u2014 ${edit.name}`,
             initialVals: {
               'Vertical Name': edit.name ?? '', 'Vertical Code': edit.code ?? '',
-              'Branch': edit.branch_name ?? '', 'Status': edit.is_active === false ? 'Inactive' : 'Active',
+              'Branch': edit.branch_name ?? '', 'Vertical Head': edit.head_name ?? '',
+              'Description': edit.description ?? '',
+              'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            lock: ['Branch', 'Vertical Head', 'Description'],
-            submit: async (vals) => {
+            initialIds: { 'Vertical Head': edit.head_user_id ? Number(edit.head_user_id) : undefined },
+            // only the parent link is immutable — the rest is editable (DEF-2)
+            lock: ['Branch'],
+            submit: async (vals, ids) => {
               await api.patch(`/verticals/${edit.id}`, {
                 name: need(vals['Vertical Name'], 'Vertical name is required'),
                 code: need(vals['Vertical Code'], 'Vertical code is required'),
+                head_user_id: ids['Vertical Head'] ?? null,
+                description: vals['Description'] || null,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Vertical updated';
@@ -1032,13 +1064,18 @@ function Pipelines() {
             initialVals: {
               'Pipeline Name': edit.name ?? '', 'Pipeline Code': edit.code ?? '',
               'Branch': edit.branch_name ?? '', 'Vertical': edit.vertical_name ?? '',
+              'Pipeline Owner': edit.owner_name ?? '',
+              'Pipeline Stages': 'Use the Stages action on the row to configure',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            lock: ['Branch', 'Vertical', 'Pipeline Stages', 'Pipeline Owner'],
-            submit: async (vals) => {
+            initialIds: { 'Pipeline Owner': edit.owner_user_id ? Number(edit.owner_user_id) : undefined },
+            // parent links + the stage set (edited in the Stage Configurator) stay locked (DEF-2)
+            lock: ['Branch', 'Vertical', 'Pipeline Stages'],
+            submit: async (vals, ids) => {
               await api.patch(`/pipelines/${edit.id}`, {
                 name: need(vals['Pipeline Name'], 'Pipeline name is required'),
                 code: need(vals['Pipeline Code'], 'Pipeline code is required'),
+                owner_user_id: ids['Pipeline Owner'] ?? null,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Pipeline updated';
@@ -1194,14 +1231,19 @@ function Campaigns() {
  *  Courses screen and Administration › Masters so Course always edits with all fields. */
 const courseEditSpec = (edit: any): EditSpec => ({
   title: `Edit Course \u2014 ${edit.name}`,
+  // DEF-2: nothing is locked — every Add Course field is editable and prefilled.
   initialVals: {
     'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
     'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
     'Standard Fee': (edit.meta as any)?.fee ?? '',
+    'Eligibility Criteria': (edit.meta as any)?.eligibility ?? '',
     'Status': edit.is_active === false ? 'Inactive' : 'Active',
   },
-  lock: ['Vertical', 'Applicable Branch(es)', 'Eligibility Criteria'],
-  submit: async (vals) => {
+  initialIds: {
+    'Vertical': (edit.meta as any)?.vertical_id ? Number((edit.meta as any).vertical_id) : undefined,
+    'Applicable Branch(es)': (edit.meta as any)?.branch_id ? Number((edit.meta as any).branch_id) : undefined,
+  },
+  submit: async (vals, ids) => {
     await api.patch(`/masters/course/${edit.id}`, {
       name: need(vals['Course Name'], 'Course name is required'),
       code: need(vals['Course Code'], 'Course code is required'),
@@ -1210,6 +1252,9 @@ const courseEditSpec = (edit: any): EditSpec => ({
         mode: vals['Training Mode'] || undefined,
         duration: vals['Duration'] || undefined,
         fee: vals['Standard Fee'] || undefined,
+        vertical_id: ids['Vertical'] ?? undefined,
+        branch_id: ids['Applicable Branch(es)'] ?? undefined,
+        eligibility: vals['Eligibility Criteria'] || undefined,
       },
       is_active: vals['Status'] !== 'Inactive',
     });
@@ -1415,17 +1460,33 @@ function Users() {
         <AddModal formKey="admin.users" onClose={() => setEdit(null)} onSaved={after}
           edit={{
             title: `Edit User \u2014 ${edit.name}`,
+            // DEF-2: Email ID / System Role / Branch + Vertical Access are editable and prefilled.
             initialVals: {
               'Full Name': edit.name ?? '', 'Email ID': edit.email ?? '', 'Mobile Number': edit.phone ?? '',
               'System Role': edit.role_names ?? '',
+              'Branch Access': edit.branch_names ?? '',
               'Status': edit.status === 'disabled' ? 'Deactivated' : 'Active',
             },
-            lock: ['Email ID', 'System Role', 'Branch Access', 'Vertical Access'],
-            submit: async (vals) => {
+            initialIds: {
+              'System Role': edit.role_id ? Number(edit.role_id) : undefined,
+              'Branch Access': edit.branch_id ? Number(edit.branch_id) : undefined,
+              'Vertical Access': edit.vertical_id ? Number(edit.vertical_id) : undefined,
+            },
+            // password is only set when the admin types a new one
+            optional: ['Password / Login Method'],
+            submit: async (vals, ids) => {
               await api.patch(`/users/${edit.id}`, {
                 name: need(vals['Full Name'], 'Name is required'),
+                email: vals['Email ID'] || null,
                 phone: vals['Mobile Number'] || null,
                 ...(vals['Password / Login Method'] ? { password: vals['Password / Login Method'] } : {}),
+                ...(ids['System Role'] ? {
+                  assignments: [{
+                    role_id: ids['System Role'],
+                    branch_id: ids['Branch Access'] ?? null,
+                    vertical_id: ids['Vertical Access'] ?? null,
+                  }],
+                } : {}),
                 status: vals['Status'] === 'Active' ? 'active' : 'disabled',
               });
               return 'User updated';

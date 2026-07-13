@@ -10,6 +10,19 @@ import { validateDistributionConfig, validateDuplicacyConfig } from './campaign-
  * On create, each child copies its parent's ancestor chain (full-path denormalisation)
  * so no client can produce an inconsistent path.
  */
+export interface BranchDto {
+  name: string;
+  code: string;
+  state_id?: number | null;
+  city_id?: number | null;
+  address?: string | null;
+  /** 'company' | 'franchise' (accepts the form's "Company Branch" / "Franchise Branch") */
+  branch_type?: string | null;
+  contact_number?: string | null;
+  email?: string | null;
+  head_user_id?: number | null;
+}
+
 @Injectable()
 export class HierarchyService {
   constructor(
@@ -55,6 +68,17 @@ export class HierarchyService {
 
   // ---- branches -----------------------------------------------------------
 
+  /** Form sends the prototype labels ("Company Branch" / "Franchise Branch"); store the enum. */
+  static branchType(v?: string | null): string | null {
+    if (v === undefined || v === null || v === '') return null;
+    const t = String(v).trim().toLowerCase();
+    if (t.startsWith('franchise')) return 'franchise';
+    if (t.startsWith('company')) return 'company';
+    if (t === 'company' || t === 'franchise') return t;
+    throw new BadRequestException(`invalid branch_type: ${v}`);
+  }
+
+
   /** UAT: lists hide inactive rows by default; `?include_inactive=1` shows them (scope-safe). */
   static activeFilter(alias: string, includeInactive?: boolean): string {
     return includeInactive ? '' : ` AND ${alias}.is_active`;
@@ -64,27 +88,37 @@ export class HierarchyService {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, { branch: 'b.id' }, params);
     return this.db.query(
-      `SELECT b.*, s.name AS state_name, c.name AS city_name,
+      `SELECT b.*, s.name AS state_name, c.name AS city_name, hu.name AS head_name,
               (SELECT COUNT(*)::int FROM vertical v WHERE v.branch_id = b.id AND v.is_active AND v.deleted_at IS NULL) AS vertical_count
          FROM branch b LEFT JOIN state s ON s.id = b.state_id LEFT JOIN city c ON c.id = b.city_id
+              LEFT JOIN "user" hu ON hu.id = b.head_user_id
         WHERE ${where} AND b.deleted_at IS NULL${HierarchyService.activeFilter('b', includeInactive)} ORDER BY b.name`,
       params,
     );
   }
 
-  async createBranch(dto: { name: string; code: string; state_id?: number; city_id?: number; address?: string }, actorId: number) {
+  async createBranch(dto: BranchDto, actorId: number) {
     if (!dto?.name || !dto?.code) throw new BadRequestException('name and code are required');
     const rows = await this.db.query(
-      `INSERT INTO branch (org_id, name, code, state_id, city_id, address, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO branch (org_id, name, code, state_id, city_id, address,
+                           branch_type, contact_number, email, head_user_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [await this.orgId(), dto.name.trim(), dto.code.trim().toUpperCase(),
-        dto.state_id ?? null, dto.city_id ?? null, dto.address ?? null, actorId],
+        dto.state_id ?? null, dto.city_id ?? null, dto.address ?? null,
+        HierarchyService.branchType(dto.branch_type), dto.contact_number ?? null,
+        dto.email ?? null, dto.head_user_id ?? null, actorId],
     );
     return rows[0];
   }
 
-  updateBranch(id: number, dto: Partial<{ name: string; code: string; state_id: number; city_id: number; address: string; is_active: boolean }>) {
-    return this.genericUpdate('branch', id, dto, ['name', 'code', 'state_id', 'city_id', 'address', 'is_active']);
+  /** DEF-2: every field the Add Branch form shows is now persisted and PATCHable. */
+  updateBranch(id: number, dto: Partial<BranchDto> & { is_active?: boolean }) {
+    const clean = { ...dto };
+    if (clean.branch_type !== undefined) clean.branch_type = HierarchyService.branchType(clean.branch_type) as any;
+    return this.genericUpdate('branch', id, clean, [
+      'name', 'code', 'state_id', 'city_id', 'address',
+      'branch_type', 'contact_number', 'email', 'head_user_id', 'is_active',
+    ]);
   }
 
   // ---- verticals ----------------------------------------------------------
@@ -92,15 +126,16 @@ export class HierarchyService {
   listVerticals(scope: ResolvedScope, branchId?: number, includeInactive = false) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, params);
-    let sql = `SELECT v.*, b.name AS branch_name,
+    let sql = `SELECT v.*, b.name AS branch_name, hu.name AS head_name,
                       (SELECT COUNT(*)::int FROM pipeline p WHERE p.vertical_id = v.id AND p.is_active AND p.deleted_at IS NULL) AS pipeline_count
                  FROM vertical v JOIN branch b ON b.id = v.branch_id
+                      LEFT JOIN "user" hu ON hu.id = v.head_user_id
                 WHERE ${where} AND v.deleted_at IS NULL${HierarchyService.activeFilter('v', includeInactive)}`;
     if (branchId) { params.push(branchId); sql += ` AND v.branch_id = $${params.length}`; }
     return this.db.query(sql + ` ORDER BY v.name`, params);
   }
 
-  async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object }, actorId: number) {
+  async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object; head_user_id?: number | null; description?: string | null }, actorId: number) {
     if (!dto?.branch_id || !dto?.name || !dto?.code) throw new BadRequestException('branch_id, name and code are required');
     const branch = await this.db.one<{ org_id: string }>(`SELECT org_id FROM branch WHERE id = $1 AND deleted_at IS NULL`, [dto.branch_id]);
     if (!branch) throw new NotFoundException('branch not found');
@@ -114,7 +149,8 @@ export class HierarchyService {
   }
 
   updateVertical(id: number, dto: Record<string, unknown>) {
-    return this.genericUpdate('vertical', id, dto, ['name', 'code', 'smtp_config', 'gateway_config', 'is_active']);
+    return this.genericUpdate('vertical', id, dto,
+      ['name', 'code', 'smtp_config', 'gateway_config', 'head_user_id', 'description', 'is_active']);
   }
 
   // ---- pipelines + stages -------------------------------------------------
@@ -124,14 +160,15 @@ export class HierarchyService {
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 'p.branch_id', vertical: 'p.vertical_id', pipeline: 'p.id',
     }, params);
-    let sql = `SELECT p.*, v.name AS vertical_name, b.name AS branch_name
+    let sql = `SELECT p.*, v.name AS vertical_name, b.name AS branch_name, ou.name AS owner_name
                  FROM pipeline p JOIN vertical v ON v.id = p.vertical_id JOIN branch b ON b.id = p.branch_id
+                      LEFT JOIN "user" ou ON ou.id = p.owner_user_id
                 WHERE ${where} AND p.deleted_at IS NULL${HierarchyService.activeFilter('p', includeInactive)}`;
     if (verticalId) { params.push(verticalId); sql += ` AND p.vertical_id = $${params.length}`; }
     return this.db.query(sql + ` ORDER BY p.name`, params);
   }
 
-  async createPipeline(dto: { vertical_id: number; name: string; code: string }, actorId: number) {
+  async createPipeline(dto: { vertical_id: number; name: string; code: string; owner_user_id?: number | null }, actorId: number) {
     if (!dto?.vertical_id || !dto?.name || !dto?.code) throw new BadRequestException('vertical_id, name and code are required');
     const v = await this.db.one<{ org_id: string; branch_id: string }>(
       `SELECT org_id, branch_id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [dto.vertical_id],
@@ -139,9 +176,10 @@ export class HierarchyService {
     if (!v) throw new NotFoundException('vertical not found');
     return this.db.tx(async (c) => {
       const p = await c.query(
-        `INSERT INTO pipeline (org_id, branch_id, vertical_id, name, code, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-        [Number(v.org_id), Number(v.branch_id), dto.vertical_id, dto.name.trim(), dto.code.trim().toUpperCase(), actorId],
+        `INSERT INTO pipeline (org_id, branch_id, vertical_id, name, code, owner_user_id, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [Number(v.org_id), Number(v.branch_id), dto.vertical_id, dto.name.trim(), dto.code.trim().toUpperCase(),
+          dto.owner_user_id ?? null, actorId],
       );
       // every pipeline starts with a default stage set (editable afterwards)
       const defaults: Array<[string, string, boolean]> = [
@@ -161,7 +199,7 @@ export class HierarchyService {
   }
 
   updatePipeline(id: number, dto: Record<string, unknown>) {
-    return this.genericUpdate('pipeline', id, dto, ['name', 'code', 'is_active']);
+    return this.genericUpdate('pipeline', id, dto, ['name', 'code', 'owner_user_id', 'is_active']);
   }
 
   listStages(pipelineId: number) {
@@ -397,6 +435,7 @@ export class HierarchyService {
 
   async createSource(dto: {
     campaign_id: number; name: string; channel?: string; master_source_id?: number; config?: object;
+    cost_per_lead?: number | string | null;
   }, actorId: number) {
     if (!dto?.campaign_id || !dto?.name) throw new BadRequestException('campaign_id and name are required');
     const c = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string; pipeline_id: string }>(
@@ -408,17 +447,18 @@ export class HierarchyService {
       ? 'whk_' + Math.random().toString(36).slice(2, 18) : null;
     const rows = await this.db.query(
       `INSERT INTO source (org_id, branch_id, vertical_id, pipeline_id, campaign_id, master_source_id,
-                           name, channel, webhook_token, config, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+                           name, channel, webhook_token, config, cost_per_lead, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [Number(c.org_id), Number(c.branch_id), Number(c.vertical_id), Number(c.pipeline_id), dto.campaign_id,
         dto.master_source_id ?? null, dto.name.trim(), channel, webhookToken,
-        JSON.stringify(dto.config ?? {}), actorId],
+        JSON.stringify(dto.config ?? {}), dto.cost_per_lead ?? 0, actorId],
     );
     return rows[0];
   }
 
   updateSource(id: number, dto: Record<string, unknown>) {
-    return this.genericUpdate('source', id, dto, ['name', 'channel', 'master_source_id', 'config', 'is_active']);
+    return this.genericUpdate('source', id, dto,
+      ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active']);
   }
 
   // ---- shared -------------------------------------------------------------

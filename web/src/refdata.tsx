@@ -21,6 +21,9 @@ export interface RefData {
   followupTypes: Named[];
   dispositions: Named[];
   budgets: Named[];
+  /** DEF-2 — Branch City/State are real masters, so the Branch form can select them. */
+  states: Named[];
+  cities: Named[];
   loaded: boolean;
   reload: () => void;
 }
@@ -28,6 +31,7 @@ export interface RefData {
 const EMPTY: RefData = {
   branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], users: [],
   statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
+  states: [], cities: [],
   loaded: false, reload: () => undefined,
 };
 
@@ -57,7 +61,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
     };
     (async () => {
       const [branches, verticals, pipelines, campaigns, sources, users,
-        statuses, courses, followupTypes, dispositions, budgets] = await Promise.all([
+        statuses, courses, followupTypes, dispositions, budgets, states, cities] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
@@ -69,11 +73,13 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), () => api.get<Named[]>('/masters/followup_type'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/disposition'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/budget'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/state'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/city'), []),
       ]);
       if (dead) return;
       setData({
         branches, verticals, pipelines, campaigns, sources, users,
-        statuses, courses, followupTypes, dispositions, budgets,
+        statuses, courses, followupTypes, dispositions, budgets, states, cities,
         loaded: true, reload: () => setTick((t) => t + 1),
       });
     })();
