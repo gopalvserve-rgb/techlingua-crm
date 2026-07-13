@@ -84,7 +84,10 @@ export class UsersService {
       `SELECT DISTINCT u.id, u.name, u.email, u.phone, u.status, u.created_at,
               (SELECT COALESCE(string_agg(DISTINCT r.name, ', '), '')
                  FROM user_assignment ra JOIN role r ON r.id = ra.role_id
-                WHERE ra.user_id = u.id AND ra.is_active) AS role_names
+                WHERE ra.user_id = u.id AND ra.is_active) AS role_names,
+              (SELECT COALESCE(string_agg(DISTINCT b.name, ', '), '')
+                 FROM user_assignment ba JOIN branch b ON b.id = ba.branch_id
+                WHERE ba.user_id = u.id AND ba.is_active) AS branch_names
          FROM "user" u
          LEFT JOIN user_assignment ua ON ua.user_id = u.id AND ua.is_active
          LEFT JOIN team_member tm ON tm.user_id = u.id

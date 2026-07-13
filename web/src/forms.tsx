@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
+import { UserPicker } from './userpicker';
 import { AddMasterModal } from './mastermodal';
 import { PhoneInput } from './phonefield';
 import { toast, useRef_, Named, RefData } from './refdata';
@@ -589,6 +590,14 @@ const DIST_OPTS = [
   ['Equal', 'equal', 'Distributes leads equally among all agents in the campaign, ensuring fair allocation.'],
   ['Conditional', 'conditional', 'Assigns leads based on set conditions, ensuring the right leads go to the right agents.'],
 ] as const;
+const COND_FIELDS = [
+  ['course', 'Course'], ['city', 'City'], ['state', 'State'], ['priority', 'Priority'],
+  ['temperature', 'Temperature'], ['source', 'Source'], ['qualification', 'Qualification'],
+  ['budget', 'Budget'], ['full_name', 'Full name'], ['email', 'Email'],
+] as const;
+const COND_OPS = [['equals', 'equals'], ['not_equals', 'not equals'], ['contains', 'contains'], ['in', 'is one of (comma-sep)']] as const;
+type CondRow = { field: string; op: string; value: string; assign_to_user_ids: number[] };
+
 const DUP_SCOPES = [['Within This Campaign', 'this_campaign'], ['Within This Pipeline', 'this_pipeline'], ['All Campaigns (Global)', 'global']] as const;
 const DUP_ACTIONS = [['Ignore Duplicate', 'ignore'], ['Merge Duplicate', 'merge'], ['Create Duplicate Leads', 'create'], ['Merge Duplicate & Reopen Closed Leads', 'merge_and_reopen']] as const;
 
@@ -604,7 +613,18 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
   const [verticalId, setVerticalId] = useState<number | undefined>(initial ? Number(initial.vertical_id) : undefined);
   const [pipelineId, setPipelineId] = useState<number | undefined>(initial ? Number(initial.pipeline_id) : undefined);
   const [dist, setDist] = useState<'on_demand' | 'equal' | 'conditional'>(
-    (initial?.distribution_config as any)?.mode ?? 'conditional');
+    (initial?.distribution_config as any)?.mode ?? 'on_demand');
+  // agent pool (searchable multi-select) + conditional rule rows (single-select assign-to)
+  const [agents, setAgents] = useState<number[]>(() =>
+    Array.isArray((initial?.distribution_config as any)?.agent_user_ids)
+      ? ((initial!.distribution_config as any).agent_user_ids as number[]).map(Number) : []);
+  const [conds, setConds] = useState<CondRow[]>(() =>
+    (Array.isArray((initial?.distribution_config as any)?.conditions)
+      ? ((initial!.distribution_config as any).conditions as any[]) : []).map((c) => ({
+      field: String(c.field ?? 'course'), op: String(c.op ?? 'equals'),
+      value: Array.isArray(c.value) ? c.value.join(', ') : String(c.value ?? ''),
+      assign_to_user_ids: Array.isArray(c.assign_to_user_ids) ? c.assign_to_user_ids.map(Number) : [],
+    })));
   const [priority, setPriority] = useState(initial?.priority ?? 'med');
   const [dupScope, setDupScope] = useState<string>((initial?.duplicacy_config as any)?.check_scope ?? 'this_campaign');
   const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
@@ -617,20 +637,28 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
     if (!vals['name']?.trim()) return toast('Campaign Name is required', true);
     if (!pipelineId) return toast('Pick Branch › Vertical › Pipeline', true);
     // Build a validator-clean NeoDove config: `conditions` may only be sent in
-    // conditional mode and must be non-empty there (kept from the saved config).
+    // conditional mode and must be non-empty there (from the rule builder below).
     const prevDist = (initial?.distribution_config as any) ?? {};
+    if (dist === 'equal' && agents.length === 0) {
+      return toast('Equal distribution needs at least one agent — search and tick the users to rotate leads across', true);
+    }
     const distribution_config: Record<string, unknown> = {
       mode: dist,
       batch_size: prevDist.batch_size ?? 10,
       round_robin_scope: prevDist.round_robin_scope ?? 'campaign',
-      ...(Array.isArray(prevDist.agent_user_ids) ? { agent_user_ids: prevDist.agent_user_ids } : {}),
+      agent_user_ids: agents,
     };
     if (dist === 'conditional') {
-      const conds = Array.isArray(prevDist.conditions) ? prevDist.conditions : [];
-      if (!conds.length) {
-        return toast('Conditional distribution needs at least one condition — pick On Demand or Equal until the condition builder lands (Sprint 3)', true);
+      if (!conds.length) return toast('Conditional distribution needs at least one condition', true);
+      for (let i = 0; i < conds.length; i++) {
+        if (!conds[i].value.trim()) return toast(`Condition ${i + 1}: enter a value to match`, true);
+        if (!conds[i].assign_to_user_ids.length) return toast(`Condition ${i + 1}: pick the user to assign matching leads to`, true);
       }
-      distribution_config.conditions = conds;
+      distribution_config.conditions = conds.map((c) => ({
+        field: c.field, op: c.op,
+        value: c.op === 'in' ? c.value.split(',').map((v) => v.trim()).filter(Boolean) : c.value.trim(),
+        assign_to_user_ids: c.assign_to_user_ids,
+      }));
     }
     const prevDup = (initial?.duplicacy_config as any) ?? {};
     const duplicacy_config = {
@@ -708,9 +736,45 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
               </label>
             ))}
           </div>
-          <button className="setcond" onClick={() => toast('Condition builder lands with the distribution engine (Sprint 3)')}>
-            <Ic k="filter" />Set Conditions
-          </button>
+          {dist !== 'conditional' && (
+            <div className="fld" style={{ marginTop: 12 }}>
+              <label>Agents{dist === 'equal' ? <span className="star"> *</span> : null}
+                <span className="fhint">{dist === 'equal'
+                  ? 'round-robin rotates over exactly these users'
+                  : 'optional — leave empty to let any agent in scope self-assign'}</span></label>
+              <UserPicker value={agents} onChange={setAgents} branchId={branchId}
+                placeholder="Search users by name / email / phone…" />
+            </div>
+          )}
+          {dist === 'conditional' && (
+            <div style={{ marginTop: 12 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.03em' }}>
+                Conditions <span className="fhint">first matching rule assigns the lead</span></label>
+              <div style={{ marginTop: 7 }}>
+                {conds.map((c, i) => {
+                  const set = (patch: Partial<CondRow>) => setConds((xs) => xs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                  return (
+                    <div className="condrow" key={i}>
+                      <select className="ainp" value={c.field} onChange={(e) => set({ field: e.target.value })}>
+                        {COND_FIELDS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}
+                      </select>
+                      <select className="ainp" value={c.op} onChange={(e) => set({ op: e.target.value })}>
+                        {COND_OPS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}
+                      </select>
+                      <input className="ainp" placeholder={c.op === 'in' ? 'IELTS, PTE' : 'value'} value={c.value}
+                        onChange={(e) => set({ value: e.target.value })} />
+                      <UserPicker multiple={false} value={c.assign_to_user_ids} branchId={branchId}
+                        onChange={(ids) => set({ assign_to_user_ids: ids })} placeholder="Assign to user…" />
+                      <button className="ax2" title="Remove condition" onClick={() => setConds((xs) => xs.filter((_, j) => j !== i))}><Ic k="trash" /></button>
+                    </div>
+                  );
+                })}
+              </div>
+              <button className="setcond" onClick={() => setConds((xs) => [...xs, { field: 'course', op: 'equals', value: '', assign_to_user_ids: [] }])}>
+                <Ic k="plus" />Add condition
+              </button>
+            </div>
+          )}
           <div className="sechead">Additional Settings</div>
           <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', padding: 0 }}>
             <div className="fld"><label>Priority</label>

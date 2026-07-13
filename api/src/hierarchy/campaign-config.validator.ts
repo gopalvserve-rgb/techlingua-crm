@@ -53,6 +53,15 @@ export function validateDistributionConfig(input: unknown): Record<string, unkno
   if (input.agent_user_ids !== undefined && !isIdArray(input.agent_user_ids)) {
     fail('distribution_config.agent_user_ids must be an array of positive integer user ids');
   }
+  const agentIds = (input.agent_user_ids as number[] | undefined) ?? [];
+  if (new Set(agentIds).size !== agentIds.length) {
+    fail('distribution_config.agent_user_ids must not contain duplicate user ids');
+  }
+  // Equal round-robin needs a concrete pool to rotate over; On Demand may leave it
+  // empty (anyone in scope self-assigns) and Conditional assigns through its rules.
+  if (mode === 'equal' && agentIds.length === 0) {
+    fail('distribution_config.agent_user_ids must contain at least one user when mode is "equal" (pick the agents to rotate leads across)');
+  }
 
   let conditions: Record<string, unknown>[] | undefined;
   if (mode === 'conditional') {
@@ -93,6 +102,9 @@ function validateCondition(c: unknown, index: number): Record<string, unknown> {
 
   if (!isIdArray(c.assign_to_user_ids) || (c.assign_to_user_ids as number[]).length === 0) {
     fail(`${label}.assign_to_user_ids must be a non-empty array of user ids`);
+  }
+  if (new Set(c.assign_to_user_ids as number[]).size !== (c.assign_to_user_ids as number[]).length) {
+    fail(`${label}.assign_to_user_ids must not contain duplicate user ids`);
   }
 
   return { field: c.field.trim(), op, value: c.value, assign_to_user_ids: c.assign_to_user_ids };

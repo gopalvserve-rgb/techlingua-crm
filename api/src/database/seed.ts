@@ -112,7 +112,9 @@ async function seed(c: PoolClient) {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
     [org, delhi, tlaDel, admDel, 'Meta Leads Jul-26',
       JSON.stringify({ utm_source: 'facebook', utm_campaign: 'jul26' }), 25000,
-      JSON.stringify({ mode: 'equal', batch_size: 10, agent_user_ids: [], round_robin_scope: 'campaign', conditions: [] }),
+      // on_demand may keep an empty pool (anyone in scope self-assigns);
+      // 'equal' now requires >=1 agent_user_ids, so the seed stays validator-clean.
+      JSON.stringify({ mode: 'on_demand', batch_size: 10, agent_user_ids: [], round_robin_scope: 'campaign' }),
       JSON.stringify({ check_scope: 'global', match_key: 'phone', on_duplicate: 'merge', open_reassign_same_user: true }),
     ],
   )).rows[0].id as Id;

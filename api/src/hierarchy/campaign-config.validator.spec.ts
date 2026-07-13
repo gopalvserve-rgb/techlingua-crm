@@ -6,9 +6,24 @@ import { validateDistributionConfig, validateDuplicacyConfig } from './campaign-
 describe('validateDistributionConfig', () => {
   it('accepts a full valid config (equal + round_robin_scope + agent ids)', () => {
     const out = validateDistributionConfig({
-      mode: 'equal', batch_size: 10, agent_user_ids: [], round_robin_scope: 'campaign',
+      mode: 'equal', batch_size: 10, agent_user_ids: [4, 7], round_robin_scope: 'campaign',
     });
-    expect(out).toEqual({ mode: 'equal', batch_size: 10, agent_user_ids: [], round_robin_scope: 'campaign' });
+    expect(out).toEqual({ mode: 'equal', batch_size: 10, agent_user_ids: [4, 7], round_robin_scope: 'campaign' });
+  });
+
+  it('equal mode requires a non-empty agent pool (user picker)', () => {
+    const empty = () => validateDistributionConfig({ mode: 'equal', agent_user_ids: [] });
+    expect(empty).toThrow(BadRequestException);
+    expect(empty).toThrow(/at least one user when mode is "equal"/);
+    expect(() => validateDistributionConfig({ mode: 'equal' })).toThrow(/at least one user when mode is "equal"/);
+    // on_demand keeps the empty-pool semantics (anyone in scope self-assigns)
+    expect(validateDistributionConfig({ mode: 'on_demand', agent_user_ids: [] }))
+      .toEqual({ mode: 'on_demand', batch_size: 10, agent_user_ids: [] });
+  });
+
+  it('rejects duplicate ids in the agent pool', () => {
+    expect(() => validateDistributionConfig({ mode: 'equal', agent_user_ids: [3, 3] }))
+      .toThrow(/must not contain duplicate/);
   });
 
   it('applies defaults: mode on_demand, batch_size 10', () => {
@@ -24,7 +39,7 @@ describe('validateDistributionConfig', () => {
     [{ agent_user_ids: ['x'] }, /agent_user_ids/],
     [{ mode: 'conditional' }, /conditions must be a non-empty array/],
     [{ mode: 'conditional', conditions: [] }, /conditions must be a non-empty array/],
-    [{ mode: 'equal', conditions: [{}] }, /only allowed when mode is "conditional"/],
+    [{ mode: 'equal', agent_user_ids: [9], conditions: [{}] }, /only allowed when mode is "conditional"/],
     [{ surprise: true }, /unknown key/],
     ['not-an-object', /must be a JSON object/],
     [[1, 2], /must be a JSON object/],
@@ -48,6 +63,7 @@ describe('validateDistributionConfig', () => {
     expect(bad([{ field: 'course', op: 'sounds_like', value: 1, assign_to_user_ids: [1] }])).toThrow(/op must be one of/);
     expect(bad([{ field: 'course', assign_to_user_ids: [1] }])).toThrow(/value is required/);
     expect(bad([{ field: 'course', value: 'x', assign_to_user_ids: [] }])).toThrow(/assign_to_user_ids/);
+    expect(bad([{ field: 'course', value: 'x', assign_to_user_ids: [2, 2] }])).toThrow(/must not contain duplicate/);
     expect(bad(['nope'])).toThrow(/must be an object/);
   });
 });

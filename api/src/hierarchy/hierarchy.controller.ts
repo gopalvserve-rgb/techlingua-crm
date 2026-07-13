@@ -71,10 +71,12 @@ export class HierarchyController {
   }
 
   @Post('campaigns') @RequirePermission('campaign.create')
-  createCampaign(@Body() dto: any, @CurrentUser() u: U) { return this.h.createCampaign(dto, u.id); }
+  createCampaign(@Body() dto: any, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.h.createCampaign(dto, u.id, s); }
 
   @Patch('campaigns/:id') @RequirePermission('campaign.update') @ScopedEntity('campaign')
-  updateCampaign(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.h.updateCampaign(id, dto); }
+  updateCampaign(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.h.updateCampaign(id, dto, u.id, s);
+  }
 
   // ---- sources ----
   @Get('sources') @RequirePermission('source.read')

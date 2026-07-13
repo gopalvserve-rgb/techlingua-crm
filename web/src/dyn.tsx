@@ -1058,9 +1058,15 @@ const DUP_ACTION_LABEL: Record<string, string> = {
 };
 const PRIORITY_LABEL: Record<string, string> = { low: 'Low', med: 'Medium', high: 'High' };
 
+const OP_LABEL: Record<string, string> = { equals: '=', not_equals: '≠', contains: 'contains', in: 'in' };
+
 function CampaignView({ campaign, leadCount, onClose }: { campaign: any; leadCount: number; onClose: () => void }) {
   const ref = useRef_();
   const dist = (campaign.distribution_config as any) ?? {};
+  const userName = (id: number) => nameOf(ref.users, id) ?? `User #${id}`;
+  const agentChips = (ids: unknown) => (Array.isArray(ids) && ids.length
+    ? <span className="mapchips">{ids.map((id: number) => <span className="mapchip" key={id}>{userName(Number(id))}</span>)}</span>
+    : null);
   const dup = (campaign.duplicacy_config as any) ?? {};
   const utm = (campaign.utm as any) ?? {};
   const utmPairs = Object.entries(utm).filter(([, v]) => v != null && v !== '');
@@ -1085,9 +1091,16 @@ function CampaignView({ campaign, leadCount, onClose }: { campaign: any; leadCou
         <KV rows={[
           ['Mode', <>{renderCell({ b: [DIST_LABEL[dist.mode] ?? dist.mode ?? '\u2014', 'b-indigo'] })}<div className="sub" style={{ marginTop: 4, fontSize: 11.5 }}>{DIST_DESC[dist.mode] ?? ''}</div></>],
           ['Batch size', String(dist.batch_size ?? '\u2014')],
-          ['Agents', Array.isArray(dist.agent_user_ids) && dist.agent_user_ids.length ? `${dist.agent_user_ids.length} assigned` : 'All campaign agents'],
+          ['Agents', agentChips(dist.agent_user_ids)
+            ?? (dist.mode === 'on_demand' ? 'Anyone in scope (self-assign)' : 'None selected')],
           ['Round robin', dist.round_robin_scope ?? '\u2014'],
-          ['Conditions', Array.isArray(dist.conditions) && dist.conditions.length ? `${dist.conditions.length} rule(s)` : 'None'],
+          ['Conditions', Array.isArray(dist.conditions) && dist.conditions.length
+            ? <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>{dist.conditions.map((c: any, i: number) => (
+              <div key={i} style={{ fontSize: 12 }}>
+                <span className="mono" style={{ fontSize: 11.5 }}>{c.field} {OP_LABEL[c.op] ?? c.op} {Array.isArray(c.value) ? c.value.join(', ') : String(c.value)}</span>
+                {' \u2192 '}{agentChips(c.assign_to_user_ids) ?? '\u2014'}
+              </div>))}</div>
+            : 'None'],
         ]} />
       </Section>
       <Section title="Duplicacy rules (NeoDove)">

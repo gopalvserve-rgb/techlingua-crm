@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { validateDistributionConfig, validateDuplicacyConfig } from './campaign-config.validator';
 
@@ -11,7 +12,40 @@ import { validateDistributionConfig, validateDuplicacyConfig } from './campaign-
  */
 @Injectable()
 export class HierarchyService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly resolver: ScopeResolverService,
+    private readonly enforcer: ScopeEnforcerService,
+  ) {}
+
+  /**
+   * Agent-pool referential check (user picker): every user id referenced by a
+   * campaign's distribution_config (agent_user_ids + conditions[].assign_to_user_ids)
+   * must be an EXISTING, ACTIVE, non-deleted user (400 with the offending ids),
+   * and must fall inside the caller's resolved scope (404, assertRefInScope
+   * policy — no existence oracle across scope boundaries).
+   */
+  private async assertDistributionUsers(dist: Record<string, unknown> | null, scope: ResolvedScope, actorId: number) {
+    if (!dist) return;
+    const ids = new Set<number>();
+    for (const id of (dist.agent_user_ids as number[] | undefined) ?? []) ids.add(Number(id));
+    for (const c of (dist.conditions as Array<Record<string, unknown>> | undefined) ?? []) {
+      for (const id of (c.assign_to_user_ids as number[] | undefined) ?? []) ids.add(Number(id));
+    }
+    if (!ids.size) return;
+    const list = [...ids];
+    const rows = await this.db.query<{ id: string }>(
+      `SELECT id FROM "user" WHERE id = ANY($1::bigint[]) AND status = 'active' AND deleted_at IS NULL`, [list],
+    );
+    const ok = new Set(rows.map((r) => Number(r.id)));
+    const bad = list.filter((id) => !ok.has(id));
+    if (bad.length) {
+      throw new BadRequestException(
+        `distribution_config references unknown, inactive or deleted user id(s): ${bad.join(', ')}`,
+      );
+    }
+    for (const id of list) await this.enforcer.assertRefInScope(scope, 'user', id, actorId);
+  }
 
   private async orgId(): Promise<number> {
     const row = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -303,11 +337,12 @@ export class HierarchyService {
   async createCampaign(dto: {
     pipeline_id: number; name: string; utm?: object; cost?: number; priority?: string;
     distribution_config?: object; duplicacy_config?: object;
-  }, actorId: number) {
+  }, actorId: number, scope: ResolvedScope) {
     if (!dto?.pipeline_id || !dto?.name) throw new BadRequestException('pipeline_id and name are required');
     // NeoDove configs are validated strictly on create AND update (QA DEF-2).
     // Omitted/null configs fall back to the documented defaults (COALESCE below).
     const dist = dto.distribution_config != null ? validateDistributionConfig(dto.distribution_config) : null;
+    await this.assertDistributionUsers(dist, scope, actorId);
     const dup = dto.duplicacy_config != null ? validateDuplicacyConfig(dto.duplicacy_config) : null;
     const p = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string }>(
       `SELECT org_id, branch_id, vertical_id FROM pipeline WHERE id = $1 AND deleted_at IS NULL`, [dto.pipeline_id],
@@ -329,9 +364,17 @@ export class HierarchyService {
     return rows[0];
   }
 
-  updateCampaign(id: number, dto: Record<string, unknown>) {
+  async updateCampaign(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
     // Same strict NeoDove config validation as on create (QA DEF-2).
-    if (dto.distribution_config !== undefined) dto = { ...dto, distribution_config: validateDistributionConfig(dto.distribution_config) };
+    if (dto.distribution_config !== undefined) {
+      const dist = validateDistributionConfig(dto.distribution_config);
+      await this.assertDistributionUsers(dist, scope, actorId);
+      dto = { ...dto, distribution_config: dist };
+      // Pool edits never break the round-robin rotation: the cursor is a
+      // monotonically increasing counter and the pick applies `% pool.length`
+      // at assignment time (leads.service), so shrinking/growing/reordering the
+      // agent pool stays safe without touching campaign_distribution_state.
+    }
     if (dto.duplicacy_config !== undefined) dto = { ...dto, duplicacy_config: validateDuplicacyConfig(dto.duplicacy_config) };
     return this.genericUpdate('campaign', id, dto,
       ['name', 'utm', 'cost', 'priority', 'distribution_config', 'duplicacy_config', 'is_active']);

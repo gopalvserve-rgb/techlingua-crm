@@ -502,3 +502,34 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .sc-check input{accent-color:var(--primary);width:16px;height:16px;margin-top:1px;flex:none}
 .sc-check b{font-size:12.5px;font-weight:600;display:block}
 .sc-check em{font-style:normal;font-size:11.5px;color:var(--text-muted);display:block;margin-top:1px}
+
+/* searchable user picker (campaign agent pool / conditional assign-to) */
+.upick{position:relative}
+.upick-ctl{display:flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:5px 9px;min-height:38px;cursor:text}
+.upick-ctl:focus-within{border-color:var(--primary)}
+.upick.dis .upick-ctl{opacity:.6;cursor:not-allowed}
+.upick-mag{width:13px;height:13px;color:var(--text-dim);flex:none}
+.upick-caret{width:13px;height:13px;color:var(--text-dim);flex:none}
+.upick-chips{display:flex;flex-wrap:wrap;gap:5px;flex:1;align-items:center}
+.upick-chips input{flex:1;min-width:90px;background:none;border:none;outline:none;color:var(--text);font-size:13px;font-family:inherit;padding:3px 2px}
+.upick-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:var(--primary);background:var(--primary-soft);border-radius:7px;padding:3px 5px 3px 8px}
+.upick-chip button{display:grid;place-items:center;width:15px;height:15px;border-radius:50%;color:var(--primary);opacity:.7}
+.upick-chip button:hover{opacity:1;background:color-mix(in srgb,var(--primary) 22%,transparent)}
+.upick-chip button svg{width:9px;height:9px}
+.upick-count{font-size:10px;font-weight:600;color:var(--text-dim);white-space:nowrap}
+.upick-drop{position:absolute;z-index:40;top:calc(100% + 5px);left:0;right:0;max-height:236px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:5px}
+.upick-row{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:8px;cursor:pointer;font-size:12.5px}
+.upick-row.act{background:var(--surface-2)}
+.upick-row.sel .upick-name{color:var(--primary)}
+.upick-name{font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.upick-branch{margin-left:auto;font-size:10.5px;color:var(--text-dim);white-space:nowrap}
+.upick-box{display:grid;place-items:center;width:16px;height:16px;border-radius:5px;border:1.5px solid var(--border);flex:none;color:#fff}
+.upick-box.on{background:var(--primary);border-color:var(--primary)}
+.upick-box svg{width:10px;height:10px}
+.upick-empty{padding:12px;font-size:12px;color:var(--text-dim);text-align:center}
+.upick-foot{display:flex;justify-content:space-between;align-items:center;padding:7px 9px 4px;border-top:1px solid var(--border);margin-top:4px;font-size:11px;color:var(--text-dim)}
+.upick-foot button{color:var(--danger);font-weight:600;font-size:11px}
+.condrow{display:grid;grid-template-columns:1.1fr .9fr 1fr 1.4fr 30px;gap:7px;align-items:start;margin-bottom:8px}
+.condrow .ax2{display:grid;place-items:center;width:30px;height:38px;border-radius:8px;color:var(--text-dim)}
+.condrow .ax2:hover{color:var(--danger);background:var(--danger-soft)}
+.condrow .ax2 svg{width:13px;height:13px}

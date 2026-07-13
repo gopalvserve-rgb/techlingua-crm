@@ -34,7 +34,7 @@ function mkDb() {
 
 const mkSvc = () => {
   const db = mkDb();
-  const svc = new HierarchyService(db as any, {} as any);
+  const svc = new HierarchyService(db as any, {} as any, {} as any);
   return { db, svc };
 };
 
