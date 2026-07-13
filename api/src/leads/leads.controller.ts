@@ -62,6 +62,8 @@ export class FollowUpsController {
       lead_id: num(q.lead_id), owner_id: num(q.owner_id), status: q.status || undefined,
       due: (q.due as 'today' | 'overdue' | 'upcoming') || undefined,
       mine: q.mine === '1' || q.mine === 'true', limit: num(q.limit),
+      view: (q.view as 'assigned' | 'reported') || undefined,
+      priority: (q.priority as 'low' | 'medium' | 'high') || undefined,
     }, u.id);
   }
 

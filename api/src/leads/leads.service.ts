@@ -3,7 +3,7 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
-import { looksLikePhoneQuery, normalizePhone, phoneDigits } from '../common/phone.util';
+import { looksLikePhoneQuery, normalizePhone, phoneQueryFragments } from '../common/phone.util';
 
 /**
  * Sprint 2 — minimal lead APIs backing the prototype-parity UI:
@@ -27,6 +27,28 @@ export const FOLLOWUP_SCOPE_COLS: ScopeColumnMap = {
   owner: 'f.owner_id', team: 'l.team_id', branch: 'l.branch_id',
   vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id',
 };
+
+/**
+ * Lead search clause (client update #2): `q` matches name (ILIKE), email (ILIKE)
+ * and phone — digits-normalised CONTAINS, country-code agnostic (a fragment like
+ * "7911 123456" or "07911123456" finds `+447911123456`). Pure SQL-fragment
+ * builder so the matrix unit-tests without a DB; appends to `params`.
+ */
+export function buildLeadSearch(q: string, params: unknown[]): string {
+  const qt = q.trim();
+  params.push(`%${qt}%`);
+  const like = `$${params.length}`;
+  const clauses = [`l.full_name ILIKE ${like}`, `l.email ILIKE ${like}`, `l.phone LIKE ${like}`];
+  if (looksLikePhoneQuery(qt)) {
+    // country-agnostic digit-contains: compare digits against digits, with the
+    // 00/trunk-0 dialing prefixes of the QUERY stripped as extra variants
+    for (const frag of phoneQueryFragments(qt)) {
+      params.push(`%${frag}%`);
+      clauses.push(`regexp_replace(l.phone, '\\D', '', 'g') LIKE $${params.length}`);
+    }
+  }
+  return `(${clauses.join(' OR ')})`;
+}
 
 export interface LeadFilters {
   branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
@@ -101,20 +123,7 @@ export class LeadsService {
     if (f.owner_id) eq('l.owner_id', f.owner_id);
     if (f.source_id) eq('l.source_id', f.source_id);
     if (f.temperature) eq('l.temperature', f.temperature);
-    if (f.q) {
-      const qt = f.q.trim();
-      params.push(`%${qt}%`);
-      const like = `$${params.length}`;
-      if (looksLikePhoneQuery(qt)) {
-        // DEF-QA4-05: numbers typed with spaces/dashes must still find the
-        // canonically stored phone — compare digits against digits.
-        params.push(`%${phoneDigits(qt)}%`);
-        where.push(`(l.full_name ILIKE ${like} OR l.email ILIKE ${like} OR l.phone LIKE ${like}
-                     OR regexp_replace(l.phone, '\D', '', 'g') LIKE $${params.length})`);
-      } else {
-        where.push(`(l.full_name ILIKE ${like} OR l.phone LIKE ${like} OR l.email ILIKE ${like})`);
-      }
-    }
+    if (f.q) where.push(buildLeadSearch(f.q, params));
     const cond = where.join(' AND ');
     const total = await this.db.one<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM lead l WHERE ${cond}`, params.slice(),

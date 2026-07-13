@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { DatabaseService } from '../database/database.service';
+import { normalizePhone } from '../common/phone.util';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
@@ -21,7 +22,7 @@ export function buildUserFilters(f: UserListFilters, params: unknown[]): string 
   let sql = '';
   if (f.q?.trim()) {
     params.push(`%${f.q.trim()}%`);
-    sql += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
+    sql += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone LIKE $${params.length})`;
   }
   if (f.role_id) {
     params.push(f.role_id);
@@ -41,8 +42,10 @@ export function buildUserFilters(f: UserListFilters, params: unknown[]): string 
 
 export interface CreateUserDto {
   name: string;
-  email: string;
-  phone?: string;
+  /** MANDATORY (client update #1 — mobile-first): stored canonical E.164, unique. */
+  phone: string;
+  /** optional; unique when present */
+  email?: string;
   password?: string;
   assignments?: Array<{
     role_id: number; branch_id?: number | null; vertical_id?: number | null;
@@ -115,7 +118,8 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto, actorId: number, scope?: ResolvedScope) {
-    if (!dto?.name || !dto?.email) throw new BadRequestException('name and email are required');
+    // Mobile-first (client update #1): phone is the mandatory identifier, email optional.
+    if (!dto?.name || !dto?.phone?.trim()) throw new BadRequestException('name and phone (mobile number) are required');
     // DEF-QA4-03: units referenced by the new user's assignments must be inside
     // the creator's scope (roles are org-level, validated by FK).
     if (scope) {
@@ -128,15 +132,21 @@ export class UsersService {
       }
     }
     const org = await this.orgId();
-    const dup = await this.db.one(`SELECT 1 FROM "user" WHERE lower(email)=lower($1)`, [dto.email]);
-    if (dup) throw new ConflictException(`Email already exists: ${dto.email}`);
+    const phone = normalizePhone(dto.phone) as string;
+    const dupPhone = await this.db.one(`SELECT 1 FROM "user" WHERE phone = $1`, [phone]);
+    if (dupPhone) throw new ConflictException(`Mobile number already exists: ${phone}`);
+    const email = dto.email?.trim() ? dto.email.trim().toLowerCase() : null;
+    if (email) {
+      const dup = await this.db.one(`SELECT 1 FROM "user" WHERE lower(email)=lower($1)`, [email]);
+      if (dup) throw new ConflictException(`Email already exists: ${email}`);
+    }
     const hash = dto.password ? await bcrypt.hash(dto.password, 10) : null;
 
     return this.db.tx(async (c) => {
       const u = await c.query(
         `INSERT INTO "user" (org_id, name, email, phone, password_hash, created_by)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, name, email, phone, status`,
-        [org, dto.name.trim(), dto.email.trim().toLowerCase(), dto.phone ?? null, hash, actorId],
+        [org, dto.name.trim(), email, phone, hash, actorId],
       );
       const userId = u.rows[0].id;
       for (const a of dto.assignments ?? []) {
@@ -157,7 +167,13 @@ export class UsersService {
     const params: unknown[] = [];
     const set = (col: string, val: unknown) => { params.push(val); sets.push(`${col} = $${params.length}`); };
     if (dto.name !== undefined) set('name', dto.name);
-    if (dto.phone !== undefined) set('phone', dto.phone);
+    if (dto.phone !== undefined) {
+      if (!String(dto.phone ?? '').trim()) throw new BadRequestException('phone cannot be removed (mobile-first login identifier)');
+      const phone = normalizePhone(String(dto.phone)) as string;
+      const clash = await this.db.one(`SELECT 1 FROM "user" WHERE phone = $1 AND id <> $2`, [phone, id]);
+      if (clash) throw new ConflictException(`Mobile number already exists: ${phone}`);
+      set('phone', phone);
+    }
     if (dto.status !== undefined) {
       if (!['active', 'disabled'].includes(dto.status)) throw new BadRequestException('invalid status');
       set('status', dto.status);
@@ -178,32 +194,33 @@ export class UsersService {
   }
 
   /**
-   * Bulk CSV import. Expected header: name,email,phone,password (password optional).
-   * Returns per-row results; existing emails are skipped, not overwritten.
+   * Bulk CSV import (mobile-first): header name,phone[,email][,password] —
+   * phone mandatory per row, email optional. Existing phones/emails are skipped.
    */
   async importCsv(csv: string, actorId: number, scope?: ResolvedScope) {
     if (!csv?.trim()) throw new BadRequestException('csv body is required');
     const lines = csv.trim().split(/\r?\n/);
     const header = lines[0].split(',').map((h) => h.trim().toLowerCase());
     const col = (name: string) => header.indexOf(name);
-    if (col('name') < 0 || col('email') < 0) {
-      throw new BadRequestException('CSV must have header columns: name,email[,phone][,password]');
+    if (col('name') < 0 || col('phone') < 0) {
+      throw new BadRequestException('CSV must have header columns: name,phone[,email][,password]');
     }
-    const results: Array<{ line: number; email: string; ok: boolean; error?: string; id?: number }> = [];
+    const results: Array<{ line: number; phone: string; email?: string; ok: boolean; error?: string; id?: number }> = [];
     for (let i = 1; i < lines.length; i++) {
       if (!lines[i].trim()) continue;
       const cells = lines[i].split(',').map((s) => s.trim());
-      const email = cells[col('email')] ?? '';
+      const phone = cells[col('phone')] ?? '';
+      const email = col('email') >= 0 ? cells[col('email')] : undefined;
       try {
         const created = await this.create({
           name: cells[col('name')] ?? '',
-          email,
-          phone: col('phone') >= 0 ? cells[col('phone')] : undefined,
+          phone,
+          email: email || undefined,
           password: col('password') >= 0 && cells[col('password')] ? cells[col('password')] : undefined,
         }, actorId, scope);
-        results.push({ line: i + 1, email, ok: true, id: Number(created.id) });
+        results.push({ line: i + 1, phone, email, ok: true, id: Number(created.id) });
       } catch (e: any) {
-        results.push({ line: i + 1, email, ok: false, error: e.message });
+        results.push({ line: i + 1, phone, email, ok: false, error: e.message });
       }
     }
     return {

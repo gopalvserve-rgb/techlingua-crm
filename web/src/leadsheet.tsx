@@ -4,6 +4,7 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
 import { AddMasterModal } from './mastermodal';
+import { PhoneInput } from './phonefield';
 import { Avatar, TempBadge } from './renderer';
 import { toast, useRef_, Named } from './refdata';
 
@@ -146,10 +147,24 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
               <div className="f"><label>Owner</label><div className="iv">
                 {ref.users.length && can('lead.assign') ? sel('owner_id', ref.users) : <span>{lead.owner_name || 'Unassigned'}</span>}
               </div></div>
+              <div className="f"><label>Phone</label>
+                {canUpdate
+                  ? <PhoneInput value={String(ed('phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, phone: v }))} />
+                  : <div className="iv"><span className="mono">{lead.phone}</span></div>}
+              </div>
               <div className="f"><label>Source</label><div className="iv">{lead.source_name}</div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">
                 {ref.courses.length || extra['course_id']?.length ? sel('course_id', withExtra('course_id', ref.courses)) : <span>{lead.course_name || '—'}</span>}
-              </div></div>
+              </div>
+                {(() => { // client update #3 — course fee auto-fetched from the Course master
+                  const cid = ed('course_id');
+                  const course: any = cid != null ? withExtra('course_id', ref.courses).find((c) => Number(c.id) === Number(cid)) : null;
+                  const fee = course?.meta?.fee;
+                  return fee != null && fee !== ''
+                    ? <div style={{ fontSize: 11, color: 'var(--success)', marginTop: 3 }}>Course fee: ₹{fee}</div>
+                    : null;
+                })()}
+              </div>
               <div className="f"><label>Budget{mlink('budget', 'budget_id')}</label><div className="iv">
                 {ref.budgets.length || extra['budget_id']?.length ? sel('budget_id', withExtra('budget_id', ref.budgets)) : <span>—</span>}
               </div></div>

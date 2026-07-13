@@ -3,7 +3,10 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { DatabaseService } from '../database/database.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
+import { normalizePhone } from '../common/phone.util';
 import { config } from '../config';
+
+type UserRow = { id: string; name: string; email: string | null; phone: string; password_hash: string; status: string };
 
 @Injectable()
 export class AuthService {
@@ -13,22 +16,36 @@ export class AuthService {
     private readonly rbacData: RbacDataService,
   ) {}
 
-  async login(email: string, password: string) {
-    const user = await this.db.one<{ id: string; name: string; email: string; password_hash: string; status: string }>(
-      `SELECT id, name, email, password_hash, status FROM "user" WHERE lower(email) = lower($1)`,
-      [email],
-    );
+  /**
+   * Password login by identifier = mobile OR email (client update #1).
+   * Emails match case-insensitively; anything else is normalised to the
+   * canonical E.164 phone and matched against user.phone.
+   */
+  async login(identifier: string, password: string) {
+    const user = identifier.includes('@')
+      ? await this.db.one<UserRow>(
+          `SELECT id, name, email, phone, password_hash, status FROM "user" WHERE lower(email) = lower($1)`,
+          [identifier],
+        )
+      : await this.db.one<UserRow>(
+          `SELECT id, name, email, phone, password_hash, status FROM "user" WHERE phone = $1`,
+          [normalizePhone(identifier)],
+        );
     if (!user || user.status !== 'active' || !user.password_hash) {
       throw new UnauthorizedException('Invalid credentials');
     }
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) throw new UnauthorizedException('Invalid credentials');
+    return this.issueToken({ id: Number(user.id), name: user.name, email: user.email });
+  }
 
+  /** Mint the session JWT + response shape (shared by password and OTP logins). */
+  async issueToken(user: { id: number; name: string; email: string | null }) {
     const token = await this.jwt.signAsync(
-      { sub: Number(user.id), email: user.email, name: user.name },
+      { sub: user.id, email: user.email, name: user.name },
       { secret: config.jwtSecret, expiresIn: config.jwtExpiresIn },
     );
-    return { token, user: { id: Number(user.id), name: user.name, email: user.email } };
+    return { token, user: { id: user.id, name: user.name, email: user.email } };
   }
 
   /** Profile + effective permission keys (used by the web app to hide nav/actions). */

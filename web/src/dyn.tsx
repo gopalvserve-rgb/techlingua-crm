@@ -11,6 +11,7 @@ import {
 } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { AddModal, CampaignModal, need } from './forms';
+import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
 import {
@@ -41,6 +42,34 @@ const fmtDT = (s?: string | null) => {
 };
 
 const LEAD_COLS = ['Lead', 'Course', 'Vertical · Pipeline', 'Source', 'Score', 'Owner', 'Stage', 'Next follow-up'];
+
+/* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
+const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
+const PRIO_LABEL: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low' };
+
+function PrioBadge({ value }: { value?: string }) {
+  const p = value || 'medium';
+  return <span className={`bdg ${PRIO_CLASS[p] ?? 'b-gray'}`}>{PRIO_LABEL[p] ?? p}</span>;
+}
+
+/** Inline-editable priority: badge-coloured select, PATCHes the follow-up. */
+function PrioSelect({ id, value, onChanged, disabled }: { id: number; value?: string; onChanged?: () => void; disabled?: boolean }) {
+  const p = value || 'medium';
+  if (disabled) return <PrioBadge value={p} />;
+  return (
+    <select className={`bdg ${PRIO_CLASS[p] ?? 'b-gray'}`}
+      style={{ border: 'none', cursor: 'pointer', appearance: 'none', fontFamily: 'inherit' }}
+      value={p} title="Set priority"
+      onClick={(e) => e.stopPropagation()}
+      onChange={async (e) => {
+        e.stopPropagation();
+        try { await api.patch(`/follow-ups/${id}`, { priority: e.target.value }); toast('Priority updated'); onChanged?.(); }
+        catch (err: any) { toast(err.message, true); }
+      }}>
+      {(['low', 'medium', 'high'] as const).map((x) => <option key={x} value={x}>{PRIO_LABEL[x]}</option>)}
+    </select>
+  );
+}
 
 function leadRow(l: any): Cell[] {
   const overdue = l.next_follow_up_at && new Date(l.next_follow_up_at) < new Date();
@@ -151,16 +180,18 @@ function DashOverview() {
   );
 }
 
-function MyTaskCard({ rows, more }: { rows: any[]; more?: string }) {
+function MyTaskCard({ rows, more, title = 'My Tasks', empty }: { rows: any[]; more?: string; title?: string; empty?: string }) {
   const { bump, openLead } = useScreen();
+  const { can } = useAuth();
+  const canEdit = can('followup.update');
   const complete = async (id: number) => {
     try { await api.patch(`/follow-ups/${id}`, { complete: true }); toast('Task marked done'); bump(); }
     catch (e: any) { toast(e.message, true); }
   };
   return (
     <div className="card">
-      <div className="card-head"><h3><Ic k="check" />My Tasks</h3><span className="more">{more || ''}</span></div>
-      {rows.length === 0 ? <div className="lrow empty">No open tasks — follow-ups you own appear here</div> :
+      <div className="card-head"><h3><Ic k="check" />{title}</h3><span className="more">{more || ''}</span></div>
+      {rows.length === 0 ? <div className="lrow empty">{empty || 'No open tasks — follow-ups you own appear here'}</div> :
         rows.map((f) => (
           <div className="lrow" key={f.id}>
             <div className="chk" onClick={() => complete(f.id)} title="Mark done" />
@@ -168,6 +199,7 @@ function MyTaskCard({ rows, more }: { rows: any[]; more?: string }) {
               <div className="t1">{f.type_name || 'Follow-up'} — {f.lead_name}</div>
               <div className="t2">{f.notes || `${f.course_name || ''}`}</div>
             </div>
+            <PrioSelect id={Number(f.id)} value={f.priority} onChanged={bump} disabled={!canEdit} />
             <span className="rt">{fmtDT(f.scheduled_at)}</span>
           </div>
         ))}
@@ -177,17 +209,33 @@ function MyTaskCard({ rows, more }: { rows: any[]; more?: string }) {
 
 function MyTasks() {
   const { refreshTick } = useScreen();
+  // client update #4 — two views: Assigned to Me (owner) | Reported by Me (creator)
+  const [view, setView] = useState<'assigned' | 'reported'>('assigned');
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
-  const mine = useFetch<any[]>('/follow-ups?mine=1&status=pending&limit=50', [refreshTick]);
+  const list = useFetch<any[]>(`/follow-ups?view=${view}&status=pending&limit=50`, [view, refreshTick]);
+  const s = sum.data ?? {};
+  const k = view === 'assigned'
+    ? { open: s.my_open, due: s.my_due_today, over: s.my_overdue, done: s.my_done_week }
+    : { open: s.reported_open, due: s.reported_due_today, over: s.reported_overdue, done: s.reported_done_week };
   return (
     <>
+      <div className="seltabs" style={{ marginBottom: 14 }}>
+        <button className={view === 'assigned' ? 'on' : ''} onClick={() => setView('assigned')}>
+          Assigned to Me{s.my_open != null ? ` (${s.my_open})` : ''}
+        </button>
+        <button className={view === 'reported' ? 'on' : ''} onClick={() => setView('reported')}>
+          Reported by Me{s.reported_open != null ? ` (${s.reported_open})` : ''}
+        </button>
+      </div>
       <Kpis items={[
-        { lab: 'Open tasks', val: String(sum.data?.my_open ?? '0'), ic: 'check' },
-        { lab: 'Due today', val: String(sum.data?.my_due_today ?? '0'), ic: 'clock' },
-        { lab: 'Overdue', val: String(sum.data?.my_overdue ?? '0'), ic: 'clock', tone: 'down', delta: sum.data?.my_overdue > 0 ? 'needs attention' : undefined },
-        { lab: 'Done this week', val: String(sum.data?.my_done_week ?? '0'), ic: 'check' },
+        { lab: 'Open tasks', val: String(k.open ?? '0'), ic: 'check' },
+        { lab: 'Due today', val: String(k.due ?? '0'), ic: 'clock' },
+        { lab: 'Overdue', val: String(k.over ?? '0'), ic: 'clock', tone: 'down', delta: k.over > 0 ? 'needs attention' : undefined },
+        { lab: 'Done this week', val: String(k.done ?? '0'), ic: 'check' },
       ]} />
-      <MyTaskCard rows={mine.data ?? []} more={`${sum.data?.my_open ?? 0} open`} />
+      <MyTaskCard rows={list.data ?? []} more={`${k.open ?? 0} open`}
+        title={view === 'assigned' ? 'Assigned to Me' : 'Reported by Me'}
+        empty={view === 'assigned' ? 'No open tasks assigned to you' : 'No open tasks reported by you'} />
     </>
   );
 }
@@ -274,6 +322,7 @@ function QuickContact() {
 
   const search = async () => {
     const q = (phone || name).trim();
+    // phone values carry "+<dial><national>" — search by digits, country-agnostic
     setBusy(true);
     try {
       const params = new URLSearchParams();
@@ -314,9 +363,9 @@ function QuickContact() {
           <div className="form-grid" style={{ padding: 0 }}>
             <div className="fld"><label>Contact Name</label><input className="ainp" placeholder="Contact Name" value={name} onChange={(e) => setName(e.target.value)} /></div>
             <div className="fld"><label>Contact Number</label>
-              <div className="inpwrap">
-                <input className="ainp" type="tel" placeholder="Contact Number" value={phone} onChange={(e) => setPhone(e.target.value)} />
-                <button className="verify" title="Verify" onClick={() => toast('Number verification lands with the messaging integration (Sprint 3)')}><Ic k="check" w={2.6} /></button>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: 0 }}><PhoneInput value={phone} onChange={setPhone} placeholder="Contact Number" /></div>
+                <button className="verify" style={{ position: 'static', flex: '0 0 auto' }} title="Verify" onClick={() => toast('Number verification lands with the messaging integration (Sprint 3)')}><Ic k="check" w={2.6} /></button>
               </div></div>
             <div className="fld span2"><label>Email</label><input className="ainp" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           </div>
@@ -396,7 +445,7 @@ function LeadsAll() {
         {chip('Vertical', 'grid', f.vertical, ref.verticals.filter((v) => !f.branch || Number(v.branch_id) === f.branch), (v) => setF((x) => ({ ...x, vertical: v, pipeline: undefined, campaign: undefined })))}
         {chip('Pipeline', 'list', f.pipeline, ref.pipelines.filter((p) => !f.vertical || Number(p.vertical_id) === f.vertical), (v) => setF((x) => ({ ...x, pipeline: v, campaign: undefined })))}
         {chip('Campaign', 'bolt', f.campaign, ref.campaigns.filter((c) => !f.pipeline || Number(c.pipeline_id) === f.pipeline), (v) => setF((x) => ({ ...x, campaign: v })))}
-        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / email…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         <div className="fchip" style={{ marginLeft: 'auto', color: 'var(--primary)', borderColor: 'var(--primary)' }}><Ic k="intel" />AI sort: Hot first</div>
       </div>
       <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']}
@@ -411,12 +460,16 @@ function LeadsAll() {
 }
 
 function Followups() {
-  const { openLead, refreshTick } = useScreen();
+  const { openLead, refreshTick, bump } = useScreen();
+  const { can } = useAuth();
+  const canEdit = can('followup.update');
+  const [prio, setPrio] = useState<string>('');
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
-  const list = useFetch<any[]>('/follow-ups?limit=100', [refreshTick]);
+  const list = useFetch<any[]>(`/follow-ups?limit=100${prio ? `&priority=${prio}` : ''}`, [prio, refreshTick]);
   const rows = (list.data ?? []).map((fx) => ({ leadId: fx.lead_id, row: [
     { node: <span className="nm">{fx.lead_name}</span> } as Cell,
     { b: [fx.type_name || 'Follow-up', fx.type_name === 'WhatsApp' ? 'b-green' : 'b-indigo'] } as Cell,
+    { node: <PrioSelect id={Number(fx.id)} value={fx.priority} onChanged={bump} disabled={!canEdit} /> } as Cell,
     fx.owner_name || '—',
     { node: <span className="mono" style={fx.status === 'pending' && new Date(fx.scheduled_at) < new Date() ? { color: 'var(--danger)' } : undefined}>{fmtDT(fx.scheduled_at)}</span> } as Cell,
     fx.disposition_name || (fx.status === 'done' ? 'Done' : '—'),
@@ -429,7 +482,14 @@ function Followups() {
         { lab: 'This week', val: String(sum.data?.this_week ?? '0'), ic: 'cal' },
         { lab: 'Done (wk)', val: String(sum.data?.done_week ?? '0'), ic: 'check' },
       ]} />
-      <TableCard title="Upcoming follow-ups" cols={['Lead', 'Type', 'Owner', 'Due', 'Disposition', 'Actions']}
+      <div className="filters">
+        <div className="fchip"><Ic k="bolt" />Priority
+          <select value={prio} onChange={(e) => setPrio(e.target.value)}>
+            <option value="">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+      <TableCard title="Upcoming follow-ups" cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Disposition', 'Actions']}
         rows={rows.map((r) => [...r.row, rowActions({ onView: () => openLead(r.leadId) })])}
         empty="No follow-ups scheduled yet"
         onRowClick={(i) => openLead(rows[i].leadId)} />

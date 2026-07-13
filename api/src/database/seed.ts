@@ -206,8 +206,8 @@ async function seed(c: PoolClient) {
   // ---- Super Admin user ----------------------------------------------------
   const hash = await bcrypt.hash(config.seedAdminPassword, 10);
   const admin = (await c.query(
-    `INSERT INTO "user" (org_id, name, email, password_hash) VALUES ($1,$2,$3,$4) RETURNING id`,
-    [org, 'Super Admin', config.seedAdminEmail, hash],
+    `INSERT INTO "user" (org_id, name, email, phone, password_hash) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+    [org, 'Super Admin', config.seedAdminEmail, config.seedAdminPhone, hash],
   )).rows[0].id as Id;
   await c.query(
     `INSERT INTO user_assignment (user_id, role_id) VALUES ($1,$2)`,   // org-wide: all unit columns NULL
@@ -220,7 +220,7 @@ async function seed(c: PoolClient) {
     [org, delhi, tlaDel, 'Delhi Counselling Team', admin],
   );
 
-  console.log(`Seeded org=${org}. Super Admin: ${config.seedAdminEmail} / ${config.seedAdminPassword}`);
+  console.log(`Seeded org=${org}. Super Admin: ${config.seedAdminEmail} · mobile ${config.seedAdminPhone} / ${config.seedAdminPassword}`);
 }
 
 async function main() {

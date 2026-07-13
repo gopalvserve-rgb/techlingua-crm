@@ -9,10 +9,10 @@ describe('buildUserFilters (UAT users-list filters)', () => {
     expect(params).toEqual(['scope']);
   });
 
-  it('q filters name OR email with one ILIKE param', () => {
+  it('q filters name OR email OR phone with one ILIKE param', () => {
     const params: unknown[] = [];
     const sql = buildUserFilters({ q: ' priya ' }, params);
-    expect(sql).toBe(' AND (u.name ILIKE $1 OR u.email ILIKE $1)');
+    expect(sql).toBe(' AND (u.name ILIKE $1 OR u.email ILIKE $1 OR u.phone LIKE $1)');
     expect(params).toEqual(['%priya%']);
   });
 

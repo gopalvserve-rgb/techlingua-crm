@@ -25,16 +25,19 @@ export class AuditInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap((result: any) => {
-        const entityType = this.entityTypeFor(req.path ?? req.url ?? '');
+        const path: string = req.path ?? req.url ?? '';
+        const entityType = this.entityTypeFor(path);
         const entityId = this.num(result?.id) ?? this.num(req.params?.id) ?? null;
         const actorId = action === 'login' ? this.num(result?.user?.id) : (req.user?.id ?? null);
+        // never persist a live OTP code to the audit trail
+        const body = path.includes('/auth/otp') ? { ...(req.body ?? {}), ...(req.body?.code ? { code: '[redacted]' } : {}) } : req.body ?? {};
         this.db
           .query(
             `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after, ip, user_agent)
              VALUES ((SELECT id FROM organisation ORDER BY id LIMIT 1), $1, $2, $3, $4, $5, $6, $7, $8)`,
             [
               actorId, entityType, entityId, action,
-              JSON.stringify(this.sanitize(req.body ?? {})),
+              JSON.stringify(this.sanitize(body)),
               action === 'login' ? null : JSON.stringify(this.sanitize(result ?? {})),
               req.ip ?? null,
               req.headers?.['user-agent'] ?? null,
@@ -48,7 +51,7 @@ export class AuditInterceptor implements NestInterceptor {
   private actionFor(req: any): string | null {
     const path: string = req.path ?? req.url ?? '';
     if (path.startsWith('/api/errors')) return null; // client error reports are not user actions
-    if (path.includes('/auth/login')) return 'login';
+    if (path.includes('/auth/login') || path.includes('/auth/otp')) return 'login';
     const base = METHOD_ACTION[req.method];
     if (!base) return null;
     if (path.includes('/permissions')) return 'permission_change';

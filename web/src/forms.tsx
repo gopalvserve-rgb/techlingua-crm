@@ -8,6 +8,7 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { AddMasterModal } from './mastermodal';
+import { PhoneInput } from './phonefield';
 import { toast, useRef_, Named, RefData } from './refdata';
 
 export interface FormField {
@@ -114,7 +115,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   'admin.verticals': { title: 'Add Vertical', fields: [
     F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.users': { title: 'Add User', fields: [
-    F('Full Name', 'text', 1, 0, 'Employee master'), F('Email ID', 'email', 1), F('Mobile Number', 'tel'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
+    F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
     F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'select', 0, 0, 'blank = org-wide', 'branches'),
     F('Vertical Access', 'select', 0, 0, 'filtered by Branch', 'verticals'), F('Status', 'select', 0, ['Active', 'Suspended', 'Deactivated'])] },
   'fran.partners': { title: 'Add Franchise Partner', fields: [
@@ -125,6 +126,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Start Date', 'date'), F('End Date', 'date'), F('Territory', 'text'), F('Signed PDF', 'file')] },
   'leads.followups': { title: 'Add Follow-up', fields: [
     F('Lead', 'leadlookup', 1, 0, 'Search lead'), F('Type', 'select', 1, 0, 'master', 'followupTypes'), F('Disposition', 'select', 0, 0, 'master', 'dispositions'),
+    F('Priority', 'select', 0, ['Low', 'Medium', 'High'], 'default: Medium'),
     F('Next Follow-up Date', 'datetime', 1), F('Remarks', 'textarea')] },
   'dash.mytasks': { title: 'Add Task', fields: [
     F('Title', 'text', 1), F('Task Type', 'select', 0, 0, 'master', 'followupTypes'), F('Related Lead', 'leadlookup', 1, 0, 'Search lead'), F('Assigned To', 'select', 0, 0, 'Users', 'users'),
@@ -198,6 +200,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<string>> = {
       lead_id: need(ids['Lead'], 'Pick a lead'),
       type_id: ids['Type'],
       disposition_id: ids['Disposition'],
+      priority: (vals['Priority'] || 'Medium').toLowerCase(),
       scheduled_at: need(vals['Next Follow-up Date'], 'Follow-up date is required'),
       notes: vals['Remarks'] || undefined,
     });
@@ -209,6 +212,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<string>> = {
       type_id: ids['Task Type'],
       owner_id: ids['Assigned To'],
       scheduled_at: need(vals['Due Date'], 'Due date is required'),
+      priority: (vals['Priority'] || 'Medium').toLowerCase(),
       notes: [vals['Title'], vals['Description']].filter(Boolean).join(' — ') || undefined,
     });
     return 'Task created';
@@ -248,8 +252,8 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<string>> = {
   'admin.users': async (vals, ids) => {
     await api.post('/users', {
       name: need(vals['Full Name'], 'Name is required'),
-      email: need(vals['Email ID'], 'Email is required'),
-      phone: vals['Mobile Number'] || undefined,
+      phone: need(vals['Mobile Number'], 'Mobile Number is required'),
+      email: vals['Email ID'] || undefined,
       password: need(vals['Password / Login Method'], 'Password is required'),
       assignments: ids['System Role'] ? [{
         role_id: ids['System Role'],
@@ -409,16 +413,34 @@ export function AddModal({ formKey, onClose, onSaved, edit }: {
     }
     if (t === 'select' && f.src) {
       const list = srcOptions(f);
+      // client update #3 — course fee auto-fetch from the Course master (meta.fee)
+      const courseFee = f.src === 'courses' && ids[f.label]
+        ? (list.find((o) => Number(o.id) === Number(ids[f.label])) as any)?.meta?.fee
+        : undefined;
       return (
-        <select className="ainp" value={ids[f.label] ?? ''}
-          onChange={(e) => {
-            const id = e.target.value ? Number(e.target.value) : undefined;
-            const nm = list.find((o) => Number(o.id) === id)?.name ?? '';
-            setField(f.label, nm, id);
-          }}>
-          <option value="">Select…</option>
-          {list.map((o) => <option key={o.id} value={o.id}>{o.name}{o.branch_name ? ` · ${o.branch_name}` : ''}</option>)}
-        </select>
+        <>
+          <select className="ainp" value={ids[f.label] ?? ''}
+            onChange={(e) => {
+              const id = e.target.value ? Number(e.target.value) : undefined;
+              const nm = list.find((o) => Number(o.id) === id)?.name ?? '';
+              setField(f.label, nm, id);
+              if (f.src === 'courses') {
+                const fee = (list.find((o) => Number(o.id) === id) as any)?.meta?.fee;
+                const feeField = spec.fields.find((x) => /course fee|standard fee/i.test(x.label));
+                if (fee != null && fee !== '' && feeField) {
+                  setVals((x) => ({ ...x, [feeField.label]: String(fee) })); // pre-fill, stays editable
+                }
+              }
+            }}>
+            <option value="">Select…</option>
+            {list.map((o) => <option key={o.id} value={o.id}>{o.name}{o.branch_name ? ` · ${o.branch_name}` : ''}</option>)}
+          </select>
+          {courseFee != null && courseFee !== '' && (
+            <div className="fhint" style={{ marginTop: 4, display: 'block', color: 'var(--success)' }}>
+              Course fee: ₹{courseFee} (auto-fetched from Course master)
+            </div>
+          )}
+        </>
       );
     }
     if (t === 'roleselect') {
@@ -445,10 +467,13 @@ export function AddModal({ formKey, onClose, onSaved, edit }: {
     if (t === 'password') return <input className="ainp" type="password" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
     if (t === 'tel') {
       const isWa = /whatsapp/i.test(f.label);
+      // client update #2 — country-code selector on every phone field (default +91)
       return (
-        <div className="inpwrap">
-          <input className="ainp" type="tel" placeholder="+91 " value={v} onChange={(e) => setField(f.label, e.target.value)} />
-          <button className={`verify ${isWa ? 'wa' : ''}`} title="Verify"
+        <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <PhoneInput value={v} onChange={(nv) => setField(f.label, nv)} placeholder={f.label} />
+          </div>
+          <button className={`verify ${isWa ? 'wa' : ''}`} title="Verify" style={{ position: 'static', flex: '0 0 auto', alignSelf: 'center' }}
             onClick={(e) => { e.preventDefault(); toast(`${isWa ? 'WhatsApp' : 'Number'} verification lands with the messaging integration (Sprint 3)`); }}>
             <Ic k={isWa ? 'wa' : 'check'} w={isWa ? 2 : 2.6} />
           </button>

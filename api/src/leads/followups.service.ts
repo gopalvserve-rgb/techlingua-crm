@@ -8,17 +8,31 @@ import { FOLLOWUP_SCOPE_COLS } from './leads.service';
 export interface FollowUpFilters {
   lead_id?: number; owner_id?: number; status?: string;
   due?: 'today' | 'overdue' | 'upcoming'; mine?: boolean; limit?: number;
+  /** client update #4 — My Tasks tabs: assigned (owner_id = me) | reported (created_by = me) */
+  view?: 'assigned' | 'reported';
+  priority?: 'low' | 'medium' | 'high';
 }
 
 export interface CreateFollowUpDto {
   lead_id: number; scheduled_at: string;
   type_id?: number; disposition_id?: number; owner_id?: number; remind_at?: string; notes?: string;
+  priority?: 'low' | 'medium' | 'high';
+}
+
+export const FOLLOWUP_PRIORITIES = ['low', 'medium', 'high'] as const;
+
+/** Validate an incoming priority value (create/update APIs). */
+export function assertPriority(value: unknown): 'low' | 'medium' | 'high' {
+  if (!FOLLOWUP_PRIORITIES.includes(value as any)) {
+    throw new BadRequestException(`invalid priority — expected one of: ${FOLLOWUP_PRIORITIES.join(', ')}`);
+  }
+  return value as 'low' | 'medium' | 'high';
 }
 
 const FU_SELECT = `
   SELECT f.id, f.lead_id, f.owner_id, f.type_id, f.disposition_id, f.scheduled_at, f.completed_at,
-         f.status, f.remind_at, f.notes, f.created_at,
-         ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name,
+         f.status, f.priority, f.remind_at, f.notes, f.created_at, f.created_by,
+         ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name, cu.name AS creator_name,
          l.full_name AS lead_name, l.phone AS lead_phone, l.temperature, l.score,
          co.name AS course_name, st.name AS stage_name, b.name AS branch_name, v.name AS vertical_name
     FROM follow_up f
@@ -26,6 +40,7 @@ const FU_SELECT = `
     LEFT JOIN m_followup_type ft ON ft.id = f.type_id
     LEFT JOIN m_disposition d ON d.id = f.disposition_id
     LEFT JOIN "user" u ON u.id = f.owner_id
+    LEFT JOIN "user" cu ON cu.id = f.created_by
     LEFT JOIN m_course co ON co.id = l.course_id
     LEFT JOIN pipeline_stage st ON st.id = l.stage_id
     JOIN branch b ON b.id = l.branch_id
@@ -47,14 +62,22 @@ export class FollowUpsService {
     if (f.lead_id) { params.push(f.lead_id); where.push(`f.lead_id = $${params.length}`); }
     if (f.owner_id) { params.push(f.owner_id); where.push(`f.owner_id = $${params.length}`); }
     if (f.mine) { params.push(userId); where.push(`f.owner_id = $${params.length}`); }
+    // My Tasks tabs (client update #4): assigned -> I own it, reported -> I created it
+    if (f.view === 'assigned') { params.push(userId); where.push(`f.owner_id = $${params.length}`); }
+    if (f.view === 'reported') { params.push(userId); where.push(`f.created_by = $${params.length}`); }
+    if (f.priority) { params.push(assertPriority(f.priority)); where.push(`f.priority = $${params.length}`); }
     if (f.status) { params.push(f.status); where.push(`f.status = $${params.length}`); }
     if (f.due === 'today') where.push(`f.status = 'pending' AND f.scheduled_at::date <= CURRENT_DATE`);
     if (f.due === 'overdue') where.push(`f.status = 'pending' AND f.scheduled_at < now()`);
     if (f.due === 'upcoming') where.push(`f.status = 'pending' AND f.scheduled_at >= now()`);
     params.push(Math.min(Number(f.limit) || 100, 500));
+    // priority sorts within the due DATE (high > medium > low), hot leads first inside a slot
     return this.db.query(
       `${FU_SELECT} WHERE ${where.join(' AND ')}
-        ORDER BY (l.temperature = 'hot') DESC, f.scheduled_at ASC LIMIT $${params.length}`,
+        ORDER BY f.scheduled_at::date ASC,
+                 CASE f.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                 (l.temperature = 'hot') DESC, f.scheduled_at ASC
+        LIMIT $${params.length}`,
       params,
     );
   }
@@ -78,7 +101,14 @@ export class FollowUpsService {
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${params.length}
                                AND f.scheduled_at < date_trunc('day', now()))::int AS my_overdue,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.owner_id = $${params.length}
-                               AND f.completed_at >= date_trunc('week', now()))::int AS my_done_week
+                               AND f.completed_at >= date_trunc('week', now()))::int AS my_done_week,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.created_by = $${params.length})::int AS reported_open,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.created_by = $${params.length}
+                               AND f.scheduled_at::date = CURRENT_DATE)::int AS reported_due_today,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.created_by = $${params.length}
+                               AND f.scheduled_at < date_trunc('day', now()))::int AS reported_overdue,
+              COUNT(*) FILTER (WHERE f.status = 'done' AND f.created_by = $${params.length}
+                               AND f.completed_at >= date_trunc('week', now()))::int AS reported_done_week
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
         WHERE (${w}) AND f.is_active AND l.is_active`, params,
     );
@@ -96,12 +126,13 @@ export class FollowUpsService {
     );
     if (!lead) throw new NotFoundException('lead not found');
     const owner = dto.owner_id ?? (lead.owner_id ? Number(lead.owner_id) : actorId);
+    const priority = dto.priority !== undefined ? assertPriority(dto.priority) : 'medium';
     return this.db.tx(async (c) => {
       const ins = await c.query(
-        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
         [dto.lead_id, owner, dto.type_id ?? null, dto.disposition_id ?? null,
-          dto.scheduled_at, dto.remind_at ?? null, dto.notes ?? null, actorId],
+          dto.scheduled_at, dto.remind_at ?? null, dto.notes ?? null, priority, actorId],
       );
       await c.query(
         `UPDATE lead SET next_follow_up_at = LEAST(COALESCE(next_follow_up_at, $2::timestamptz), $2::timestamptz),
@@ -146,6 +177,7 @@ export class FollowUpsService {
     if (dto.type_id !== undefined) set('type_id', dto.type_id);
     if (dto.disposition_id !== undefined) set('disposition_id', dto.disposition_id);
     if (dto.owner_id !== undefined) set('owner_id', dto.owner_id);
+    if (dto.priority !== undefined) set('priority', assertPriority(dto.priority));
     if (dto.notes !== undefined) set('notes', dto.notes);
     if (!sets.length) throw new BadRequestException('nothing to update');
     params.push(id);

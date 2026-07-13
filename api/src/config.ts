@@ -10,4 +10,6 @@ export const config = {
   webOrigin: process.env.WEB_ORIGIN ?? 'http://localhost:5173',
   seedAdminEmail: process.env.SEED_ADMIN_EMAIL ?? 'admin@techlingua.in',
   seedAdminPassword: process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe@123',
+  /** Mobile-first login: the Super Admin's seeded mobile (unique, E.164). */
+  seedAdminPhone: process.env.SEED_ADMIN_PHONE ?? '+919000000001',
 };
