@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ImportService, MAX_CSV_BYTES } from './import.service';
-import { LeadIngestionService } from './lead-ingestion.service';
+import { makeIngestion } from './fake-db.testkit';
 import { DatabaseService } from '../database/database.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
@@ -50,7 +50,7 @@ const SCOPED: ResolvedScope = {
 };
 
 function makeSvc(db: DatabaseService, inScope = true) {
-  const ingestion = new LeadIngestionService(db);
+  const ingestion = makeIngestion(db).svc;
   const enforcer = {
     assertRefInScope: async (_s: ResolvedScope, kind: string) => {
       if (!inScope) throw new NotFoundException(`${kind} not found`);

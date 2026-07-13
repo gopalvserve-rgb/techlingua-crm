@@ -28,6 +28,7 @@ interface ParseResult {
 interface PreviewRow {
   row_num: number; status: 'valid' | 'duplicate' | 'error';
   reason?: string; name?: string; phone?: string; duplicate_of?: number | null;
+  action?: 'ignore' | 'create' | 'merge' | 'merge_and_reopen' | 'skip' | null;
 }
 interface PreviewResult {
   total: number; valid: number; duplicates: number; errors: number;
@@ -48,8 +49,18 @@ const DIST_LABEL: Record<string, string> = {
   equal: 'Equal (round-robin)', conditional: 'Conditional rules', on_demand: 'On demand (stays unassigned)',
 };
 const DUP_LABEL: Record<string, string> = {
-  ignore: 'Ignore duplicate (row skipped)', create: 'Create duplicate lead (flagged)',
-  merge: 'Merge (flagged — merge engine lands next)', merge_and_reopen: 'Merge & reopen (flagged — merge engine lands next)',
+  ignore: 'Ignore duplicate (row skipped, existing lead untouched)',
+  create: 'Create duplicate lead (second lead, flagged & linked)',
+  merge: 'Merge into the existing lead (blanks filled; conflicts keep the existing value)',
+  merge_and_reopen: 'Merge & re-open closed leads',
+};
+/** The per-row badge: WHICH action this duplicate row will get. */
+const ROW_ACTION: Record<string, [string, string]> = {
+  ignore: ['Duplicate → Ignore', 'b-gray'],
+  create: ['Duplicate → Create', 'b-amber'],
+  merge: ['Duplicate → Merge', 'b-cyan'],
+  merge_and_reopen: ['Duplicate → Merge & re-open', 'b-cyan'],
+  skip: ['Duplicate in file', 'b-gray'],
 };
 
 /** Read a File as text. Blob.text() is not everywhere (older Safari, jsdom) — fall back. */
@@ -328,7 +339,11 @@ export default function LeadImport() {
             rows={preview.rows.map((r): Cell[] => [
               { mono: String(r.row_num) },
               r.name || '—', r.phone || '—',
-              { b: r.status === 'valid' ? ['Valid', 'b-green'] : r.status === 'duplicate' ? ['Duplicate', 'b-amber'] : ['Error', 'b-rose'] },
+              {
+                b: r.status === 'valid' ? ['Valid', 'b-green']
+                  : r.status === 'duplicate' ? (ROW_ACTION[r.action ?? 'ignore'] ?? ['Duplicate', 'b-amber'])
+                  : ['Error', 'b-rose'],
+              },
               r.reason || '—',
             ])} />
           <div className="card"><div className="card-pad" style={{ display: 'flex', gap: 8 }}>

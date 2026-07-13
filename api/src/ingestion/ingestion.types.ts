@@ -38,17 +38,20 @@ export type IngestChannel = 'csv' | 'webhook' | 'form' | 'sheet' | 'api' | 'manu
 /**
  * Duplicate policy:
  *  - 'campaign'      : obey the campaign's duplicacy_config.on_duplicate
- *                      (ignore | create | merge* | merge_and_reopen*) — used by
- *                      every AUTOMATED channel.
+ *                      (ignore | create | merge | merge_and_reopen) — used by
+ *                      every AUTOMATED channel. All four actions are EXECUTED
+ *                      (merge engine: merge.service.ts / merge.util.ts).
  *  - 'always_create' : always create the lead, flag is_duplicate — the existing,
  *                      client-verified behaviour of the interactive "Add lead"
  *                      form (a human typing a lead is an explicit act and must
- *                      never be silently swallowed by an `ignore` rule).
- * (*) merge / merge_and_reopen are the NEXT workstream. Today they behave as
- *     `create + flag` and the intended action is recorded on the ingest record
- *     (pending_action) so the merge engine can pick these up — see DuplicateDecision.
+ *                      never be silently swallowed by an `ignore` rule). The new
+ *                      lead is LINKED to the one it duplicates (duplicate_of_id)
+ *                      so a user can merge them by hand from the Duplicates panel.
  */
 export type DuplicatePolicy = 'campaign' | 'always_create';
+
+/** The four NeoDove §4 duplicate actions (campaign.duplicacy_config.on_duplicate). */
+export type DuplicateAction = 'ignore' | 'create' | 'merge' | 'merge_and_reopen';
 
 export interface IngestContext {
   channel: IngestChannel;
@@ -69,7 +72,9 @@ export interface IngestContext {
 
 export type IngestStatus =
   | 'created'    // a new lead exists
-  | 'duplicate'  // matched an existing lead; campaign action applied (no new lead)
+  | 'duplicate'  // matched an existing lead; the campaign's action was applied
+                 // (ignore -> nothing written · create -> a 2nd flagged lead ·
+                 //  merge / merge_and_reopen -> folded into the existing lead)
   | 'skipped'    // idempotent replay: this exact record was already ingested
   | 'failed';    // validation / resolution error — lands in import_error, never dropped
 
@@ -77,8 +82,13 @@ export interface IngestOutcome {
   status: IngestStatus;
   lead_id?: number | null;
   duplicate_of?: number | null;
-  /** the duplicacy action that WOULD apply once merge lands (seam, not executed) */
-  pending_action?: string | null;
+  /** the duplicacy action that WAS executed for this record (null when not a duplicate) */
+  action?: DuplicateAction | null;
+  /** true when the payload was folded into the existing lead (no new lead) */
+  merged?: boolean;
+  merge_id?: number | null;
+  /** true when a won/lost lead was moved back to an open stage */
+  reopened?: boolean;
   owner_id?: number | null;
   reason?: string | null;
 }

@@ -81,6 +81,7 @@ const LEAD_SELECT = `
          l.branch_id, l.vertical_id, l.pipeline_id, l.campaign_id, l.source_id,
          l.stage_id, l.status_id, l.owner_id, l.team_id,
          l.next_follow_up_at, l.last_activity_at, l.is_duplicate, l.custom_fields,
+         l.duplicate_of_id, l.merged_into_id,
          l.state_id, l.city_id, l.course_id, l.qualification_id, l.budget_id,
          l.created_at, l.updated_at,
          b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,

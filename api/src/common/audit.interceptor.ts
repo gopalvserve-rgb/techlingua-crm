@@ -56,6 +56,7 @@ export class AuditInterceptor implements NestInterceptor {
     if (!base) return null;
     if (path.includes('/permissions')) return 'permission_change';
     if (path.endsWith('/restore')) return 'restore'; // soft-delete restore (POST)
+    if (path.endsWith('/merge')) return 'merge';     // duplicate merge (POST) — §4
     return base;
   }
 

@@ -1,6 +1,8 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { CreateLeadDto, LeadsService } from './leads.service';
 import { CreateFollowUpDto, FollowUpsService } from './followups.service';
+import { LeadMergeService } from '../ingestion/merge.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { CurrentScope, CurrentUser, RequirePermission, ScopedEntity } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 
@@ -9,7 +11,11 @@ const num = (v?: string) => (v != null && v !== '' ? Number(v) : undefined);
 
 @Controller('leads')
 export class LeadsController {
-  constructor(private readonly leads: LeadsService) {}
+  constructor(
+    private readonly leads: LeadsService,
+    private readonly merge: LeadMergeService,
+    private readonly enforcer: ScopeEnforcerService,
+  ) {}
 
   @Get() @RequirePermission('lead.read')
   list(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
@@ -49,6 +55,42 @@ export class LeadsController {
   @Post(':id/notes') @RequirePermission('lead.update') @ScopedEntity('lead')
   addNote(@Param('id', ParseIntPipe) id: number, @Body() body: { note: string }, @CurrentUser() u: U) {
     return this.leads.addNote(id, body?.note, u.id);
+  }
+
+  // ---- duplicates & merge (NeoDove §4) ------------------------------------
+  // RBAC: reading the panel needs lead.read; merging needs lead.merge, and BOTH
+  // leads must be inside the caller's record scope — :id via @ScopedEntity and
+  // the other one via the STRICT enforcer (out of scope -> 404, no oracle).
+
+  /** "This lead is a duplicate of X" · "N duplicates of this lead" · merge history + diffs. */
+  @Get(':id/duplicates') @RequirePermission('lead.read') @ScopedEntity('lead')
+  duplicates(@Param('id', ParseIntPipe) id: number, @CurrentScope() s: ResolvedScope) {
+    return this.merge.duplicatesFor(id, s);
+  }
+
+  /** What a merge WOULD change — the diff the modal renders before the user commits. */
+  @Get(':id/merge-preview') @RequirePermission('lead.merge') @ScopedEntity('lead')
+  async mergePreview(
+    @Param('id', ParseIntPipe) id: number, @Query('from') from: string,
+    @CurrentScope() s: ResolvedScope, @CurrentUser() u: U,
+  ) {
+    const sourceId = Number(from);
+    if (!Number.isFinite(sourceId) || sourceId <= 0) throw new BadRequestException('from (source lead id) is required');
+    await this.enforcer.assertInScope(s, 'lead', sourceId, u.id);
+    return this.merge.preview(id, sourceId);
+  }
+
+  /** Merge `from_lead_id` INTO :id — the target survives, the source becomes a tombstone. */
+  @Post(':id/merge') @RequirePermission('lead.merge') @ScopedEntity('lead')
+  async mergeLeads(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { from_lead_id: number; reopen?: boolean },
+    @CurrentScope() s: ResolvedScope, @CurrentUser() u: U,
+  ) {
+    const sourceId = Number(body?.from_lead_id);
+    if (!Number.isFinite(sourceId) || sourceId <= 0) throw new BadRequestException('from_lead_id is required');
+    await this.enforcer.assertInScope(s, 'lead', sourceId, u.id);
+    return this.merge.mergeLeads(id, sourceId, u.id, body?.reopen === true);
   }
 }
 

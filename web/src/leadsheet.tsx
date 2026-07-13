@@ -7,6 +7,7 @@ import { AddMasterModal } from './mastermodal';
 import { AddModal } from './forms';
 import { PhoneInput } from './phonefield';
 import { Avatar, TempBadge } from './renderer';
+import { DuplicatePanel } from './mergemodal';
 import { toast, useRef_, Named, selectableUsers } from './refdata';
 
 interface Stage { id: number; name: string; sort_order: number; stage_type: string }
@@ -23,6 +24,10 @@ function activityTitle(a: Activity, sourceName?: string): { tt: string; td: stri
     case 'follow_up': return { tt: a.to_value?.action === 'completed' ? 'Follow-up completed' : a.to_value?.action === 'scheduled' ? `Follow-up scheduled · ${fmtDT(a.to_value?.scheduled_at)}` : 'Follow-up updated', td: a.note || '' };
     case 'note': return { tt: a.note || 'Note', td: 'Note added' };
     case 'field_change': return { tt: 'Lead details updated', td: Object.keys(a.to_value || {}).join(', ') };
+    case 'merge': return {
+      tt: a.to_value?.reopened ? 'Duplicate merged & lead re-opened' : 'Duplicate merged',
+      td: a.note || `Merged from ${a.to_value?.channel ?? 'another lead'}`,
+    };
     default: return { tt: a.type, td: a.note || '' };
   }
 }
@@ -196,6 +201,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
               </div></div>
             </div>
           </div>
+          <DuplicatePanel leadId={lead.id} onChanged={() => { load(); onChanged?.(); }} />
           <div className="sheet-sec">
             <h5>History</h5>
             <div className="seltabs">

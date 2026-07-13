@@ -12,7 +12,7 @@ export interface PermissionModule {
 
 export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'dashboard', label: 'Dashboard', actions: ['read'] },
-  { module: 'lead', label: 'Leads', actions: ['read', 'create', 'update', 'delete', 'assign', 'transfer', 'export', 'import'] },
+  { module: 'lead', label: 'Leads', actions: ['read', 'create', 'update', 'delete', 'assign', 'transfer', 'export', 'import', 'merge'] },
   { module: 'followup', label: 'Follow-ups', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'user', label: 'Users', actions: ['read', 'create', 'update', 'deactivate', 'delete', 'import'] },
   { module: 'team', label: 'Teams', actions: ['read', 'create', 'update', 'delete'] },

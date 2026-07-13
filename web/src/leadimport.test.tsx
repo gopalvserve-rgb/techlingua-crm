@@ -45,11 +45,11 @@ const PARSE = {
 
 const PREVIEW = {
   total: 3, valid: 1, duplicates: 1, errors: 1,
-  duplicate_action: 'ignore', duplicate_scope: 'this_campaign', distribution_mode: 'equal',
+  duplicate_action: 'merge_and_reopen', duplicate_scope: 'this_campaign', distribution_mode: 'equal',
   truncated: false,
   rows: [
-    { row_num: 1, status: 'valid', name: 'Sharma, Priya', phone: '+919811100001' },
-    { row_num: 2, status: 'duplicate', name: 'Ravi', phone: '+919811100002', duplicate_of: 900, reason: 'Phone matches existing lead #900 — campaign rule: ignore' },
+    { row_num: 1, status: 'valid', action: null, name: 'Sharma, Priya', phone: '+919811100001' },
+    { row_num: 2, status: 'duplicate', action: 'merge_and_reopen', name: 'Ravi', phone: '+919811100002', duplicate_of: 900, reason: 'Phone matches existing lead #900 — campaign rule: MERGE & REOPEN — folded into the existing lead, and a closed lead is re-opened' },
     { row_num: 3, status: 'error', name: 'Bad', phone: '12', reason: 'Invalid mobile number: "12"' },
   ],
 };
@@ -130,12 +130,13 @@ describe('Import Leads screen', () => {
     expect(screen.getByText('Will be created')).toBeTruthy();
     expect(screen.getByText('Rows with errors')).toBeTruthy();
     expect(screen.getByText('Valid')).toBeTruthy();
-    expect(screen.getAllByText('Duplicate').length).toBeGreaterThan(0);
     expect(screen.getByText('Error')).toBeTruthy();
     expect(screen.getByText(/Invalid mobile number: "12"/)).toBeTruthy();
     expect(screen.getByText(/Phone matches existing lead #900/)).toBeTruthy();
+    // WS2: the duplicate row shows WHICH ACTION will be applied, not merely "duplicate"
+    expect(screen.getByText('Duplicate → Merge & re-open')).toBeTruthy();
     // the campaign's own rules are shown before the user commits
-    expect(screen.getByText(/Ignore duplicate/)).toBeTruthy();
+    expect(screen.getByText(/Merge & re-open closed leads/)).toBeTruthy();
     expect(screen.getByText(/Equal \(round-robin\)/)).toBeTruthy();
     // errored rows are excluded from the import button's count
     expect(screen.getByText(/Import 2 rows/)).toBeTruthy();

@@ -6,7 +6,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { parseCsv, rowToObject, toCsv } from './csv.util';
 import { LEAD_IMPORT_FIELDS, CUSTOM_PREFIX, applyMapping, autoMap, validateMapping } from './mapping.util';
-import { IngestPayload, IngestValidationError } from './ingestion.types';
+import { DuplicateAction, IngestPayload, IngestValidationError } from './ingestion.types';
 import { LeadIngestionService, IngestTarget } from './lead-ingestion.service';
 
 /** Import batches scope through their denormalised path (same columns as leads). */
@@ -19,6 +19,14 @@ export const MAX_CSV_BYTES = 5 * 1024 * 1024;
 export const MAX_CSV_ROWS = 20000;
 const PREVIEW_ROWS = 200;
 
+/** What the campaign's duplicacy action will DO to a matching row (shown in the preview). */
+const ACTION_REASON: Record<DuplicateAction, string> = {
+  ignore: 'campaign rule: IGNORE — this row will be skipped, the existing lead is untouched',
+  create: 'campaign rule: CREATE — a second, flagged lead will be added',
+  merge: 'campaign rule: MERGE — this row will be folded into the existing lead (blanks filled; conflicts keep the existing value and are recorded)',
+  merge_and_reopen: 'campaign rule: MERGE & REOPEN — folded into the existing lead, and a closed lead is re-opened',
+};
+
 export interface PreviewRow {
   row_num: number;
   status: 'valid' | 'duplicate' | 'error';
@@ -26,6 +34,9 @@ export interface PreviewRow {
   name?: string;
   phone?: string;
   duplicate_of?: number | null;
+  /** the campaign's duplicacy action this row WILL get: ignore | create | merge | merge_and_reopen
+   *  ('skip' = the row repeats earlier in the same file and is imported once). */
+  action?: 'ignore' | 'create' | 'merge' | 'merge_and_reopen' | 'skip' | null;
 }
 
 @Injectable()
@@ -85,6 +96,7 @@ export class ImportService {
     const { headers, rows } = parseCsv(csv);
     const target = await this.ingestion.loadTarget(campaignId, sourceId);
 
+    const action = (target.duplicacy.on_duplicate ?? 'ignore') as DuplicateAction;
     const out: PreviewRow[] = [];
     let valid = 0, dupes = 0, errors = 0;
     const seenKeys = new Set<string>();
@@ -101,7 +113,12 @@ export class ImportService {
         });
         if (seenKeys.has(key)) {
           dupes++;
-          if (out.length < PREVIEW_ROWS) out.push({ row_num: rowNum, status: 'duplicate', name: lead.full_name, phone: lead.phone, reason: 'Identical row appears earlier in this file — it will be imported once.' });
+          if (out.length < PREVIEW_ROWS) {
+            out.push({
+              row_num: rowNum, status: 'duplicate', action: 'skip', name: lead.full_name, phone: lead.phone,
+              reason: 'Identical row appears earlier in this file — it will be imported once.',
+            });
+          }
           continue;
         }
         seenKeys.add(key);
@@ -112,9 +129,11 @@ export class ImportService {
             out.push({
               row_num: rowNum, status: 'duplicate', name: lead.full_name, phone: lead.phone,
               duplicate_of: existing ? Number(existing.id) : null,
+              // the ACTION that will be applied, not merely "it's a duplicate"
+              action: existing ? action : 'skip',
               reason: existing
-                ? `Phone matches existing lead #${existing.id} — campaign rule: ${target.duplicacy.on_duplicate ?? 'ignore'}`
-                : 'Phone repeats earlier in this file',
+                ? `Phone matches existing lead #${existing.id} — ${ACTION_REASON[action]}`
+                : 'Phone repeats earlier in this file — it will be imported once.',
             });
           }
           seenPhones.add(lead.phone);
@@ -122,7 +141,7 @@ export class ImportService {
         }
         seenPhones.add(lead.phone);
         valid++;
-        if (out.length < PREVIEW_ROWS) out.push({ row_num: rowNum, status: 'valid', name: lead.full_name, phone: lead.phone });
+        if (out.length < PREVIEW_ROWS) out.push({ row_num: rowNum, status: 'valid', action: null, name: lead.full_name, phone: lead.phone });
       } catch (e) {
         errors++;
         const reason = e instanceof IngestValidationError ? e.message : (e as Error).message;

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { LeadIngestionService } from './lead-ingestion.service';
+import { LeadMergeService } from './merge.service';
 import { ImportService } from './import.service';
 import { ImportController } from './import.controller';
 import { ImportWorker } from './import.worker';
@@ -13,7 +14,7 @@ import { ImportWorker } from './import.worker';
  */
 @Module({
   controllers: [ImportController],
-  providers: [LeadIngestionService, ImportService, ImportWorker],
-  exports: [LeadIngestionService],
+  providers: [LeadIngestionService, LeadMergeService, ImportService, ImportWorker],
+  exports: [LeadIngestionService, LeadMergeService],
 })
 export class IngestionModule {}
