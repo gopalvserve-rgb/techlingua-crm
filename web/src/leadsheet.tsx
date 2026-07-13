@@ -4,6 +4,7 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
 import { AddMasterModal } from './mastermodal';
+import { AddModal } from './forms';
 import { PhoneInput } from './phonefield';
 import { Avatar, TempBadge } from './renderer';
 import { toast, useRef_, Named } from './refdata';
@@ -36,6 +37,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const [noteText, setNoteText] = useState('');
   const [busy, setBusy] = useState(false);
   const [masterAdd, setMasterAdd] = useState<{ type: string; k: string } | null>(null);
+  const [courseAdd, setCourseAdd] = useState(false);
   const [extra, setExtra] = useState<Record<string, Named[]>>({});
 
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
@@ -90,9 +92,10 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   /** Master-bound select options + any value just added via ＋ Master (pre-reload). */
   const withExtra = (k: string, opts: Named[]) =>
     [...opts, ...(extra[k] ?? []).filter((e) => !opts.some((o) => Number(o.id) === Number(e.id)))];
-  /** ＋ Master link on master-bound lead fields — hidden without master.create. */
+  /** ＋ Master link on master-bound lead fields — hidden without master.create.
+   *  Course opens the full Courses-screen form (all fields), not the generic name/code modal. */
   const mlink = (type: string, k: string) => (canUpdate && can('master.create')
-    ? <a className="mlink" onClick={() => setMasterAdd({ type, k })}>＋ Master</a> : null);
+    ? <a className="mlink" onClick={() => (type === 'course' ? setCourseAdd(true) : setMasterAdd({ type, k }))}>＋ Master</a> : null);
   const sel = (k: string, opts: Array<{ id: number; name: string }>, allowEmpty = true) => (
     <select value={ed(k) ?? ''} disabled={!canUpdate}
       onChange={(e) => setEdits((x) => ({ ...x, [k]: e.target.value ? Number(e.target.value) : null }))}>
@@ -253,6 +256,14 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           onCreated={(row) => {
             setExtra((x) => ({ ...x, [masterAdd.k]: [...(x[masterAdd.k] ?? []), row] }));
             setEdits((x) => ({ ...x, [masterAdd.k]: Number(row.id) })); // auto-select the new value
+            ref.reload();
+          }} />
+      )}
+      {courseAdd && (
+        <AddModal formKey="students.courses" onClose={() => setCourseAdd(false)}
+          onSavedRow={(row) => {
+            setExtra((x) => ({ ...x, course_id: [...(x.course_id ?? []), row] }));
+            setEdits((x) => ({ ...x, course_id: Number(row.id) })); // auto-select + fee hint re-renders from meta.fee
             ref.reload();
           }} />
       )}

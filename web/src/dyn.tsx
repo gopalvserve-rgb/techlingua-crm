@@ -10,7 +10,7 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
-import { AddModal, CampaignModal, need } from './forms';
+import { AddModal, CampaignModal, need, EditSpec } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
@@ -1187,6 +1187,33 @@ function Campaigns() {
   );
 }
 
+/** Edit spec for a course row — the full Configure Course form, shared by the
+ *  Courses screen and Administration › Masters so Course always edits with all fields. */
+const courseEditSpec = (edit: any): EditSpec => ({
+  title: `Edit Course \u2014 ${edit.name}`,
+  initialVals: {
+    'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
+    'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
+    'Standard Fee': (edit.meta as any)?.fee ?? '',
+    'Status': edit.is_active === false ? 'Inactive' : 'Active',
+  },
+  lock: ['Vertical', 'Applicable Branch(es)', 'Eligibility Criteria'],
+  submit: async (vals) => {
+    await api.patch(`/masters/course/${edit.id}`, {
+      name: need(vals['Course Name'], 'Course name is required'),
+      code: need(vals['Course Code'], 'Course code is required'),
+      meta: {
+        ...(edit.meta as any ?? {}),
+        mode: vals['Training Mode'] || undefined,
+        duration: vals['Duration'] || undefined,
+        fee: vals['Standard Fee'] || undefined,
+      },
+      is_active: vals['Status'] !== 'Inactive',
+    });
+    return 'Course updated';
+  },
+});
+
 function Courses() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
@@ -1245,30 +1272,7 @@ function Courses() {
       )}
       {edit && (
         <AddModal formKey="students.courses" onClose={() => setEdit(null)} onSaved={after}
-          edit={{
-            title: `Edit Course \u2014 ${edit.name}`,
-            initialVals: {
-              'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
-              'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
-              'Standard Fee': (edit.meta as any)?.fee ?? '',
-              'Status': edit.is_active === false ? 'Inactive' : 'Active',
-            },
-            lock: ['Vertical', 'Applicable Branch(es)', 'Eligibility Criteria'],
-            submit: async (vals) => {
-              await api.patch(`/masters/course/${edit.id}`, {
-                name: need(vals['Course Name'], 'Course name is required'),
-                code: need(vals['Course Code'], 'Course code is required'),
-                meta: {
-                  ...(edit.meta as any ?? {}),
-                  mode: vals['Training Mode'] || undefined,
-                  duration: vals['Duration'] || undefined,
-                  fee: vals['Standard Fee'] || undefined,
-                },
-                is_active: vals['Status'] !== 'Inactive',
-              });
-              return 'Course updated';
-            },
-          }} />
+          edit={courseEditSpec(edit)} />
       )}
     </>
   );
@@ -1981,8 +1985,12 @@ function MastersAdmin() {
           return cells;
         })} empty={`No ${label.toLowerCase()} yet`} />
       {del.deleteModal}
-      {add && <AddMasterModal type={type} onClose={() => setAdd(false)} onCreated={after} />}
-      {edit && <AddMasterModal type={type} initial={edit} onClose={() => setEdit(null)} onCreated={after} />}
+      {add && (type === 'course'
+        ? <AddModal formKey="students.courses" onClose={() => setAdd(false)} onSaved={after} />
+        : <AddMasterModal type={type} onClose={() => setAdd(false)} onCreated={after} />)}
+      {edit && (type === 'course'
+        ? <AddModal formKey="students.courses" onClose={() => setEdit(null)} onSaved={after} edit={courseEditSpec(edit)} />
+        : <AddMasterModal type={type} initial={edit} onClose={() => setEdit(null)} onCreated={after} />)}
       {view && (
         <DetailModal title={`${label.replace(/s$/, '')} \u2014 ${view.name}`} icon="cfg" onClose={() => setView(null)}>
           <Section title="Details">

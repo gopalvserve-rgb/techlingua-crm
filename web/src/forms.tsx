@@ -170,13 +170,15 @@ export function entFromLabel(label: string): string {
 
 type Vals = Record<string, string>;
 type Ids = Record<string, number | undefined>;
+/** Savers may return the created row so callers can auto-select it (e.g. ＋ Master → full course form). */
+type SaveResult = string | { msg: string; row?: Named };
 
 export const need = (v: string | number | undefined, msg: string) => {
   if (v === undefined || v === '' || v === null) { toast(msg, true); throw new Error(msg); }
   return v;
 };
 
-const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<string>> = {
+const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
   'leads.all': async (vals, ids) => {
     await api.post('/leads', {
       full_name: need(vals['Name'], 'Name is required'),
@@ -266,7 +268,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<string>> = {
   },
 };
 SAVERS['students.courses'] = async (vals) => {
-  await api.post('/masters/course', {
+  const row = await api.post<Named>('/masters/course', {
     name: need(vals['Course Name'], 'Course name is required'),
     code: need(vals['Course Code'], 'Course code is required'),
     meta: {
@@ -275,7 +277,7 @@ SAVERS['students.courses'] = async (vals) => {
       fee: vals['Standard Fee'] || undefined,
     },
   });
-  return 'Course added to the master';
+  return { msg: `Course "${row.name}" added to the master`, row };
 };
 SAVERS['admin.courseconfig'] = SAVERS['students.courses'];
 SAVERS['dash.quickcontact'] = SAVERS['leads.all'];
@@ -323,6 +325,12 @@ const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
   courses: 'course', statuses: 'status', followupTypes: 'followup_type',
   dispositions: 'disposition', budgets: 'budget',
 };
+/** Masters whose dedicated management screen has a richer form: ＋ Master opens that
+ *  full form (client: adding a Course from a lead must show all course fields,
+ *  not just Name/Code). Rule: ＋ Master = the master's own management-screen form. */
+const SRC_MASTER_FORM: Partial<Record<NonNullable<FormField['src']>, string>> = {
+  courses: 'students.courses',
+};
 /** Hierarchy-bound srcs open their full add-form inline instead (not generic masters). */
 const SRC_FORM: Partial<Record<NonNullable<FormField['src']>, { form: string; perm: string }>> = {
   branches: { form: 'admin.branches', perm: 'branch.create' },
@@ -344,8 +352,10 @@ export interface EditSpec {
   submit: (vals: Vals, ids: Ids) => Promise<string>;
 }
 
-export function AddModal({ formKey, onClose, onSaved, edit }: {
-  formKey: string; onClose: () => void; onSaved?: () => void; edit?: EditSpec;
+export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
+  formKey: string; onClose: () => void; onSaved?: () => void;
+  /** Fires with the created row (when the saver returns one) so the opener can auto-select it. */
+  onSavedRow?: (row: Named) => void; edit?: EditSpec;
 }) {
   const ref = useRef_();
   const { can } = useAuth();
@@ -354,6 +364,7 @@ export function AddModal({ formKey, onClose, onSaved, edit }: {
   const [vals, setVals] = useState<Vals>(edit?.initialVals ?? {});
   const [ids, setIds] = useState<Ids>(edit?.initialIds ?? {});
   const [masterAdd, setMasterAdd] = useState<{ type: string; field: string } | null>(null);
+  const [masterForm, setMasterForm] = useState<{ form: string; field: string } | null>(null);
   const [subForm, setSubForm] = useState<string | null>(null);
   const [subCampaign, setSubCampaign] = useState(false);
   const [extras, setExtras] = useState<Record<string, Named[]>>({});
@@ -392,8 +403,9 @@ export function AddModal({ formKey, onClose, onSaved, edit }: {
     }
     setBusy(true);
     try {
-      const msg = await (edit ? edit.submit(vals, ids) : SAVERS[formKey](vals, ids));
-      toast(msg);
+      const res = await (edit ? edit.submit(vals, ids) : SAVERS[formKey](vals, ids));
+      toast(typeof res === 'string' ? res : res.msg);
+      if (typeof res !== 'string' && res.row) onSavedRow?.(res.row);
       onSaved?.();
       onClose();
     } catch (e: any) {
@@ -511,12 +523,15 @@ export function AddModal({ formKey, onClose, onSaved, edit }: {
   const isMaster = (f: FormField) => (f.type === 'select' || f.type === 'multiselect') &&
     (/master/i.test(f.hint || '') || /\b(course|vertical|pipeline|campaign|branch|source|stage|status|tag|batch|payment plan|payment terms|qualification|budget|designation|department|training mode)\b/i.test(f.label));
 
-  /** ＋ Master → inline add modal. Generic masters open <AddMasterModal>; hierarchy
-   *  fields open their full add-form; both hidden without the create permission. */
+  /** ＋ Master → inline add modal. Rule: opens the same form as the master's own
+   *  management screen — rich masters (Course) open their full spec form, generic
+   *  masters open <AddMasterModal>, hierarchy fields open their full add-form;
+   *  all hidden without the create permission. */
   const masterLink = (f: FormField) => {
     if (!isMaster(f)) return null;
     if (edit?.lock?.includes(f.label)) return null;
     const mt = f.src ? SRC_MASTER[f.src] : undefined;
+    const mf = f.src ? SRC_MASTER_FORM[f.src] : undefined;
     const hf = f.src ? SRC_FORM[f.src] : undefined;
     const isCamp = f.src === 'campaigns';
     if (mt && !can('master.create')) return null;
@@ -525,7 +540,8 @@ export function AddModal({ formKey, onClose, onSaved, edit }: {
     return (
       <a className="mlink" onClick={(e) => {
         e.preventDefault();
-        if (mt) setMasterAdd({ type: mt, field: f.label });
+        if (mf) setMasterForm({ form: mf, field: f.label }); // full management-screen form
+        else if (mt) setMasterAdd({ type: mt, field: f.label });
         else if (isCamp) setSubCampaign(true);
         else if (hf) setSubForm(hf.form);
         else toast('Manage master lists under Administration › Settings');
@@ -574,6 +590,17 @@ export function AddModal({ formKey, onClose, onSaved, edit }: {
           onCreated={(row) => {
             setExtras((x) => ({ ...x, [masterAdd.field]: [...(x[masterAdd.field] ?? []), row] }));
             setField(masterAdd.field, row.name, Number(row.id)); // auto-select the new value
+            ref.reload();
+          }} />
+      )}
+      {masterForm && (
+        <AddModal formKey={masterForm.form} onClose={() => setMasterForm(null)}
+          onSavedRow={(row) => {
+            setExtras((x) => ({ ...x, [masterForm.field]: [...(x[masterForm.field] ?? []), row] }));
+            setField(masterForm.field, row.name, Number(row.id)); // auto-select the new value
+            const fee = (row as any)?.meta?.fee; // course fee auto-fetch, same as manual select
+            const feeField = spec.fields.find((x) => /course fee|standard fee/i.test(x.label));
+            if (fee != null && fee !== '' && feeField) setVals((x) => ({ ...x, [feeField.label]: String(fee) }));
             ref.reload();
           }} />
       )}
