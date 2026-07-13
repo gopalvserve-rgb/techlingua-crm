@@ -55,9 +55,9 @@ const PREVIEW = {
 };
 
 const post = vi.fn(async (path: string, _body?: unknown) => {
-  if (path === '/leads/import/parse') return PARSE;
-  if (path === '/leads/import/preview') return PREVIEW;
-  if (path === '/leads/import') return { id: 1, file_name: 'leads.csv', status: 'queued', total_rows: 3, created_count: 0, duplicate_count: 0, skipped_count: 0, failed_count: 0, pending: 3, created_at: new Date().toISOString() };
+  if (path === '/lead-imports/parse') return PARSE;
+  if (path === '/lead-imports/preview') return PREVIEW;
+  if (path === '/lead-imports') return { id: 1, file_name: 'leads.csv', status: 'queued', total_rows: 3, created_count: 0, duplicate_count: 0, skipped_count: 0, failed_count: 0, pending: 3, created_at: new Date().toISOString() };
   throw new Error(`unexpected POST ${path}`);
 });
 
@@ -90,7 +90,7 @@ describe('Import Leads screen', () => {
     render(<LeadImport />);
     const file = new File(['Name,Mobile\nAsha,9811100001\n'], 'leads.csv', { type: 'text/csv' });
     fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [file] } });
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/leads/import/parse', expect.objectContaining({ csv: expect.stringContaining('Name,Mobile') })));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/lead-imports/parse', expect.objectContaining({ csv: expect.stringContaining('Name,Mobile') })));
     // step 2 = the target picker
     await waitFor(() => screen.getByText(/Where do these leads land/));
   });
@@ -126,7 +126,7 @@ describe('Import Leads screen', () => {
     fireEvent.click(screen.getByText(/Validate & preview/));
     await waitFor(() => screen.getByText('Row-by-row validation'));
 
-    expect(post).toHaveBeenCalledWith('/leads/import/preview', expect.objectContaining({ campaign_id: 3, source_id: 4 }));
+    expect(post).toHaveBeenCalledWith('/lead-imports/preview', expect.objectContaining({ campaign_id: 3, source_id: 4 }));
     expect(screen.getByText('Will be created')).toBeTruthy();
     expect(screen.getByText('Rows with errors')).toBeTruthy();
     expect(screen.getByText('Valid')).toBeTruthy();
@@ -146,7 +146,7 @@ describe('Import Leads screen', () => {
     fireEvent.click(screen.getByText(/Validate & preview/));
     await waitFor(() => screen.getByText('Row-by-row validation'));
     fireEvent.click(screen.getByText(/Import 2 rows/));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/leads/import', expect.objectContaining({ campaign_id: 3, source_id: 4, file_name: 'leads.csv' })));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/lead-imports', expect.objectContaining({ campaign_id: 3, source_id: 4, file_name: 'leads.csv' })));
     await waitFor(() => screen.getByText('Skipped (already imported)'));
     expect(screen.getAllByText('Created').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Failed').length).toBeGreaterThan(0);

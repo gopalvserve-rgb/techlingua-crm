@@ -93,7 +93,7 @@ export default function LeadImport() {
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
 
-  const history = useFetch<Batch[]>('/leads/import?limit=25', [tick]);
+  const history = useFetch<Batch[]>('/lead-imports?limit=25', [tick]);
   const canImport = can('lead.import');
 
   /* ---------------------------- step 1: upload ---------------------------- */
@@ -104,7 +104,7 @@ export default function LeadImport() {
     const text = await readFile(f);
     setBusy(true);
     try {
-      const p = await api.post<ParseResult>('/leads/import/parse', { csv: text });
+      const p = await api.post<ParseResult>('/lead-imports/parse', { csv: text });
       setCsv(text); setFileName(f.name); setParsed(p); setMapping(p.mapping); setPreview(null); setBatch(null);
       setStep(1);
     } catch (e) {
@@ -116,7 +116,7 @@ export default function LeadImport() {
   const runPreview = async () => {
     setErr(''); setBusy(true);
     try {
-      const p = await api.post<PreviewResult>('/leads/import/preview', {
+      const p = await api.post<PreviewResult>('/lead-imports/preview', {
         csv, mapping, campaign_id: target.campaign, source_id: target.source,
       });
       setPreview(p); setStep(3);
@@ -126,7 +126,7 @@ export default function LeadImport() {
   const startImport = async () => {
     setErr(''); setBusy(true);
     try {
-      const b = await api.post<Batch>('/leads/import', {
+      const b = await api.post<Batch>('/lead-imports', {
         csv, mapping, campaign_id: target.campaign, source_id: target.source, file_name: fileName,
       });
       setBatch(b); setStep(4); setTick((t) => t + 1);
@@ -140,7 +140,7 @@ export default function LeadImport() {
     const t = setInterval(async () => {
       tries++;
       try {
-        const b = await api.get<Batch>(`/leads/import/${id}`);
+        const b = await api.get<Batch>(`/lead-imports/${id}`);
         setBatch(b);
         if ((b.status === 'done' || b.status === 'failed') || tries > 150) {
           clearInterval(t); setBusy(false); setTick((x) => x + 1);
@@ -222,7 +222,7 @@ export default function LeadImport() {
         <div className="card">
           <div className="card-head"><h3><Ic k="export" />Upload a CSV</h3>
             <span className="more"><a className="mlink" style={{ cursor: 'pointer' }}
-              onClick={() => download('/leads/import/template', 'lead-import-template.csv')}>Download template</a></span>
+              onClick={() => download('/lead-imports/template', 'lead-import-template.csv')}>Download template</a></span>
           </div>
           <div className="card-pad">
             <p className="page-sub" style={{ marginBottom: 14 }}>
@@ -369,7 +369,7 @@ export default function LeadImport() {
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
                 {batch.failed_count > 0 && (
-                  <button className="btn" onClick={() => download(`/leads/import/${batch.id}/errors.csv`, 'import-errors.csv')}>
+                  <button className="btn" onClick={() => download(`/lead-imports/${batch.id}/errors.csv`, 'import-errors.csv')}>
                     <Ic k="export" />Download error CSV ({batch.failed_count})
                   </button>
                 )}

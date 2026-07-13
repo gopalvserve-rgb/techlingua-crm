@@ -7,7 +7,13 @@ import { ResolvedScope } from '../rbac/rbac.types';
 type U = { id: number };
 
 /**
- * Bulk CSV lead import. Every endpoint requires `lead.import` AND passes the
+ * Bulk CSV lead import.
+ *
+ * Prefix is `lead-imports`, NOT `leads/import`: LeadsController already owns
+ * `GET /leads/:id`, which shadows `GET /leads/import` (the id pipe would 400 on
+ * "import"). A dedicated collection avoids the collision entirely.
+ *
+ * Every endpoint requires `lead.import` AND passes the
  * chosen campaign/source through the record-scope enforcer, so a branch- or
  * campaign-scoped user can only import into their own units.
  *
@@ -15,7 +21,7 @@ type U = { id: number };
  * redactor already strips (common/redact.ts), so audit_log never stores the
  * customer data blob.
  */
-@Controller('leads/import')
+@Controller('lead-imports')
 export class ImportController {
   constructor(private readonly svc: ImportService) {}
 
