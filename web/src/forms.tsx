@@ -16,9 +16,16 @@ export interface FormField {
   label: string; type?: string; req?: boolean; opts?: string[] | null; hint?: string;
   /** refdata source for id-valued selects (enables cascading + wired saves) */
   src?: keyof Pick<RefData, 'branches' | 'verticals' | 'pipelines' | 'campaigns' | 'sources' | 'users' | 'courses' | 'followupTypes' | 'dispositions' | 'statuses' | 'budgets'>;
+  /** client update #5 (Task module only) — render the logged-in user as "Myself",
+   *  pinned to the top of the user list and selected by default. Scoped per field,
+   *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
+  self?: boolean;
 }
-export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src']): FormField =>
-  ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src });
+export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src'], self?: 0 | 1 | boolean): FormField =>
+  ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src, self: !!self });
+
+/** Label used for the current user inside Task-module user dropdowns. */
+export const SELF_LABEL = 'Myself';
 
 const _BR = ['—'], _VERT = ['—'], _PIPE = ['—'], _COURSE = ['—'], _USERS = ['—'];
 const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
@@ -129,8 +136,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Lead', 'leadlookup', 1, 0, 'Search lead'), F('Type', 'select', 1, 0, 'master', 'followupTypes'), F('Disposition', 'select', 0, 0, 'master', 'dispositions'),
     F('Priority', 'select', 0, ['Low', 'Medium', 'High'], 'default: Medium'),
     F('Next Follow-up Date', 'datetime', 1), F('Remarks', 'textarea')] },
+  // client update #5 — Assigned To / Report To show the logged-in user as "Myself" (top of list, default).
   'dash.mytasks': { title: 'Add Task', fields: [
-    F('Title', 'text', 1), F('Task Type', 'select', 0, 0, 'master', 'followupTypes'), F('Related Lead', 'leadlookup', 1, 0, 'Search lead'), F('Assigned To', 'select', 0, 0, 'Users', 'users'),
+    F('Title', 'text', 1), F('Task Type', 'select', 0, 0, 'master', 'followupTypes'), F('Related Lead', 'leadlookup', 1, 0, 'Search lead'),
+    F('Assigned To', 'select', 0, 0, 'Users', 'users', 1),
+    F('Report To', 'select', 0, 0, 'Users · the assignee reports progress to them', 'users', 1),
     F('Due Date', 'datetime', 1), F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea')] },
 };
 SPEC_FORMS['dash.quickcontact'] = { ...SPEC_FORMS['leads.all'], title: 'Quick Add Lead' };
@@ -214,6 +224,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       lead_id: need(ids['Related Lead'], 'Pick the related lead'),
       type_id: ids['Task Type'],
       owner_id: ids['Assigned To'],
+      report_to_id: ids['Report To'] ?? null,
       scheduled_at: need(vals['Due Date'], 'Due date is required'),
       priority: (vals['Priority'] || 'Medium').toLowerCase(),
       notes: [vals['Title'], vals['Description']].filter(Boolean).join(' — ') || undefined,
@@ -358,7 +369,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   onSavedRow?: (row: Named) => void; edit?: EditSpec;
 }) {
   const ref = useRef_();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const spec = SPEC_FORMS[formKey];
   const wired = !!SAVERS[formKey] || !!edit;
   const [vals, setVals] = useState<Vals>(edit?.initialVals ?? {});
@@ -376,6 +387,24 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (needsRoles) api.get<Named[]>('/roles').then(setRoles).catch(() => setRoles([]));
   }, [needsRoles]);
 
+  // client update #5 — preselect "Myself" on self-aware user selects (Task module).
+  const uid = me?.user?.id;
+  useEffect(() => {
+    if (!spec || !uid || edit) return; // add-form only — never touch an edit prefill
+    const selfFields = spec.fields.filter((f) => f.self && f.src === 'users');
+    if (!selfFields.length) return;
+    setVals((v) => {
+      const next = { ...v };
+      for (const f of selfFields) if (next[f.label] === undefined) next[f.label] = SELF_LABEL;
+      return next;
+    });
+    setIds((x) => {
+      const next = { ...x };
+      for (const f of selfFields) if (next[f.label] === undefined) next[f.label] = Number(uid);
+      return next;
+    });
+  }, [formKey, uid]);
+
   if (!spec) return null;
 
   const srcOptions = (f: FormField): Named[] => {
@@ -387,7 +416,13 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (f.src === 'campaigns' && ids['Pipeline']) list = list.filter((c) => Number(c.pipeline_id) === ids['Pipeline']);
     if (f.src === 'sources' && ids['Campaign']) list = list.filter((s) => Number(s.campaign_id) === ids['Campaign']);
     const fresh = (extras[f.label] ?? []).filter((e) => !list.some((o) => Number(o.id) === Number(e.id)));
-    return [...list, ...fresh];
+    let out = [...list, ...fresh];
+    // client update #5 — Task module: the logged-in user shows as "Myself", pinned first.
+    if (f.self && f.src === 'users' && me?.user?.id) {
+      const uid = Number(me.user.id);
+      out = [{ id: uid, name: SELF_LABEL } as Named, ...out.filter((o) => Number(o.id) !== uid)];
+    }
+    return out;
   };
 
   const setField = (label: string, value: string, id?: number) => {

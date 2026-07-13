@@ -17,6 +17,10 @@ export interface CreateFollowUpDto {
   lead_id: number; scheduled_at: string;
   type_id?: number; disposition_id?: number; owner_id?: number; remind_at?: string; notes?: string;
   priority?: 'low' | 'medium' | 'high';
+  /** client update #5 — the person the assignee reports task progress to.
+   *  Optional, NULL when not supplied (the UI defaults it to the current user).
+   *  Independent of created_by — "Reported by Me" still keys off created_by. */
+  report_to_id?: number | null;
 }
 
 export const FOLLOWUP_PRIORITIES = ['low', 'medium', 'high'] as const;
@@ -31,8 +35,9 @@ export function assertPriority(value: unknown): 'low' | 'medium' | 'high' {
 
 const FU_SELECT = `
   SELECT f.id, f.lead_id, f.owner_id, f.type_id, f.disposition_id, f.scheduled_at, f.completed_at,
-         f.status, f.priority, f.remind_at, f.notes, f.created_at, f.created_by,
+         f.status, f.priority, f.remind_at, f.notes, f.created_at, f.created_by, f.report_to_id,
          ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name, cu.name AS creator_name,
+         ru.name AS report_to_name,
          l.full_name AS lead_name, l.phone AS lead_phone, l.temperature, l.score,
          co.name AS course_name, st.name AS stage_name, b.name AS branch_name, v.name AS vertical_name,
          (l.deleted_at IS NOT NULL) AS lead_deleted
@@ -42,6 +47,7 @@ const FU_SELECT = `
     LEFT JOIN m_disposition d ON d.id = f.disposition_id
     LEFT JOIN "user" u ON u.id = f.owner_id
     LEFT JOIN "user" cu ON cu.id = f.created_by
+    LEFT JOIN "user" ru ON ru.id = f.report_to_id
     LEFT JOIN m_course co ON co.id = l.course_id
     LEFT JOIN pipeline_stage st ON st.id = l.stage_id
     JOIN branch b ON b.id = l.branch_id
@@ -123,6 +129,9 @@ export class FollowUpsService {
     // Out-of-scope -> 404, consistent with the by-ID policy (no existence oracle).
     await this.enforcer.assertRefInScope(scope, 'lead', dto.lead_id, actorId);
     await this.enforcer.assertRefInScope(scope, 'user', dto.owner_id, actorId);
+    // client update #5 — Report To: same scope rules as owner, plus a real-active-user check.
+    await this.enforcer.assertRefInScope(scope, 'user', dto.report_to_id, actorId);
+    const reportTo = await this.resolveReportTo(dto.report_to_id);
     const lead = await this.db.one<{ org_id: string; branch_id: string; owner_id: string | null }>(
       `SELECT org_id, branch_id, owner_id FROM lead WHERE id = $1 AND is_active AND deleted_at IS NULL`, [dto.lead_id],
     );
@@ -131,10 +140,10 @@ export class FollowUpsService {
     const priority = dto.priority !== undefined ? assertPriority(dto.priority) : 'medium';
     return this.db.tx(async (c) => {
       const ins = await c.query(
-        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by, report_to_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
         [dto.lead_id, owner, dto.type_id ?? null, dto.disposition_id ?? null,
-          dto.scheduled_at, dto.remind_at ?? null, dto.notes ?? null, priority, actorId],
+          dto.scheduled_at, dto.remind_at ?? null, dto.notes ?? null, priority, actorId, reportTo],
       );
       await c.query(
         `UPDATE lead SET next_follow_up_at = LEAST(COALESCE(next_follow_up_at, $2::timestamptz), $2::timestamptz),
@@ -166,6 +175,10 @@ export class FollowUpsService {
     if (dto.owner_id != null && Number(dto.owner_id) !== Number(before.owner_id ?? 0)) {
       await this.enforcer.assertRefInScope(scope, 'user', Number(dto.owner_id), actorId);
     }
+    // client update #5 — Report To may be changed (or cleared with null); same scope check as owner.
+    if (dto.report_to_id != null && Number(dto.report_to_id) !== Number(before.report_to_id ?? 0)) {
+      await this.enforcer.assertRefInScope(scope, 'user', Number(dto.report_to_id), actorId);
+    }
     const sets: string[] = [];
     const params: unknown[] = [];
     const set = (col: string, val: unknown) => { params.push(val); sets.push(`${col} = $${params.length}`); };
@@ -179,6 +192,7 @@ export class FollowUpsService {
     if (dto.type_id !== undefined) set('type_id', dto.type_id);
     if (dto.disposition_id !== undefined) set('disposition_id', dto.disposition_id);
     if (dto.owner_id !== undefined) set('owner_id', dto.owner_id);
+    if (dto.report_to_id !== undefined) set('report_to_id', await this.resolveReportTo(dto.report_to_id));
     if (dto.priority !== undefined) set('priority', assertPriority(dto.priority));
     if (dto.notes !== undefined) set('notes', dto.notes);
     if (!sets.length) throw new BadRequestException('nothing to update');
@@ -201,4 +215,18 @@ export class FollowUpsService {
     });
   }
 
+  /**
+   * client update #5 — validate an incoming report_to_id: null/undefined clears it,
+   * anything else must be a real, active, non-deleted user (400 otherwise).
+   */
+  private async resolveReportTo(id: number | null | undefined): Promise<number | null> {
+    if (id === undefined || id === null || (id as unknown as string) === '') return null;
+    const n = Number(id);
+    if (!Number.isInteger(n) || n <= 0) throw new BadRequestException('invalid report_to_id');
+    const u = await this.db.one<{ id: string }>(
+      `SELECT id FROM "user" WHERE id = $1 AND is_active AND deleted_at IS NULL`, [n],
+    );
+    if (!u) throw new BadRequestException('report_to_id must be an active user');
+    return n;
+  }
 }

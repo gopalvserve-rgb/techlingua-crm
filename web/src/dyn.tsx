@@ -202,7 +202,10 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty }: { rows: any[]; mo
             <div className="chk" onClick={() => complete(f.id)} title="Mark done" />
             <div className="gr" style={{ cursor: 'pointer' }} onClick={() => openLead(f.lead_id)}>
               <div className="t1">{f.type_name || 'Follow-up'} — {f.lead_name}</div>
-              <div className="t2">{f.notes || `${f.course_name || ''}`}</div>
+              <div className="t2">
+                {f.notes || `${f.course_name || ''}`}
+                {f.report_to_name ? <span style={{ color: 'var(--text-dim)' }}> · Reports to {f.report_to_name}</span> : null}
+              </div>
             </div>
             <PrioSelect id={Number(f.id)} value={f.priority} onChanged={bump} disabled={!canEdit} />
             <span className="rt">{fmtDT(f.scheduled_at)}</span>
