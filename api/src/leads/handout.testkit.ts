@@ -50,6 +50,10 @@ const STAGES = [
   { id: 59, name: 'Lost', stage_type: 'lost', is_default: false, sort_order: 9, pipeline_id: 4 },
 ];
 
+/** audit_log.action CHECK — keep in step with db/migrations (006 -> 015 -> 019 -> 021). */
+export const AUDIT_ACTIONS = ['create', 'update', 'delete', 'login', 'export', 'transfer',
+  'permission_change', 'merge', 'restore', 'handout'];
+
 export const CAMPAIGN_ID = 5;
 export const ORG = 1; export const BRANCH = 2; export const VERTICAL = 3; export const PIPELINE = 4;
 
@@ -186,6 +190,14 @@ export function makeHandoutDb(init: Partial<FakeHandoutState> = {}) {
       return [];
     }
     if (s.startsWith('INSERT INTO audit_log')) {
+      // The REAL audit_log.action is an enumerated CHECK (006, widened by 015/019/021).
+      // A value outside it rolls the whole claim transaction back — that actually
+      // happened in the WS4 live smoke ('handout' was not yet allowed), so the fake DB
+      // enforces the constraint now: a new audit verb without a migration fails here.
+      const action = /VALUES \(\$1,\$2,'lead_handout',\$3,'(\w+)'/.exec(s)?.[1] ?? '';
+      if (!AUDIT_ACTIONS.includes(action)) {
+        throw new Error(`new row for relation "audit_log" violates check constraint "audit_log_action_check" (action='${action}')`);
+      }
       st.audit.push({ org_id: params[0], actor_id: params[1], entity_type: 'lead_handout', entity_id: params[2], action: 'handout', after: JSON.parse(String(params[3])) });
       return [];
     }

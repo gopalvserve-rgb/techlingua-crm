@@ -214,6 +214,18 @@ describe('HandoutService — audit trail', () => {
   });
 });
 
+describe('HandoutService — audit constraint', () => {
+  it("the fake DB enforces audit_log's action CHECK (the WS4 live-smoke bug, now a unit test)", async () => {
+    // 'handout' is allowed by migration 021; anything else must blow up exactly as
+    // Postgres does — so a future audit verb cannot ship without widening the CHECK.
+    const { AUDIT_ACTIONS } = await import('./handout.testkit');
+    expect(AUDIT_ACTIONS).toContain('handout');
+    const { db } = makeHandoutDb({ leads: poolLeads(3) });
+    const svc = makeHandout(db);
+    await expect(svc.pull(CAMPAIGN_ID, AGENT_A, ALL_SCOPE, 2)).resolves.toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('HandoutService — the working queue', () => {
   it('a disposition marks the lead actioned and advances the progress; the batch completes at N of N', async () => {
     const { db, st } = makeHandoutDb({ leads: poolLeads(3) });
