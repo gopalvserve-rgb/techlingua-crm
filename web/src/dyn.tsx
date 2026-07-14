@@ -21,6 +21,7 @@ import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
+import Channels from './channels';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -2191,6 +2192,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   kanban: Kanban,
   scoring: Scoring,
   sources: Sources,
+  captureChannels: Channels,
   sla: Sla,
   branches: Branches,
   verticals: Verticals,

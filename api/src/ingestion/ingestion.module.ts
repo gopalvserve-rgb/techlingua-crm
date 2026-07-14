@@ -4,17 +4,30 @@ import { LeadMergeService } from './merge.service';
 import { ImportService } from './import.service';
 import { ImportController } from './import.controller';
 import { ImportWorker } from './import.worker';
+import { ChannelService } from './channels/channel.service';
+import { ChannelController } from './channels/channel.controller';
+import { WebhookController } from './channels/webhook.controller';
+import { WebhookService } from './channels/webhook.service';
+import { SheetWorker } from './channels/sheet.worker';
 
 /**
- * The shared lead-ingestion pipeline + the bulk CSV import channel.
- * Webhooks (Meta/Google/JustDial/IndiaMART), the website form and the
- * Google-Sheet pull are added as further controllers in this module — they all
- * call LeadIngestionService.ingest() and inherit idempotency, duplicate rules,
- * distribution and audit for free.
+ * The shared lead-ingestion pipeline and EVERY capture channel that feeds it:
+ *   · bulk CSV import            (ImportController + ImportWorker)
+ *   · Meta Lead Ads webhook      \
+ *   · Google Ads lead form       |  WebhookController (public, signature-verified)
+ *   · website form endpoint      /
+ *   · Google Sheet pull          (SheetWorker, scheduled)
+ *
+ * They all call LeadIngestionService.ingest() and therefore inherit idempotency,
+ * the NeoDove duplicate rules, campaign distribution and audit for free. Adding
+ * JustDial / IndiaMART later = one entry in channels/providers.ts.
  */
 @Module({
-  controllers: [ImportController],
-  providers: [LeadIngestionService, LeadMergeService, ImportService, ImportWorker],
-  exports: [LeadIngestionService, LeadMergeService],
+  controllers: [ImportController, ChannelController, WebhookController],
+  providers: [
+    LeadIngestionService, LeadMergeService, ImportService, ImportWorker,
+    ChannelService, WebhookService, SheetWorker,
+  ],
+  exports: [LeadIngestionService, LeadMergeService, ChannelService],
 })
 export class IngestionModule {}
