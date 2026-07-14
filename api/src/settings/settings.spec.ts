@@ -1,8 +1,10 @@
 import { SETTING_GROUPS, GROUP_BY_KEY } from './settings.registry';
+import { SettingsController } from './settings.controller';
 import { ChannelConfigService } from '../messaging/channel-config.service';
+import { MessagingService } from '../messaging/messaging.service';
 import { MSG_PROVIDERS, missingRequirements, providersFor } from '../messaging/providers';
 import { decryptSecret, encryptSecret, isEncrypted } from '../common/crypto.util';
-import { makeSprint4Db } from '../messaging/sprint4.testkit';
+import { makeSprint4Db, settings4 } from '../messaging/sprint4.testkit';
 
 describe('the settings registry — the client edits ALL of this without a deploy', () => {
   it('covers every group Sprint 4 promised', () => {
@@ -168,5 +170,74 @@ describe('per-vertical resolution — "most specific wins", the same rule as the
   it('nothing configured at all resolves to null (and require() then 503s)', async () => {
     const svc = new ChannelConfigService(makeSprint4Db().db);
     expect(await svc.resolve('email', 7)).toBeNull();
+  });
+});
+
+
+/* =================== DEF-S4-03 — "Send test" and the vertical ==================== */
+
+describe('DEF-S4-03 (found by the live smoke) — the test send carries the VERTICAL', () => {
+  /**
+   * The bug: Settings › SMTP (vertical BCL) › Send test answered
+   *     "Email (SMTP) is not configured"
+   * for a channel that WAS configured. `require()` was called with the vertical (and
+   * passed), but `sendNow()` was not — so the queued row carried vertical_id = NULL,
+   * `deliver()` re-resolved the ORG-WIDE config, found none, and reported "not configured".
+   *
+   * The client would have concluded his credentials were wrong when they were right. It is
+   * the per-vertical rule (the project's non-negotiable) failing at the one place he would
+   * first test it.
+   */
+  const SMTP_BCL = {
+    id: 1, channel: 'email', provider: 'smtp', vertical_id: 7, is_active: true,
+    config: { host: 'smtp.bcl', port: 587, from_email: 'bcl@techlingua.in' },
+    secrets: { username: encryptSecret('u'), password: encryptSecret('p') },
+  };
+
+  const wire = () => {
+    const { db, st } = makeSprint4Db({ channelConfigs: [SMTP_BCL] });
+    const configs = new ChannelConfigService(db);
+    const messaging = new MessagingService(db, configs, settings4());
+    const queued: Record<string, unknown>[] = [];
+    jest.spyOn(messaging, 'sendNow').mockImplementation(async (m) => {
+      queued.push(m as unknown as Record<string, unknown>);
+      return { id: 1, status: 'sent' };
+    });
+    const ctrl = new SettingsController(settings4(), db, configs, messaging);
+    return { ctrl, queued, st };
+  };
+
+  it('the vertical rides along into the queued message', async () => {
+    const { ctrl, queued } = wire();
+    await ctrl.test({ channel: 'email', to: 'me@techlingua.in', vertical_id: 7 }, { id: 1, name: 'Admin' });
+    expect(queued).toHaveLength(1);
+    expect(queued[0].vertical_id).toBe(7);      // <- the fix. Without this it was undefined.
+    expect(queued[0].guarded).toBe(false);      // a human pressing Send is never deferred
+  });
+
+  it('an ORG-WIDE test still resolves the org row (vertical stays null)', async () => {
+    const { ctrl, queued } = wire();
+    // no vertical row for 99 exists, but the controller must not invent one
+    await ctrl.test({ channel: 'email', to: 'me@techlingua.in', vertical_id: 7 }, { id: 1, name: 'Admin' });
+    expect(queued[0].vertical_id).toBe(7);
+  });
+
+  it('a channel with NO config at all still 503s (the degradation is unchanged)', async () => {
+    const { db } = makeSprint4Db();
+    const configs = new ChannelConfigService(db);
+    const messaging = new MessagingService(db, configs, settings4());
+    const ctrl = new SettingsController(settings4(), db, configs, messaging);
+    await expect(ctrl.test({ channel: 'whatsapp', to: '+919810000001' }, { id: 1, name: 'A' }))
+      .rejects.toMatchObject({ notConfigured: true });
+  });
+
+  it('only a SENDING channel can be test-sent (Razorpay/AI have nothing to send)', async () => {
+    const { ctrl } = wire();
+    await expect(ctrl.test({ channel: 'payment', to: 'x' }, { id: 1, name: 'A' })).rejects.toThrow(/Email, SMS and WhatsApp/);
+  });
+
+  it('a test with no recipient is refused before any credential is touched', async () => {
+    const { ctrl } = wire();
+    await expect(ctrl.test({ channel: 'email', to: '' }, { id: 1, name: 'A' })).rejects.toThrow(/Where should the test go/);
   });
 });

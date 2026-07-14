@@ -96,6 +96,11 @@ export class SettingsController {
     const out = await this.messaging.sendNow({
       channel,
       to,
+      // DEF-S4-03 (found by the LIVE smoke): the vertical MUST ride along. Without it the
+      // queued row carries vertical_id = NULL, deliver() re-resolves the ORG-WIDE config,
+      // and a perfectly-configured per-vertical SMTP reports "not configured" — the client
+      // would have concluded his credentials were wrong when they were right.
+      vertical_id: verticalId,
       subject: 'Tech Lingua CRM — test message',
       body: channel === 'email'
         ? `<p>This is a test message from the Tech Lingua CRM.</p><p>If you are reading this, ${cfg.provider} is configured correctly.</p>`

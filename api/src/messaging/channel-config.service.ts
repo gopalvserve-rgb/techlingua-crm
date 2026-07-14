@@ -172,7 +172,12 @@ export class ChannelConfigService {
         [orgId, spec.channel, spec.key, verticalId, JSON.stringify(config), JSON.stringify(secrets),
           dto?.is_active === false ? false : true, actorId],
       );
-    return this.present(row);
+    // re-read with the vertical joined, so the save response says "BCL" and not null
+    const full = await this.db.one<any>(
+      `SELECT c.*, v.name AS vertical_name FROM channel_config c
+         LEFT JOIN vertical v ON v.id = c.vertical_id WHERE c.id = $1`, [row!.id],
+    );
+    return this.present(full ?? row);
   }
 
   async remove(id: number, actorId: number) {
