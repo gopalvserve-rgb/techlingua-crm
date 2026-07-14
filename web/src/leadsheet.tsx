@@ -24,6 +24,13 @@ function activityTitle(a: Activity, sourceName?: string): { tt: string; td: stri
     case 'follow_up': return { tt: a.to_value?.action === 'completed' ? 'Follow-up completed' : a.to_value?.action === 'scheduled' ? `Follow-up scheduled · ${fmtDT(a.to_value?.scheduled_at)}` : 'Follow-up updated', td: a.note || '' };
     case 'note': return { tt: a.note || 'Note', td: 'Note added' };
     case 'field_change': return { tt: 'Lead details updated', td: Object.keys(a.to_value || {}).join(', ') };
+    // Start Calling (§4.1): the outcome an agent logged while working a handed-out batch
+    case 'disposition': return {
+      tt: a.note ? `Call outcome — ${a.note}` : 'Call outcome logged',
+      td: a.to_value?.handout_id
+        ? `Start Calling batch #${a.to_value.handout_id}${a.to_value.position ? ` · lead ${a.to_value.position}` : ''}`
+        : 'Disposition logged',
+    };
     case 'merge': return {
       tt: a.to_value?.reopened ? 'Duplicate merged & lead re-opened' : 'Duplicate merged',
       td: a.note || `Merged from ${a.to_value?.channel ?? 'another lead'}`,

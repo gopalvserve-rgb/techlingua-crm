@@ -50,9 +50,13 @@ const STAGES = [
   { id: 59, name: 'Lost', stage_type: 'lost', is_default: false, sort_order: 9, pipeline_id: 4 },
 ];
 
-/** audit_log.action CHECK — keep in step with db/migrations (006 -> 015 -> 019 -> 021). */
+/** audit_log.action CHECK — keep in step with db/migrations (006 -> 015 -> 019 -> 022). */
 export const AUDIT_ACTIONS = ['create', 'update', 'delete', 'login', 'export', 'transfer',
   'permission_change', 'merge', 'restore', 'handout'];
+
+/** lead_activity.type CHECK — keep in step with db/migrations (005 -> 023). */
+export const ACTIVITY_TYPES = ['create', 'stage_change', 'status_change', 'assign', 'follow_up',
+  'note', 'message', 'call_log', 'field_change', 'merge', 'transfer', 'disposition'];
 
 export const CAMPAIGN_ID = 5;
 export const ORG = 1; export const BRANCH = 2; export const VERTICAL = 3; export const PIPELINE = 4;
@@ -179,6 +183,11 @@ export function makeHandoutDb(init: Partial<FakeHandoutState> = {}) {
       // `type` is a SQL LITERAL in these statements ('assign' | 'stage_change' | 'disposition'),
       // the remaining columns are positional params — mirror that faithfully.
       const type = /VALUES \(\$1,\$2,\$3,\$4,'(\w+)'/.exec(s)?.[1] ?? 'unknown';
+      // the REAL lead_activity.type is an enumerated CHECK (005, widened by 023) —
+      // enforce it here so a new verb cannot reach production without a migration
+      if (!ACTIVITY_TYPES.includes(type)) {
+        throw new Error(`new row for relation "lead_activity" violates check constraint "lead_activity_type_check" (type='${type}')`);
+      }
       const cols = /INSERT INTO lead_activity \(([^)]+)\)/.exec(s)![1].split(',').map((c) => c.trim());
       const row: Record<string, unknown> = { type };
       let pi = 0;
