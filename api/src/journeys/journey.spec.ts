@@ -238,6 +238,42 @@ describe('a journey obeys the guardrails', () => {
   });
 });
 
+/* ============ DEF-S4-02 — an UNASSIGNED lead still gets its task ========== */
+
+describe('DEF-S4-02 (found by the live smoke) — a task is NEVER delivered to nobody', () => {
+  it('an ON-DEMAND lead has no owner, and the task falls back to the MANAGER', async () => {
+    // An On Demand campaign parks its leads UNASSIGNED until an agent clicks Start Calling
+    // (§4.1). Before the fix, "create a task for the owner" found no owner and SKIPPED —
+    // the journey silently did half its job, and nobody was told.
+    const { st, journeys } = build({
+      journeys: [JOURNEY({ actions: [{ kind: 'create_task', title: 'Call the new lead', assign_to: 'owner' }] })],
+      leads: { 1: { ...LEAD, owner_id: null } },
+    });
+    await journeys.fire('lead_created', 1);
+
+    expect(st.followUps).toHaveLength(1);
+    expect(st.followUps[0].owner_id).toBe(77);         // the manager resolver's answer
+    expect((st.runs[0].steps as any[])[0]).toMatchObject({ kind: 'create_task', status: 'done' });
+  });
+
+  it('notify_user on an unassigned lead reaches the manager too', async () => {
+    const { st, journeys } = build({
+      journeys: [JOURNEY({ actions: [{ kind: 'notify_user', assign_to: 'owner', title: 'New unassigned lead' }] })],
+      leads: { 1: { ...LEAD, owner_id: null } },
+    });
+    await journeys.fire('lead_created', 1);
+    expect(st.notifications).toEqual([{ user_id: 77, title: 'New unassigned lead' }]);
+  });
+
+  it('when the lead DOES have an owner, the owner still gets it (no behaviour change)', async () => {
+    const { st, journeys } = build({
+      journeys: [JOURNEY({ actions: [{ kind: 'create_task', title: 't', assign_to: 'owner' }] })],
+    });
+    await journeys.fire('lead_created', 1);
+    expect(st.followUps[0].owner_id).toBe(3);          // the lead's own counsellor
+  });
+});
+
 /* ============================ WAIT / RESUME =============================== */
 
 describe('a `wait` step parks the run and the worker resumes it', () => {

@@ -164,7 +164,12 @@ export class TemplateService {
       `SELECT l.id, l.full_name, l.phone, l.whatsapp_phone, l.email, l.score, l.temperature,
               l.priority, l.dob, l.next_follow_up_at, l.vertical_id, l.branch_id, l.campaign_id,
               b.name AS branch, v.name AS vertical, p.name AS pipeline, ca.name AS campaign,
-              s.name AS source, st.name AS stage, c.name AS course, c.fee AS course_fee,
+              s.name AS source, st.name AS stage, c.name AS course,
+              -- DEF-S4-01 (found by the LIVE smoke, not by a unit test): the masters are a
+              -- GENERIC table (id, name, code, meta JSONB) - there is no m_course.fee column.
+              -- The fee lives in meta.fee, which is where the Course form writes it and where
+              -- the lead sheet fee auto-fetch reads it. Pinned by template-sql-schema.spec.ts.
+              (c.meta->>'fee') AS course_fee,
               u.name AS counsellor, city.name AS city, o.name AS org
          FROM lead l
          JOIN organisation o ON o.id = l.org_id

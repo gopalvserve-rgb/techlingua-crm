@@ -306,17 +306,32 @@ export class JourneyService {
     );
   }
 
-  /** owner | manager | a specific user id. */
+  /**
+   * owner | manager | a specific user id.
+   *
+   * DEF-S4-02 (found by the LIVE smoke): an **On Demand** campaign deliberately parks its
+   * leads UNASSIGNED until an agent clicks Start Calling (§4.1). Such a lead has no owner,
+   * so "create a task for the owner" had nobody to give it to and skipped — the journey
+   * silently did half its job.
+   *
+   * A task delivered to nobody is the exact failure Sprint 3 ruled out for escalations, so
+   * the same rule applies here: **fall back to the manager** (team leader -> vertical ->
+   * branch -> org admin, an admin backstop that always resolves). The work item exists and
+   * a human sees it; when the lead is later claimed, its owner takes it over.
+   */
+  private async manager(lead: any): Promise<number | null> {
+    const ms = await this.managers.managersFor(Number(lead.id), Number(lead.owner_id) || null);
+    return ms[0] ?? null;
+  }
+
   private async resolveUser(who: unknown, lead: any): Promise<number | null> {
-    if (who === 'manager') {
-      // the SAME hierarchy walk the Sprint-3 escalation uses (team leader -> vertical ->
-      // branch -> org admin), so "notify the manager" means the same person everywhere.
-      const ms = await this.managers.managersFor(Number(lead.id), Number(lead.owner_id) || null);
-      return ms[0] ?? null;
+    if (who === 'manager') return this.manager(lead);
+    if (who === 'owner' || who === undefined || who === null) {
+      return lead.owner_id ? Number(lead.owner_id) : this.manager(lead);   // never nobody
     }
-    if (who === 'owner' || who === undefined || who === null) return lead.owner_id ? Number(lead.owner_id) : null;
     const n = Number(who);
-    return Number.isFinite(n) && n > 0 ? n : (lead.owner_id ? Number(lead.owner_id) : null);
+    if (Number.isFinite(n) && n > 0) return n;
+    return lead.owner_id ? Number(lead.owner_id) : this.manager(lead);
   }
 
   private async runAction(a: JourneyAction, j: any, run: any, lead: any): Promise<StepResult> {
