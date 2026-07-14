@@ -179,6 +179,12 @@ async function seed(c: PoolClient) {
     'user.read', 'team.read', 'team.create', 'team.update',
     'branch.read', 'vertical.read', 'pipeline.read', 'campaign.read', 'campaign.create', 'campaign.update',
     'source.read', 'source.create', 'source.update', 'master.read', 'custom_field.read', 'report.read', 'report.export',
+    // Sprint 3 (also granted by migration 025 on the existing DB; listed here so a FRESH
+    // database gets them too — migrations run before this seed, when `role` is still empty)
+    'notification.read', 'score.read', 'sla.read',
+    'calendar.read', 'calendar.create', 'calendar.update', 'calendar.delete',
+    'walkin.read', 'walkin.create', 'walkin.update', 'walkin.delete',
+    'referral.read', 'referral.create', 'referral.update', 'referral.delete',
   ], 'branch');
   // Vertical Manager: same shape, scoped to vertical
   await grant('Vertical Manager', [
@@ -187,14 +193,28 @@ async function seed(c: PoolClient) {
     'user.read', 'team.read', 'vertical.read', 'pipeline.read',
     'campaign.read', 'campaign.create', 'campaign.update', 'source.read', 'source.create', 'source.update',
     'master.read', 'custom_field.read', 'report.read', 'report.export',
+    'notification.read', 'score.read', 'sla.read',
+    'calendar.read', 'calendar.create', 'calendar.update',
+    'walkin.read', 'walkin.create', 'walkin.update',
+    'referral.read', 'referral.create', 'referral.update',
   ], 'vertical');
   await grant('Team Leader', [
     'dashboard.read', 'lead.read', 'lead.update', 'lead.assign', 'lead.pull',
     'followup.read', 'followup.create', 'followup.update', 'team.read', 'user.read', 'master.read', 'report.read',
+    'notification.read', 'score.read', 'sla.read',
+    'calendar.read', 'calendar.create', 'calendar.update',
+    'walkin.read', 'walkin.create', 'walkin.update',
+    'referral.read', 'referral.create', 'referral.update',
   ], 'team');
   // lead.pull = on-demand "Start Calling" hand-out (§4.1) — the agents who do the calling
   const agentPerms = ['dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.pull',
-    'followup.read', 'followup.create', 'followup.update', 'master.read'];
+    'followup.read', 'followup.create', 'followup.update', 'master.read',
+    // Sprint 3 — an agent sees their OWN score bands, SLA clocks, calendar, walk-ins and
+    // referrals (record scope 'own' below narrows every one of them to their own records).
+    'notification.read', 'score.read', 'sla.read',
+    'calendar.read', 'calendar.create', 'calendar.update',
+    'walkin.read', 'walkin.create', 'walkin.update',
+    'referral.read', 'referral.create', 'referral.update'];
   await grant('Counsellor', agentPerms, 'own');
   await grant('Telecaller', agentPerms, 'own');
   await grant('Trainer', ['dashboard.read', 'master.read'], 'own');
@@ -204,8 +224,47 @@ async function seed(c: PoolClient) {
   await grant('Marketing Manager', [
     'dashboard.read', 'campaign.read', 'campaign.create', 'campaign.update',
     'source.read', 'source.create', 'source.update', 'lead.read', 'report.read', 'report.export', 'master.read',
+    'notification.read', 'score.read', 'referral.read',
   ], 'vertical');
   // Student / Parent: portal roles, no CRM permissions in Phase 1
+
+  // ---- Sprint 3: default lead-scoring rules + the default SLA policy --------
+  //
+  // These ALSO live in migration 025, which inserts them for the EXISTING production
+  // database (where the organisation row already exists when the migration runs). On a
+  // FRESH database the migrations run BEFORE this seed, so `organisation` is empty at
+  // that point and 025's insert is a no-op — a brand-new environment would then come up
+  // with zero scoring rules and no SLA policy, and lead scoring would silently do nothing.
+  // Seeding them here too closes that gap. Both inserts are guarded by NOT EXISTS, so
+  // whichever runs first wins and the other is a no-op — never a duplicate.
+  await c.query(
+    `INSERT INTO lead_score_rule (org_id, name, rule_type, config, points, sort_order)
+     SELECT $1, r.name, r.rule_type, r.config::jsonb, r.points, r.sort_order
+       FROM (VALUES
+         ('Walk-in visitor',            'walk_in',          '{}',                                    25, 10),
+         ('Referral lead',              'referral',         '{}',                                    20, 20),
+         ('Paid social source (Meta)',  'source_channel',   '{"channels": ["meta"]}',                10, 30),
+         ('Paid search source (Google)','source_channel',   '{"channels": ["google"]}',              10, 40),
+         ('Website / landing form',     'source_channel',   '{"channels": ["form", "webhook"]}',      5, 50),
+         ('High priority lead',         'priority',         '{"values": ["high"]}',                  15, 60),
+         ('Budget declared',            'has_field',        '{"field": "budget_id"}',                10, 70),
+         ('Course of interest known',   'has_field',        '{"field": "course_id"}',                 8, 80),
+         ('Email captured',             'has_field',        '{"field": "email"}',                     5, 90),
+         ('WhatsApp number captured',   'has_field',        '{"field": "whatsapp_phone"}',            5, 100),
+         ('Engagement: follow-ups done','followup_done',    '{"points_each": 5, "max": 20}',          5, 110),
+         ('No response for 7 days',     'no_response_days', '{"days": 7}',                          -15, 120),
+         ('Stale lead (30 days open)',  'age_days',         '{"days": 30}',                         -10, 130),
+         ('Flagged as duplicate',       'duplicate',        '{}',                                   -10, 140)
+       ) AS r(name, rule_type, config, points, sort_order)
+      WHERE NOT EXISTS (SELECT 1 FROM lead_score_rule)`,
+    [org],
+  );
+  await c.query(
+    `INSERT INTO sla_policy (org_id, name, metric, threshold_minutes, escalate_after_minutes)
+     SELECT $1, 'First response within 60 minutes', 'first_response', 60, 0
+      WHERE NOT EXISTS (SELECT 1 FROM sla_policy)`,
+    [org],
+  );
 
   // ---- Super Admin user ----------------------------------------------------
   const hash = await bcrypt.hash(config.seedAdminPassword, 10);

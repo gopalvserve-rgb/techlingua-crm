@@ -94,26 +94,18 @@ export const APP: ModuleItem[] = [
       sub: 'Key numbers at a glance for any range — today, week, month, or a custom date range.',
       actions: [['cal', 'This month', 'ghost']] } },
     { id: 'calendar', label: 'Calendar', spec: { dyn: 'calendar',
-      sub: 'Follow-ups, demos, batch sessions, holidays & leaves — two-way Google/Outlook sync.' } },
-    { id: 'walkins', label: 'Walk-ins', spec: {
-      sub: 'Capture branch visitors and convert directly into assigned leads.',
-      actions: [['plus', 'Add walk-in', 'primary']], sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Walk-ins today', '0', 'users'), kpi('Converted', '0', 'check'), kpi('Demo booked', '0', 'cal'), kpi('Avg wait', '—', 'clock')] },
-        emptyTable("Today's walk-ins", ['Visitor', 'Interest', 'Assigned to', 'Branch', 'Status'], 'No walk-ins recorded yet'),
-      ] } },
-    { id: 'referrals', label: 'Referrals', spec: {
+      sub: 'Follow-ups, demos and meetings on one calendar. Google/Outlook sync is built and waiting on credentials.' } },
+    { id: 'walkins', label: 'Walk-ins', spec: { dyn: 'walkIns',
+      sub: 'Capture branch visitors and convert directly into assigned leads — the counsellor owns the lead on add.',
+      actions: [['plus', 'Add walk-in', 'primary']] } },
+    { id: 'referrals', label: 'Referrals', spec: { dyn: 'referrals',
       sub: 'Students, staff & partners refer new leads — track rewards and link referrer to lead.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Referrals (MTD)', '0', 'users'), kpi('Converted', '0', 'check'), kpi('Rewards due', '—', 'rupee')] },
-        emptyTable('Referral tracker', ['Referrer', 'Type', 'New lead', 'Status', 'Reward'], 'No referrals recorded yet'),
-      ] } },
+      actions: [['plus', 'Add referral', 'primary']] } },
     { id: 'aiinsights', label: 'AI Insights', spec: {
       sub: 'Lead scoring, churn / at-risk, next-best-action & summaries — running on Gemini.',
-      sprintNote: 'AI insights switch on once the Gemini key is configured in Settings (Sprint 3).',
+      sprintNote: 'Rule-based lead scoring is LIVE (Marketing › Lead Scoring). AI insights switch on once the Gemini key is configured in Settings (Phase 2).',
       blocks: [
-        emptyList('Active insights', 'No insights yet — AI engine connects in Sprint 3'),
+        emptyList('Active insights', 'No insights yet — the AI engine connects in Phase 2'),
         { type: 'caps', title: 'Insight types', items: [
           cap('Lead scoring', 'Hot / Warm / Cold bands'), cap('Churn & at-risk', 'Recency + engagement'),
           cap('Next-best-action', 'Per-lead suggestion'), cap('Conversation summaries', 'Phase 2 with call AI', true)] },
@@ -147,7 +139,7 @@ export const APP: ModuleItem[] = [
       sub: 'Drag to move stage (permitted users) · every lead tagged Branch › Vertical › Pipeline › Campaign › Source.',
       actions: [['filter', 'Filters', 'ghost'], ['plus', 'Add lead', 'primary']] } },
     { id: 'scoring', label: 'Lead Scoring', spec: { dyn: 'scoring',
-      sub: 'Automatic scoring on source, budget, course, engagement & recency. Bands for Hot / Warm / Cold.' } },
+      sub: 'Rule-based scoring you configure yourself — source, budget, course, engagement, recency. Bands for Hot / Warm / Cold.' } },
     { id: 'sources', label: 'Lead Sources', spec: { dyn: 'sources',
       sub: 'Auto-capture via API/webhook from every source. Cost per source tracked for ROI.' } },
     { id: 'assign', label: 'Auto-Assignment', spec: {

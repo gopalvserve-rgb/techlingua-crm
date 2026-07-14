@@ -23,6 +23,7 @@ import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
 import StartCalling from './calling';
+import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -93,7 +94,15 @@ function leadRow(l: any): Cell[] {
     l.course_name || '—',
     `${dn(l.vertical_name, l.vertical_deleted)} · ${dn(l.pipeline_name, l.pipeline_deleted)}`,
     { b: [dn(l.source_name, l.source_deleted) || '—', 'b-indigo'] },
-    { node: <TempBadge temperature={l.temperature} score={l.score} /> },
+    { node: (
+      <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+        <TempBadge temperature={l.temperature} score={l.score} />
+        {/* Sprint 3 — a breached SLA / an escalated follow-up is visible in the LIST,
+            not only in a report. This is the badge the client will look for. */}
+        {l.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA</span> : null}
+        {l.is_flagged && !l.sla_breached
+          ? <span className="bdg b-amber" title={l.flag_reason || 'Flagged'}>!</span> : null}
+      </span>) },
     l.owner_name || 'Unassigned',
     { b: [l.stage_name || '—', l.stage_type === 'won' ? 'b-green' : l.stage_type === 'lost' ? 'b-rose' : 'b-cyan'] },
     { node: <span className="mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span> },
@@ -150,27 +159,84 @@ function fuRow(f: any, openLead: (id: number) => void): { row: Cell[]; leadId: n
 
 /* ------------------------------ screens ------------------------------ */
 
+/**
+ * THE ROLE-BASED DASHBOARD (client decision, 14 Jul 2026).
+ *
+ * The server returns `view` (counsellor | team | branch | vertical | admin) and the
+ * `widgets` list for that view. The view is DERIVED FROM THE RBAC SCOPE, not from a role
+ * name, and every number in the payload is already scope-filtered — so a counsellor
+ * literally cannot receive branch figures. This component just renders what it is given.
+ */
+interface Dash {
+  view: 'counsellor' | 'team' | 'branch' | 'vertical' | 'admin';
+  widgets: string[];
+  range: { from: string; to: string };
+  kpis: { total: number; today: number; in_range: number; won: number; won_in_range: number;
+    lost: number; hot: number; warm: number; cold: number; flagged: number; unassigned: number };
+  follow_ups: { pending: number; due_today: number; overdue: number; done_today: number;
+    escalated: number; my_open: number; my_due_today: number; my_overdue: number };
+  by_stage: Array<{ stage_id: number; name: string; stage_type: string; sort_order: number; ct: number }>;
+  series: Array<{ day: string; leads: number; won: number }>;
+  leaderboard: Array<{ user_id: number; name: string; leads: number; won: number; new_in_range: number }>;
+  sla: { open_breaches: number; breaches_today: number; avg_response_seconds: number } | null;
+  walkins: { total: number; today: number; converted: number };
+  referrals: { total: number; mtd: number; converted: number; rewardable: number };
+}
+
+const VIEW_LABEL: Record<Dash['view'], string> = {
+  counsellor: 'My work', team: 'My team', branch: 'My branch', vertical: 'My vertical', admin: 'Organisation',
+};
+
 function DashOverview() {
   const { openLead, refreshTick } = useScreen();
-  const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
+  const d = useFetch<Dash>('/dashboard', [refreshTick]);
   const today = useFetch<any[]>('/follow-ups?due=today&limit=5', [refreshTick]);
   const mine = useFetch<any[]>('/follow-ups?mine=1&status=pending&limit=4', [refreshTick]);
   const recent = useFetch<{ total: number; rows: any[] }>('/leads?limit=5', [refreshTick]);
-  const k = sum.data?.kpis; const fu = sum.data?.follow_ups;
+
+  const data = d.data;
+  const has = (w: string) => !!data?.widgets.includes(w);
+  const k = data?.kpis;
+  const fu = data?.follow_ups;
+  const personal = data?.view === 'counsellor' || data?.view === 'team';
+
+  // a counsellor's KPI strip is about THEIR work; a manager's is about the unit.
+  const kpiItems = personal ? [
+    { lab: 'My leads', val: String(k?.total ?? 0), ic: 'leads' },
+    { lab: 'My conversions', val: String(k?.won ?? 0), ic: 'check' },
+    { lab: 'My open tasks', val: String(fu?.my_open ?? 0), ic: 'clock',
+      delta: fu?.my_overdue ? `${fu.my_overdue} overdue` : undefined, tone: fu?.my_overdue ? 'down' as const : 'flat' as const },
+    { lab: 'Due today', val: String(fu?.my_due_today ?? 0), ic: 'cal' },
+    { lab: 'Hot leads', val: String(k?.hot ?? 0), ic: 'bolt' },
+    { lab: 'New today', val: String(k?.today ?? 0), ic: 'users' },
+  ] : [
+    { lab: "Today's leads", val: String(k?.today ?? 0), ic: 'leads' },
+    { lab: 'Conversions', val: String(k?.won ?? 0), ic: 'check' },
+    { lab: 'Pending follow-ups', val: String(fu?.pending ?? 0), ic: 'clock',
+      delta: fu?.overdue ? `${fu.overdue} overdue` : undefined, tone: fu?.overdue ? 'down' as const : 'flat' as const },
+    { lab: 'SLA breaches', val: String(data?.sla?.open_breaches ?? 0), ic: 'bolt',
+      tone: (data?.sla?.open_breaches ?? 0) > 0 ? 'down' as const : 'flat' as const },
+    { lab: 'Walk-ins today', val: String(data?.walkins?.today ?? 0), ic: 'users' },
+    { lab: 'Unassigned', val: String(k?.unassigned ?? 0), ic: 'target' },
+  ];
+
   return (
     <>
-      <Kpis cols={6} items={[
-        { lab: "Today's Leads", val: String(k?.today ?? '0'), ic: 'leads' },
-        { lab: 'Conversions', val: String(k?.won ?? '0'), ic: 'check' },
-        { lab: "Today's Collection", val: '—', ic: 'rupee' },
-        { lab: 'Pending Follow-ups', val: String(fu?.pending ?? '0'), ic: 'clock', delta: fu?.overdue ? `${fu.overdue} overdue` : undefined, tone: fu?.overdue ? 'down' : 'flat' },
-        { lab: 'Walk-ins', val: String(k?.walkins ?? '0'), ic: 'users' },
-        { lab: 'Active Students', val: '—', ic: 'students' },
-      ]} />
-      <div className="row2" style={{ gridTemplateColumns: '1.55fr 1fr' }}>
-        <BarsCard title="Lead inflow & conversions — last 14 days" series={sum.data?.series?.map((s) => ({ day: String(s.day), leads: Number(s.leads), won: Number(s.won) })) ?? []} />
-        <Funnel title="Conversion funnel" rows={sum.data ? funnelRows(sum.data.by_stage) : []} />
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <span className="fchip on" style={{ cursor: 'default' }} data-view={data?.view ?? ''}>
+          <Ic k="users" />{data ? VIEW_LABEL[data.view] : 'Loading…'}
+        </span>
+        {data?.view === 'admin' && <span className="fchip" style={{ cursor: 'default' }}>Org-wide</span>}
       </div>
+
+      <Kpis cols={6} items={kpiItems} />
+
+      <div className="row2" style={{ gridTemplateColumns: '1.55fr 1fr' }}>
+        <BarsCard title="Lead inflow & conversions — last 14 days"
+          series={(data?.series ?? []).map((x) => ({ day: String(x.day), leads: Number(x.leads), won: Number(x.won) }))} />
+        <Funnel title="Conversion funnel" rows={data ? funnelRows(data.by_stage as any) : []} />
+      </div>
+
       <div className="row2" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
         <ListCard title="Today's Follow-ups" icon="clock" more={String(fu?.due_today ?? 0)}
           empty="No follow-ups due today"
@@ -184,10 +250,48 @@ function DashOverview() {
         <MyTaskCard rows={mine.data ?? []} more={`${fu?.my_open ?? 0} open`} />
         <div className="card" style={{ background: 'linear-gradient(150deg,var(--primary-soft),var(--accent-soft))' }}>
           <div className="card-head"><h3><Ic k="intel" />AI Insights</h3><span className="bdg b-indigo">Gemini</span></div>
-          <div className="empty-note">AI insights switch on once the Gemini key is configured (Sprint 3).</div>
+          <div className="empty-note">AI insights switch on once the Gemini key is configured (Phase 2).</div>
         </div>
       </div>
-      <TableCard title="Recent leads" more="View pipeline" cols={LEAD_COLS}
+
+      {/* ---- manager-only widgets. The server does not even compute these for a
+              counsellor, and `widgets` is what decides — not a client-side role guess. ---- */}
+      {has('team_leaderboard') && (
+        <TableCard title="Team performance" icon="users"
+          cols={['Counsellor', 'Leads', 'Converted', 'New in range', 'Conversion']}
+          rows={(data?.leaderboard ?? []).map((u) => [
+            { node: <span className="nm">{u.name}</span> } as Cell,
+            String(u.leads), String(u.won), String(u.new_in_range),
+            { b: [`${u.leads ? Math.round((u.won / u.leads) * 100) : 0}%`, u.won > 0 ? 'b-green' : 'b-gray'] } as Cell,
+          ])}
+          empty="No leads assigned in this unit yet" />
+      )}
+
+      {has('sla') && data?.sla && (
+        <div className="row2" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          <div className="card bignum">
+            <div className="l">Open SLA breaches</div>
+            <div className="v">{data.sla.open_breaches}</div>
+            <div className="s">
+              <span className={`bdg ${data.sla.open_breaches > 0 ? 'b-rose' : 'b-green'}`}>
+                {data.sla.open_breaches > 0 ? 'Needs attention' : 'All within target'}
+              </span>
+            </div>
+          </div>
+          <div className="card bignum">
+            <div className="l">Avg first response</div>
+            <div className="v">{dur(data.sla.avg_response_seconds)}</div>
+            <div className="s"><span className="bdg b-indigo">{data.sla.breaches_today} breached today</span></div>
+          </div>
+          <div className="card bignum">
+            <div className="l">Referrals (MTD)</div>
+            <div className="v">{data.referrals?.mtd ?? 0}</div>
+            <div className="s"><span className="bdg b-green">{data.referrals?.converted ?? 0} converted</span></div>
+          </div>
+        </div>
+      )}
+
+      <TableCard title={personal ? 'My recent leads' : 'Recent leads'} more="View pipeline" cols={LEAD_COLS}
         rows={(recent.data?.rows ?? []).map(leadRow)}
         empty="No leads yet — add your first lead or connect a source"
         onRowClick={(i) => openLead(Number(recent.data!.rows[i].id))} />
@@ -279,47 +383,74 @@ function TodayFollowups() {
   );
 }
 
+/**
+ * QUICK STATS — with the CUSTOM DATE RANGE the client asked for explicitly.
+ * Presets plus a real from/to picker; the numbers are scoped exactly like the dashboard.
+ */
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const PRESETS: Array<[string, () => { from: string; to: string }]> = [
+  ['Today', () => ({ from: iso(new Date()), to: iso(new Date()) })],
+  ['This week', () => {
+    const n = new Date(); const s = new Date(n); s.setDate(n.getDate() - n.getDay());
+    return { from: iso(s), to: iso(n) };
+  }],
+  ['This month', () => {
+    const n = new Date();
+    return { from: iso(new Date(n.getFullYear(), n.getMonth(), 1)), to: iso(n) };
+  }],
+  ['Last 90 days', () => {
+    const n = new Date(); const s = new Date(n); s.setDate(n.getDate() - 89);
+    return { from: iso(s), to: iso(n) };
+  }],
+];
+
 function QuickStats() {
   const { refreshTick } = useScreen();
-  const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
-  const k = sum.data?.kpis; const fu = sum.data?.follow_ups;
-  const conv = k && k.total > 0 ? `${Math.round((k.won / k.total) * 100)}%` : '—';
-  return (
-    <>
-      <Kpis cols={4} items={[
-        { lab: 'Leads', val: String(k?.total ?? '0'), ic: 'leads' },
-        { lab: 'Conversions', val: String(k?.won ?? '0'), ic: 'check' },
-        { lab: 'Revenue', val: '—', ic: 'rupee' },
-        { lab: 'Collection', val: '—', ic: 'rupee' },
-        { lab: 'Walk-ins', val: String(k?.walkins ?? '0'), ic: 'users' },
-        { lab: 'Follow-ups done', val: String(fu?.done_week ?? '0'), ic: 'clock' },
-        { lab: 'Avg CPL', val: '—', ic: 'bolt' },
-        { lab: 'Conv rate', val: conv, ic: 'target' },
-      ]} />
-      <HBars title="This month vs target" rows={[]} empty="Targets are set under Performance › Monthly Targets — progress bars appear once targets exist" />
-    </>
-  );
-}
+  const [preset, setPreset] = useState('This month');
+  const [range, setRange] = useState(() => PRESETS[2][1]());
+  const stats = useFetch<any>(`/dashboard/quick-stats?from=${range.from}&to=${range.to}`, [range.from, range.to, refreshTick]);
+  const s = stats.data;
 
-function Calendar() {
-  const { openLead, refreshTick } = useScreen();
-  const today = useFetch<any[]>('/follow-ups?due=today&limit=20', [refreshTick]);
+  const setPre = (name: string) => {
+    const p = PRESETS.find(([n]) => n === name);
+    if (!p) return;
+    setPreset(name);
+    setRange(p[1]());
+  };
+  const setCustom = (k: 'from' | 'to', v: string) => {
+    setPreset('Custom');
+    setRange((r) => ({ ...r, [k]: v }));
+  };
+
   return (
     <>
-      <Blocks blocks={[{ type: 'caps', title: 'Calendar shows', items: [
-        { t: 'Follow-ups & demos', d: 'Pulled from lead next-follow-up date' },
-        { t: 'Batch sessions', d: 'From academics schedule (Sprint 3)' },
-        { t: 'Holidays & staff leaves', d: 'From HR calendar (Phase 2)' },
-        { t: 'Meetings', d: 'Add internal meetings' },
-        { t: 'Two-way sync', d: 'Google Calendar / Outlook' }] }]} />
-      <ListCard title={`Today — ${new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}`}
-        icon="cal" empty="Nothing scheduled today"
-        rows={(today.data ?? []).map((f) => ({
-          ic: 'clock', tone: f.temperature === 'hot' ? 'b-hot' : 'b-indigo',
-          t1: <span style={{ cursor: 'pointer' }} onClick={() => openLead(f.lead_id)}>{f.type_name || 'Follow-up'} {f.lead_name} · {f.course_name || ''}</span>,
-          t2: f.notes || f.stage_name || '',
-          rt: new Date(f.scheduled_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-        }))} />
+      <div className="filters" style={{ marginBottom: 12, alignItems: 'center' }}>
+        {PRESETS.map(([name]) => (
+          <button key={name} className={`fchip${preset === name ? ' on' : ''}`} onClick={() => setPre(name)}>{name}</button>
+        ))}
+        <span className={`fchip${preset === 'Custom' ? ' on' : ''}`} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <label htmlFor="qs-from" style={{ fontSize: 11 }}>From</label>
+          <input id="qs-from" type="date" className="ainp" style={{ padding: '2px 6px', fontSize: 11.5, width: 130 }}
+            value={range.from} onChange={(e) => setCustom('from', e.target.value)} />
+          <label htmlFor="qs-to" style={{ fontSize: 11 }}>To</label>
+          <input id="qs-to" type="date" className="ainp" style={{ padding: '2px 6px', fontSize: 11.5, width: 130 }}
+            value={range.to} onChange={(e) => setCustom('to', e.target.value)} />
+        </span>
+      </div>
+
+      <Kpis cols={4} items={[
+        { lab: 'Leads', val: String(s?.leads ?? 0), ic: 'leads' },
+        { lab: 'Conversions', val: String(s?.won ?? 0), ic: 'check' },
+        { lab: 'Lost', val: String(s?.lost ?? 0), ic: 'clock' },
+        { lab: 'Conversion rate', val: s ? `${s.conversion_rate}%` : '—', ic: 'target' },
+        { lab: 'Hot leads', val: String(s?.hot ?? 0), ic: 'bolt' },
+        { lab: 'Duplicates', val: String(s?.duplicates ?? 0), ic: 'users' },
+        { lab: 'Follow-ups done', val: String(s?.followups_done ?? 0), ic: 'check' },
+        { lab: 'Follow-ups scheduled', val: String(s?.followups_scheduled ?? 0), ic: 'cal' },
+      ]} />
+
+      <HBars title="This month vs target" rows={[]}
+        empty="Targets are set under Performance › Monthly Targets — progress bars appear once targets exist" />
     </>
   );
 }
@@ -437,15 +568,22 @@ function LeadsAll() {
   const canEditLead = can('lead.update');
   const canDeleteLead = can('lead.delete');
   const ref = useRef_();
-  const [f, setF] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number; q: string }>({ q: '' });
+  const [f, setF] = useState<{
+    branch?: number; vertical?: number; pipeline?: number; campaign?: number;
+    // Sprint 3 — the score BAND is filterable, and SLA breaches are their own filter
+    temperature?: string; sla?: boolean; sort: string; q: string;
+  }>({ q: '', sort: 'recent' });
   const params = new URLSearchParams();
   if (f.branch) params.set('branch_id', String(f.branch));
   if (f.vertical) params.set('vertical_id', String(f.vertical));
   if (f.pipeline) params.set('pipeline_id', String(f.pipeline));
   if (f.campaign) params.set('campaign_id', String(f.campaign));
+  if (f.temperature) params.set('temperature', f.temperature);
+  if (f.sla) params.set('sla_breached', '1');
+  if (f.sort && f.sort !== 'recent') params.set('sort', f.sort);
   if (f.q.trim()) params.set('q', f.q.trim());
   params.set('limit', '100');
-  const data = useFetch<{ total: number; rows: any[] }>(`/leads?${params.toString()}`, [refreshTick]);
+  const data = useFetch<{ total: number; rows: any[] }>(`/leads?${params.toString()}`, [refreshTick, params.toString()]);
   const del = useDelete('Lead', '/leads', () => bump());
 
   const chip = (label: string, icon: string, value: number | undefined, list: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
@@ -466,7 +604,34 @@ function LeadsAll() {
         {chip('Pipeline', 'list', f.pipeline, ref.pipelines.filter((p) => !f.vertical || Number(p.vertical_id) === f.vertical), (v) => setF((x) => ({ ...x, pipeline: v, campaign: undefined })))}
         {chip('Campaign', 'bolt', f.campaign, ref.campaigns.filter((c) => !f.pipeline || Number(c.pipeline_id) === f.pipeline), (v) => setF((x) => ({ ...x, campaign: v })))}
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / email…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
-        <div className="fchip" style={{ marginLeft: 'auto', color: 'var(--primary)', borderColor: 'var(--primary)' }}><Ic k="intel" />AI sort: Hot first</div>
+        {/* Sprint 3 — the band is FILTERABLE (client requirement). These chips are real. */}
+        <div className="fchip" data-testid="band-filter">
+          <Ic k="bolt" />Band
+          <select aria-label="Filter by score band" value={f.temperature ?? ''}
+            onChange={(e) => setF((x) => ({ ...x, temperature: e.target.value || undefined }))}>
+            <option value="">All</option>
+            <option value="hot">Hot</option>
+            <option value="warm">Warm</option>
+            <option value="cold">Cold</option>
+          </select>
+        </div>
+        {/* ...and SORTABLE. */}
+        <div className="fchip" data-testid="sort-control">
+          <Ic k="analytics" />Sort
+          <select aria-label="Sort leads" value={f.sort}
+            onChange={(e) => setF((x) => ({ ...x, sort: e.target.value }))}>
+            <option value="recent">Newest first</option>
+            <option value="score">Score: high to low</option>
+            <option value="score_asc">Score: low to high</option>
+            <option value="followup">Next follow-up</option>
+            <option value="name">Name (A–Z)</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </div>
+        <button className={`fchip${f.sla ? ' on' : ''}`} style={{ marginLeft: 'auto' }}
+          onClick={() => setF((x) => ({ ...x, sla: !x.sla }))}>
+          <Ic k="clock" />SLA breached
+        </button>
       </div>
       <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']}
         rows={(data.data?.rows ?? []).map((l) => [...leadRow(l), rowActions({
@@ -588,6 +753,7 @@ function Kanban() {
                   <div className="foot">
                     <div className="src"><Ic k="search" />{l.source_name}</div>
                     <TempBadge temperature={l.temperature} />
+                    {l.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA</span> : null}
                   </div>
                 </div>
               ))}
@@ -595,29 +761,6 @@ function Kanban() {
           </div>
         ))}
       </div>
-    </>
-  );
-}
-
-function Scoring() {
-  const { refreshTick } = useScreen();
-  const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
-  const k = sum.data?.kpis;
-  const total = Math.max(1, (k?.hot ?? 0) + (k?.warm ?? 0) + (k?.cold ?? 0));
-  const rows = k && (k.hot || k.warm || k.cold) ? [
-    { label: '🔥 Hot (80–100)', val: `${k.hot} leads`, pct: Math.round((k.hot / total) * 100), color: 'var(--hot)' },
-    { label: '🌤 Warm (50–79)', val: `${k.warm} leads`, pct: Math.round((k.warm / total) * 100), color: 'var(--warm)' },
-    { label: '❄️ Cold (0–49)', val: `${k.cold} leads`, pct: Math.round((k.cold / total) * 100), color: 'var(--cold)' },
-  ] : [];
-  return (
-    <>
-      <Blocks blocks={[{ type: 'cfg', title: 'Scoring criteria & weights', rows: [
-        { ic: 'leads', k: 'Source quality', s: 'Paid sources weighted higher', v: '25%', toggle: true },
-        { ic: 'rupee', k: 'Budget', s: 'Declared budget vs course fee', v: '20%', toggle: true },
-        { ic: 'book', k: 'Course interest', s: 'High-ticket courses score up', v: '15%', toggle: true },
-        { ic: 'bolt', k: 'Engagement', s: 'Calls answered, WA replies, opens', v: '25%', toggle: true },
-        { ic: 'clock', k: 'Recency', s: 'Time since last activity', v: '15%', toggle: true }] }]} />
-      <HBars title="Current band distribution" rows={rows} empty="Band distribution appears as leads are scored" />
     </>
   );
 }
@@ -710,20 +853,6 @@ function Sources() {
           }} />
       )}
     </>
-  );
-}
-
-function Sla() {
-  return (
-    <Blocks blocks={[
-      { type: 'kpis', items: [
-        { lab: 'Target first response', val: '5m', ic: 'clock' }, { lab: 'Avg actual', val: '—', ic: 'check' },
-        { lab: 'Breaches today', val: '0', ic: 'clock' }, { lab: 'Escalated', val: '0', ic: 'bolt' }] },
-      { type: 'cfg', title: 'Escalation ladder', rows: [
-        { ic: 'clock', k: 'First response SLA', s: 'Counsellor must respond', v: '5 min', toggle: true },
-        { ic: 'bolt', k: 'Breach → Team Leader', s: 'Notify + reassign option', v: '+10 min', toggle: true },
-        { ic: 'users', k: 'Repeat breach → Manager', s: 'Escalation alert', v: '+30 min', toggle: true }] },
-    ]} />
   );
 }
 
@@ -2199,6 +2328,8 @@ export const DYN: Record<string, () => JSX.Element> = {
   todayFollowups: TodayFollowups,
   quickStats: QuickStats,
   calendar: Calendar,
+  walkIns: WalkIns,
+  referrals: Referrals,
   leadsAll: LeadsAll,
   leadImport: LeadImport,
   followups: Followups,

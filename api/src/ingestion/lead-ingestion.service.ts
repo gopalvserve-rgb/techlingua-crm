@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service';
+import { ScoringService } from '../scoring/scoring.service';
+import { SlaService } from '../sla/sla.service';
 import { normalizePhone } from '../common/phone.util';
 import { DistributionConfig, matchCondition, pickFromPool } from '../leads/distribution.util';
 import {
@@ -76,7 +78,31 @@ export class LeadIngestionService {
   constructor(
     private readonly db: DatabaseService,
     private readonly merger: LeadMergeService,
+    /**
+     * Sprint 3 — every lead, from EVERY channel, gets its SLA clock started and its
+     * score computed the moment it exists. Hooking it here (rather than in each of the
+     * five callers) is what keeps "one ingestion path" true: CSV, Meta, Google, the
+     * website form, the Sheet pull, walk-ins, referrals and manual Add Lead all get it.
+     * Optional so the in-memory test double can omit them.
+     */
+    private readonly scoring?: ScoringService,
+    private readonly sla?: SlaService,
   ) {}
+
+  /**
+   * Fired after the ingest transaction has COMMITTED. Best-effort by design: a scoring
+   * or SLA hiccup must never lose a lead that is already durably stored.
+   */
+  private async afterIngest(outcome: IngestOutcome): Promise<void> {
+    const id = outcome?.lead_id;
+    if (!id) return;
+    if (outcome.status === 'created') {
+      await this.sla?.safe(() => this.sla!.onLeadCreated(Number(id)), 'sla.onLeadCreated(ingest)');
+    }
+    if (outcome.status === 'created' || outcome.merged) {
+      await this.scoring?.safeRescore(Number(id));
+    }
+  }
 
   // ---- target resolution ---------------------------------------------------
 
@@ -314,6 +340,13 @@ export class LeadIngestionService {
   // ---- THE pipeline --------------------------------------------------------
 
   async ingest(payload: IngestPayload, ctx: IngestContext, preloaded?: IngestTarget): Promise<IngestOutcome> {
+    const outcome = await this.ingestInner(payload, ctx, preloaded);
+    await this.afterIngest(outcome);
+    return outcome;
+  }
+
+  /** The ingestion transaction itself (unchanged from Sprint 2). */
+  private async ingestInner(payload: IngestPayload, ctx: IngestContext, preloaded?: IngestTarget): Promise<IngestOutcome> {
     const target = preloaded ?? (await this.loadTarget(ctx.campaign_id, ctx.source_id));
     const policy: DuplicatePolicy = ctx.duplicate_policy ?? 'campaign';
     const key = this.dedupeKey(payload, ctx);

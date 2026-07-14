@@ -11,6 +11,7 @@ import { AddModal, CampaignModal, MULTI_ADD, SPEC_FORMS, entFromLabel } from './
 import { LeadSheet } from './leadsheet';
 import { RoleModal } from './rolemodal';
 import { toast, useRef_, Toaster } from './refdata';
+import { NotificationBell } from './notifications';
 
 const addLike = (l: string) => /^(add|new|record|create|quick add)/i.test(l);
 
@@ -85,7 +86,10 @@ export function Shell() {
             <button className={theme === 'light' ? 'on' : ''} onClick={() => setTheme('light')} title="Light"><Ic k="sun" /></button>
             <button className={theme === 'dark' ? 'on' : ''} onClick={() => setTheme('dark')} title="Dark"><Ic k="moon" /></button>
           </div>
-          <button className="icon-btn" title="Notifications" onClick={() => toast('No new notifications')}><Ic k="bell" /></button>
+          {/* Sprint 3 — the real notification centre. Reminders, overdue escalations,
+              SLA breaches and assignments all land here; Sprint 4's WhatsApp/SMS/Email
+              channels fan out from the same server-side message. */}
+          <NotificationBell onOpenLead={(id) => nav(`/m/leads/all?lead=${id}`)} />
           <button className="user-pill" title="Sign out" onClick={() => { if (confirm('Sign out?')) logout(); }}>
             <div className="av">{(me?.user.name || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}</div>
             <div><div className="nm">{me?.user.name}</div><div className="rl">{roleName || me?.user.email}</div></div>

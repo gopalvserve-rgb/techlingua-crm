@@ -6,6 +6,8 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { looksLikePhoneQuery, normalizePhone, phoneQueryFragments } from '../common/phone.util';
+import { ScoringService } from '../scoring/scoring.service';
+import { SlaService } from '../sla/sla.service';
 
 /**
  * Sprint 2 — minimal lead APIs backing the prototype-parity UI:
@@ -18,17 +20,13 @@ import { looksLikePhoneQuery, normalizePhone, phoneQueryFragments } from '../com
  * @ScopedEntity('lead' | 'follow_up') so out-of-scope ids 404 (QA DEF-1 policy).
  */
 
-/** Scope columns for the `lead l` alias (single source in this module). */
-export const LEAD_SCOPE_COLS: ScopeColumnMap = {
-  owner: 'l.owner_id', team: 'l.team_id', branch: 'l.branch_id',
-  vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id',
-};
-
-/** Scope columns for follow-ups (`f` = follow_up, `l` = its lead). */
-export const FOLLOWUP_SCOPE_COLS: ScopeColumnMap = {
-  owner: 'f.owner_id', team: 'l.team_id', branch: 'l.branch_id',
-  vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id',
-};
+/**
+ * Scope columns now live in rbac/scope-cols.ts (a LEAF module) because Sprint 3 made
+ * this service depend on Scoring/SLA, which need the same maps — importing them back
+ * from here would be a cycle. Re-exported so every existing import site is unchanged.
+ */
+export { LEAD_SCOPE_COLS, FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
+import { LEAD_SCOPE_COLS, FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
 
 /**
  * Lead search clause (client update #2): `q` matches name (ILIKE), email (ILIKE)
@@ -58,8 +56,29 @@ export function buildLeadSearch(q: string, params: unknown[]): string {
 export interface LeadFilters {
   branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
   stage_id?: number; status_id?: number; owner_id?: number; source_id?: number;
-  temperature?: string; q?: string; limit?: number; offset?: number;
+  /** Sprint 3 — the Hot/Warm/Cold BAND, filterable (client requirement). */
+  temperature?: string;
+  /** Sprint 3 — only leads with an open SLA breach / an escalation flag. */
+  sla_breached?: boolean;
+  flagged?: boolean;
+  /** Sprint 3 — the band must be SORTABLE too. */
+  sort?: string;
+  q?: string; limit?: number; offset?: number;
 }
+
+/**
+ * Sprint 3 — the whitelisted sort columns. A whitelist (not a passthrough) because this
+ * string goes straight into ORDER BY: an unlisted value falls back to `recent`, so a
+ * crafted `?sort=` can never inject SQL.
+ */
+const LEAD_SORTS: Record<string, string> = {
+  recent: 'l.created_at DESC',
+  oldest: 'l.created_at ASC',
+  score: 'l.score DESC NULLS LAST, l.created_at DESC',
+  score_asc: 'l.score ASC NULLS LAST, l.created_at DESC',
+  name: 'l.full_name ASC',
+  followup: 'l.next_follow_up_at ASC NULLS LAST',
+};
 
 export interface CreateLeadDto {
   full_name: string; phone: string; email?: string; alt_phone?: string; whatsapp_phone?: string;
@@ -82,6 +101,9 @@ const LEAD_SELECT = `
          l.stage_id, l.status_id, l.owner_id, l.team_id,
          l.next_follow_up_at, l.last_activity_at, l.is_duplicate, l.custom_fields,
          l.duplicate_of_id, l.merged_into_id,
+         l.score_breakdown, l.scored_at, l.is_flagged, l.flag_reason,
+         EXISTS (SELECT 1 FROM lead_sla s
+                  WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now()) AS sla_breached,
          l.state_id, l.city_id, l.course_id, l.qualification_id, l.budget_id,
          l.created_at, l.updated_at,
          b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
@@ -110,6 +132,11 @@ export class LeadsService {
     private readonly resolver: ScopeResolverService,
     private readonly enforcer: ScopeEnforcerService,
     private readonly ingestion: LeadIngestionService,
+    // Sprint 3: the score and the SLA/TAT clocks are DERIVED state — they are refreshed
+    // on every lead event, never on a nightly job only. Both are best-effort: a scoring
+    // or SLA hiccup must never stop a lead being created or updated.
+    private readonly scoring: ScoringService,
+    private readonly sla: SlaService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -133,6 +160,11 @@ export class LeadsService {
     if (f.owner_id) eq('l.owner_id', f.owner_id);
     if (f.source_id) eq('l.source_id', f.source_id);
     if (f.temperature) eq('l.temperature', f.temperature);
+    if (f.flagged) where.push('l.is_flagged');
+    if (f.sla_breached) {
+      where.push(`EXISTS (SELECT 1 FROM lead_sla s
+                           WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now())`);
+    }
     if (f.q) where.push(buildLeadSearch(f.q, params));
     const cond = where.join(' AND ');
     const total = await this.db.one<{ n: number }>(
@@ -141,9 +173,10 @@ export class LeadsService {
     params.push(Math.min(Number(f.limit) || 50, 500));
     const limIdx = params.length;
     params.push(Math.max(Number(f.offset) || 0, 0));
+    const orderBy = LEAD_SORTS[String(f.sort ?? 'recent')] ?? LEAD_SORTS.recent;
     const rows = await this.db.query(
       `${LEAD_SELECT} WHERE ${cond}
-        ORDER BY l.created_at DESC LIMIT $${limIdx} OFFSET $${params.length}`,
+        ORDER BY ${orderBy} LIMIT $${limIdx} OFFSET $${params.length}`,
       params,
     );
     return { total: total?.n ?? 0, rows };
@@ -223,7 +256,14 @@ export class LeadsService {
       actor_id: actorId, owner_id: dto.owner_id ?? null, duplicate_policy: 'always_create',
     });
     if (!lead) throw new BadRequestException(outcome.reason ?? 'lead could not be created');
-    return { ...lead, duplicate_of: outcome.duplicate_of ?? null };
+
+    // Sprint 3 — a NEW lead: start its first-response SLA clock + TAT, then score it.
+    await this.sla.safe(() => this.sla.onLeadCreated(Number(lead.id)), 'sla.onLeadCreated');
+    await this.scoring.safeRescore(Number(lead.id));
+    const scored = await this.db.one<Record<string, any>>(
+      `SELECT score, temperature, score_breakdown FROM lead WHERE id = $1`, [Number(lead.id)],
+    );
+    return { ...lead, ...(scored ?? {}), duplicate_of: outcome.duplicate_of ?? null };
   }
 
   // ---- update (stage/status/owner/priority/temperature/fields) -------------
@@ -301,7 +341,7 @@ export class LeadsService {
     }
 
     params.push(id);
-    return this.db.tx(async (c) => {
+    const saved = await this.db.tx(async (c) => {
       const upd = sets.length
         ? await c.query(
             `UPDATE lead SET ${sets.join(', ')}, last_activity_at = now(), updated_at = now()
@@ -322,8 +362,27 @@ export class LeadsService {
            VALUES ($1,$2,$3,$4,'note',$5)`, [id, org, before.branch_id, actorId, String(dto.note)],
         );
       }
+
+      // Sprint 3 — SLA/TAT inside the SAME transaction as the change that caused it, so
+      // the stage TAT row and the stage move can never disagree.
+      const stageMoved = activities.some((a) => a.type === 'stage_change');
+      if (stageMoved) {
+        const to = upd.rows[0]?.stage_id ?? null;
+        await this.sla.safe(() => this.sla.onStageChanged(id, to ? Number(to) : null, c), 'sla.onStageChanged');
+      } else if (activities.length || dto.note) {
+        // any human touch (note, assign, field change, disposition) stops the
+        // first-response clock — that IS the response
+        await this.sla.safe(() => this.sla.onLeadTouched(id, c), 'sla.onLeadTouched');
+      }
       return upd.rows[0];
     });
+
+    // the score depends on stage/priority/course/budget/email/whatsapp — all updatable
+    await this.scoring.safeRescore(id);
+    const rescored = await this.db.one<Record<string, any>>(
+      `SELECT score, temperature, score_breakdown, is_flagged, flag_reason FROM lead WHERE id = $1`, [id],
+    );
+    return { ...saved, ...(rescored ?? {}) };
   }
 
   /** Append a free-text note to the timeline. */
@@ -336,6 +395,10 @@ export class LeadsService {
       [id, Number(lead.org_id), Number(lead.branch_id), actorId, note.trim()],
     );
     await this.db.query(`UPDATE lead SET last_activity_at = now() WHERE id = $1`, [id]);
+    // a note is a human touch: it stops the first-response clock and refreshes the score
+    // (the no-response penalty must lift the moment somebody actually responds)
+    await this.sla.safe(() => this.sla.onLeadTouched(id), 'sla.onLeadTouched(note)');
+    await this.scoring.safeRescore(id);
     return { ok: true };
   }
 

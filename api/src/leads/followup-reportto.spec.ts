@@ -58,7 +58,10 @@ function build() {
   };
   const resolver: any = { buildScopeWhere: () => '1=1' };
   const enforcer: any = { assertRefInScope: async () => undefined };
-  return { svc: new FollowUpsService(db, resolver, enforcer), calls };
+  const scoring: any = { safeRescore: async () => undefined };
+  const sla: any = { safe: async (fn: () => Promise<void>) => fn().catch(() => undefined), onLeadTouched: async () => undefined };
+  const settings: any = { get: async (_k: string, d: any) => d };
+  return { svc: new FollowUpsService(db, resolver, enforcer, scoring, sla, settings), calls };
 }
 
 const userLookups = (calls: Array<{ sql: string }>) => calls.filter((c) => /FROM "user" WHERE id/.test(c.sql));

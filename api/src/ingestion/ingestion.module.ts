@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ScoringModule } from '../scoring/scoring.module';
+import { SlaModule } from '../sla/sla.module';
 import { LeadIngestionService } from './lead-ingestion.service';
 import { LeadMergeService } from './merge.service';
 import { ImportService } from './import.service';
@@ -23,6 +25,9 @@ import { SheetWorker } from './channels/sheet.worker';
  * JustDial / IndiaMART later = one entry in channels/providers.ts.
  */
 @Module({
+  // Sprint 3: every ingested lead is scored and gets an SLA clock, in ONE place
+  // (LeadIngestionService.afterIngest) rather than in each channel.
+  imports: [ScoringModule, SlaModule],
   controllers: [ImportController, ChannelController, WebhookController],
   providers: [
     LeadIngestionService, LeadMergeService, ImportService, ImportWorker,

@@ -533,3 +533,40 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .condrow .ax2{display:grid;place-items:center;width:30px;height:38px;border-radius:8px;color:var(--text-dim)}
 .condrow .ax2:hover{color:var(--danger);background:var(--danger-soft)}
 .condrow .ax2 svg{width:13px;height:13px}
+
+/* ---------- Sprint 3: notification bell + panel ---------- */
+.notif-dot{position:absolute;top:2px;right:2px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;
+  background:var(--danger);color:#fff;font-size:9.5px;font-weight:700;line-height:15px;text-align:center;
+  border:1.5px solid var(--surface-1)}
+.notif-panel{position:absolute;top:42px;right:0;width:360px;max-width:calc(100vw - 24px);z-index:70;
+  background:var(--surface-1);border:1px solid var(--border);border-radius:var(--r-md);
+  box-shadow:0 18px 44px rgba(0,0,0,.34);overflow:hidden}
+.notif-head{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;
+  border-bottom:1px solid var(--border)}
+.notif-head h4{margin:0;font-size:13px;font-weight:700;font-family:var(--f-display)}
+.notif-list{max-height:388px;overflow-y:auto}
+.notif-row{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--border)}
+.notif-row:last-child{border-bottom:0}
+.notif-row:hover{background:var(--surface-2)}
+.notif-row.unread{background:var(--primary-soft)}
+.notif-row .gr{flex:1;min-width:0}
+.notif-row .t1{font-size:12.5px;font-weight:600;color:var(--text)}
+.notif-row .t2{font-size:11.5px;color:var(--text-muted);margin-top:2px}
+.notif-row .rt{font-size:10.5px;color:var(--text-dim);white-space:nowrap}
+
+/* ---------- Sprint 3: calendar grid ---------- */
+.cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border);
+  border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden}
+.cal-dow{background:var(--surface-2);padding:7px 8px;font-size:10.5px;font-weight:700;color:var(--text-muted);
+  text-transform:uppercase;letter-spacing:.04em;text-align:center}
+.cal-cell{background:var(--surface-1);min-height:96px;padding:6px 7px;display:flex;flex-direction:column;gap:3px}
+.cal-cell.out{background:var(--surface-2);opacity:.5}
+.cal-cell.today .cal-num{background:var(--primary);color:#fff;border-radius:50%}
+.cal-num{font-size:11px;font-weight:700;color:var(--text-muted);width:19px;height:19px;line-height:19px;text-align:center}
+.cal-ev{font-size:10.5px;padding:2px 5px;border-radius:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  cursor:pointer;background:var(--primary-soft);color:var(--text)}
+.cal-ev.fu{background:var(--surface-3)}
+.cal-ev.overdue{background:rgba(244,63,94,.16);color:var(--danger);font-weight:600}
+.cal-ev.demo{background:rgba(34,211,238,.16)}
+.cal-more{font-size:10px;color:var(--text-dim)}

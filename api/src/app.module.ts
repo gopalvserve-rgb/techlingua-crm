@@ -14,6 +14,12 @@ import { ErrorLogModule } from './errorlog/error-log.module';
 import { LeadsModule } from './leads/leads.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { SoftDeleteModule } from './softdelete/softdelete.module';
+import { ScoringModule } from './scoring/scoring.module';
+import { SlaModule } from './sla/sla.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { CalendarModule } from './calendar/calendar.module';
+import { CaptureModule } from './capture/capture.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -36,6 +42,13 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     LeadsModule,
     IngestionModule,
     SoftDeleteModule,
+    // Sprint 3 — working the lead
+    ScoringModule,      // rule-based, admin-configurable lead scoring (Hot/Warm/Cold)
+    SlaModule,          // SLA policies, per-lead clocks, per-stage TAT
+    NotificationsModule,// the bell + the channel-agnostic notifier + the reminder/escalation/SLA worker
+    DashboardModule,    // role-based dashboards (scope-derived, never role-name-derived)
+    CalendarModule,     // in-app calendar; Google/Outlook sync config-driven
+    CaptureModule,      // walk-ins (assign-on-add) & referrals
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

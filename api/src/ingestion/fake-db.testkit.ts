@@ -308,7 +308,10 @@ export const allScopeResolver = {
 } as unknown as ScopeResolverService;
 
 /** The ingestion service wired to its real merge engine, over the fake DB. */
-export function makeIngestion(db: DatabaseService) {
+export function makeIngestion(db: DatabaseService, opts: { scoring?: any; sla?: any } = {}) {
   const merger = new LeadMergeService(db, allScopeResolver);
-  return { svc: new LeadIngestionService(db, merger), merger };
+  // scoring / SLA are the Sprint-3 post-commit hooks. They are OPTIONAL on the service
+  // so these tests keep asserting the ingestion contract in isolation; the hooks have
+  // their own suites (scoring.spec, sla.spec) and a wiring test below.
+  return { svc: new LeadIngestionService(db, merger, opts.scoring, opts.sla), merger };
 }

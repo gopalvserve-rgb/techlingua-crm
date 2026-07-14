@@ -130,6 +130,11 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
               <TempBadge temperature={lead.temperature} score={lead.score} />
               <span className="bdg b-indigo">{lead.vertical_name}{lead.vertical_deleted ? ' (deleted)' : ''} · {lead.pipeline_name}{lead.pipeline_deleted ? ' (deleted)' : ''}</span>
               {lead.is_duplicate && <span className="bdg b-rose">Duplicate</span>}
+              {/* Sprint 3 — a breached SLA and an escalation flag are visible on the sheet */}
+              {lead.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA breached</span> : null}
+              {lead.is_flagged && !lead.sla_breached
+                ? <span className="bdg b-amber" title={lead.flag_reason || 'Flagged'}>{lead.flag_reason || 'Flagged'}</span>
+                : null}
             </div>
           </div>
           <button className="x" onClick={onClose}><Ic k="x" /></button>
@@ -156,6 +161,34 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             </div>
             {saved && <div className="toast">{checkS}{saved}</div>}
           </div>
+          {/* Sprint 3 — WHY is this lead Hot? The score breakdown is stored on the lead,
+              so the answer is the rules that actually fired, not a guess. */}
+          {Array.isArray(lead.score_breakdown) && lead.score_breakdown.length > 0 && (
+            <div className="sheet-sec">
+              <h5>Lead score — {lead.score} / 100 · {String(lead.temperature ?? 'unscored').replace(/^./, (c: string) => c.toUpperCase())}</h5>
+              <div className="hbars">
+                {lead.score_breakdown.map((b: any, i: number) => (
+                  <div className="hbar" key={i}>
+                    <div className="top">
+                      <span>{b.name}</span>
+                      <b style={{ color: Number(b.points) >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                        {Number(b.points) > 0 ? '+' : ''}{b.points}
+                      </b>
+                    </div>
+                    <div className="track">
+                      <div className="fill" style={{
+                        width: `${Math.min(100, Math.abs(Number(b.points)))}%`,
+                        background: Number(b.points) >= 0 ? 'var(--success)' : 'var(--danger)',
+                      }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="empty-note" style={{ marginTop: 8, textAlign: 'left' }}>
+                Rules are configured under Marketing &amp; Lead Management &rsaquo; Lead Scoring.
+              </div>
+            </div>
+          )}
           <div className="sheet-sec">
             <h5>Lead details</h5>
             <div className="kv">

@@ -34,4 +34,11 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'deleted', label: 'Deleted Items', actions: ['manage'] },
   { module: 'report', label: 'Reports', actions: ['read', 'export'] },
   { module: 'settings', label: 'Settings', actions: ['read', 'update'] },
+  // Sprint 3 (migration 025) — working the lead
+  { module: 'score', label: 'Lead Scoring', actions: ['read', 'manage'] },
+  { module: 'sla', label: 'SLA & TAT', actions: ['read', 'manage'] },
+  { module: 'calendar', label: 'Calendar', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'notification', label: 'Notifications', actions: ['read'] },
+  { module: 'walkin', label: 'Walk-ins', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'referral', label: 'Referrals', actions: ['read', 'create', 'update', 'delete'] },
 ];

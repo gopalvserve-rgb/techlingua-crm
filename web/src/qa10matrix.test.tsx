@@ -212,3 +212,116 @@ describe('QA-10 sweep — a Status the user picks on Add is sent to the API', ()
     expect(status.opts).toEqual(['Active', 'Deactivated']);
   });
 });
+
+/* ============ SPRINT 3 — the new forms join the matrix (qa/09 rule) ============ */
+
+/**
+ * The rule from docs/qa/09: EVERY new form must pass "Add with all fields -> the API
+ * receives them". A field that renders but never persists is a client-visible bug, and
+ * this class has already reached the client twice. So both Sprint-3 forms are pinned here.
+ */
+
+describe('QA-10 (Sprint 3) — Add Walk-in: every field it renders is SENT', () => {
+  it('renders the full hierarchy path (a walk-in becomes a lead, so it needs one)', () => {
+    render(<AddModal formKey="dash.walkins" onClose={() => undefined} />);
+    for (const label of ['Name', 'Mobile Number', 'Branch', 'Vertical', 'Pipeline', 'Campaign',
+      'Lead Source', 'Counsellor Assigned', 'Purpose of Visit']) {
+      expect(control(label)).not.toBeNull();
+    }
+  });
+
+  it('POST /walk-ins carries the visitor, the path AND the counsellor (assign on add)', async () => {
+    render(<AddModal formKey="dash.walkins" onClose={() => undefined} />);
+    fireEvent.change(control('Name')!, { target: { value: 'Priya Sharma' } });
+    fireEvent.change(telInput('Mobile Number'), { target: { value: '9810000011' } });
+    fireEvent.change(telInput('WhatsApp Number'), { target: { value: '9810000012' } });
+    fireEvent.change(control('Email ID')!, { target: { value: 'priya@x.com' } });
+    fireEvent.change(control('Branch')!, { target: { value: '9' } });
+    fireEvent.change(control('Vertical')!, { target: { value: '1' } });
+    fireEvent.change(control('Pipeline')!, { target: { value: '4' } });
+    fireEvent.change(control('Campaign')!, { target: { value: '5' } });
+    fireEvent.change(control('Lead Source')!, { target: { value: '7' } });
+    fireEvent.change(control('Purpose of Visit')!, { target: { value: 'Admission enquiry' } });
+    fireEvent.change(control('Counsellor Assigned')!, { target: { value: '3' } });
+    fireEvent.change(control('Remarks')!, { target: { value: 'Wants weekend batch' } });
+    save();
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][0]).toBe('/walk-ins');
+    const body = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body).toMatchObject({
+      visitor_name: 'Priya Sharma', email: 'priya@x.com',
+      branch_id: 9, vertical_id: 1, campaign_id: 5, source_id: 7,
+      counsellor_id: 3,                              // ASSIGN ON ADD
+      purpose: 'Admission enquiry', remarks: 'Wants weekend batch',
+    });
+    expect(String(body.phone)).toContain('9810000011');
+    expect(String(body.whatsapp_phone)).toContain('9810000012');
+  });
+
+  it('the counsellor is MANDATORY — saving without one does not POST', async () => {
+    render(<AddModal formKey="dash.walkins" onClose={() => undefined} />);
+    fireEvent.change(control('Name')!, { target: { value: 'No Counsellor' } });
+    fireEvent.change(telInput('Mobile Number'), { target: { value: '9810000013' } });
+    fireEvent.change(control('Branch')!, { target: { value: '9' } });
+    fireEvent.change(control('Vertical')!, { target: { value: '1' } });
+    fireEvent.change(control('Campaign')!, { target: { value: '5' } });
+    fireEvent.change(control('Lead Source')!, { target: { value: '7' } });
+    save();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe('QA-10 (Sprint 3) — Add Referral: every field it renders is SENT', () => {
+  it('renders the referrer, the referred person and the full path', () => {
+    render(<AddModal formKey="dash.referrals" onClose={() => undefined} />);
+    for (const label of ['Referrer Type', 'Referrer Name', 'Referred Person Name',
+      'Referred Person Contact Number', 'Branch', 'Vertical', 'Pipeline', 'Campaign', 'Lead Source']) {
+      expect(control(label)).not.toBeNull();
+    }
+  });
+
+  it('POST /referrals carries the referrer AND the referred person', async () => {
+    render(<AddModal formKey="dash.referrals" onClose={() => undefined} />);
+    fireEvent.change(control('Referrer Type')!, { target: { value: 'Existing Student' } });
+    fireEvent.change(control('Referrer Name')!, { target: { value: 'Asha Rao' } });
+    fireEvent.change(telInput('Referrer Contact Number'), { target: { value: '9810000001' } });
+    fireEvent.change(control('Referred Person Name')!, { target: { value: 'Ravi Kumar' } });
+    fireEvent.change(telInput('Referred Person Contact Number'), { target: { value: '9810000022' } });
+    fireEvent.change(control('Relationship to Referrer')!, { target: { value: 'Cousin' } });
+    fireEvent.change(control('Branch')!, { target: { value: '9' } });
+    fireEvent.change(control('Vertical')!, { target: { value: '1' } });
+    fireEvent.change(control('Pipeline')!, { target: { value: '4' } });
+    fireEvent.change(control('Campaign')!, { target: { value: '5' } });
+    fireEvent.change(control('Lead Source')!, { target: { value: '7' } });
+    fireEvent.change(control('Incentive / Reward Applicable')!, { target: { value: '10% off' } });
+    fireEvent.change(control('Referral Status')!, { target: { value: 'Pending' } });
+    save();
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][0]).toBe('/referrals');
+    const body = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body).toMatchObject({
+      referrer_type: 'Existing Student', referrer_name: 'Asha Rao',
+      referred_name: 'Ravi Kumar', relationship: 'Cousin',
+      branch_id: 9, vertical_id: 1, campaign_id: 5, source_id: 7,
+      incentive: '10% off', status: 'pending',
+    });
+    expect(String(body.referred_phone)).toContain('9810000022');
+    expect(String(body.referrer_phone)).toContain('9810000001');
+  });
+
+  it('the Campaign is MANDATORY (the referred person becomes a lead, and leads carry the path)', async () => {
+    render(<AddModal formKey="dash.referrals" onClose={() => undefined} />);
+    fireEvent.change(control('Referrer Type')!, { target: { value: 'Parent' } });
+    fireEvent.change(control('Referrer Name')!, { target: { value: 'X' } });
+    fireEvent.change(control('Referred Person Name')!, { target: { value: 'Y' } });
+    fireEvent.change(telInput('Referred Person Contact Number'), { target: { value: '9810000033' } });
+    fireEvent.change(control('Branch')!, { target: { value: '9' } });
+    fireEvent.change(control('Vertical')!, { target: { value: '1' } });
+    save();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(post).not.toHaveBeenCalled();
+  });
+});

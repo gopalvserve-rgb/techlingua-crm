@@ -3,7 +3,10 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
-import { FOLLOWUP_SCOPE_COLS } from './leads.service';
+import { FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
+import { ScoringService } from '../scoring/scoring.service';
+import { SlaService } from '../sla/sla.service';
+import { SettingsService } from '../common/settings.service';
 
 export interface FollowUpFilters {
   lead_id?: number; owner_id?: number; status?: string;
@@ -60,6 +63,9 @@ export class FollowUpsService {
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
     private readonly enforcer: ScopeEnforcerService,
+    private readonly scoring: ScoringService,
+    private readonly sla: SlaService,
+    private readonly settings: SettingsService,
   ) {}
 
   async list(scope: ResolvedScope, f: FollowUpFilters, userId: number) {
@@ -140,12 +146,16 @@ export class FollowUpsService {
     if (!lead) throw new NotFoundException('lead not found');
     const owner = dto.owner_id ?? (lead.owner_id ? Number(lead.owner_id) : actorId);
     const priority = dto.priority !== undefined ? assertPriority(dto.priority) : 'medium';
-    return this.db.tx(async (c) => {
+    // Sprint 3 — REMINDERS. When the user sets no explicit remind_at, derive one from the
+    // escalation policy's `reminder_lead_minutes` (default: 30 min before it is due). The
+    // worker sweeps `remind_at` and notifies the owner exactly once.
+    const remindAt = dto.remind_at ?? await this.defaultRemindAt(dto.scheduled_at);
+    const created = await this.db.tx(async (c) => {
       const ins = await c.query(
         `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by, report_to_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
         [dto.lead_id, owner, dto.type_id ?? null, dto.disposition_id ?? null,
-          dto.scheduled_at, dto.remind_at ?? null, dto.notes ?? null, priority, actorId, reportTo],
+          dto.scheduled_at, remindAt, dto.notes ?? null, priority, actorId, reportTo],
       );
       await c.query(
         `UPDATE lead SET next_follow_up_at = LEAST(COALESCE(next_follow_up_at, $2::timestamptz), $2::timestamptz),
@@ -159,8 +169,27 @@ export class FollowUpsService {
           JSON.stringify({ follow_up_id: ins.rows[0].id, scheduled_at: dto.scheduled_at, action: 'scheduled' }),
           dto.notes ?? null],
       );
+      // scheduling a follow-up IS the counsellor responding — it stops the
+      // first-response SLA clock, inside this same transaction.
+      await this.sla.safe(() => this.sla.onLeadTouched(dto.lead_id, c), 'sla.onLeadTouched(followup)');
       return ins.rows[0];
     });
+    await this.scoring.safeRescore(dto.lead_id);
+    return created;
+  }
+
+  /**
+   * The default reminder time: `reminder_lead_minutes` before the follow-up is due
+   * (app_setting `escalation_policy`, editable — no deploy). Never in the past relative
+   * to the schedule itself, and never produced for an invalid date.
+   */
+  private async defaultRemindAt(scheduledAt: string): Promise<string | null> {
+    const due = new Date(scheduledAt);
+    if (Number.isNaN(due.getTime())) return null;
+    const p = await this.settings.get('escalation_policy', { reminder_lead_minutes: 30 });
+    const lead = Number((p as { reminder_lead_minutes?: number }).reminder_lead_minutes ?? 30);
+    if (!Number.isFinite(lead) || lead < 0) return null;
+    return new Date(due.getTime() - lead * 60_000).toISOString();
   }
 
   async update(
@@ -201,7 +230,7 @@ export class FollowUpsService {
     if (dto.notes !== undefined) set('notes', dto.notes);
     if (!sets.length) throw new BadRequestException('nothing to update');
     params.push(id);
-    return this.db.tx(async (c) => {
+    const saved = await this.db.tx(async (c) => {
       const upd = await c.query(
         `UPDATE follow_up SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} RETURNING *`, params,
       );
@@ -215,8 +244,19 @@ export class FollowUpsService {
           dto.notes ?? null],
       );
       await c.query(`UPDATE lead SET last_activity_at = now() WHERE id = $1`, [before.lead_id]);
+      // completing / dispositioning a follow-up is the clearest possible "human touch"
+      await this.sla.safe(() => this.sla.onLeadTouched(Number(before.lead_id), c), 'sla.onLeadTouched(followup update)');
+      // a RESCHEDULE re-arms the reminder + escalation (they fired for the old due time)
+      if (dto.scheduled_at !== undefined || dto.remind_at !== undefined) {
+        await c.query(
+          `UPDATE follow_up SET reminded_at = NULL, escalated_at = NULL, escalation_level = 0 WHERE id = $1`, [id],
+        );
+      }
       return upd.rows[0];
     });
+    // followups_done feeds the engagement rule; completing one must move the score now
+    await this.scoring.safeRescore(Number(before.lead_id));
+    return saved;
   }
 
   /**

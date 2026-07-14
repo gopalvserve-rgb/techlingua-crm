@@ -38,17 +38,26 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Course', 'select', 0, 0, 'master', 'courses'), F('Training Mode', 'select', 0, ['Online', 'Offline', 'Hybrid', 'Bootcamp']), F('Course Fee', 'number'), F('City / Location', 'text'),
     F('Lead Owner / Assigned Counsellor', 'select', 0, 0, 'Users', 'users'), F('Lead Stage / Status', 'select', 0, 0, 'default: New', 'statuses'),
     F('Next Follow-up Date', 'datetime'), F('Created On', 'auto', 0, 0, 'Auto-stamped · edit permission by Admin'), F('Remarks / Notes', 'textarea')] },
+  // Sprint 3 — a walk-in creates a REAL lead, and every lead carries the FULL path
+  // (Org > Branch > Vertical > Pipeline > Campaign > Source). The prototype's walk-in form
+  // stopped at Vertical, so Pipeline / Campaign / Lead Source are added here — a sanctioned
+  // form-field addition (see design/01-prototype-parity-spec.md), not a nav change.
   'dash.walkins': { title: 'Add Walk-in', fields: [
     F('Name', 'text', 1), F('Mobile Number', 'tel', 1, 0, 'de-dup key'), F('Alternate Number', 'tel'), F('WhatsApp Number', 'tel'), F('Email ID', 'email'),
-    F('Branch', 'select', 1, 0, 'auto if desk is Branch-locked', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped'),
+    F('Branch', 'select', 1, 0, 'auto if desk is Branch-locked', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
+    F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
+    F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
+    F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped'),
     F('Purpose of Visit', 'select', 1, ['Admission enquiry', 'Fee query', 'Document submission', 'Other']), F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
     F('Course Fee', 'number'), F('How did you hear about us?', 'select', 0, ['Google Ads', 'Meta', 'Referral', 'Walk-in', 'Hoarding'], 'Lead Source master'),
-    F('Counsellor Assigned', 'select', 1, 0, 'Users', 'users'), F('Convert to Lead', 'checkbox'), F('Remarks', 'textarea')] },
+    F('Counsellor Assigned', 'select', 1, 0, 'Users \u00b7 owns the lead immediately', 'users'), F('Convert to Lead', 'checkbox'), F('Remarks', 'textarea')] },
   'dash.referrals': { title: 'Add Referral', fields: [
-    F('Referrer Type', 'select', 1, ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner']), F('Referrer Name', 'lookup', 1, 0, 'Student / Employee master'),
+    F('Referrer Type', 'select', 1, ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner']), F('Referrer Name', 'text', 1, 0, 'Student / Employee name'),
     F('Referrer Contact Number', 'tel', 1), F('Referred Person Name', 'text', 1), F('Referred Person Contact Number', 'tel', 1, 0, 'de-dup key'),
     F('Referred Person WhatsApp Number', 'tel'), F('Referred Person Email', 'email'), F('Relationship to Referrer', 'text'),
-    F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Campaign', 'select', 0, 0, 'filtered by Vertical', 'campaigns'),
+    F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
+    F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
+    F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'), F('Incentive / Reward Applicable', 'text', 0, 0, 'auto-computed'),
     F('Referral Status', 'select', 1, ['Pending', 'Converted', 'Rewarded', 'Rejected'])] },
   'leads.sources': { title: 'Add Lead Source', fields: [
@@ -190,6 +199,51 @@ export const need = (v: string | number | undefined, msg: string) => {
 };
 
 const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
+  /**
+   * Sprint 3 — WALK-IN. Creates a REAL lead (through the one server-side
+   * LeadIngestionService) with the counsellor as its owner: "assign on add".
+   * Every field the form renders is sent — the qa/09 rule.
+   */
+  'dash.walkins': async (vals, ids) => {
+    await api.post('/walk-ins', {
+      visitor_name: need(vals['Name'], 'Name is required'),
+      phone: need(vals['Mobile Number'], 'Mobile Number is required'),
+      alt_phone: vals['Alternate Number'] || undefined,
+      whatsapp_phone: vals['WhatsApp Number'] || undefined,
+      email: vals['Email ID'] || undefined,
+      branch_id: need(ids['Branch'], 'Pick a Branch'),
+      vertical_id: need(ids['Vertical'], 'Pick a Vertical'),
+      campaign_id: need(ids['Campaign'], 'Pick a Campaign (a walk-in becomes a lead, and every lead carries the full path)'),
+      source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
+      counsellor_id: need(ids['Counsellor Assigned'], 'A walk-in must be assigned to a counsellor on add'),
+      visited_at: vals['Date & Time of Visit'] || undefined,
+      purpose: vals['Purpose of Visit'] || undefined,
+      course_id: ids['Course Interested'],
+      remarks: vals['Remarks'] || undefined,
+    });
+    return 'Walk-in recorded and assigned';
+  },
+  /** Sprint 3 — REFERRAL. The referred person becomes a lead; the referrer is kept. */
+  'dash.referrals': async (vals, ids) => {
+    await api.post('/referrals', {
+      referrer_type: need(vals['Referrer Type'], 'Pick a referrer type'),
+      referrer_name: need(vals['Referrer Name'], 'Referrer name is required'),
+      referrer_phone: vals['Referrer Contact Number'] || undefined,
+      referred_name: need(vals['Referred Person Name'], 'Referred person name is required'),
+      referred_phone: need(vals['Referred Person Contact Number'], 'Referred person contact number is required'),
+      referred_whatsapp: vals['Referred Person WhatsApp Number'] || undefined,
+      referred_email: vals['Referred Person Email'] || undefined,
+      relationship: vals['Relationship to Referrer'] || undefined,
+      branch_id: need(ids['Branch'], 'Pick a Branch'),
+      vertical_id: need(ids['Vertical'], 'Pick a Vertical'),
+      campaign_id: need(ids['Campaign'], 'Pick a Campaign (the referred person becomes a lead)'),
+      source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
+      course_id: ids['Course Interested'],
+      incentive: vals['Incentive / Reward Applicable'] || undefined,
+      status: (vals['Referral Status'] || 'Pending').toLowerCase(),
+    });
+    return 'Referral captured';
+  },
   'leads.all': async (vals, ids) => {
     await api.post('/leads', {
       full_name: need(vals['Name'], 'Name is required'),
