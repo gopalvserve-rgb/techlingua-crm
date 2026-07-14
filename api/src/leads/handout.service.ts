@@ -126,6 +126,14 @@ export class HandoutService {
     if (pool.length && !pool.includes(Number(userId))) {
       throw new ForbiddenException(`You are not in the agent pool of "${camp.name}" — ask an admin to add you to the campaign.`);
     }
+    if (!pool.length) {
+      // An EMPTY pool means "anyone in scope may self-assign". `assertRefInScope` above is
+      // the LOOSE check: it lets a grant that cannot narrow campaigns (an `own`-scoped
+      // counsellor — campaigns have no owner column) through, exactly as lead creation does.
+      // That must not become a hole here, so with no named pool we demand the STRICT check:
+      // the caller's scope must genuinely cover this campaign (unmapped -> 404).
+      await this.enforcer.assertInScope(scope, 'campaign', campaignId, userId);
+    }
     const active = await this.db.one(
       `SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [userId],
     );
@@ -152,10 +160,21 @@ export class HandoutService {
 
   // ---- what an agent can pull from (the Start Calling screen's picker) -----
 
-  /** On-demand campaigns the caller may pull from, with pool sizes. */
+  /**
+   * On-demand campaigns the caller may pull from, with pool sizes.
+   *
+   * SCOPE SUBTLETY (the reason this is not a one-liner): a Counsellor's grant is
+   * record_scope `own`, and campaigns have no owner column — so buildScopeWhere
+   * yields `1=0` and a naive filter would show an agent NOTHING to call. The rule
+   * that actually authorises an agent here is POOL MEMBERSHIP, so when the caller's
+   * scope cannot narrow campaigns we drop the SQL filter and list exactly the
+   * campaigns whose agent pool NAMES them (never the "empty pool = anyone" ones).
+   */
   async campaigns(userId: number, scope: ResolvedScope) {
     const params: unknown[] = [];
-    const where = this.resolver.buildScopeWhere(scope, CAMPAIGN_SCOPE_COLS, params);
+    let where = this.resolver.buildScopeWhere(scope, CAMPAIGN_SCOPE_COLS, params);
+    const unmapped = where === '1=0';
+    if (unmapped) { params.length = 0; where = '1=1'; }
     const rows = await this.db.query<any>(
       `SELECT c.id, c.name, c.distribution_config,
               b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
@@ -173,8 +192,9 @@ export class HandoutService {
     );
     return rows
       .filter((r) => {
-        const pool = (r.distribution_config?.agent_user_ids ?? []) as number[];
-        return !pool.length || pool.map(Number).includes(Number(userId));   // empty pool = anyone in scope
+        const pool = ((r.distribution_config?.agent_user_ids ?? []) as number[]).map(Number);
+        if (unmapped) return pool.includes(Number(userId));                 // named in the pool, or nothing
+        return !pool.length || pool.includes(Number(userId));               // empty pool = anyone in scope
       })
       .map((r) => ({
         id: Number(r.id), name: r.name,

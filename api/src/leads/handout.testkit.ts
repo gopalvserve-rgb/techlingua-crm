@@ -338,21 +338,44 @@ export const ALL_SCOPE: ResolvedScope = {
 
 export const allResolver = { buildScopeWhere: () => '1=1' } as unknown as ScopeResolverService;
 
-/** Enforcer stub: `deny` = the campaign is outside the caller's record scope (404). */
-export function makeEnforcer(deny = false): ScopeEnforcerService {
+/**
+ * Enforcer stub.
+ *  · `deny`       — the campaign is outside the caller's record scope (loose check fails).
+ *  · `denyStrict` — the caller's scope does not MAP onto campaigns (an `own`-scoped
+ *                   counsellor): the loose check passes, the strict one 404s. That is
+ *                   the real behaviour of ScopeEnforcer and it is what stops an
+ *                   empty-agent-pool campaign becoming a scope hole.
+ */
+export function makeEnforcer(deny = false, denyStrict = false): ScopeEnforcerService {
+  const boom = async () => {
+    const { NotFoundException } = await import('@nestjs/common');
+    throw new NotFoundException('campaign not found');
+  };
   return {
-    assertRefInScope: async () => {
-      if (deny) {
-        const { NotFoundException } = await import('@nestjs/common');
-        throw new NotFoundException('campaign not found');
-      }
-    },
-    assertInScope: async () => undefined,
+    assertRefInScope: async () => { if (deny) await boom(); },
+    assertInScope: async () => { if (deny || denyStrict) await boom(); },
   } as unknown as ScopeEnforcerService;
 }
 
-export function makeHandout(db: DatabaseService, opts: { denyScope?: boolean; followups?: FollowUpsService } = {}) {
+export function makeHandout(
+  db: DatabaseService,
+  opts: {
+    denyScope?: boolean; denyStrictScope?: boolean;
+    followups?: FollowUpsService; resolver?: ScopeResolverService;
+  } = {},
+) {
   const followups = opts.followups
     ?? ({ create: async () => ({ id: 1 }) } as unknown as FollowUpsService);
-  return new HandoutService(db, allResolver, makeEnforcer(opts.denyScope), followups);
+  return new HandoutService(
+    db, opts.resolver ?? allResolver, makeEnforcer(opts.denyScope, opts.denyStrictScope), followups,
+  );
 }
+
+/** An `own`-scoped counsellor: allowed, but no filter maps onto a campaign. */
+export const OWN_SCOPE: ResolvedScope = {
+  permissionKey: 'lead.pull', allowed: true, all: false,
+  filters: [{ kind: 'own', userId: 11 }], allowedFields: null, deniedFields: [],
+};
+
+/** buildScopeWhere over CAMPAIGN_SCOPE_COLS for an own-only scope -> '1=0' (no owner column). */
+export const ownResolver = { buildScopeWhere: () => '1=0' } as unknown as ScopeResolverService;

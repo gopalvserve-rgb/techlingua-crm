@@ -12,7 +12,7 @@
  */
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import {
-  ALL_SCOPE, CAMPAIGN_ID, makeHandout, makeHandoutDb, poolLeads,
+  ALL_SCOPE, CAMPAIGN_ID, OWN_SCOPE, makeHandout, makeHandoutDb, ownResolver, poolLeads,
 } from './handout.testkit';
 import { FollowUpsService } from './followups.service';
 
@@ -161,6 +161,30 @@ describe('HandoutService — eligibility', () => {
     const { db } = makeHandoutDb();
     const svc = makeHandout(db, { denyScope: true });
     await expect(svc.pull(CAMPAIGN_ID, AGENT_A, ALL_SCOPE)).rejects.toThrow(NotFoundException);
+  });
+
+  it("an own-scoped counsellor sees the campaigns they are POOLED in (their scope cannot narrow campaigns)", async () => {
+    // record_scope 'own' + campaigns have no owner column -> buildScopeWhere = '1=0'.
+    // A naive filter would show the agent NOTHING to call; pool membership is what
+    // authorises them, so the picker must fall back to it.
+    const { db } = makeHandoutDb({ leads: poolLeads(25) });
+    const svc = makeHandout(db, { resolver: ownResolver });
+
+    const mine = await svc.campaigns(AGENT_A, OWN_SCOPE);          // AGENT_A is in agent_user_ids
+    expect(mine.map((c) => c.id)).toEqual([CAMPAIGN_ID]);
+    expect(mine[0].waiting).toBe(25);
+
+    expect(await svc.campaigns(OUTSIDER, OWN_SCOPE)).toHaveLength(0);  // not in the pool -> nothing
+  });
+
+  it('an EMPTY agent pool is NOT a scope hole: an own-scoped agent still needs the campaign in scope', async () => {
+    const { db, st } = makeHandoutDb({ users: [AGENT_A, OUTSIDER] });
+    st.campaign.distribution_config = { mode: 'on_demand', batch_size: 10, agent_user_ids: [] };
+    // strict check fails = the caller's grant does not map onto campaigns (own scope)
+    const svc = makeHandout(db, { denyStrictScope: true, resolver: ownResolver });
+    await expect(svc.pull(CAMPAIGN_ID, OUTSIDER, OWN_SCOPE)).rejects.toThrow(NotFoundException);
+    // ...and such an agent is not offered the campaign either
+    expect(await svc.campaigns(OUTSIDER, OWN_SCOPE)).toHaveLength(0);
   });
 
   it('another agent cannot open my batch', async () => {
