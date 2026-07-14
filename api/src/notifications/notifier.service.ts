@@ -3,6 +3,7 @@ import { PoolClient } from 'pg';
 import { DatabaseService } from '../database/database.service';
 import { SettingsService } from '../common/settings.service';
 import { isNotConfigured } from '../common/not-configured.exception';
+import { MessagingService } from '../messaging/messaging.service';
 
 /**
  * THE CHANNEL-AGNOSTIC NOTIFIER — the seam Sprint 4 plugs WhatsApp / SMS / Email into.
@@ -34,11 +35,19 @@ export interface NotifyMessage {
   meta?: Record<string, unknown>;
 }
 
+/** What a channel is handed. `messaging` is absent only in the in-memory test double. */
+export interface NotifyContext {
+  db: DatabaseService;
+  orgId: number;
+  client?: PoolClient;
+  messaging?: { queue(m: Record<string, unknown>): Promise<unknown> };
+}
+
 /** A delivery channel. `send` must be idempotent-safe and must never throw. */
 export interface NotifyChannel {
   key: 'in_app' | 'email' | 'sms' | 'whatsapp';
   label: string;
-  send(msg: NotifyMessage, ctx: { db: DatabaseService; orgId: number; client?: PoolClient }): Promise<void>;
+  send(msg: NotifyMessage, ctx: NotifyContext): Promise<void>;
 }
 
 /** in-app — the bell. The only channel live today; the others land in Sprint 4. */
@@ -58,36 +67,81 @@ const IN_APP: NotifyChannel = {
 };
 
 /**
- * Sprint-4 placeholders. They are REGISTERED (so the settings screen can list them
- * and the admin can flip them on) but they raise NotConfiguredException until the
- * client's credentials arrive — the SMS-gateway / Google-Sheet precedent exactly.
+ * SPRINT 4 — the three placeholders are now REAL.
+ *
+ * Each one resolves the STAFF member's own address (email / mobile) and hands the message
+ * to MessagingService, which owns the queue, the rate limit, the retry, the opt-out check
+ * and the durable send log. The notifier therefore did not grow a second sending path: a
+ * reminder email and a journey's marketing email are the same row in the same table, sent
+ * by the same worker, visible on the same screen.
+ *
+ * They are still DISABLED by default (`notification_matrix`), and if the admin switches one
+ * on before its credentials exist, MessagingService writes a `failed / not_configured` row
+ * and the notifier swallows it — the bell still rings, the Error Log stays clean.
  */
-const notYet = (key: NotifyChannel['key'], label: string, needs: string): NotifyChannel => ({
+const staffChannel = (key: 'email' | 'sms' | 'whatsapp', label: string): NotifyChannel => ({
   key, label,
-  async send() {
-    const e = new Error(`${label} is not configured — ${needs}`) as Error & { notConfigured?: boolean };
-    e.notConfigured = true;
-    throw e;
+  async send(msg, { db, messaging }) {
+    if (!messaging) return;   // the in-memory test double has no messaging
+    const u = await db.one<{ email: string | null; mobile: string | null; name: string }>(
+      `SELECT email, mobile, name FROM "user" WHERE id = $1`, [msg.userId],
+    );
+    const to = key === 'email' ? u?.email : u?.mobile;
+    // a staff member with no mobile on file is not an error — just not reachable this way
+    if (!to) return;
+    const text = msg.body ? `${msg.title} — ${msg.body}` : msg.title;
+    await messaging.queue({
+      channel: key,
+      to,
+      user_id: msg.userId,
+      subject: key === 'email' ? msg.title : null,
+      body: key === 'email' ? `<p>${text}</p>` : text,
+      lead_id: msg.link?.type === 'lead' ? msg.link.id : null,
+      // a notification to STAFF is not marketing: it must not be deferred to business
+      // hours (an SLA breach at 21:00 matters at 21:00) and must not hit the lead cap.
+      guarded: false,
+    });
   },
 });
 
 export const CHANNELS: NotifyChannel[] = [
   IN_APP,
-  notYet('email', 'Email', 'add per-vertical SMTP details in Settings (Sprint 4)'),
-  notYet('sms', 'SMS', 'add the SMS gateway API in Settings (Sprint 4)'),
-  notYet('whatsapp', 'WhatsApp', 'connect Meta WhatsApp in Settings (Sprint 4)'),
+  staffChannel('email', 'Email'),
+  staffChannel('sms', 'SMS'),
+  staffChannel('whatsapp', 'WhatsApp'),
 ];
 
 @Injectable()
 export class NotifierService {
   private readonly log = new Logger('Notifier');
 
-  constructor(private readonly db: DatabaseService, private readonly settings: SettingsService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly settings: SettingsService,
+    private readonly messaging?: MessagingService,
+  ) {}
 
+  /** The MASTER switch — a channel off here is off for every event. */
   async enabledChannels(): Promise<Record<string, boolean>> {
     return this.settings.get('notification_channels', {
-      in_app: true, email: false, sms: false, whatsapp: false,
+      in_app: true, email: true, sms: true, whatsapp: true,
     }) as unknown as Promise<Record<string, boolean>>;
+  }
+
+  /**
+   * THE NOTIFICATION MATRIX (Sprint 4) — which EVENT goes out on which CHANNEL.
+   * `notification_channels` remains the master on/off; the matrix decides per event type.
+   * Both default to sane values, so a missing row never means "notify nobody".
+   */
+  async matrix(): Promise<Record<string, Record<string, boolean>>> {
+    return this.settings.get('notification_matrix', {
+      reminder: { in_app: true, email: false, sms: false, whatsapp: false },
+      escalation: { in_app: true, email: true, sms: false, whatsapp: false },
+      sla_breach: { in_app: true, email: true, sms: false, whatsapp: false },
+      assignment: { in_app: true, email: false, sms: false, whatsapp: false },
+      handout: { in_app: true, email: false, sms: false, whatsapp: false },
+      system: { in_app: true, email: false, sms: false, whatsapp: false },
+    }) as unknown as Promise<Record<string, Record<string, boolean>>>;
   }
 
   private async orgId(client?: PoolClient): Promise<number> {
@@ -109,11 +163,16 @@ export class NotifierService {
   async notify(msg: NotifyMessage, client?: PoolClient): Promise<void> {
     if (!msg?.userId) return;
     const enabled = await this.enabledChannels();
+    const matrix = await this.matrix();
+    const forType = matrix[msg.type] ?? {};
     const orgId = await this.orgId(client);
     for (const ch of CHANNELS) {
-      if (!enabled[ch.key]) continue;
+      // master switch AND the per-event matrix must both say yes. in_app is always on —
+      // the bell is the system of record, and a notification nobody can find is no
+      // notification at all.
+      if (ch.key !== 'in_app' && (!enabled[ch.key] || !forType[ch.key])) continue;
       try {
-        await ch.send(msg, { db: this.db, orgId, client });
+        await ch.send(msg, { db: this.db, orgId, client, messaging: this.messaging as never });
       } catch (e) {
         if (isNotConfigured(e) || (e as { notConfigured?: boolean })?.notConfigured) {
           this.log.debug(`channel ${ch.key} skipped: ${(e as Error).message}`);

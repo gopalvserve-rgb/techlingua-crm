@@ -41,4 +41,12 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'notification', label: 'Notifications', actions: ['read'] },
   { module: 'walkin', label: 'Walk-ins', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'referral', label: 'Referrals', actions: ['read', 'create', 'update', 'delete'] },
+  // Sprint 4 (migration 026) — engagement & automation.
+  // `settings` already existed above (Sprint 1) but had no grants until 026: the Settings
+  // module holds the client's credentials, so it is Super/Org Admin only.
+  { module: 'template', label: 'Message Templates', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'journey', label: 'Automation Journeys', actions: ['read', 'create', 'update', 'delete'] },
+  // 'send' = despatch a message (a counsellor may message THEIR lead).
+  // 'manage' = the opt-out list + retrying a failed send (admin / marketing).
+  { module: 'message', label: 'Messages & Send Log', actions: ['read', 'send', 'manage'] },
 ];

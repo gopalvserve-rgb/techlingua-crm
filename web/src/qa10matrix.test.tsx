@@ -19,6 +19,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { AddModal, CampaignModal, SPEC_FORMS } from './forms';
+import { JourneyModal, TemplateModal } from './sprint4';
 
 vi.mock('./auth', () => ({
   useAuth: () => ({ can: () => true, me: { user: { id: 1, name: 'Super Admin' } } }),
@@ -46,9 +47,33 @@ vi.mock('./refdata', async (importOriginal) => {
 
 const post = vi.fn().mockResolvedValue({ id: 99, name: 'x' });
 const patch = vi.fn().mockResolvedValue({ id: 99 });
+
+/**
+ * The Sprint-4 forms are DATA-DRIVEN: the journey builder's trigger list and its template
+ * dropdown come from the API. A blanket `get -> []` would make those selects empty, and
+ * the test would then be asserting against a form the user never sees. So the double
+ * answers the routes those forms actually call.
+ */
+const getRoute = (path: string): Promise<unknown> => {
+  if (path.startsWith('/journeys/triggers')) {
+    return Promise.resolve([
+      { key: 'lead_created', label: 'New lead', blurb: 'Any channel', config: [] },
+      { key: 'stage_changed', label: 'Stage change', blurb: '', config: ['stage_ids'] },
+      { key: 'no_response', label: 'No response for N days', blurb: '', config: ['days'] },
+    ]);
+  }
+  if (path.startsWith('/templates/catalog')) {
+    return Promise.resolve({ variables: [{ key: 'lead.name', label: 'Lead name' }], channels: [], sample: {} });
+  }
+  if (path.startsWith('/templates')) {
+    return Promise.resolve([{ id: 50, channel: 'whatsapp', name: 'Welcome', wa_params: [], variables: [] }]);
+  }
+  return Promise.resolve([]);
+};
+
 vi.mock('./api', () => ({
   api: {
-    get: vi.fn().mockResolvedValue([]),
+    get: (p: string) => getRoute(p),
     post: (...a: unknown[]) => post(...a),
     patch: (...a: unknown[]) => patch(...a),
     del: vi.fn(), put: vi.fn(),
@@ -323,5 +348,125 @@ describe('QA-10 (Sprint 3) — Add Referral: every field it renders is SENT', ()
     save();
     await new Promise((r) => setTimeout(r, 0));
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+
+/* ============ SPRINT 4 — the new forms join the matrix (qa/09 rule) ============ */
+
+/**
+ * Sprint 4 adds three forms. The rule from docs/qa/09 applies to every one of them:
+ * "Add with all fields -> the API receives them" and "Edit -> prefilled -> save -> the
+ * change is in the PATCH". A field that renders but never persists has reached this
+ * client TWICE. It does not happen a third time.
+ *
+ * (The screens themselves — send log, journey run history, Settings — are rendered and
+ * asserted in `sprint4.test.tsx`; this file pins the FORM CONTRACT.)
+ */
+
+const TPL = {
+  id: 50, channel: 'whatsapp', name: 'Welcome', code: 'welcome_wa', vertical_id: 1,
+  subject: null, body: 'Hi {{lead.name}}', wa_template_name: 'lead_welcome', wa_language: 'en',
+  wa_params: ['{{lead.name}}'], sms_sender_id: null, sms_dlt_template_id: null,
+  variables: ['lead.name'], is_active: true,
+};
+const JNY = {
+  id: 7, name: 'Welcome new leads', description: null, trigger_type: 'lead_created',
+  trigger_config: {}, conditions: { campaign_ids: [5] },
+  actions: [{ kind: 'send_message', template_id: 50 }],
+  status: 'active', branch_id: null, vertical_id: null,
+};
+
+describe('QA-10 (Sprint 4) — Add Lead: the new Date of Birth field is SENT', () => {
+  it('renders as a live date input', () => {
+    render(<AddModal formKey="leads.all" onClose={() => undefined} />);
+    const dob = control('Date of Birth') as HTMLInputElement;
+    expect(dob).not.toBeNull();
+    expect(dob.type).toBe('date');
+  });
+
+  it('POST /leads carries dob — the `birthday` journey has nothing to fire on otherwise', async () => {
+    render(<AddModal formKey="leads.all" onClose={() => undefined} />);
+    fireEvent.change(control('Name')!, { target: { value: 'Birthday Lead' } });
+    fireEvent.change(telInput('Mobile Number'), { target: { value: '9810000044' } });
+    fireEvent.change(control('Date of Birth')!, { target: { value: '2001-03-14' } });
+    fireEvent.change(control('Campaign')!, { target: { value: '5' } });
+    fireEvent.change(control('Lead Source')!, { target: { value: '7' } });
+    save();
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][0]).toBe('/leads');
+    expect(post.mock.calls[0][1]).toMatchObject({ dob: '2001-03-14' });
+  });
+});
+
+describe('QA-10 (Sprint 4) — Message Template: renders -> sends -> prefills -> re-sends', () => {
+  it('Add SENDS every WhatsApp field the form shows', async () => {
+    render(<TemplateModal onClose={() => undefined} onSaved={() => undefined} />);
+    fireEvent.change(control('Template Name')!, { target: { value: 'Welcome' } });
+    fireEvent.change(control('Meta template name')!, { target: { value: 'lead_welcome' } });
+    fireEvent.change(control('Body parameters')!, { target: { value: '{{lead.name}}' } });
+    fireEvent.change(control('Message Body')!, { target: { value: 'Hi {{lead.name}}' } });
+    fireEvent.change(control('Vertical')!, { target: { value: '1' } });
+    save();
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/templates', expect.anything()));
+    const body = post.mock.calls.find((c) => c[0] === '/templates')![1] as Record<string, unknown>;
+    expect(body).toMatchObject({
+      channel: 'whatsapp', name: 'Welcome', wa_template_name: 'lead_welcome',
+      body: 'Hi {{lead.name}}', vertical_id: 1,
+    });
+    expect(body.wa_params).toEqual(['{{lead.name}}']);
+  });
+
+  it('Edit PREFILLS every field, and the PATCH carries the change', async () => {
+    render(<TemplateModal initial={TPL as never} onClose={() => undefined} onSaved={() => undefined} />);
+    expect((control('Template Name') as HTMLInputElement).value).toBe('Welcome');
+    expect((control('Meta template name') as HTMLInputElement).value).toBe('lead_welcome');
+    expect((control('Message Body') as HTMLTextAreaElement).value).toBe('Hi {{lead.name}}');
+    expect((control('Vertical') as HTMLSelectElement).value).toBe('1');
+
+    fireEvent.change(control('Template Name')!, { target: { value: 'Welcome (v2)' } });
+    save();
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    expect(patch.mock.calls[0][0]).toBe('/templates/50');
+    expect(patch.mock.calls[0][1]).toMatchObject({ name: 'Welcome (v2)', wa_template_name: 'lead_welcome' });
+  });
+});
+
+describe('QA-10 (Sprint 4) — Journey builder: trigger + conditions + actions all persist', () => {
+  it('Add SENDS the trigger, the conditions and the ordered actions', async () => {
+    render(<JourneyModal onClose={() => undefined} onSaved={() => undefined} />);
+    await waitFor(() => expect(control('Trigger')).not.toBeNull());
+    fireEvent.change(control('Journey Name')!, { target: { value: 'Welcome Meta leads' } });
+    fireEvent.change(control('Campaign')!, { target: { value: '5' } });
+    fireEvent.change(control('Status')!, { target: { value: 'active' } });
+    await waitFor(() => expect(control('Template')).not.toBeNull());
+    fireEvent.change(control('Template')!, { target: { value: '50' } });
+    save();
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/journeys', expect.anything()));
+    const body = post.mock.calls.find((c) => c[0] === '/journeys')![1] as Record<string, unknown>;
+    expect(body).toMatchObject({
+      name: 'Welcome Meta leads', trigger_type: 'lead_created', status: 'active',
+      conditions: { campaign_ids: [5] },
+    });
+    expect(body.actions).toEqual([{ kind: 'send_message', template_id: 50 }]);
+  });
+
+  it('Edit PREFILLS the trigger, the condition and the action step', async () => {
+    render(<JourneyModal initial={JNY as never} onClose={() => undefined} onSaved={() => undefined} />);
+    await waitFor(() => expect(control('Trigger')).not.toBeNull());
+    expect((control('Journey Name') as HTMLInputElement).value).toBe('Welcome new leads');
+    expect((control('Trigger') as HTMLSelectElement).value).toBe('lead_created');
+    expect((control('Status') as HTMLSelectElement).value).toBe('active');
+    expect((control('Campaign') as HTMLSelectElement).value).toBe('5');
+    expect((control('Step 1') as HTMLSelectElement).value).toBe('send_message');
+
+    fireEvent.change(control('Journey Name')!, { target: { value: 'Welcome (renamed)' } });
+    save();
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    expect(patch.mock.calls[0][0]).toBe('/journeys/7');
+    expect(patch.mock.calls[0][1]).toMatchObject({ name: 'Welcome (renamed)' });
   });
 });

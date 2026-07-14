@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
+import { JourneyService } from '../journeys/journey.service';
 import { IngestPayload } from '../ingestion/ingestion.types';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
@@ -81,7 +82,7 @@ const LEAD_SORTS: Record<string, string> = {
 };
 
 export interface CreateLeadDto {
-  full_name: string; phone: string; email?: string; alt_phone?: string; whatsapp_phone?: string;
+  full_name: string; phone: string; email?: string; alt_phone?: string; whatsapp_phone?: string; dob?: string;
   campaign_id: number; source_id: number;
   owner_id?: number; stage_id?: number; status_id?: number;
   priority?: 'low' | 'med' | 'high'; temperature?: 'hot' | 'warm' | 'cold'; score?: number;
@@ -92,11 +93,15 @@ export interface CreateLeadDto {
 const LEAD_UPDATABLE = [
   'full_name', 'phone', 'email', 'alt_phone', 'whatsapp_phone', 'priority', 'temperature', 'score',
   'state_id', 'city_id', 'course_id', 'qualification_id', 'budget_id',
+  // Sprint 4: `dob` is what the `birthday` journey trigger fires on. It is on the Add Lead
+  // form, so it must be persisted here — a field that renders and never saves is DEF-2.
+  'dob',
   'next_follow_up_at', 'custom_fields', 'is_active',
 ] as const;
 
 const LEAD_SELECT = `
-  SELECT l.id, l.full_name, l.phone, l.email, l.alt_phone, l.whatsapp_phone, l.priority, l.temperature, l.score,
+  SELECT l.id, l.full_name, l.phone, l.email, l.alt_phone, l.whatsapp_phone, l.dob,
+         l.priority, l.temperature, l.score,
          l.branch_id, l.vertical_id, l.pipeline_id, l.campaign_id, l.source_id,
          l.stage_id, l.status_id, l.owner_id, l.team_id,
          l.next_follow_up_at, l.last_activity_at, l.is_duplicate, l.custom_fields,
@@ -137,6 +142,8 @@ export class LeadsService {
     // or SLA hiccup must never stop a lead being created or updated.
     private readonly scoring: ScoringService,
     private readonly sla: SlaService,
+    /** Sprint 4 — a stage move is the second-most-used journey trigger after "new lead". */
+    private readonly journeys?: JourneyService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -244,6 +251,7 @@ export class LeadsService {
     const payload: IngestPayload = {
       full_name: dto.full_name, phone: dto.phone, email: dto.email, alt_phone: dto.alt_phone,
       whatsapp_phone: dto.whatsapp_phone,
+      dob: dto.dob,
       state: dto.state_id, city: dto.city_id, course: dto.course_id,
       qualification: dto.qualification_id, budget: dto.budget_id,
       status: dto.status_id, stage: dto.stage_id,
@@ -382,6 +390,13 @@ export class LeadsService {
     const rescored = await this.db.one<Record<string, any>>(
       `SELECT score, temperature, score_breakdown, is_flagged, flag_reason FROM lead WHERE id = $1`, [id],
     );
+
+    // Sprint 4 — fire `stage_changed` AFTER the transaction commits and AFTER the rescore,
+    // so a journey conditioned on the new stage (or on the score that stage produced) sees
+    // the lead as it now IS. Best-effort: automation must never fail a save.
+    if (dto.stage_id !== undefined && Number(dto.stage_id) !== Number(before.stage_id)) {
+      await this.journeys?.safeFire('stage_changed', id, { stage_id: Number(dto.stage_id) });
+    }
     return { ...saved, ...(rescored ?? {}) };
   }
 

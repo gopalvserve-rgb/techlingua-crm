@@ -25,7 +25,7 @@
 
 /** Scalar lead columns a merge may fill. */
 export const MERGEABLE_FIELDS = [
-  'full_name', 'email', 'alt_phone', 'whatsapp_phone',
+  'full_name', 'email', 'alt_phone', 'whatsapp_phone', 'dob',
   'state_id', 'city_id', 'course_id', 'qualification_id', 'budget_id',
   'temperature', 'priority', 'score', 'next_follow_up_at',
 ] as const;
@@ -34,7 +34,7 @@ export type MergeableField = (typeof MERGEABLE_FIELDS)[number];
 
 /** Human labels for the timeline note + the UI diff. */
 export const FIELD_LABEL: Record<string, string> = {
-  full_name: 'Name', email: 'Email', alt_phone: 'Alternate phone', whatsapp_phone: 'WhatsApp number',
+  full_name: 'Name', email: 'Email', alt_phone: 'Alternate phone', whatsapp_phone: 'WhatsApp number', dob: 'Date of birth',
   state_id: 'State', city_id: 'City', course_id: 'Course', qualification_id: 'Qualification',
   budget_id: 'Budget', temperature: 'Temperature', priority: 'Priority', score: 'Score',
   next_follow_up_at: 'Next follow-up',

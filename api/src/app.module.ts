@@ -20,6 +20,10 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { CaptureModule } from './capture/capture.module';
+import { MessagingModule } from './messaging/messaging.module';
+import { TemplatesModule } from './templates/templates.module';
+import { JourneysModule } from './journeys/journeys.module';
+import { SettingsModule } from './settings/settings.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -49,6 +53,11 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     DashboardModule,    // role-based dashboards (scope-derived, never role-name-derived)
     CalendarModule,     // in-app calendar; Google/Outlook sync config-driven
     CaptureModule,      // walk-ins (assign-on-add) & referrals
+    // Sprint 4 — engagement & automation
+    MessagingModule,    // WhatsApp (Meta) · SMS (any gateway) · Email (per-vertical SMTP) + the send log/queue
+    TemplatesModule,    // dynamic templates per channel, merge variables, live preview
+    JourneysModule,     // trigger -> conditions -> actions, idempotent, guard-railed
+    SettingsModule,     // Administration › Settings: credentials (encrypted), hours, holidays, matrix, numbering
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

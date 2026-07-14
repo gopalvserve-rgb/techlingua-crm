@@ -14,6 +14,8 @@ export interface IngestPayload {
   alt_phone?: string;
   /** DEF-S2-03 — the Add Lead form's "WhatsApp Number" (stored, not a custom field) */
   whatsapp_phone?: string;
+  /** Sprint 4 — the `birthday` journey trigger fires on this. */
+  dob?: string;
   /** master values may arrive as a NAME ("IELTS") or a numeric id — both resolve */
   state?: string | number;
   city?: string | number;

@@ -11,6 +11,7 @@ import {
   IngestValidationError,
 } from './ingestion.types';
 import { LeadMergeService } from './merge.service';
+import { JourneyService } from '../journeys/journey.service';
 import { MERGEABLE_FIELDS } from './merge.util';
 
 /** Campaign duplicacy_config (migration 002). */
@@ -38,6 +39,7 @@ export interface IngestTarget {
 export interface NormalisedLead {
   full_name: string; phone: string; email: string | null; alt_phone: string | null;
   whatsapp_phone: string | null;
+  dob: string | null;
   state_id: number | null; city_id: number | null; course_id: number | null;
   qualification_id: number | null; budget_id: number | null;
   status_id: number | null; stage_id: number | null;
@@ -87,6 +89,13 @@ export class LeadIngestionService {
      */
     private readonly scoring?: ScoringService,
     private readonly sla?: SlaService,
+    /**
+     * Sprint 4 — automation journeys. Hooked in the SAME one place, so a `lead_created`
+     * journey fires for a Meta lead, a Google lead, a website form, a Sheet row, a CSV
+     * import, a walk-in, a referral AND a manual Add Lead, without any of them knowing
+     * that journeys exist. Optional so the in-memory test double can omit it.
+     */
+    private readonly journeys?: JourneyService,
   ) {}
 
   /**
@@ -101,6 +110,11 @@ export class LeadIngestionService {
     }
     if (outcome.status === 'created' || outcome.merged) {
       await this.scoring?.safeRescore(Number(id));
+    }
+    // Fire AFTER scoring: a journey conditioned on "score band = Hot" must see the score
+    // this lead actually has, not the zero it had a millisecond ago.
+    if (outcome.status === 'created') {
+      await this.journeys?.safeFire('lead_created', Number(id));
     }
   }
 
@@ -230,6 +244,8 @@ export class LeadIngestionService {
       email, alt_phone: p.alt_phone ? normalizePhone(String(p.alt_phone)) : null,
       // DEF-S2-03: WhatsApp Number is a real, stored contact field
       whatsapp_phone: p.whatsapp_phone ? normalizePhone(String(p.whatsapp_phone)) : null,
+      // an unparseable date must not fail the whole ingest — it just means no birthday journey
+      dob: p.dob && /^\d{4}-\d{2}-\d{2}/.test(String(p.dob)) ? String(p.dob).slice(0, 10) : null,
       state_id: this.master(target, 'state', 'State', p.state),
       city_id: this.master(target, 'city', 'City', p.city),
       course_id: this.master(target, 'course', 'Course', p.course),
@@ -466,14 +482,14 @@ export class LeadIngestionService {
         const owner = ownerId ?? (await this.pickOwner(c, target.campaign_id, pool));
         const ins = await c.query(
           `INSERT INTO lead (org_id, branch_id, vertical_id, pipeline_id, campaign_id, source_id,
-                             full_name, phone, email, alt_phone, whatsapp_phone, status_id, stage_id, priority, temperature, score,
+                             full_name, phone, email, alt_phone, whatsapp_phone, dob, status_id, stage_id, priority, temperature, score,
                              owner_id, next_follow_up_at, last_activity_at, is_duplicate,
                              state_id, city_id, course_id, qualification_id, budget_id, custom_fields,
                              created_by, ingest_batch_id, external_id, duplicate_of_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now(),$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,now(),$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
            RETURNING *`,
           [target.org_id, target.branch_id, target.vertical_id, target.pipeline_id, target.campaign_id, target.source_id,
-            lead.full_name, lead.phone, lead.email, lead.alt_phone, lead.whatsapp_phone, lead.status_id, lead.stage_id,
+            lead.full_name, lead.phone, lead.email, lead.alt_phone, lead.whatsapp_phone, lead.dob, lead.status_id, lead.stage_id,
             lead.priority, lead.temperature, lead.score, owner, lead.next_follow_up_at, !!dup,
             lead.state_id, lead.city_id, lead.course_id, lead.qualification_id, lead.budget_id,
             JSON.stringify(lead.custom_fields), ctx.actor_id, ctx.batch_id ?? null, lead.external_id,

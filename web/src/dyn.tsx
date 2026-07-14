@@ -24,6 +24,9 @@ import LeadImport from './leadimport';
 import Channels from './channels';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
+import {
+  BulkSms, BulkWhatsApp, EmailCampaigns, Journeys, Settings, Templates,
+} from './sprint4';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -2339,6 +2342,13 @@ export const DYN: Record<string, () => JSX.Element> = {
   captureChannels: Channels,
   startCalling: StartCalling,
   sla: Sla,
+  // Sprint 4 — engagement & automation
+  templates: Templates,
+  journeys: Journeys,
+  bulkWhatsApp: BulkWhatsApp,
+  bulkSms: BulkSms,
+  emailCampaigns: EmailCampaigns,
+  settings: Settings,
   branches: Branches,
   verticals: Verticals,
   pipelines: Pipelines,

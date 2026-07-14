@@ -33,6 +33,8 @@ const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
 export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> = {
   'leads.all': { title: 'Add Lead', fields: [
     F('Name', 'text', 1), F('Mobile Number', 'tel', 1, 0, 'de-dup key'), F('Alternate Number', 'tel'), F('WhatsApp Number', 'tel'), F('Email ID', 'email'),
+    // Sprint 4 — the `birthday` automation journey needs a date to fire on.
+    F('Date of Birth', 'date', 0, 0, 'used by the Birthday automation journey'),
     F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'),
     F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'), F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course', 'select', 0, 0, 'master', 'courses'), F('Training Mode', 'select', 0, ['Online', 'Offline', 'Hybrid', 'Bootcamp']), F('Course Fee', 'number'), F('City / Location', 'text'),
@@ -251,6 +253,9 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       alt_phone: vals['Alternate Number'] || undefined,
       // DEF-S2-03: WhatsApp Number is stored (lead.whatsapp_phone), not discarded
       whatsapp_phone: vals['WhatsApp Number'] || undefined,
+      // Sprint 4: the `birthday` journey trigger fires on this — so it must be SENT, not
+      // merely rendered (qa/09).
+      dob: vals['Date of Birth'] || undefined,
       email: vals['Email ID'] || undefined,
       campaign_id: need(ids['Campaign'], 'Pick a Campaign (Branch › Vertical › Pipeline › Campaign)'),
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),

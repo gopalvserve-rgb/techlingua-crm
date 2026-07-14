@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ScoringModule } from '../scoring/scoring.module';
 import { SlaModule } from '../sla/sla.module';
+import { JourneysModule } from '../journeys/journeys.module';
 import { LeadIngestionService } from './lead-ingestion.service';
 import { LeadMergeService } from './merge.service';
 import { ImportService } from './import.service';
@@ -27,7 +28,9 @@ import { SheetWorker } from './channels/sheet.worker';
 @Module({
   // Sprint 3: every ingested lead is scored and gets an SLA clock, in ONE place
   // (LeadIngestionService.afterIngest) rather than in each channel.
-  imports: [ScoringModule, SlaModule],
+  // Sprint 4: and every ingested lead can start an automation journey, hooked in the
+  // same one place (LeadIngestionService.afterIngest).
+  imports: [ScoringModule, SlaModule, JourneysModule],
   controllers: [ImportController, ChannelController, WebhookController],
   providers: [
     LeadIngestionService, LeadMergeService, ImportService, ImportWorker,

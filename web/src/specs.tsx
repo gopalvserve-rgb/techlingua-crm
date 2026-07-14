@@ -245,43 +245,18 @@ export const APP: ModuleItem[] = [
           { ic: 'users', k: 'Human hand-over', s: 'On intent: pricing/complaint', v: 'Auto', toggle: true },
           { ic: 'cfg', k: 'AI provider', s: 'Gemini key in Settings', v: 'Gemini', toggle: true }] },
       ] } },
-    { id: 'sms', label: 'Bulk SMS', spec: {
-      sub: 'DLT-approved templates & sender ID, audience filters, scheduling & opt-out handling.',
-      actions: [['plus', 'New SMS blast', 'primary']], sprintNote: NOTE_S2,
-      blocks: [emptyTable('SMS campaigns', ['Campaign', 'Template (DLT)', 'Audience', 'Scheduled', 'Sent', 'Status'], 'No SMS campaigns yet')] } },
-    { id: 'wabulk', label: 'Bulk WhatsApp', spec: {
-      sub: 'Approved template messages, media, audience filters, scheduling & delivery/read reports.',
-      actions: [['plus', 'New broadcast', 'primary']], sprintNote: NOTE_S2,
-      blocks: [emptyTable('WhatsApp broadcasts', ['Broadcast', 'Template', 'Media', 'Audience', 'Delivered', 'Read'], 'No broadcasts yet')] } },
-    { id: 'email', label: 'Email Campaigns', spec: {
-      sub: 'SMTP / SendGrid, templates, lists & segments, scheduling, open/click tracking, unsubscribe.',
-      actions: [['plus', 'New email', 'primary']], sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Sent (MTD)', '0', 'mail'), kpi('Open rate', '—', 'perf'), kpi('Click rate', '—', 'bolt'), kpi('Unsub', '—', 'refresh')] },
-        emptyTable('Campaigns', ['Campaign', 'Segment', 'Sent', 'Open', 'Click', 'Status'], 'No email campaigns yet'),
-      ] } },
-    { id: 'journeys', label: 'Automation Journeys (Workflow)', spec: {
-      sub: 'Triggers (new lead, stage change, no response, fee due, birthday) → actions with conditions & delays.',
-      actions: [['plus', 'New journey', 'primary']], sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'builder', title: 'Journey · "No response 48h re-engage"', steps: [
-          { k: 'trig', t: 'Trigger: No response 48h', d: 'Lead in Contacted, no reply' },
-          { k: 'wait', t: 'Wait 0m', d: 'Run immediately' },
-          { k: 'act', t: 'Send WhatsApp template', d: 'Re-engage message' },
-          { k: 'cond', t: 'If replied → stop', d: 'Else continue' },
-          { k: 'wait', t: 'Wait 1 day', d: 'Delay' },
-          { k: 'act', t: 'Create call task + notify owner', d: 'Assign follow-up' },
-          { k: 'end', t: 'If still cold → mark Lost', d: 'Flag for re-open later' }] },
-        { type: 'caps', title: 'Journey library', items: [
-          cap('Welcome on new lead', 'Greeting + brochure'), cap('Stage change → notify', 'Counsellor + manager'),
-          cap('Fee due reminder', '3-day, 1-day, overdue'), cap('Birthday wish', 'Auto on DOB')] },
-      ] } },
+    { id: 'sms', label: 'Bulk SMS', spec: { dyn: 'bulkSms',
+      sub: 'DLT-approved templates & sender ID, audience filters & opt-out handling. Any Indian gateway — the adapter is configured in Settings.' } },
+    { id: 'wabulk', label: 'Bulk WhatsApp', spec: { dyn: 'bulkWhatsApp',
+      sub: 'Meta Cloud API template messages, audience filters, delivery/read receipts & opt-out (a customer who replies STOP is never messaged again).' } },
+    { id: 'email', label: 'Email Campaigns', spec: { dyn: 'emailCampaigns',
+      sub: 'SMTP PER VERTICAL — each course line sends from its own domain. Templates, audience filters, bounce/failure capture & unsubscribe.' } },
+    { id: 'journeys', label: 'Automation Journeys (Workflow)', spec: { dyn: 'journeys',
+      sub: 'Triggers (new lead, stage change, no response, fee due, birthday) → conditions → actions. Idempotent: a lead never receives the same step twice.' } },
     { id: 'inbox', label: 'WhatsApp Live Chat', spec: { dyn: 'waChat',
       sub: 'Live WhatsApp inbox — bot auto-replies, lead qualification, quick replies & human hand-over.' } },
-    { id: 'templates', label: 'Message Templates', spec: {
-      sub: 'Dynamic templates per channel — WhatsApp, SMS, Email — with variables.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Templates', ['Name', 'Channel', 'Variables', 'Approval', 'Used'], 'No templates yet')] } },
+    { id: 'templates', label: 'Message Templates', spec: { dyn: 'templates',
+      sub: 'Dynamic templates per channel — WhatsApp (Meta template name + params), SMS (sender ID + DLT), Email (subject + HTML) — with merge variables and a live preview.' } },
   ] },
 
   /* ---------------- Students & Academics ---------------- */
@@ -698,15 +673,8 @@ export const APP: ModuleItem[] = [
     // Sanctioned addition (soft-delete client request) — see design spec §Sanctioned additions.
     { id: 'deleted', label: 'Deleted Items', spec: { dyn: 'deletedItems',
       sub: 'Soft-deleted records across every module — deleted rows are hidden from lists, dropdowns & KPIs while their children stay intact. Review impact and restore (Super Admin / Org Admin).' } },
-    { id: 'settings', label: 'Settings', spec: {
-      sub: 'Org settings, numbering series, templates, business hours, holidays, SMTP & notifications.',
-      blocks: [{ type: 'cfg', title: 'Organisation settings', rows: [
-        { ic: 'finance', k: 'Currency / Timezone', s: 'INR · Asia/Kolkata', v: 'INR ₹', toggle: true },
-        { ic: 'doc', k: 'Numbering series', s: 'Per branch & vertical', v: 'Configured', toggle: true },
-        { ic: 'mail', k: 'SMTP per vertical', s: 'One sending domain per vertical', v: 'Per vertical', toggle: true },
-        { ic: 'clock', k: 'Business hours', s: 'Mon–Sat 9–7', v: 'Set', toggle: true },
-        { ic: 'cal', k: 'Holidays', s: 'Branch calendar', v: 'Set', toggle: true },
-        { ic: 'bolt', k: 'Notification channels', s: 'In-app, email, WhatsApp, SMS', v: 'All', toggle: true }] }] } },
+    { id: 'settings', label: 'Settings', spec: { dyn: 'settings',
+      sub: 'Channels & credentials (SMTP per vertical · WhatsApp · SMS · Razorpay per vertical · AI keys — encrypted at rest), business hours, holidays, numbering series, automation guardrails and the notification matrix.' } },
   ] },
 
   /* ---------------- Help & Support ---------------- */
