@@ -68,9 +68,25 @@ describe('first-response clock', () => {
     await svc.onLeadCreated(1);
     const ins = sqlOf(calls, /INSERT INTO lead_sla/)[0];
     expect(ins.sql).toContain("'first_response'");
-    expect(ins.sql).toContain("$3 + ($4 || ' minutes')::interval");   // due = created + threshold
     expect(ins.params).toEqual([1, 1, '2026-07-14T09:00:00Z', '60']);
     expect(ins.sql).toContain('ON CONFLICT DO NOTHING');              // idempotent replay
+  });
+
+  /**
+   * REGRESSION PIN (live-smoke escape, 14 Jul). $3 is used BOTH as the `started_at` value
+   * and inside `$3 + interval`. Postgres 16/17 refuse to deduce one type for both and throw
+   * "inconsistent types deduced for parameter $3" — so every SLA clock silently failed to
+   * start on the live database (silently, because SLA bookkeeping is wrapped in safe()).
+   * PG18 accepts it, which is why a local check passed. The explicit casts are load-bearing.
+   */
+  it('casts $3 explicitly (PG16/17 will NOT infer it — this cast is load-bearing)', async () => {
+    const { svc, calls } = build({ policy: [{ id: 1, threshold_minutes: 60 }] });
+    await svc.onLeadCreated(1);
+    const sql = sqlOf(calls, /INSERT INTO lead_sla/)[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toContain('$3::timestamptz');
+    expect(sql).toContain("$3::timestamptz + ($4 || ' minutes')::interval");
+    // the un-cast form is what broke production — it must never come back
+    expect(sql).not.toMatch(/NULL, \$3,/);
   });
 
   it('a human touch STOPS it and records the elapsed time (the TAT number)', async () => {

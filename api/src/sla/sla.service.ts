@@ -174,9 +174,17 @@ export class SlaService {
 
     const policy = await this.policyFor('first_response', Number(lead.pipeline_id), null, client);
     if (policy) {
+      // NOTE THE EXPLICIT ::timestamptz CASTS — do not remove them.
+      // $3 is used twice: once as the `started_at` VALUE (a timestamptz column) and once
+      // inside `$3 + interval`. Postgres 16/17 refuse to deduce one type for both uses and
+      // raise "inconsistent types deduced for parameter $3"; PG18 is more lenient, so this
+      // passed a local PG18 check and failed on the live database. The casts make the type
+      // explicit in every version. (Found by the live smoke — the failure was silent because
+      // SLA bookkeeping is deliberately wrapped in safe(), so lead creation still worked.)
       await q(
         `INSERT INTO lead_sla (lead_id, policy_id, metric, stage_id, started_at, due_at)
-         VALUES ($1, $2, 'first_response', NULL, $3, $3 + ($4 || ' minutes')::interval)
+         VALUES ($1, $2, 'first_response', NULL, $3::timestamptz,
+                 $3::timestamptz + ($4 || ' minutes')::interval)
          ON CONFLICT DO NOTHING`,
         [leadId, Number(policy.id), lead.created_at, String(policy.threshold_minutes)],
       );
