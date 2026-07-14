@@ -174,7 +174,7 @@ async function seed(c: PoolClient) {
   // Branch Manager: everything inside the branch except org/role administration
   await grant('Branch Manager', [
     'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.assign', 'lead.transfer', 'lead.export',
-    'lead.delete', 'followup.delete', // soft delete: leads/follow-ups only (migration 015)
+    'lead.pull', 'lead.delete', 'followup.delete', // soft delete: leads/follow-ups only (migration 015)
     'followup.read', 'followup.create', 'followup.update',
     'user.read', 'team.read', 'team.create', 'team.update',
     'branch.read', 'vertical.read', 'pipeline.read', 'campaign.read', 'campaign.create', 'campaign.update',
@@ -182,17 +182,18 @@ async function seed(c: PoolClient) {
   ], 'branch');
   // Vertical Manager: same shape, scoped to vertical
   await grant('Vertical Manager', [
-    'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.assign', 'lead.export',
+    'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.assign', 'lead.export', 'lead.pull',
     'followup.read', 'followup.create', 'followup.update',
     'user.read', 'team.read', 'vertical.read', 'pipeline.read',
     'campaign.read', 'campaign.create', 'campaign.update', 'source.read', 'source.create', 'source.update',
     'master.read', 'custom_field.read', 'report.read', 'report.export',
   ], 'vertical');
   await grant('Team Leader', [
-    'dashboard.read', 'lead.read', 'lead.update', 'lead.assign',
+    'dashboard.read', 'lead.read', 'lead.update', 'lead.assign', 'lead.pull',
     'followup.read', 'followup.create', 'followup.update', 'team.read', 'user.read', 'master.read', 'report.read',
   ], 'team');
-  const agentPerms = ['dashboard.read', 'lead.read', 'lead.create', 'lead.update',
+  // lead.pull = on-demand "Start Calling" hand-out (§4.1) — the agents who do the calling
+  const agentPerms = ['dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.pull',
     'followup.read', 'followup.create', 'followup.update', 'master.read'];
   await grant('Counsellor', agentPerms, 'own');
   await grant('Telecaller', agentPerms, 'own');

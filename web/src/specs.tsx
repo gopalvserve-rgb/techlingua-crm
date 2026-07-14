@@ -134,6 +134,8 @@ export const APP: ModuleItem[] = [
     { id: 'all', label: 'Leads', spec: { dyn: 'leadsAll',
       sub: 'Full lead table — every lead tagged Branch › Vertical › Pipeline › Campaign › Source.',
       actions: [['filter', 'Filters', 'ghost'], ['plus', 'Add lead', 'primary']] } },
+    { id: 'calling', label: 'Start Calling', spec: { dyn: 'startCalling',
+      sub: 'On Demand campaigns park their leads in a pool. Click Start Calling and the next 10 (the campaign\u2019s hand-out size) are assigned to you \u2014 then work them one at a time: disposition, next follow-up, next lead. No dialler: you call from your own phone.' } },
     { id: 'import', label: 'Import Leads', spec: { dyn: 'leadImport',
       sub: 'Bulk-import leads from a CSV — map your columns, preview every row, then import. Duplicates and assignment follow the campaign\u2019s own rules.' } },
     { id: 'capture', label: 'Lead Capture', spec: { dyn: 'captureChannels',

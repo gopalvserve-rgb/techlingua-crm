@@ -708,6 +708,9 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
       value: Array.isArray(c.value) ? c.value.join(', ') : String(c.value ?? ''),
       assign_to_user_ids: Array.isArray(c.assign_to_user_ids) ? c.assign_to_user_ids.map(Number) : [],
     })));
+  // §4.1 — On Demand hands out `batch_size` leads per "Start Calling" click (default 10)
+  const [batchSize, setBatchSize] = useState<string>(
+    String((initial?.distribution_config as any)?.batch_size ?? 10));
   const [priority, setPriority] = useState(initial?.priority ?? 'med');
   const [dupScope, setDupScope] = useState<string>((initial?.duplicacy_config as any)?.check_scope ?? 'this_campaign');
   const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
@@ -725,9 +728,13 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
     if (dist === 'equal' && agents.length === 0) {
       return toast('Equal distribution needs at least one agent — search and tick the users to rotate leads across', true);
     }
+    const size = Number(batchSize);
+    if (!Number.isInteger(size) || size <= 0) {
+      return toast('Leads per hand-out must be a positive whole number (the On Demand batch size)', true);
+    }
     const distribution_config: Record<string, unknown> = {
       mode: dist,
-      batch_size: prevDist.batch_size ?? 10,
+      batch_size: size,
       round_robin_scope: prevDist.round_robin_scope ?? 'campaign',
       agent_user_ids: agents,
     };
@@ -827,6 +834,13 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
                   : 'optional — leave empty to let any agent in scope self-assign'}</span></label>
               <UserPicker value={agents} onChange={setAgents} branchId={branchId}
                 placeholder="Search users by name / email / phone…" />
+            </div>
+          )}
+          {dist === 'on_demand' && (
+            <div className="fld" style={{ marginTop: 12, maxWidth: 260 }}>
+              <label>Leads per hand-out <span className="fhint">Start Calling assigns this many at a time</span></label>
+              <input className="ainp" type="number" min={1} aria-label="Leads per hand-out"
+                value={batchSize} onChange={(e) => setBatchSize(e.target.value)} />
             </div>
           )}
           {dist === 'conditional' && (

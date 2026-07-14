@@ -51,6 +51,10 @@ export class AuditInterceptor implements NestInterceptor {
   private actionFor(req: any): string | null {
     const path: string = req.path ?? req.url ?? '';
     if (path.startsWith('/api/errors')) return null; // client error reports are not user actions
+    // On-demand hand-out (§4.1): HandoutService writes its OWN audit_log row inside the
+    // claim transaction — richer (the claimed lead ids) and rolled back with a failed
+    // claim. A generic interceptor row here would only duplicate it.
+    if (/^\/api\/leads\/handout(\/|$)/.test(path) && req.method === 'POST') return null;
     if (path.includes('/auth/login') || path.includes('/auth/otp')) return 'login';
     const base = METHOD_ACTION[req.method];
     if (!base) return null;
