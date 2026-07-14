@@ -14,7 +14,11 @@ export interface RefData {
   verticals: Named[];
   pipelines: Named[];
   campaigns: Named[];
+  /** campaign-scoped `source` rows — the "Lead Source" field on every form */
   sources: Named[];
+  /** the LEAD SOURCE MASTER (m_source) — "How did you hear about us?" on the walk-in
+   *  form maps here, the same master `source.master_source_id` points at. */
+  masterSources: Named[];
   users: Named[];
   statuses: Named[];
   courses: Named[];
@@ -29,8 +33,8 @@ export interface RefData {
 }
 
 const EMPTY: RefData = {
-  branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], users: [],
-  statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
+  branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], masterSources: [],
+  users: [], statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
   states: [], cities: [],
   loaded: false, reload: () => undefined,
 };
@@ -60,13 +64,14 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
       try { return await p(); } catch { return fallback; }
     };
     (async () => {
-      const [branches, verticals, pipelines, campaigns, sources, users,
+      const [branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets, states, cities] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
         safe(can('campaign.read'), () => api.get<Named[]>('/campaigns'), []),
         safe(can('source.read'), () => api.get<Named[]>('/sources'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/source'), []),
         safe(can('user.read'), () => api.get<Named[]>('/users'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/status'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/course'), []),
@@ -78,7 +83,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
       ]);
       if (dead) return;
       setData({
-        branches, verticals, pipelines, campaigns, sources, users,
+        branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets, states, cities,
         loaded: true, reload: () => setTick((t) => t + 1),
       });

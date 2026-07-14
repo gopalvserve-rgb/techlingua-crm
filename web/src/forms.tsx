@@ -15,14 +15,16 @@ import { toast, useRef_, Named, RefData, selectableUsers } from './refdata';
 export interface FormField {
   label: string; type?: string; req?: boolean; opts?: string[] | null; hint?: string;
   /** refdata source for id-valued selects (enables cascading + wired saves) */
-  src?: keyof Pick<RefData, 'branches' | 'verticals' | 'pipelines' | 'campaigns' | 'sources' | 'users' | 'courses' | 'followupTypes' | 'dispositions' | 'statuses' | 'budgets' | 'states' | 'cities'>;
+  src?: keyof Pick<RefData, 'branches' | 'verticals' | 'pipelines' | 'campaigns' | 'sources' | 'masterSources' | 'users' | 'courses' | 'followupTypes' | 'dispositions' | 'statuses' | 'budgets' | 'states' | 'cities'>;
+  /** default value on the ADD form (never on Edit — an edit prefill always wins). */
+  def?: string;
   /** client update #5 (Task module only) — render the logged-in user as "Myself",
    *  pinned to the top of the user list and selected by default. Scoped per field,
    *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
   self?: boolean;
 }
-export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src'], self?: 0 | 1 | boolean): FormField =>
-  ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src, self: !!self });
+export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src'], self?: 0 | 1 | boolean, def?: string): FormField =>
+  ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src, self: !!self, def });
 
 /** Label used for the current user inside Task-module user dropdowns. */
 export const SELF_LABEL = 'Myself';
@@ -51,8 +53,15 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped'),
     F('Purpose of Visit', 'select', 1, ['Admission enquiry', 'Fee query', 'Document submission', 'Other']), F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
-    F('Course Fee', 'number'), F('How did you hear about us?', 'select', 0, ['Google Ads', 'Meta', 'Referral', 'Walk-in', 'Hoarding'], 'Lead Source master'),
-    F('Counsellor Assigned', 'select', 1, 0, 'Users \u00b7 owns the lead immediately', 'users'), F('Convert to Lead', 'checkbox'), F('Remarks', 'textarea')] },
+    // DEF-S34-02 — these three RENDERED but were never SENT and had no columns (migration 027).
+    F('Course Fee', 'number', 0, 0, 'auto-filled from the Course master \u00b7 editable'),
+    F('How did you hear about us?', 'select', 0, 0, 'Lead Source master', 'masterSources'),
+    F('Counsellor Assigned', 'select', 1, 0, 'Users \u00b7 owns the lead immediately', 'users'),
+    // ticked by default: a walk-in becoming an assigned lead IS the point of this screen.
+    // Untick it to log a visit (a fee query from an existing student) without a lead;
+    // tick it later on Edit and it converts through the same LeadIngestionService.
+    F('Convert to Lead', 'checkbox', 0, 0, 'creates the lead and assigns it to the counsellor', undefined, 0, '1'),
+    F('Remarks', 'textarea')] },
   'dash.referrals': { title: 'Add Referral', fields: [
     F('Referrer Type', 'select', 1, ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner']), F('Referrer Name', 'text', 1, 0, 'Student / Employee name'),
     F('Referrer Contact Number', 'tel', 1), F('Referred Person Name', 'text', 1), F('Referred Person Contact Number', 'tel', 1, 0, 'de-dup key'),
@@ -200,11 +209,20 @@ export const need = (v: string | number | undefined, msg: string) => {
   return v;
 };
 
-const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
+/**
+ * THE SAVERS ARE THE CONTRACT. `qa10matrix.test.tsx` renders every form below, fills
+ * EVERY control it renders, and proves — field by field, with a differential probe — that
+ * the value reaches the request body. A field that renders but is not sent here FAILS
+ * THE BUILD. That rule exists because this class of bug has reached the client THREE
+ * times (DEF-2 Edit Branch · DEF-S2-02 campaign dates · DEF-S34-02 walk-in).
+ */
+export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
   /**
    * Sprint 3 — WALK-IN. Creates a REAL lead (through the one server-side
    * LeadIngestionService) with the counsellor as its owner: "assign on add".
-   * Every field the form renders is sent — the qa/09 rule.
+   *
+   * DEF-S34-02: Course Fee, "How did you hear about us?" and Convert to Lead used to be
+   * rendered and thrown away. They are sent now, and they have columns (migration 027).
    */
   'dash.walkins': async (vals, ids) => {
     await api.post('/walk-ins', {
@@ -221,9 +239,14 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       visited_at: vals['Date & Time of Visit'] || undefined,
       purpose: vals['Purpose of Visit'] || undefined,
       course_id: ids['Course Interested'],
+      course_fee: vals['Course Fee'] || undefined,
+      heard_about_source_id: ids['How did you hear about us?'],
+      convert_to_lead: vals['Convert to Lead'] === '1',
       remarks: vals['Remarks'] || undefined,
     });
-    return 'Walk-in recorded and assigned';
+    return vals['Convert to Lead'] === '1'
+      ? 'Walk-in recorded and assigned'
+      : 'Walk-in recorded (no lead created — tick "Convert to Lead" to convert it)';
   },
   /** Sprint 3 — REFERRAL. The referred person becomes a lead; the referrer is kept. */
   'dash.referrals': async (vals, ids) => {
@@ -418,6 +441,9 @@ function LeadLookup({ value, onPick }: { value: string; onPick: (id: number | un
 const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
   courses: 'course', statuses: 'status', followupTypes: 'followup_type',
   dispositions: 'disposition', budgets: 'budget', states: 'state', cities: 'city',
+  // "How did you hear about us?" -> the Lead Source MASTER (m_source), so ＋ Master adds
+  // a new one exactly the way every other master-backed select does.
+  masterSources: 'source',
 };
 /** Masters whose dedicated management screen has a richer form: ＋ Master opens that
  *  full form (client: adding a Course from a lead must show all course fields,
@@ -459,7 +485,14 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   const { can, me } = useAuth();
   const spec = SPEC_FORMS[formKey];
   const wired = !!SAVERS[formKey] || !!edit;
-  const [vals, setVals] = useState<Vals>(edit?.initialVals ?? {});
+  // Spec defaults apply on ADD only — an edit prefill is the record, and always wins.
+  // (This is how "Convert to Lead" ships ticked without a special case in the modal.)
+  const [vals, setVals] = useState<Vals>(() => {
+    if (edit?.initialVals) return edit.initialVals;
+    const seed: Vals = {};
+    for (const f of SPEC_FORMS[formKey]?.fields ?? []) if (f.def !== undefined) seed[f.label] = f.def;
+    return seed;
+  });
   const [ids, setIds] = useState<Ids>(edit?.initialIds ?? {});
   const [masterAdd, setMasterAdd] = useState<{ type: string; field: string } | null>(null);
   const [masterForm, setMasterForm] = useState<{ form: string; field: string } | null>(null);
@@ -623,8 +656,9 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (t === 'file') return <input className="ainp" type="file" style={{ padding: '7px 10px' }} />;
     if (t === 'checkbox') return (
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: 'var(--text-muted)', padding: '5px 0' }}>
-        <input type="checkbox" style={{ accentColor: 'var(--primary)', width: 16, height: 16 }}
-          checked={v === '1'} onChange={(e) => setField(f.label, e.target.checked ? '1' : '')} /> One-click promote to Lead
+        <input type="checkbox" aria-label={f.label} style={{ accentColor: 'var(--primary)', width: 16, height: 16 }}
+          checked={v === '1'} onChange={(e) => setField(f.label, e.target.checked ? '1' : '')} />
+        {f.hint || f.label}
       </label>
     );
     if (t === 'lookup') return (
@@ -691,7 +725,8 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
             {spec.fields.map((f) => {
               const t = f.type || 'text';
               const span2 = t === 'textarea' || t === 'table';
-              const inField = t === 'auto' || t === 'lookup' || t === 'table';
+              // 'checkbox' renders its own caption next to the box — don't print the hint twice
+              const inField = t === 'auto' || t === 'lookup' || t === 'table' || t === 'checkbox';
               return (
                 <div className={`fld ${span2 ? 'span2' : ''}`} key={f.label}>
                   <label>
@@ -872,8 +907,8 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
 
-  const txt = (k: string, ph = '') => (
-    <input className="ainp" placeholder={ph} value={vals[k] ?? ''} onChange={(e) => setVals((x) => ({ ...x, [k]: e.target.value }))} />
+  const txt = (k: string, ph = '', type = 'text') => (
+    <input className="ainp" type={type} placeholder={ph} value={vals[k] ?? ''} onChange={(e) => setVals((x) => ({ ...x, [k]: e.target.value }))} />
   );
   const sel = (opts: string[], v: string, set: (x: string) => void) => (
     <select className="ainp" value={v} onChange={(e) => set(e.target.value)}>
@@ -908,7 +943,10 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
             <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? '', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
             <div className="fld"><label>Start Date <span className="star">*</span></label><input className="ainp" type="date" value={vals['start'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, start: e.target.value }))} /></div>
             <div className="fld"><label>End Date</label><input className="ainp" type="date" value={vals['end'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, end: e.target.value }))} /></div>
-            <div className="fld"><label>Campaign Budget / Spend</label>{txt('cost', '₹')}</div>
+            {/* MONEY, so a number input: as free text, `Number(vals['cost'])` turned anything
+                non-numeric into NaN and the API stored 0 without telling anyone.
+                (Found by the generic qa10 probe.) */}
+            <div className="fld"><label>Campaign Budget / Spend</label>{txt('cost', '₹', 'number')}</div>
             <div className="fld"><label>UTM / Tracking Code<span className="fhint">digital only</span></label>{txt('utm', 'utm_campaign')}</div>
           </div>
           <div className="sechead">Lead Distribution</div>

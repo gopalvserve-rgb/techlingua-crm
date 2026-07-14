@@ -126,3 +126,67 @@ describe('DEF-S4-01 — the template query only references columns that EXIST', 
     expect(sql).not.toMatch(/\bc\.fee\b/);
   });
 });
+
+/* ========================================================================== */
+/*  The SAME guard, extended to the CAPTURE queries (DEF-S34-02 / -03).        */
+/*                                                                             */
+/*  Migration 027 adds six columns to `walk_in` and four to `referral`, and    */
+/*  the list/edit queries now select all of them. A typo, or a column dropped  */
+/*  from a migration, would only surface as a 500 on the client's Walk-ins     */
+/*  screen — exactly how DEF-S4-01 reached production. Same parser, same guard.*/
+/* ========================================================================== */
+
+import { CaptureService } from '../capture/capture.service';
+import { ScopeResolverService } from '../rbac/scope-resolver.service';
+
+/** the SQL listWalkIns() / listReferrals() actually run, captured with a fake db */
+async function captureSql(which: 'walkins' | 'referrals'): Promise<string> {
+  let sql = '';
+  const db = {
+    query: async (s: string) => { sql = s; return []; },
+    one: async () => ({}),
+  } as never;
+  const svc = new CaptureService(db, {} as never, new ScopeResolverService(),
+    {} as never, {} as never, {} as never);
+  const scope = { permissionKey: 'walkin.read', allowed: true, all: true, filters: [],
+    allowedFields: null, deniedFields: [] } as never;
+  if (which === 'walkins') await svc.listWalkIns(scope, {});
+  else await svc.listReferrals(scope, {});
+  return sql;
+}
+
+describe('DEF-S34-02/03 — the walk-in & referral queries only reference columns that EXIST', () => {
+  it('migration 027 really adds the six walk-in columns the form now depends on', () => {
+    const w = columnsOf('walk_in');
+    for (const c of ['alt_phone', 'whatsapp_phone', 'course_fee', 'heard_about_source_id',
+      'convert_to_lead', 'campaign_id', 'source_id']) {
+      expect(`walk_in.${c}: ${w.has(c)}`).toBe(`walk_in.${c}: true`);
+    }
+    const r = columnsOf('referral');
+    for (const c of ['referred_whatsapp', 'referred_email', 'campaign_id', 'source_id']) {
+      expect(`referral.${c}: ${r.has(c)}`).toBe(`referral.${c}: true`);
+    }
+  });
+
+  const ALIASES: Record<string, Record<string, string>> = {
+    walkins: { w: 'walk_in', wl: 'lead', c: 'm_course', ms: 'm_source', b: 'branch',
+      v: 'vertical', cmp: 'campaign', pl: 'pipeline', sr: 'source', st: 'pipeline_stage' },
+    referrals: { r: 'referral', rl: 'lead', c: 'm_course', b: 'branch', v: 'vertical',
+      cmp: 'campaign', pl: 'pipeline', sr: 'source', st: 'pipeline_stage' },
+  };
+
+  it.each(['walkins', 'referrals'] as const)('%s: every aliased column exists', async (which) => {
+    const sql = await captureSql(which);
+    const missing: string[] = [];
+    for (const [alias, table] of Object.entries(ALIASES[which])) {
+      const cols = columnsOf(table);
+      const re = new RegExp(`\\b${alias}\\.([a-z_][a-z0-9_]*)`, 'g');
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(sql)) !== null) {
+        if (!cols.has(m[1].toLowerCase())) missing.push(`${alias}.${m[1]}  (${table})`);
+      }
+    }
+    // any entry here is a column the query names but the migrations never create
+    expect(missing).toEqual([]);
+  });
+});

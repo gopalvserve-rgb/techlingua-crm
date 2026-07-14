@@ -720,7 +720,7 @@ export function Journeys() {
 /* ==================================================================== */
 
 /** Compose a blast: pick a template, pick an audience, send. Guard-railed like any automation. */
-function BlastModal({ channel, onClose, onSent }: { channel: string; onClose: () => void; onSent: () => void }) {
+export function BlastModal({ channel, onClose, onSent }: { channel: string; onClose: () => void; onSent: () => void }) {
   const ref = useRef_();
   const templates = useFetch<Template[]>(`/templates?channel=${channel}`);
   const [templateId, setTemplateId] = useState('');
@@ -879,7 +879,7 @@ export const EmailCampaigns = () => <ChannelScreen channel="email" />;
 /* ==================================================================== */
 
 /** The credential form for one provider — GENERATED from the provider spec. */
-function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
+export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
   spec: ProviderSpec; existing: ChannelCfg | null; onClose: () => void; onSaved: () => void;
 }) {
   const ref = useRef_();

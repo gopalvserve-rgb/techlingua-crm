@@ -21,7 +21,7 @@ const scope = (over: Partial<ResolvedScope> = {}): ResolvedScope => ({
   allowedFields: null, deniedFields: [], ...over,
 });
 
-function build(opts: { ingestOutcome?: any; activeUser?: boolean } = {}) {
+function build(opts: { ingestOutcome?: any; activeUser?: boolean; walkInRow?: any } = {}) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const ingested: Array<{ payload: any; ctx: any }> = [];
   const rescored: number[] = [];
@@ -35,7 +35,13 @@ function build(opts: { ingestOutcome?: any; activeUser?: boolean } = {}) {
       if (/INSERT INTO walk_in/.test(sql)) return { id: 55, visitor_name: params[4], counsellor_id: params[10] };
       if (/INSERT INTO referral/.test(sql)) return { id: 66, referrer_name: params[5] };
       if (/UPDATE walk_in/.test(sql)) return { id: 55 };
-      if (/FROM walk_in WHERE id/.test(sql)) return { id: 55, counsellor_id: 3, lead_id: 100 };
+      if (/FROM walk_in WHERE id/.test(sql)) {
+        return opts.walkInRow ?? { id: 55, counsellor_id: 3, lead_id: 100, campaign_id: 5, source_id: 7 };
+      }
+      // DEF-S34-02 — "How did you hear about us?" resolves against the Lead Source master
+      if (/FROM m_source WHERE id/.test(sql)) return { id: String(params[0]) };
+      if (/FROM referral WHERE id/.test(sql)) return { id: 66, lead_id: 101 };
+      if (/UPDATE referral SET/.test(sql)) return { id: 66 };
       return {};
     },
   } as unknown as DatabaseService;
@@ -140,7 +146,10 @@ describe('walk-in list + summary are SCOPED through the lead', () => {
   it('a counsellor only sees walk-ins whose lead they own', async () => {
     const { svc, calls } = build();
     await svc.listWalkIns(scope({ all: false, filters: [{ kind: 'own', userId: 3 }] }), {});
-    expect(calls[0].sql).toContain('wl.owner_id = $1');
+    // DEF-S34-02: a walk-in with `convert_to_lead = false` has NO lead, so `wl.owner_id`
+    // is NULL and the row would vanish from its own counsellor's list. The owner falls
+    // back to the counsellor who attended the visit — who is, after all, the owner.
+    expect(calls[0].sql).toContain('COALESCE(wl.owner_id, w.counsellor_id) = $1');
     expect(calls[0].params[0]).toBe(3);
   });
   it('a branch manager sees the whole branch', async () => {
@@ -189,5 +198,143 @@ describe('referral — the referred person becomes a lead, through the same path
     const { svc, calls } = build();
     await svc.listReferrals(scope({ all: false, filters: [{ kind: 'own', userId: 3 }] }), {});
     expect(calls[0].sql).toContain('rl.owner_id = $1');
+  });
+});
+
+/* ========================================================================== */
+/*  DEF-S34-02 / DEF-S34-03 — the phantom fields, and the Edit path.           */
+/*                                                                             */
+/*  This is the THIRD instance of the class the client caught himself (Edit    */
+/*  Branch, then the campaign dates). The web-side guard is the generic        */
+/*  qa10 matrix; this is the server-side half — the whitelists that the form   */
+/*  posts into. If a column is dropped from one of these lists, a field the    */
+/*  user filled in is silently discarded again.                                */
+/* ========================================================================== */
+
+const FULL_WALKIN = {
+  ...WALKIN,
+  alt_phone: '9810000012', whatsapp_phone: '9810000013', email: 'priya@x.com',
+  visited_at: '2026-07-14T10:30', course_id: 21,
+  course_fee: '45000', heard_about_source_id: 81, convert_to_lead: true,
+  remarks: 'Wants weekend batch',
+};
+
+describe('DEF-S34-02 — every field the walk-in form renders is STORED', () => {
+  const insertOf = (calls: Array<{ sql: string; params: unknown[] }>) =>
+    calls.find((c) => /INSERT INTO walk_in/.test(c.sql))!;
+
+  it('the INSERT carries course_fee, heard_about_source_id and convert_to_lead', async () => {
+    const { svc, calls } = build();
+    await svc.createWalkIn(FULL_WALKIN as any, 1, scope());
+    const ins = insertOf(calls);
+    for (const col of ['course_fee', 'heard_about_source_id', 'convert_to_lead',
+      'alt_phone', 'whatsapp_phone', 'campaign_id', 'source_id']) {
+      expect(ins.sql).toContain(col);
+    }
+    expect(ins.params).toContain(45000);      // the fee is a NUMBER by the time it lands
+    expect(ins.params).toContain(81);         // the m_source id
+    expect(ins.params).toContain(true);       // convert_to_lead
+  });
+
+  it('the quoted Course Fee travels to the LEAD too (same custom_fields slot as Add Lead)', async () => {
+    const { svc, ingested } = build();
+    await svc.createWalkIn(FULL_WALKIN as any, 1, scope());
+    expect(ingested[0].payload.custom_fields).toEqual({ course_fee: 45000 });
+  });
+
+  it('a negative Course Fee is rejected, not stored', async () => {
+    const { svc } = build();
+    await expect(svc.createWalkIn({ ...FULL_WALKIN, course_fee: '-5' } as any, 1, scope()))
+      .rejects.toThrow(/course_fee/);
+  });
+
+  it('"Convert to Lead" DEFAULTS to true — the walk-in still becomes an assigned lead', async () => {
+    const { svc, ingested, calls } = build();
+    await svc.createWalkIn(WALKIN as any, 1, scope());       // no convert_to_lead in the DTO
+    expect(ingested).toHaveLength(1);
+    expect(insertOf(calls).params).toContain(true);
+  });
+
+  it('UNTICKED, it logs the visit and creates NO lead (the checkbox is not a no-op)', async () => {
+    const { svc, ingested, calls, rescored } = build();
+    await svc.createWalkIn({ ...FULL_WALKIN, convert_to_lead: false } as any, 1, scope());
+    expect(ingested).toHaveLength(0);                        // nothing ingested
+    expect(calls.some((c) => /INSERT INTO lead\b/.test(c.sql))).toBe(false);
+    expect(insertOf(calls).params).toContain(false);
+    expect(rescored).toEqual([]);                            // no lead to score
+  });
+});
+
+describe('DEF-S34-03 — the walk-in EDIT path', () => {
+  it('PATCH updates every walk-in field the Edit form renders', async () => {
+    const { svc, calls } = build();
+    await svc.updateWalkIn(55, {
+      visitor_name: 'Priya S', phone: '9810000099', alt_phone: '9810000098',
+      whatsapp_phone: '9810000097', email: 'new@x.com', purpose: 'Fee query',
+      course_id: 22, course_fee: '52000', remarks: 'corrected', visited_at: '2026-07-14T11:00',
+    } as any, 1, scope());
+    const upd = calls.find((c) => /UPDATE walk_in SET/.test(c.sql))!;
+    for (const col of ['visitor_name', 'phone', 'alt_phone', 'whatsapp_phone', 'email',
+      'purpose', 'course_id', 'course_fee', 'remarks', 'visited_at']) {
+      expect(upd.sql).toContain(`${col} = $`);
+    }
+  });
+
+  it('a corrected name/phone is pushed onto the LEAD too (no stale typo on the lead sheet)', async () => {
+    const { svc, calls } = build();
+    await svc.updateWalkIn(55, { visitor_name: 'Priya S', phone: '9810000099' } as any, 1, scope());
+    const lead = calls.find((c) => /UPDATE lead SET/.test(c.sql) && /full_name/.test(c.sql))!;
+    expect(lead).toBeTruthy();
+    expect(lead.params).toContain('+919810000099');   // E.164 — the same normaliser ingestion uses
+  });
+
+  it('ticking Convert to Lead on an UNCONVERTED walk-in converts it through LeadIngestionService', async () => {
+    const { svc, ingested, calls } = build({ walkInRow: { id: 55, counsellor_id: 3, lead_id: null,
+      campaign_id: 5, source_id: 7, visitor_name: 'Priya', phone: '9810000011' } });
+    await svc.updateWalkIn(55, { convert_to_lead: true } as any, 1, scope());
+    expect(ingested).toHaveLength(1);                                   // the ONE path
+    expect(ingested[0].ctx.owner_id).toBe(3);                           // still assign-on-add
+    expect(calls.some((c) => /INSERT INTO lead\b/.test(c.sql))).toBe(false);  // no second path
+    const upd = calls.find((c) => /UPDATE walk_in SET/.test(c.sql))!;
+    expect(upd.sql).toContain('lead_id = $');
+  });
+
+  it('an already-converted walk-in is NOT converted a second time', async () => {
+    const { svc, ingested } = build();                                  // mock row has lead_id 100
+    await svc.updateWalkIn(55, { convert_to_lead: true } as any, 1, scope());
+    expect(ingested).toHaveLength(0);
+  });
+});
+
+describe('DEF-S34-03 — the referral EDIT path', () => {
+  it('PATCH updates referred_whatsapp / referred_email / relationship / incentive', async () => {
+    const { svc, calls } = build();
+    await svc.updateReferral(66, {
+      referrer_name: 'Asha R', referred_whatsapp: '9810000023', referred_email: 'ravi@x.com',
+      relationship: 'Cousin', incentive: '20% off', status: 'converted',
+    } as any, 1, scope());
+    const upd = calls.find((c) => /UPDATE referral SET/.test(c.sql))!;
+    for (const col of ['referrer_name', 'referred_whatsapp', 'referred_email',
+      'relationship', 'incentive', 'status']) {
+      expect(upd.sql).toContain(`${col} = $`);
+    }
+  });
+
+  it('a corrected referred person is pushed onto the LEAD too', async () => {
+    const { svc, calls } = build();
+    await svc.updateReferral(66, { referred_name: 'Ravi K', referred_email: 'ravi@x.com' } as any, 1, scope());
+    const lead = calls.find((c) => /UPDATE lead SET/.test(c.sql))!;
+    expect(lead).toBeTruthy();
+    expect(lead.params).toContain('Ravi K');
+  });
+
+  it('the create INSERT stores the referred WhatsApp/Email and the path', async () => {
+    const { svc, calls } = build();
+    await svc.createReferral({ ...REFERRAL, referred_whatsapp: '9810000023',
+      referred_email: 'ravi@x.com' } as any, 1, scope());
+    const ins = calls.find((c) => /INSERT INTO referral/.test(c.sql))!;
+    for (const col of ['referred_whatsapp', 'referred_email', 'campaign_id', 'source_id']) {
+      expect(ins.sql).toContain(col);
+    }
   });
 });

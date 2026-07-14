@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
@@ -44,13 +44,24 @@ export interface SlaPolicyDto {
 }
 
 @Injectable()
-export class SlaService {
+export class SlaService implements OnModuleInit {
   private readonly log = new Logger('SlaService');
 
   constructor(
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
   ) {}
+
+  /**
+   * DEF-S34-01 — catch up any lead that has no first-response clock, once, at boot.
+   * Idempotent (see backfillFirstResponseClocks), wrapped in safe() so SLA bookkeeping
+   * can never stop the API from starting. Disable with SPRINT3_WORKER=0, like the rest
+   * of the Sprint-3 background work.
+   */
+  onModuleInit(): void {
+    if (process.env.SPRINT3_WORKER === '0') return;
+    void this.safe(async () => { await this.backfillFirstResponseClocks(); }, 'sla backfill');
+  }
 
   /* --------------------------- policies (admin) --------------------------- */
 
@@ -264,6 +275,70 @@ export class SlaService {
     if (!toStageId) return;
     const lead = (await q(`SELECT pipeline_id FROM lead WHERE id = $1`, [leadId]))[0];
     if (lead) await this.enterStage(leadId, Number(lead.pipeline_id), Number(toStageId), client);
+  }
+
+  /**
+   * DEF-S34-01 — BACKFILL the first-response clock for every lead that has none.
+   *
+   * Migration 025 §9 backfilled `lead_stage_tat` and only that, so every lead that
+   * existed before Sprint 3 (including the client's real lead 31) had NO SLA clock:
+   * it could never be measured, never breach, and never appear in the manager breach
+   * view. The same hole would swallow every historical lead he imports by CSV.
+   *
+   * This is the SAME statement as migration 027 §4, and it runs once at worker boot as
+   * well, so a policy created LATER also gets its clocks (a migration runs once; a
+   * policy can be added any day). It is idempotent twice over — the NOT EXISTS guard
+   * and `uq_lead_sla_clock` — so running it every boot is a no-op once it has caught up.
+   *
+   * The retroactive part is deliberately honest, and deliberately quiet:
+   *   already touched   -> the clock is SATISFIED at the first activity, with the real
+   *                        elapsed time (so historical response averages are true);
+   *   never touched and
+   *   already past due  -> BREACHED at the moment it was due, and `notified_at` is
+   *                        stamped. The worker claims breaches on `notified_at IS NULL`,
+   *                        so the breach is VISIBLE (badge, filter, manager view) but
+   *                        does NOT fire a retroactive alert storm — importing 5,000
+   *                        historical leads must not send 5,000 "SLA breached" alerts.
+   */
+  async backfillFirstResponseClocks(): Promise<number> {
+    const rows = await this.db.query<{ id: string }>(
+      `INSERT INTO lead_sla (lead_id, policy_id, metric, stage_id, started_at, due_at,
+                             satisfied_at, elapsed_seconds, breached_at, notified_at)
+       SELECT l.id, p.id, 'first_response', NULL,
+              l.created_at,
+              l.created_at + (p.threshold_minutes || ' minutes')::interval,
+              t.touched_at,
+              CASE WHEN t.touched_at IS NOT NULL
+                   THEN GREATEST(0, EXTRACT(EPOCH FROM (t.touched_at - l.created_at))::int) END,
+              CASE WHEN t.touched_at IS NULL
+                    AND l.created_at + (p.threshold_minutes || ' minutes')::interval <= now()
+                   THEN l.created_at + (p.threshold_minutes || ' minutes')::interval END,
+              CASE WHEN t.touched_at IS NULL
+                    AND l.created_at + (p.threshold_minutes || ' minutes')::interval <= now()
+                   THEN now() END
+         FROM lead l
+         JOIN LATERAL (
+              SELECT sp.id, sp.threshold_minutes
+                FROM sla_policy sp
+               WHERE sp.is_active AND sp.deleted_at IS NULL AND sp.metric = 'first_response'
+                 AND (sp.pipeline_id IS NULL OR sp.pipeline_id = l.pipeline_id)
+                 AND sp.stage_id IS NULL
+               ORDER BY (sp.pipeline_id IS NOT NULL) DESC, sp.id
+               LIMIT 1
+         ) p ON TRUE
+         LEFT JOIN LATERAL (
+              SELECT MIN(a.occurred_at) AS touched_at
+                FROM lead_activity a
+               WHERE a.lead_id = l.id AND a.type <> 'create' AND a.occurred_at > l.created_at
+         ) t ON TRUE
+        WHERE l.deleted_at IS NULL AND l.is_active
+          AND NOT EXISTS (SELECT 1 FROM lead_sla s
+                           WHERE s.lead_id = l.id AND s.metric = 'first_response')
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+    );
+    if (rows.length) this.log.log(`SLA backfill: opened ${rows.length} missing first-response clock(s)`);
+    return rows.length;
   }
 
   /** Never let SLA bookkeeping break the operation that triggered it. */

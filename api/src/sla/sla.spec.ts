@@ -191,3 +191,88 @@ describe('SLA bookkeeping never breaks the operation that triggered it', () => {
     await expect(svc.safe(async () => { throw new Error('boom'); }, 'test')).resolves.toBeUndefined();
   });
 });
+
+/* ========================================================================== */
+/*  DEF-S34-01 — the SLA BACKFILL.                                            */
+/*                                                                            */
+/*  Migration 025 §9 backfilled `lead_stage_tat` and ONLY that. Every lead     */
+/*  that existed before Sprint 3 — including the client's real lead 31 — had   */
+/*  no SLA clock: it could never be measured, never breach, and never reach    */
+/*  the manager breach view. The same hole would swallow every historical      */
+/*  lead he imports by CSV. PROJECT_STATUS said "existing leads were           */
+/*  backfilled"; that was true of TAT, not of SLA.                             */
+/* ========================================================================== */
+
+describe('DEF-S34-01 — backfillFirstResponseClocks', () => {
+  it('opens a clock ONLY for leads that have none (idempotent by construction)', async () => {
+    const { svc, calls } = build();
+    await svc.backfillFirstResponseClocks();
+    const sql = calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toMatch(/INSERT INTO lead_sla/);
+    expect(sql).toMatch(/NOT EXISTS \(SELECT 1 FROM lead_sla s WHERE s\.lead_id = l\.id AND s\.metric = 'first_response'\)/);
+    expect(sql).toMatch(/ON CONFLICT DO NOTHING/);          // + the uq_lead_sla_clock index
+  });
+
+  it('starts the clock at the lead\'s OWN created_at, not at now()', async () => {
+    const { svc, calls } = build();
+    await svc.backfillFirstResponseClocks();
+    const sql = calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toMatch(/l\.created_at \+ \(p\.threshold_minutes \|\| ' minutes'\)::interval/);
+  });
+
+  it('honours the SAME "most specific policy wins" rule as onLeadCreated (pipeline > global)', async () => {
+    const { svc, calls } = build();
+    await svc.backfillFirstResponseClocks();
+    const sql = calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toMatch(/sp\.pipeline_id IS NULL OR sp\.pipeline_id = l\.pipeline_id/);
+    expect(sql).toMatch(/ORDER BY \(sp\.pipeline_id IS NOT NULL\) DESC/);
+  });
+
+  it('a lead that WAS answered is recorded as satisfied, with its real elapsed time', async () => {
+    const { svc, calls } = build();
+    await svc.backfillFirstResponseClocks();
+    const sql = calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toMatch(/MIN\(a\.occurred_at\) AS touched_at/);
+    expect(sql).toMatch(/EXTRACT\(EPOCH FROM \(t\.touched_at - l\.created_at\)\)::int/);
+  });
+
+  /**
+   * The part that matters operationally: a historical breach must be VISIBLE but must not
+   * page anyone. The worker claims breaches with `WHERE satisfied_at IS NULL AND
+   * notified_at IS NULL` — so stamping notified_at makes the row show on the badge, the
+   * ?sla_breached=1 filter and the manager view, while guaranteeing that importing 5,000
+   * historical leads does not fire 5,000 "SLA breached" notifications at the client.
+   */
+  it('a historical breach is recorded as breached AND already-notified (no retroactive alert storm)', async () => {
+    const { svc, calls } = build();
+    await svc.backfillFirstResponseClocks();
+    const sql = calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toMatch(/breached_at/);
+    expect(sql).toMatch(/notified_at/);
+    // breached_at is stamped at the moment it FELL DUE, not at now() — the history is honest
+    expect(sql).toMatch(/THEN l\.created_at \+ \(p\.threshold_minutes \|\| ' minutes'\)::interval END/);
+  });
+
+  it('never resurrects a deleted or inactive lead', async () => {
+    const { svc, calls } = build();
+    await svc.backfillFirstResponseClocks();
+    const sql = calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toMatch(/l\.deleted_at IS NULL AND l\.is_active/);
+  });
+
+  it('runs at boot, and is skipped when the Sprint-3 worker is disabled', async () => {
+    const prev = process.env.SPRINT3_WORKER;
+    process.env.SPRINT3_WORKER = '0';
+    const { svc, calls } = build();
+    svc.onModuleInit();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls.some((c) => /INSERT INTO lead_sla/.test(c.sql))).toBe(false);
+
+    process.env.SPRINT3_WORKER = '';
+    const b = build();
+    b.svc.onModuleInit();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(b.calls.some((c) => /INSERT INTO lead_sla/.test(c.sql))).toBe(true);
+    process.env.SPRINT3_WORKER = prev;
+  });
+});

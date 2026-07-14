@@ -12,7 +12,7 @@ import { Ic } from './icons';
 import { Cell, HBars, Kpis, TableCard, TempBadge, renderCell } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { ConfirmModal, DetailModal, KV, Section, fmtFull, rowActions } from './rowactions';
-import { AddModal } from './forms';
+import { AddModal, EditSpec, need } from './forms';
 import { ScreenCtx } from './dyn';
 
 const useScreen = () => useContext(ScreenCtx);
@@ -48,7 +48,7 @@ interface ScoreSummary {
 }
 
 /** The rule form. Its inputs are GENERATED from the rule type's declared config fields. */
-function RuleModal({ initial, types, onClose, onSaved }: {
+export function RuleModal({ initial, types, onClose, onSaved }: {
   initial?: Rule | null; types: RuleType[]; onClose: () => void; onSaved: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
@@ -168,7 +168,7 @@ function RuleModal({ initial, types, onClose, onSaved }: {
 }
 
 /** Band thresholds — one row, editable, no deploy. */
-function BandModal({ cfg, onClose, onSaved }: {
+export function BandModal({ cfg, onClose, onSaved }: {
   cfg: ScoreSummary['config']; onClose: () => void; onSaved: () => void;
 }) {
   const [hot, setHot] = useState(String(cfg.bands.hot));
@@ -324,7 +324,7 @@ interface SlaSummary {
   tat: Array<{ stage_name: string; moves: number; avg_seconds: number }>;
 }
 
-function PolicyModal({ initial, onClose, onSaved }: { initial?: Policy | null; onClose: () => void; onSaved: () => void }) {
+export function PolicyModal({ initial, onClose, onSaved }: { initial?: Policy | null; onClose: () => void; onSaved: () => void }) {
   const ref = useRef_();
   const [name, setName] = useState(initial?.name ?? '');
   const [metric, setMetric] = useState<Policy['metric']>(initial?.metric ?? 'first_response');
@@ -563,7 +563,7 @@ interface CalFeed {
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-function EventModal({ onClose, onSaved, initial }: {
+export function EventModal({ onClose, onSaved, initial }: {
   onClose: () => void; onSaved: () => void; initial?: CalEvent | null;
 }) {
   const [title, setTitle] = useState(initial?.title ?? '');
@@ -794,6 +794,129 @@ export function Calendar() {
 /*  WALK-INS — assign on add                                                */
 /* ======================================================================== */
 
+/**
+ * DEF-S34-03 — WALK-IN & REFERRAL EDIT.
+ *
+ * Before this, "Edit" on a walk-in opened the LEAD (so no walk-in field could ever be
+ * corrected) and a referral had NO Edit action at all — View only. This is the DEF-2
+ * family the client hit on day one ("Edit branch is not editable"), on two screens a
+ * receptionist uses every day.
+ *
+ * Both reuse the SAME spec form as Add, so the two can never drift: every field the Add
+ * form renders is here, prefilled and editable. The only locked fields are the
+ * HIERARCHY PATH (Branch › Vertical › Pipeline › Campaign › Lead Source) — that is the
+ * lead's immutable parent link, which is exactly and only what qa/09 permits `lock` for.
+ */
+const PATH_LOCK = ['Branch', 'Vertical', 'Pipeline', 'Campaign', 'Lead Source'];
+
+/** a `datetime-local` input needs `YYYY-MM-DDTHH:mm` in LOCAL time, not an ISO Z string */
+const toLocalDT = (iso?: string | null): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const num = (v: unknown): number | undefined => (v == null || v === '' ? undefined : Number(v));
+
+export const walkInEditSpec = (w: any, after: () => void): EditSpec => ({
+  title: `Edit Walk-in \u2014 ${w.visitor_name}`,
+  initialVals: {
+    'Name': w.visitor_name ?? '',
+    'Mobile Number': w.phone ?? '',
+    'Alternate Number': w.alt_phone ?? '',
+    'WhatsApp Number': w.whatsapp_phone ?? '',
+    'Email ID': w.email ?? '',
+    'Branch': w.branch_name ?? '',
+    'Vertical': w.vertical_name ?? '',
+    'Pipeline': w.pipeline_name ?? '',
+    'Campaign': w.campaign_name ?? '',
+    'Lead Source': w.source_name ?? '',
+    'Date & Time of Visit': toLocalDT(w.visited_at),
+    'Purpose of Visit': w.purpose ?? '',
+    'Course Interested': w.course_name ?? '',
+    'Course Fee': w.course_fee != null ? String(Number(w.course_fee)) : '',
+    'How did you hear about us?': w.heard_about_name ?? '',
+    'Counsellor Assigned': w.counsellor_name ?? '',
+    'Convert to Lead': w.lead_id || w.convert_to_lead ? '1' : '',
+    'Remarks': w.remarks ?? '',
+  },
+  initialIds: {
+    'Branch': num(w.branch_id), 'Vertical': num(w.vertical_id), 'Pipeline': num(w.pipeline_id),
+    'Campaign': num(w.campaign_id), 'Lead Source': num(w.source_id),
+    'Course Interested': num(w.course_id),
+    'How did you hear about us?': num(w.heard_about_source_id),
+    'Counsellor Assigned': num(w.counsellor_id),
+  },
+  lock: PATH_LOCK,
+  submit: async (vals, ids) => {
+    // EVERY editable field the form renders is in this body (the qa/09 rule, pinned by
+    // the generic matrix test — a phantom field cannot survive here any more).
+    await api.patch(`/walk-ins/${w.id}`, {
+      visitor_name: need(vals['Name'], 'Name is required'),
+      phone: need(vals['Mobile Number'], 'Mobile Number is required'),
+      alt_phone: vals['Alternate Number'] || null,
+      whatsapp_phone: vals['WhatsApp Number'] || null,
+      email: vals['Email ID'] || null,
+      visited_at: vals['Date & Time of Visit'] || undefined,
+      purpose: vals['Purpose of Visit'] || null,
+      course_id: ids['Course Interested'] ?? null,
+      course_fee: vals['Course Fee'] === '' ? null : vals['Course Fee'],
+      heard_about_source_id: ids['How did you hear about us?'] ?? null,
+      counsellor_id: need(ids['Counsellor Assigned'], 'A walk-in must have a counsellor'),
+      convert_to_lead: vals['Convert to Lead'] === '1',
+      remarks: vals['Remarks'] || null,
+    });
+    after();
+    return vals['Convert to Lead'] === '1' && !w.lead_id ? 'Walk-in updated and converted to a lead' : 'Walk-in updated';
+  },
+});
+
+export const referralEditSpec = (r: any, after: () => void): EditSpec => ({
+  title: `Edit Referral \u2014 ${r.referrer_name}`,
+  initialVals: {
+    'Referrer Type': r.referrer_type ?? '',
+    'Referrer Name': r.referrer_name ?? '',
+    'Referrer Contact Number': r.referrer_phone ?? '',
+    'Referred Person Name': r.referred_name ?? '',
+    'Referred Person Contact Number': r.referred_phone ?? '',
+    'Referred Person WhatsApp Number': r.referred_whatsapp ?? '',
+    'Referred Person Email': r.referred_email ?? '',
+    'Relationship to Referrer': r.relationship ?? '',
+    'Branch': r.branch_name ?? '',
+    'Vertical': r.vertical_name ?? '',
+    'Pipeline': r.pipeline_name ?? '',
+    'Campaign': r.campaign_name ?? '',
+    'Lead Source': r.source_name ?? '',
+    'Course Interested': r.course_name ?? '',
+    'Incentive / Reward Applicable': r.incentive ?? '',
+    'Referral Status': REF_STATUS[String(r.status)]?.[0] ?? 'Pending',
+  },
+  initialIds: {
+    'Branch': num(r.branch_id), 'Vertical': num(r.vertical_id), 'Pipeline': num(r.pipeline_id),
+    'Campaign': num(r.campaign_id), 'Lead Source': num(r.source_id),
+    'Course Interested': num(r.course_id),
+  },
+  lock: PATH_LOCK,
+  submit: async (vals, ids) => {
+    await api.patch(`/referrals/${r.id}`, {
+      referrer_type: need(vals['Referrer Type'], 'Pick a referrer type'),
+      referrer_name: need(vals['Referrer Name'], 'Referrer name is required'),
+      referrer_phone: vals['Referrer Contact Number'] || null,
+      referred_name: need(vals['Referred Person Name'], 'Referred person name is required'),
+      referred_phone: need(vals['Referred Person Contact Number'], 'Referred person contact number is required'),
+      referred_whatsapp: vals['Referred Person WhatsApp Number'] || null,
+      referred_email: vals['Referred Person Email'] || null,
+      relationship: vals['Relationship to Referrer'] || null,
+      course_id: ids['Course Interested'] ?? null,
+      incentive: vals['Incentive / Reward Applicable'] || null,
+      status: (vals['Referral Status'] || 'Pending').toLowerCase(),
+    });
+    after();
+    return 'Referral updated';
+  },
+});
+
 const WALKIN_STATUS: Record<string, [string, string]> = {
   waiting: ['Waiting', 'b-amber'], in_progress: ['In progress', 'b-indigo'],
   converted: ['Converted', 'b-green'], closed: ['Closed', 'b-gray'],
@@ -806,6 +929,7 @@ export function WalkIns() {
   const sum = useFetch<any>('/walk-ins/summary', [refreshTick]);
   const list = useFetch<any[]>(`/walk-ins?limit=100${today ? '&today=1' : ''}`, [today, refreshTick]);
   const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
   const rows = list.data ?? [];
   const after = () => { list.reload(); sum.reload(); bump(); };
 
@@ -851,9 +975,11 @@ export function WalkIns() {
               {Object.keys(WALKIN_STATUS).map((k) => <option key={k} value={k}>{WALKIN_STATUS[k][0]}</option>)}
             </select>
           ) } as Cell,
+          // DEF-S34-03: Edit opens the WALK-IN, not the lead it created. (The lead is still
+          // one click away — from the View modal, and from the visitor's name.)
           rowActions({
             onView: () => setView(w),
-            onEdit: w.lead_id && can('lead.read') ? () => openLead(Number(w.lead_id)) : undefined,
+            onEdit: can('walkin.update') ? () => setEdit(w) : undefined,
           }),
         ])}
         empty="No walk-ins recorded yet — add one and it becomes an assigned lead immediately" />
@@ -872,9 +998,13 @@ export function WalkIns() {
             <KV rows={[
               ['Name', view.visitor_name],
               ['Phone', <span className="mono">{view.phone}</span>],
+              ['Alternate', <span className="mono">{view.alt_phone || '—'}</span>],
+              ['WhatsApp', <span className="mono">{view.whatsapp_phone || '—'}</span>],
               ['Email', view.email || '—'],
               ['Purpose', view.purpose || '—'],
               ['Course', view.course_name || '—'],
+              ['Course fee', view.course_fee != null ? `\u20b9${Number(view.course_fee)}` : '—'],
+              ['Heard about us', view.heard_about_name || '—'],
             ]} />
           </Section>
           <Section title="Visit">
@@ -892,6 +1022,11 @@ export function WalkIns() {
             ]} />
           </Section>
         </DetailModal>
+      )}
+
+      {edit && (
+        <AddModal formKey="dash.walkins" onClose={() => setEdit(null)}
+          edit={walkInEditSpec(edit, after)} />
       )}
     </>
   );
@@ -912,6 +1047,7 @@ export function Referrals() {
   const sum = useFetch<any>('/referrals/summary', [refreshTick]);
   const list = useFetch<any[]>('/referrals?limit=100', [refreshTick]);
   const [view, setView] = useState<any | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
   const rows = list.data ?? [];
   const after = () => { list.reload(); sum.reload(); bump(); };
 
@@ -953,7 +1089,12 @@ export function Referrals() {
               {Object.keys(REF_STATUS).map((k) => <option key={k} value={k}>{REF_STATUS[k][0]}</option>)}
             </select>
           ) } as Cell,
-          rowActions({ onView: () => setView(r) }),
+          // DEF-S34-03: a referral had NO Edit action at all, so a wrong Referrer Name /
+          // Relationship / Incentive could never be corrected.
+          rowActions({
+            onView: () => setView(r),
+            onEdit: can('referral.update') ? () => setEdit(r) : undefined,
+          }),
         ])}
         empty="No referrals recorded yet — capture one and the referred person becomes a lead" />
 
@@ -971,6 +1112,8 @@ export function Referrals() {
             <KV rows={[
               ['Name', view.referred_name],
               ['Contact', <span className="mono">{view.referred_phone}</span>],
+              ['WhatsApp', <span className="mono">{view.referred_whatsapp || '—'}</span>],
+              ['Email', view.referred_email || '—'],
               ['Course', view.course_name || '—'],
               ['Owner', view.owner_name || '—'],
               ['Lead', view.lead_id
@@ -987,6 +1130,11 @@ export function Referrals() {
             ]} />
           </Section>
         </DetailModal>
+      )}
+
+      {edit && (
+        <AddModal formKey="dash.referrals" onClose={() => setEdit(null)}
+          edit={referralEditSpec(edit, after)} />
       )}
     </>
   );
