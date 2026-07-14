@@ -92,16 +92,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- 5) audit_log.action must accept 'handout'.
---    (`audit_log_action_check` is an enumerated CHECK — 015 and 019 each widened it;
---    the hand-out adds its own verb. Without this the whole claim transaction rolls
---    back on the audit insert: caught by the live smoke, never let out of the door.)
-ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_action_check;
-ALTER TABLE audit_log ADD CONSTRAINT audit_log_action_check
-  CHECK (action IN ('create','update','delete','login','export','transfer',
-                    'permission_change','merge','restore','handout'));
-
--- 6) the anti-hoarding guardrail — CONFIGURABLE, DEFAULT OFF.
+-- 5) the anti-hoarding guardrail — CONFIGURABLE, DEFAULT OFF.
 --    §4 defines no hoarding rule, so the default must not change today's behaviour:
 --    an agent may pull a fresh batch whenever they like (the unworked leads of the
 --    previous batch stay assigned to them and remain in their lead list).
@@ -110,3 +101,7 @@ ALTER TABLE audit_log ADD CONSTRAINT audit_log_action_check
 INSERT INTO app_setting (key, value) VALUES
   ('handout_guard', '{"enabled": false, "min_actioned_pct": 100}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
+
+-- NOTE: audit_log.action must also accept 'handout' — that lives in its own migration
+-- (022) because 021 had already been applied to the live DB when the constraint was
+-- found (the runner is filename-keyed and never re-runs a file).
