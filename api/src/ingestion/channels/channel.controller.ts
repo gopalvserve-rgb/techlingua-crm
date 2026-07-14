@@ -1,6 +1,7 @@
 import {
-  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, ServiceUnavailableException,
+  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
+import { NotConfiguredException } from '../../common/not-configured.exception';
 import { ChannelService } from './channel.service';
 import { WebhookService } from './webhook.service';
 import { CurrentScope, CurrentUser, RequirePermission } from '../../rbac/rbac.decorators';
@@ -78,11 +79,11 @@ export class ChannelController {
     await this.svc.get(id, s, u.id);                 // scope + existence
     const row = await this.svc.raw(id);
     if (!row || row.provider !== 'google_sheet') {
-      throw new ServiceUnavailableException('This channel is not a Google Sheet channel.');
+      throw new NotConfiguredException('This channel is not a Google Sheet channel.');
     }
     const missing = this.svc.missing(row);
     if (missing.length) {
-      throw new ServiceUnavailableException(`Not configured — still needed: ${missing.join(', ')}`);
+      throw new NotConfiguredException(`Not configured — still needed: ${missing.join(', ')}`);
     }
     return this.hooks.pollSheet(row, { manual: true });
   }

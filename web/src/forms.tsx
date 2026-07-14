@@ -126,7 +126,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   'admin.users': { title: 'Add User', fields: [
     F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
     F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'select', 0, 0, 'blank = org-wide', 'branches'),
-    F('Vertical Access', 'select', 0, 0, 'filtered by Branch', 'verticals'), F('Status', 'select', 0, ['Active', 'Suspended', 'Deactivated'])] },
+    F('Vertical Access', 'select', 0, 0, 'filtered by Branch', 'verticals'), F('Status', 'select', 0, ['Active', 'Deactivated'])] },
   'fran.partners': { title: 'Add Franchise Partner', fields: [
     F('Franchise ID', 'auto', 1, 0, 'Auto-generated'), F('Legal Name', 'text', 1), F('Brand Name', 'text'), F('Owner', 'text', 1), F('Mobile', 'tel', 1), F('Email', 'email'),
     F('Branch / Territory', 'text'), F('Status', 'select', 0, ['Onboarding', 'Active', 'Inactive']), F('KYC Documents', 'file')] },
@@ -195,6 +195,8 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       full_name: need(vals['Name'], 'Name is required'),
       phone: need(vals['Mobile Number'], 'Mobile Number is required'),
       alt_phone: vals['Alternate Number'] || undefined,
+      // DEF-S2-03: WhatsApp Number is stored (lead.whatsapp_phone), not discarded
+      whatsapp_phone: vals['WhatsApp Number'] || undefined,
       email: vals['Email ID'] || undefined,
       campaign_id: need(ids['Campaign'], 'Pick a Campaign (Branch › Vertical › Pipeline › Campaign)'),
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
@@ -243,6 +245,8 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       contact_number: vals['Contact Number'] || undefined,
       email: vals['Branch Email'] || undefined,
       head_user_id: ids['Branch Head'] ?? undefined,
+      // QA-10 sweep: the Status select on the Add form must be honoured on create
+      is_active: vals['Status'] !== 'Inactive',
     });
     return 'Branch created';
   },
@@ -253,6 +257,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       code: need(vals['Vertical Code'], 'Vertical code is required'),
       head_user_id: ids['Vertical Head'] ?? undefined,
       description: vals['Description'] || undefined,
+      is_active: vals['Status'] !== 'Inactive',
     });
     return 'Vertical created';
   },
@@ -262,6 +267,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       name: need(vals['Pipeline Name'], 'Pipeline name is required'),
       code: need(vals['Pipeline Code'], 'Pipeline code is required'),
       owner_user_id: ids['Pipeline Owner'] ?? undefined,
+      is_active: vals['Status'] !== 'Inactive',
     });
     return 'Pipeline created (default stages added)';
   },
@@ -271,6 +277,7 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
       name: need(vals['Source Name'], 'Source name is required'),
       channel: vals['Source Category'] || 'manual',
       cost_per_lead: vals['Cost per Lead (if fixed/paid)'] || 0,
+      is_active: vals['Status'] !== 'Inactive',
     });
     return 'Source connected';
   },
@@ -285,6 +292,8 @@ const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
         branch_id: ids['Branch Access'] ?? null,
         vertical_id: ids['Vertical Access'] ?? null,
       }] : [],
+      // QA-10 sweep: Status is a live select on Add User — honour it (same mapping as Edit)
+      status: vals['Status'] === 'Deactivated' ? 'disabled' : 'active',
     });
     return 'User created';
   },
@@ -301,6 +310,7 @@ SAVERS['students.courses'] = async (vals, ids) => {
       branch_id: ids['Applicable Branch(es)'] ?? undefined,
       eligibility: vals['Eligibility Criteria'] || undefined,
     },
+    is_active: vals['Status'] !== 'Inactive',
   });
   return { msg: `Course "${row.name}" added to the master`, row };
 };
@@ -687,10 +697,17 @@ const DUP_ACTIONS = [['Ignore Duplicate', 'ignore'], ['Merge Duplicate', 'merge'
 /** `initial` switches the same NeoDove modal into edit mode (PATCH /campaigns/:id, path locked). */
 export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => void; onSaved?: () => void; initial?: any }) {
   const ref = useRef_();
+  // DEF-S2-02 — Campaign Type / Marketing Channel / Start Date / End Date are stored
+  // (migration 024) and therefore PREFILLED here, sent on save, and back on re-open.
+  const day = (v: unknown) => (v ? String(v).slice(0, 10) : '');
   const [vals, setVals] = useState<Record<string, string>>(() => (initial ? {
     name: String(initial.name ?? ''),
     utm: String((initial.utm as any)?.utm_campaign ?? ''),
     cost: initial.cost != null && Number(initial.cost) !== 0 ? String(initial.cost) : '',
+    type: String(initial.campaign_type ?? ''),
+    channel: String(initial.marketing_channel ?? ''),
+    start: day(initial.start_date),
+    end: day(initial.end_date),
   } : {} as Record<string, string>));
   const [branchId, setBranchId] = useState<number | undefined>(initial ? Number(initial.branch_id) : undefined);
   const [verticalId, setVerticalId] = useState<number | undefined>(initial ? Number(initial.vertical_id) : undefined);
@@ -722,6 +739,14 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
   const save = async () => {
     if (!vals['name']?.trim()) return toast('Campaign Name is required', true);
     if (!pipelineId) return toast('Pick Branch › Vertical › Pipeline', true);
+    // Campaign Type + Start Date carry a required star on a NEW campaign. On an EXISTING
+    // one they may be blank (campaigns created before migration 024 have neither), so the
+    // client is never locked out of renaming a legacy campaign.
+    if (!initial && !vals['type']) return toast('Campaign Type is required', true);
+    if (!initial && !vals['start']) return toast('Start Date is required', true);
+    if (vals['start'] && vals['end'] && vals['end'] < vals['start']) {
+      return toast('End Date cannot be before Start Date', true);
+    }
     // Build a validator-clean NeoDove config: `conditions` may only be sent in
     // conditional mode and must be non-empty there (from the rule builder below).
     const prevDist = (initial?.distribution_config as any) ?? {};
@@ -757,6 +782,13 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
       on_duplicate: dupAction,
       open_reassign_same_user: prevDup.open_reassign_same_user ?? true,
     };
+    // every field the modal renders goes in the body (qa/09 rule)
+    const formFields = {
+      campaign_type: vals['type'] || null,
+      marketing_channel: vals['channel'] || null,
+      start_date: vals['start'] || null,
+      end_date: vals['end'] || null,
+    };
     setBusy(true);
     try {
       if (initial) {
@@ -764,7 +796,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           name: vals['name'].trim(),
           utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
           cost: vals['cost'] ? Number(vals['cost']) : 0,
-          priority, distribution_config, duplicacy_config,
+          priority, distribution_config, duplicacy_config, ...formFields,
         });
         toast('Campaign updated');
       } else {
@@ -773,7 +805,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           name: vals['name'].trim(),
           utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
           cost: vals['cost'] ? Number(vals['cost']) : 0,
-          priority, distribution_config, duplicacy_config,
+          priority, distribution_config, duplicacy_config, ...formFields,
         });
         toast('Campaign created');
       }
@@ -785,7 +817,10 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
     <input className="ainp" placeholder={ph} value={vals[k] ?? ''} onChange={(e) => setVals((x) => ({ ...x, [k]: e.target.value }))} />
   );
   const sel = (opts: string[], v: string, set: (x: string) => void) => (
-    <select className="ainp" value={v} onChange={(e) => set(e.target.value)}>{opts.map((o) => <option key={o}>{o}</option>)}</select>
+    <select className="ainp" value={v} onChange={(e) => set(e.target.value)}>
+      <option value="">Select…</option>
+      {opts.map((o) => <option key={o}>{o}</option>)}
+    </select>
   );
 
   return (
@@ -810,8 +845,8 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
                 : <select className="ainp" value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
                 <option value="">Select…</option>{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>}</div>
-            <div className="fld"><label>Campaign Type <span className="star">*</span></label>{sel(['Digital', 'Print', 'Event', 'Referral Drive', 'Tele-calling'], vals['type'] ?? 'Digital', (x) => setVals((s) => ({ ...s, type: x })))}</div>
-            <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? 'Meta', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
+            <div className="fld"><label>Campaign Type <span className="star">*</span></label>{sel(['Digital', 'Print', 'Event', 'Referral Drive', 'Tele-calling'], vals['type'] ?? '', (x) => setVals((s) => ({ ...s, type: x })))}</div>
+            <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? '', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
             <div className="fld"><label>Start Date <span className="star">*</span></label><input className="ainp" type="date" value={vals['start'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, start: e.target.value }))} /></div>
             <div className="fld"><label>End Date</label><input className="ainp" type="date" value={vals['end'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, end: e.target.value }))} /></div>
             <div className="fld"><label>Campaign Budget / Spend</label>{txt('cost', '₹')}</div>

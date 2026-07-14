@@ -412,7 +412,8 @@ export class HandoutService {
    */
   async action(handoutId: number, dto: DispositionDto, userId: number, scope: ResolvedScope) {
     const item = await this.db.one<any>(
-      `SELECT i.id, i.actioned_at, i.position, h.id AS handout_id, h.user_id, h.size, h.status AS handout_status,
+      `SELECT i.id, i.actioned_at, i.position, i.follow_up_id,
+              h.id AS handout_id, h.user_id, h.size, h.status AS handout_status,
               l.id AS lead_id, l.org_id, l.branch_id, l.pipeline_id, l.owner_id, l.stage_id, l.status_id
          FROM lead_handout_item i
          JOIN lead_handout h ON h.id = i.handout_id
@@ -509,15 +510,45 @@ export class HandoutService {
       }
     });
 
-    // the next follow-up goes through the existing service (one place owns follow-ups:
+    // The next follow-up goes through the existing service (one place owns follow-ups:
     // its activity row, the lead's next_follow_up_at and the My Tasks views).
+    //
+    // DEF-S2-07: re-actioning the same lead in the batch must RESCHEDULE the follow-up
+    // this batch already created for it, not stack a second open one. The follow-up is
+    // remembered on the item (migration 024); if the agent has since completed or
+    // deleted it, a fresh one is created.
     if (dto.next_follow_up_at) {
-      await this.followups.create({
-        lead_id: leadId, scheduled_at: dto.next_follow_up_at,
-        disposition_id: dto.disposition_id ?? undefined,
-        notes: dto.note?.trim() || undefined,
-        owner_id: userId,
-      }, userId, scope);
+      const existing = item.follow_up_id
+        ? await this.db.one<{ id: string }>(
+          `SELECT id FROM follow_up WHERE id = $1 AND status = 'pending' AND deleted_at IS NULL`,
+          [Number(item.follow_up_id)],
+        )
+        : null;
+      if (existing) {
+        await this.followups.update(Number(existing.id), {
+          scheduled_at: dto.next_follow_up_at,
+          disposition_id: dto.disposition_id ?? undefined,
+          notes: dto.note?.trim() || undefined,
+        }, userId, scope);
+        // keep the lead's "next follow-up" in step with its earliest OPEN follow-up
+        await this.db.query(
+          `UPDATE lead SET next_follow_up_at = (SELECT MIN(scheduled_at) FROM follow_up
+                                                 WHERE lead_id = $1 AND status = 'pending' AND deleted_at IS NULL),
+                           updated_at = now()
+            WHERE id = $1`, [leadId],
+        );
+      } else {
+        const created = await this.followups.create({
+          lead_id: leadId, scheduled_at: dto.next_follow_up_at,
+          disposition_id: dto.disposition_id ?? undefined,
+          notes: dto.note?.trim() || undefined,
+          owner_id: userId,
+        }, userId, scope) as { id?: number | string };
+        if (created?.id != null) {
+          await this.db.query(`UPDATE lead_handout_item SET follow_up_id = $2 WHERE id = $1`,
+            [Number(item.id), Number(created.id)]);
+        }
+      }
     }
 
     return this.batch(handoutId, userId);

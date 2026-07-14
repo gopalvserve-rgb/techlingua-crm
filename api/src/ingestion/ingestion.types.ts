@@ -12,6 +12,8 @@ export interface IngestPayload {
   phone?: string;
   email?: string;
   alt_phone?: string;
+  /** DEF-S2-03 — the Add Lead form's "WhatsApp Number" (stored, not a custom field) */
+  whatsapp_phone?: string;
   /** master values may arrive as a NAME ("IELTS") or a numeric id — both resolve */
   state?: string | number;
   city?: string | number;

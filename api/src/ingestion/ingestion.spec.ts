@@ -259,6 +259,75 @@ describe('LeadIngestionService', () => {
       expect(Number(st.leads[1].duplicate_of_id)).toBe(Number(st.leads[0].id));   // mergeable by hand
     });
 
+    // -------------------------------------------------------------------------
+    // DEF-S2-01 (QA-10) — the idempotency ledger must never swallow a MANUAL add
+    // -------------------------------------------------------------------------
+    it('DEF-S2-01: adding the SAME lead twice by hand creates TWO leads (no silent skip)', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      const rec = { full_name: 'Zed Idem Probe', phone: '9810000061' };
+      const manual = ctx({ channel: 'manual', duplicate_policy: 'always_create', batch_id: null });
+      const first = await svc.ingest(rec, manual);
+      const second = await svc.ingest({ ...rec }, manual);
+
+      expect(first.status).toBe('created');
+      expect(second.status).toBe('duplicate');               // flagged as a duplicate — NOT 'skipped'
+      expect(second.action).toBe('create');
+      expect(second.lead_id).not.toBe(first.lead_id);        // a REAL second lead
+      expect(st.leads).toHaveLength(2);
+      expect(st.leads[1].is_duplicate).toBe(true);           // flagged + linked, per §4
+      expect(Number(st.leads[1].duplicate_of_id)).toBe(Number(st.leads[0].id));
+      expect(st.ledger).toHaveLength(2);                     // the audit trail stays complete
+    });
+
+    it('DEF-S2-01: add -> soft-delete -> add again returns a NEW live lead, never the deleted id', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      const rec = { full_name: 'Zed Idem Probe', phone: '9810000062' };
+      const manual = ctx({ channel: 'manual', duplicate_policy: 'always_create', batch_id: null });
+      const first = await svc.ingest(rec, manual);
+      st.leads[0].deleted_at = new Date().toISOString();     // the counsellor deletes it
+      const again = await svc.ingest({ ...rec }, manual);
+
+      expect(again.status).toBe('created');
+      expect(again.lead_id).not.toBe(first.lead_id);
+      const live = st.leads.filter((l) => !l.deleted_at);
+      expect(live).toHaveLength(1);
+      expect(Number(live[0].id)).toBe(Number(again.lead_id));  // the id handed back IS the live lead
+    });
+
+    it('DEF-S2-01: an AUTOMATED replay whose lead was soft-deleted re-ingests (no dead id handed back)', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      const rec = { full_name: 'Sheet Row', phone: '9810000063', external_id: 'ROW-9' };
+      const first = await svc.ingest(rec, ctx({ channel: 'sheet' }));
+      expect(first.status).toBe('created');
+      st.leads[0].deleted_at = new Date().toISOString();
+
+      const replay = await svc.ingest({ ...rec }, ctx({ channel: 'sheet' }));
+      expect(replay.status).toBe('created');
+      expect(st.leads.filter((l) => !l.deleted_at)).toHaveLength(1);
+    });
+
+    it('DEF-S2-01 guard: channel idempotency is UNCHANGED while the lead is alive', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      const rec = { full_name: 'Meta Lead', phone: '9810000064', external_id: 'LG-1' };
+      await svc.ingest(rec, ctx({ channel: 'webhook' }));
+      const replay = await svc.ingest({ ...rec }, ctx({ channel: 'webhook' }));
+      expect(replay.status).toBe('skipped');                 // Meta/Google/form/sheet/CSV replay
+      expect(st.leads).toHaveLength(1);
+      expect(st.cursor).toBe(0);                             // and the cursor never moved
+    });
+
+    it('DEF-S2-03: the WhatsApp number is normalised and stored on the lead', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      await svc.ingest({ full_name: 'Wa Lead', phone: '9810000065', whatsapp_phone: '098100 00066' },
+        ctx({ channel: 'manual', duplicate_policy: 'always_create' }));
+      expect(st.leads[0].whatsapp_phone).toBe('+919810000066');
+    });
+
     it("a manual add under a MERGE campaign still creates (a human's entry is never swallowed)", async () => {
       const { db, st } = makeFakeDb({ duplicacy: dup({ on_duplicate: 'merge' }) });
       const { svc } = makeIngestion(db);

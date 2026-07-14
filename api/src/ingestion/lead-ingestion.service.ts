@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PoolClient } from 'pg';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service';
 import { normalizePhone } from '../common/phone.util';
 import { DistributionConfig, matchCondition, pickFromPool } from '../leads/distribution.util';
@@ -35,6 +35,7 @@ export interface IngestTarget {
 
 export interface NormalisedLead {
   full_name: string; phone: string; email: string | null; alt_phone: string | null;
+  whatsapp_phone: string | null;
   state_id: number | null; city_id: number | null; course_id: number | null;
   qualification_id: number | null; budget_id: number | null;
   status_id: number | null; stage_id: number | null;
@@ -201,6 +202,8 @@ export class LeadIngestionService {
     return {
       full_name: name, phone,
       email, alt_phone: p.alt_phone ? normalizePhone(String(p.alt_phone)) : null,
+      // DEF-S2-03: WhatsApp Number is a real, stored contact field
+      whatsapp_phone: p.whatsapp_phone ? normalizePhone(String(p.whatsapp_phone)) : null,
       state_id: this.master(target, 'state', 'State', p.state),
       city_id: this.master(target, 'city', 'City', p.city),
       course_id: this.master(target, 'course', 'Course', p.course),
@@ -218,8 +221,17 @@ export class LeadIngestionService {
 
   // ---- idempotency key -----------------------------------------------------
 
-  /** Provider record id when present, else a stable sha-256 of the payload. */
+  /**
+   * Provider record id when present, else a stable sha-256 of the payload.
+   *
+   * DEF-S2-01: `always_create` (the interactive "Add lead" form) gets a key that
+   * can NEVER collide. A human deliberately typing the same lead twice must get
+   * two leads — the idempotency ledger exists to swallow *machine* replays
+   * (Meta/Google/form/sheet/CSV), not deliberate human acts. The ledger row is
+   * still written, so the audit trail of every ingest stays complete.
+   */
   dedupeKey(p: IngestPayload, ctx: IngestContext): string {
+    if ((ctx.duplicate_policy ?? 'campaign') === 'always_create') return `man:${randomUUID()}`;
     const explicit = ctx.external_key ?? p.external_id;
     if (explicit && String(explicit).trim()) return `ext:${String(explicit).trim()}`.slice(0, 120);
     const canonical = JSON.stringify(
@@ -303,18 +315,33 @@ export class LeadIngestionService {
 
   async ingest(payload: IngestPayload, ctx: IngestContext, preloaded?: IngestTarget): Promise<IngestOutcome> {
     const target = preloaded ?? (await this.loadTarget(ctx.campaign_id, ctx.source_id));
+    const policy: DuplicatePolicy = ctx.duplicate_policy ?? 'campaign';
     const key = this.dedupeKey(payload, ctx);
 
-    // 1) idempotency — a record already ingested for this source is a no-op
-    const seen = await this.db.one<{ lead_id: string | null; outcome: string }>(
-      `SELECT lead_id, outcome FROM lead_ingest_record WHERE source_id = $1 AND dedupe_key = $2`,
-      [target.source_id, key],
-    );
-    if (seen) {
-      return {
-        status: 'skipped', lead_id: seen.lead_id ? Number(seen.lead_id) : null,
-        reason: `Already imported (${seen.outcome}) — idempotent replay`,
-      };
+    // 1) idempotency — a record already ingested for this source is a no-op.
+    //    DEF-S2-01: the ledger governs AUTOMATED channels only. `always_create`
+    //    (manual Add lead) skips the lookup entirely, so a second identical Add
+    //    can never be reported as a "skipped replay" of the first.
+    if (policy !== 'always_create') {
+      const seen = await this.db.one<{ id: string; lead_id: string | null; outcome: string }>(
+        `SELECT id, lead_id, outcome FROM lead_ingest_record WHERE source_id = $1 AND dedupe_key = $2`,
+        [target.source_id, key],
+      );
+      if (seen) {
+        // DEF-S2-01: a ledger row whose lead has since been SOFT-DELETED is not a
+        // live hit — handing that id back would resurrect a deleted lead in the API
+        // response while the list stays empty. Drop the dead row and ingest afresh.
+        const live = seen.lead_id == null
+          ? true
+          : !!(await this.db.one(`SELECT id FROM lead WHERE id = $1 AND deleted_at IS NULL`, [Number(seen.lead_id)]));
+        if (live) {
+          return {
+            status: 'skipped', lead_id: seen.lead_id ? Number(seen.lead_id) : null,
+            reason: `Already imported (${seen.outcome}) — idempotent replay`,
+          };
+        }
+        await this.db.query(`DELETE FROM lead_ingest_record WHERE id = $1`, [Number(seen.id)]);
+      }
     }
 
     // 2) normalise + resolve (throws IngestValidationError -> dead-letter, no retry)
@@ -322,7 +349,6 @@ export class LeadIngestionService {
 
     // 3) duplicate check (phone key, campaign-configured scope)
     const dup = await this.findDuplicate(lead.phone, target);
-    const policy: DuplicatePolicy = ctx.duplicate_policy ?? 'campaign';
     const action: DuplicateAction = policy === 'always_create'
       ? 'create'
       : ((target.duplicacy.on_duplicate ?? 'ignore') as DuplicateAction);
@@ -407,14 +433,14 @@ export class LeadIngestionService {
         const owner = ownerId ?? (await this.pickOwner(c, target.campaign_id, pool));
         const ins = await c.query(
           `INSERT INTO lead (org_id, branch_id, vertical_id, pipeline_id, campaign_id, source_id,
-                             full_name, phone, email, alt_phone, status_id, stage_id, priority, temperature, score,
+                             full_name, phone, email, alt_phone, whatsapp_phone, status_id, stage_id, priority, temperature, score,
                              owner_id, next_follow_up_at, last_activity_at, is_duplicate,
                              state_id, city_id, course_id, qualification_id, budget_id, custom_fields,
                              created_by, ingest_batch_id, external_id, duplicate_of_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now(),$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now(),$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
            RETURNING *`,
           [target.org_id, target.branch_id, target.vertical_id, target.pipeline_id, target.campaign_id, target.source_id,
-            lead.full_name, lead.phone, lead.email, lead.alt_phone, lead.status_id, lead.stage_id,
+            lead.full_name, lead.phone, lead.email, lead.alt_phone, lead.whatsapp_phone, lead.status_id, lead.stage_id,
             lead.priority, lead.temperature, lead.score, owner, lead.next_follow_up_at, !!dup,
             lead.state_id, lead.city_id, lead.course_id, lead.qualification_id, lead.budget_id,
             JSON.stringify(lead.custom_fields), ctx.actor_id, ctx.batch_id ?? null, lead.external_id,

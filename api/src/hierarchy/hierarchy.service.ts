@@ -21,6 +21,8 @@ export interface BranchDto {
   contact_number?: string | null;
   email?: string | null;
   head_user_id?: number | null;
+  /** QA-10 sweep: the Add Branch form has a Status select — honour it on create. */
+  is_active?: boolean;
 }
 
 @Injectable()
@@ -68,6 +70,22 @@ export class HierarchyService {
 
   // ---- branches -----------------------------------------------------------
 
+  /** Trim a free-text form value; '' (an untouched input) is NULL, never an empty string. */
+  static text(v?: string | null, max = 32): string | null {
+    if (v === undefined || v === null) return null;
+    const t = String(v).trim();
+    return t === '' ? null : t.slice(0, max);
+  }
+
+  /** A date input sends '' when cleared — that is NULL, not an invalid date (22P02). */
+  static date(v?: string | null): string | null {
+    if (v === undefined || v === null) return null;
+    const t = String(v).trim();
+    if (t === '') return null;
+    if (!/^\d{4}-\d{2}-\d{2}/.test(t)) throw new BadRequestException(`invalid date: ${v} (expected YYYY-MM-DD)`);
+    return t.slice(0, 10);
+  }
+
   /** Form sends the prototype labels ("Company Branch" / "Franchise Branch"); store the enum. */
   static branchType(v?: string | null): string | null {
     if (v === undefined || v === null || v === '') return null;
@@ -101,12 +119,12 @@ export class HierarchyService {
     if (!dto?.name || !dto?.code) throw new BadRequestException('name and code are required');
     const rows = await this.db.query(
       `INSERT INTO branch (org_id, name, code, state_id, city_id, address,
-                           branch_type, contact_number, email, head_user_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+                           branch_type, contact_number, email, head_user_id, is_active, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11, TRUE),$12) RETURNING *`,
       [await this.orgId(), dto.name.trim(), dto.code.trim().toUpperCase(),
         dto.state_id ?? null, dto.city_id ?? null, dto.address ?? null,
         HierarchyService.branchType(dto.branch_type), dto.contact_number ?? null,
-        dto.email ?? null, dto.head_user_id ?? null, actorId],
+        dto.email ?? null, dto.head_user_id ?? null, dto.is_active ?? null, actorId],
     );
     return rows[0];
   }
@@ -135,15 +153,20 @@ export class HierarchyService {
     return this.db.query(sql + ` ORDER BY v.name`, params);
   }
 
-  async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object; head_user_id?: number | null; description?: string | null }, actorId: number) {
+  async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object; head_user_id?: number | null; description?: string | null; is_active?: boolean }, actorId: number) {
     if (!dto?.branch_id || !dto?.name || !dto?.code) throw new BadRequestException('branch_id, name and code are required');
     const branch = await this.db.one<{ org_id: string }>(`SELECT org_id FROM branch WHERE id = $1 AND deleted_at IS NULL`, [dto.branch_id]);
     if (!branch) throw new NotFoundException('branch not found');
+    // DEF-S2-04: Vertical Head + Description are on the Add form and MUST be in the
+    // INSERT (they were only in the PATCH whitelist, so Add silently dropped them).
     const rows = await this.db.query(
-      `INSERT INTO vertical (org_id, branch_id, name, code, smtp_config, gateway_config, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO vertical (org_id, branch_id, name, code, smtp_config, gateway_config,
+                             head_user_id, description, is_active, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, TRUE),$10) RETURNING *`,
       [Number(branch.org_id), dto.branch_id, dto.name.trim(), dto.code.trim().toUpperCase(),
-        JSON.stringify(dto.smtp_config ?? {}), JSON.stringify(dto.gateway_config ?? {}), actorId],
+        JSON.stringify(dto.smtp_config ?? {}), JSON.stringify(dto.gateway_config ?? {}),
+        dto.head_user_id ?? null, dto.description?.trim() ? dto.description.trim() : null,
+        dto.is_active ?? null, actorId],
     );
     return rows[0];
   }
@@ -168,7 +191,7 @@ export class HierarchyService {
     return this.db.query(sql + ` ORDER BY p.name`, params);
   }
 
-  async createPipeline(dto: { vertical_id: number; name: string; code: string; owner_user_id?: number | null }, actorId: number) {
+  async createPipeline(dto: { vertical_id: number; name: string; code: string; owner_user_id?: number | null; is_active?: boolean }, actorId: number) {
     if (!dto?.vertical_id || !dto?.name || !dto?.code) throw new BadRequestException('vertical_id, name and code are required');
     const v = await this.db.one<{ org_id: string; branch_id: string }>(
       `SELECT org_id, branch_id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [dto.vertical_id],
@@ -176,10 +199,10 @@ export class HierarchyService {
     if (!v) throw new NotFoundException('vertical not found');
     return this.db.tx(async (c) => {
       const p = await c.query(
-        `INSERT INTO pipeline (org_id, branch_id, vertical_id, name, code, owner_user_id, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        `INSERT INTO pipeline (org_id, branch_id, vertical_id, name, code, owner_user_id, is_active, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, TRUE),$8) RETURNING *`,
         [Number(v.org_id), Number(v.branch_id), dto.vertical_id, dto.name.trim(), dto.code.trim().toUpperCase(),
-          dto.owner_user_id ?? null, actorId],
+          dto.owner_user_id ?? null, dto.is_active ?? null, actorId],
       );
       // every pipeline starts with a default stage set (editable afterwards)
       const defaults: Array<[string, string, boolean]> = [
@@ -374,7 +397,10 @@ export class HierarchyService {
 
   async createCampaign(dto: {
     pipeline_id: number; name: string; utm?: object; cost?: number; priority?: string;
-    distribution_config?: object; duplicacy_config?: object;
+    distribution_config?: object; duplicacy_config?: object; is_active?: boolean;
+    // DEF-S2-02 — rendered on the campaign modal since day one, stored since migration 024
+    campaign_type?: string | null; marketing_channel?: string | null;
+    start_date?: string | null; end_date?: string | null;
   }, actorId: number, scope: ResolvedScope) {
     if (!dto?.pipeline_id || !dto?.name) throw new BadRequestException('pipeline_id and name are required');
     // NeoDove configs are validated strictly on create AND update (QA DEF-2).
@@ -388,16 +414,20 @@ export class HierarchyService {
     if (!p) throw new NotFoundException('pipeline not found');
     const rows = await this.db.query(
       `INSERT INTO campaign (org_id, branch_id, vertical_id, pipeline_id, name, utm, cost, priority,
-                             distribution_config, duplicacy_config, created_by)
+                             distribution_config, duplicacy_config,
+                             campaign_type, marketing_channel, start_date, end_date, is_active, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
                COALESCE($9, '{"mode":"on_demand","batch_size":10}'::jsonb),
                COALESCE($10, '{"check_scope":"this_campaign","match_key":"phone","on_duplicate":"ignore","open_reassign_same_user":true}'::jsonb),
-               $11)
+               $11,$12,$13,$14,COALESCE($15, TRUE),$16)
        RETURNING *`,
       [Number(p.org_id), Number(p.branch_id), Number(p.vertical_id), dto.pipeline_id, dto.name.trim(),
         JSON.stringify(dto.utm ?? {}), dto.cost ?? 0, dto.priority ?? 'med',
         dist ? JSON.stringify(dist) : null,
-        dup ? JSON.stringify(dup) : null, actorId],
+        dup ? JSON.stringify(dup) : null,
+        HierarchyService.text(dto.campaign_type), HierarchyService.text(dto.marketing_channel),
+        HierarchyService.date(dto.start_date), HierarchyService.date(dto.end_date),
+        dto.is_active ?? null, actorId],
     );
     return rows[0];
   }
@@ -414,8 +444,17 @@ export class HierarchyService {
       // agent pool stays safe without touching campaign_distribution_state.
     }
     if (dto.duplicacy_config !== undefined) dto = { ...dto, duplicacy_config: validateDuplicacyConfig(dto.duplicacy_config) };
+    // DEF-S2-02: the four form fields are PATCHable like every other stored field
+    // ('' from an emptied date input -> NULL, never a 22P02).
+    for (const k of ['campaign_type', 'marketing_channel'] as const) {
+      if (dto[k] !== undefined) dto = { ...dto, [k]: HierarchyService.text(dto[k] as string | null) };
+    }
+    for (const k of ['start_date', 'end_date'] as const) {
+      if (dto[k] !== undefined) dto = { ...dto, [k]: HierarchyService.date(dto[k] as string | null) };
+    }
     return this.genericUpdate('campaign', id, dto,
-      ['name', 'utm', 'cost', 'priority', 'distribution_config', 'duplicacy_config', 'is_active']);
+      ['name', 'utm', 'cost', 'priority', 'distribution_config', 'duplicacy_config',
+        'campaign_type', 'marketing_channel', 'start_date', 'end_date', 'is_active']);
   }
 
   // ---- sources ------------------------------------------------------------
@@ -435,7 +474,7 @@ export class HierarchyService {
 
   async createSource(dto: {
     campaign_id: number; name: string; channel?: string; master_source_id?: number; config?: object;
-    cost_per_lead?: number | string | null;
+    cost_per_lead?: number | string | null; is_active?: boolean;
   }, actorId: number) {
     if (!dto?.campaign_id || !dto?.name) throw new BadRequestException('campaign_id and name are required');
     const c = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string; pipeline_id: string }>(
@@ -447,11 +486,11 @@ export class HierarchyService {
       ? 'whk_' + Math.random().toString(36).slice(2, 18) : null;
     const rows = await this.db.query(
       `INSERT INTO source (org_id, branch_id, vertical_id, pipeline_id, campaign_id, master_source_id,
-                           name, channel, webhook_token, config, cost_per_lead, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+                           name, channel, webhook_token, config, cost_per_lead, is_active, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, TRUE),$13) RETURNING *`,
       [Number(c.org_id), Number(c.branch_id), Number(c.vertical_id), Number(c.pipeline_id), dto.campaign_id,
         dto.master_source_id ?? null, dto.name.trim(), channel, webhookToken,
-        JSON.stringify(dto.config ?? {}), dto.cost_per_lead ?? 0, actorId],
+        JSON.stringify(dto.config ?? {}), dto.cost_per_lead ?? 0, dto.is_active ?? null, actorId],
     );
     return rows[0];
   }

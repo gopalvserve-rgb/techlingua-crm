@@ -30,7 +30,7 @@ function makeDb(existingPhones: string[] = []) {
     }
     if (s.startsWith('INSERT INTO import_batch')) { const b = { id: 1, file_name: params[1], total_rows: params[9] }; batches.push(b); return [b]; }
     if (s.startsWith('INSERT INTO import_job')) { jobs.push({ row_num: params[1], payload: params[2], dedupe_key: params[4] }); return []; }
-    if (s.startsWith('SELECT lead_id, outcome FROM lead_ingest_record')) return [];
+    if (/^SELECT (id, )?lead_id, outcome FROM lead_ingest_record/.test(s)) return [];
     throw new Error(`unhandled SQL: ${s.slice(0, 80)}`);
   };
   const db = {

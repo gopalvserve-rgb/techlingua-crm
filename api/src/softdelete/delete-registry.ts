@@ -189,7 +189,8 @@ const MASTER_DEPS: Record<string, DependentDef[]> = {
 for (const [type, def] of Object.entries(MASTER_TYPES)) {
   DELETE_REGISTRY[`master:${type}`] = {
     key: `master:${type}`,
-    label: def.label.replace(/s$/, ''),
+    // DEF-S2-06: an explicit singular — naive de-pluralising produced "Citie" / "Lead Statuse"
+    label: def.singular,
     table: def.table,
     nameExpr: 'name',
     permission: 'master.delete',

@@ -1,5 +1,6 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common';
 import { classify, ErrorLogService } from '../errorlog/error-log.service';
+import { isNotConfigured } from './not-configured.exception';
 
 /**
  * Global exception filter (QA DEF-3): translates Postgres constraint violations
@@ -15,8 +16,10 @@ import { classify, ErrorLogService } from '../errorlog/error-log.service';
  *
  * Error Log capture (Error Log module): every response emitted here is offered
  * to ErrorLogService — 5xx as level 'error' (with stack), 409/400 as 'warning';
- * 401/403/404 are never logged (noise). The capture is fire-and-forget and
- * wrapped fail-safe so the logger can never break or delay the response.
+ * 401/403/404 are never logged (noise), and neither is a NotConfiguredException
+ * (DEF-S2-05: an expected "waiting on the client's credentials" 503). The capture
+ * is fire-and-forget and wrapped fail-safe so the logger can never break or delay
+ * the response.
  */
 
 interface PgError {
@@ -66,6 +69,9 @@ export class PgExceptionFilter implements ExceptionFilter {
   /** Fail-safe, fire-and-forget error_log write. NEVER throws, never blocks. */
   private capture(host: ArgumentsHost, status: number, message: string, exception: unknown) {
     try {
+      // DEF-S2-05: "not configured yet" (Google Sheet credentials, SMS gateway) is a
+      // documented, expected state — a 503 the UI explains, never an Error Log row.
+      if (isNotConfigured(exception)) return;
       const level = classify(status);
       if (!level) return; // 401/403/404 and other noise stay out of the log
       const req = host.switchToHttp().getRequest();

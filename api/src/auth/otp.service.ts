@@ -1,4 +1,5 @@
-import { BadRequestException, HttpException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { NotConfiguredException } from '../common/not-configured.exception';
 import * as bcrypt from 'bcryptjs';
 import { DatabaseService } from '../database/database.service';
 import { normalizePhone } from '../common/phone.util';
@@ -82,7 +83,7 @@ export class OtpService {
     const provider = await this.sms.provider();
     if (provider.name === 'not_configured') {
       await this.audit(user?.id ?? null, 'otp_request_unavailable', { phone, reason: 'sms gateway not configured' });
-      throw new ServiceUnavailableException(SMS_NOT_CONFIGURED_MSG);
+      throw new NotConfiguredException(SMS_NOT_CONFIGURED_MSG);
     }
 
     this.lastRequestAt.set(phone, Date.now());

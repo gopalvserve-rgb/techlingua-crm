@@ -136,7 +136,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
         </div>
         <div className="sheet-act">
           <a className="qa call" href={`tel:${lead.phone}`}><Ic k="calls" />Call</a>
-          <a className="qa wa" href={`https://wa.me/${String(lead.phone).replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer"><Ic k="wa" />WhatsApp</a>
+          <a className="qa wa" href={`https://wa.me/${String(lead.whatsapp_phone || lead.phone).replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer"><Ic k="wa" />WhatsApp</a>
           <a className="qa" href={lead.email ? `mailto:${lead.email}` : undefined} onClick={(e) => { if (!lead.email) { e.preventDefault(); toast('No email on this lead', true); } }}><Ic k="mail" />Email</a>
           <button className="qa" onClick={() => setTab('notes')}><Ic k="note" />Edit</button>
         </div>
@@ -166,6 +166,12 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                 {canUpdate
                   ? <PhoneInput value={String(ed('phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, phone: v }))} />
                   : <div className="iv"><span className="mono">{lead.phone}</span></div>}
+              </div>
+              {/* DEF-S2-03 — WhatsApp Number is a stored contact field, editable here */}
+              <div className="f"><label>WhatsApp</label>
+                {canUpdate
+                  ? <PhoneInput value={String(ed('whatsapp_phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, whatsapp_phone: v }))} />
+                  : <div className="iv"><span className="mono">{lead.whatsapp_phone || '\u2014'}</span></div>}
               </div>
               <div className="f"><label>Source</label><div className="iv">{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">

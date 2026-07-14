@@ -45,6 +45,13 @@ const fmtDT = (s?: string | null) => {
   return same ? `Today ${time}` : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ` ${time}`;
 };
 
+/** A plain DATE column (campaign start/end) — no time, no timezone drift. */
+const fmtDate = (v?: string | null) => {
+  if (!v) return '\u2014';
+  const d = new Date(String(v).slice(0, 10) + 'T00:00:00');
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
 const LEAD_COLS = ['Lead', 'Course', 'Vertical · Pipeline', 'Source', 'Score', 'Owner', 'Stage', 'Next follow-up'];
 
 /* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
@@ -1122,6 +1129,11 @@ function CampaignView({ campaign, leadCount, onClose }: { campaign: any; leadCou
           ['Name', campaign.name],
           ['Path', `${campaign.branch_name ?? '\u2014'} \u203a ${campaign.vertical_name ?? '\u2014'} \u203a ${campaign.pipeline_name ?? '\u2014'}`],
           ['Status', renderCell(statusBadge(campaign.is_active !== false))],
+          ['Campaign Type', campaign.campaign_type || '\u2014'],
+          ['Marketing Channel', campaign.marketing_channel || '\u2014'],
+          ['Runs', campaign.start_date
+            ? `${fmtDate(campaign.start_date)}${campaign.end_date ? ` \u2192 ${fmtDate(campaign.end_date)}` : ' \u2192 open-ended'}`
+            : '\u2014'],
           ['Priority', PRIORITY_LABEL[campaign.priority] ?? campaign.priority ?? '\u2014'],
           ['Spend', cost ? `\u20b9${cost.toLocaleString('en-IN')}` : '\u2014'],
           ['Leads', String(leadCount)],

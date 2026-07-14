@@ -6,17 +6,17 @@ import { DatabaseService } from '../database/database.service';
  * (m_<name>(id, org_id, name, code, sort_order, is_active, meta, parent_id)).
  * The whitelist below is the only place a new master needs registering.
  */
-export const MASTER_TYPES: Record<string, { table: string; label: string; parent?: string }> = {
-  state: { table: 'state', label: 'States' },
-  city: { table: 'city', label: 'Cities', parent: 'state' },
-  source: { table: 'm_source', label: 'Sources' },
-  course: { table: 'm_course', label: 'Courses' },
-  qualification: { table: 'm_qualification', label: 'Qualifications' },
-  budget: { table: 'm_budget', label: 'Budgets' },
-  status: { table: 'm_status', label: 'Lead Statuses' },
-  tag: { table: 'm_tag', label: 'Tags' },
-  followup_type: { table: 'm_followup_type', label: 'Follow-up Types' },
-  disposition: { table: 'm_disposition', label: 'Dispositions' },
+export const MASTER_TYPES: Record<string, { table: string; label: string; singular: string; parent?: string }> = {
+  state: { table: 'state', label: 'States', singular: 'State' },
+  city: { table: 'city', label: 'Cities', singular: 'City', parent: 'state' },
+  source: { table: 'm_source', label: 'Sources', singular: 'Source' },
+  course: { table: 'm_course', label: 'Courses', singular: 'Course' },
+  qualification: { table: 'm_qualification', label: 'Qualifications', singular: 'Qualification' },
+  budget: { table: 'm_budget', label: 'Budgets', singular: 'Budget' },
+  status: { table: 'm_status', label: 'Lead Statuses', singular: 'Lead Status' },
+  tag: { table: 'm_tag', label: 'Tags', singular: 'Tag' },
+  followup_type: { table: 'm_followup_type', label: 'Follow-up Types', singular: 'Follow-up Type' },
+  disposition: { table: 'm_disposition', label: 'Dispositions', singular: 'Disposition' },
 };
 
 export interface MasterDto {
@@ -25,6 +25,8 @@ export interface MasterDto {
   sort_order?: number;
   meta?: Record<string, unknown>;
   parent_id?: number | null;
+  /** QA-10 sweep: the Add form has a Status select — Add "Inactive" must stick. */
+  is_active?: boolean;
 }
 
 @Injectable()
@@ -55,10 +57,10 @@ export class MastersService {
     const t = this.table(type);
     const org = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
     const rows = await this.db.query(
-      `INSERT INTO ${t} (org_id, name, code, sort_order, meta, parent_id, created_by)
-       VALUES ($1,$2,$3,COALESCE($4,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM ${t})),$5,$6,$7) RETURNING *`,
+      `INSERT INTO ${t} (org_id, name, code, sort_order, meta, parent_id, is_active, created_by)
+       VALUES ($1,$2,$3,COALESCE($4,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM ${t})),$5,$6,COALESCE($7, TRUE),$8) RETURNING *`,
       [Number(org!.id), dto.name.trim(), dto.code ?? null, dto.sort_order ?? null,
-        JSON.stringify(dto.meta ?? {}), dto.parent_id ?? null, actorId],
+        JSON.stringify(dto.meta ?? {}), dto.parent_id ?? null, dto.is_active ?? null, actorId],
     );
     return rows[0];
   }

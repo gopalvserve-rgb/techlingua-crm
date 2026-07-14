@@ -176,7 +176,7 @@ export function makeHandoutDb(init: Partial<FakeHandoutState> = {}) {
       if (st.items.some((i) => Number(i.lead_id) === Number(params[1]))) {
         throw new Error('duplicate key value violates unique constraint "lead_handout_item_lead_id_key"');
       }
-      st.items.push({ id: ++iSeq, handout_id: Number(params[0]), lead_id: Number(params[1]), position: Number(params[2]), actioned_at: null, disposition_id: null });
+      st.items.push({ id: ++iSeq, handout_id: Number(params[0]), lead_id: Number(params[1]), position: Number(params[2]), actioned_at: null, disposition_id: null, follow_up_id: null });
       return [];
     }
     if (s.startsWith('INSERT INTO lead_activity')) {
@@ -269,7 +269,7 @@ export function makeHandoutDb(init: Partial<FakeHandoutState> = {}) {
       const l = st.leads.find((x) => Number(x.id) === Number(i.lead_id))!;
       if (l.deleted_at) return [];
       return [{
-        id: i.id, actioned_at: i.actioned_at, position: i.position,
+        id: i.id, actioned_at: i.actioned_at, position: i.position, follow_up_id: i.follow_up_id ?? null,
         handout_id: h.id, user_id: h.user_id, size: h.size, handout_status: h.status,
         lead_id: l.id, org_id: ORG, branch_id: BRANCH, pipeline_id: PIPELINE,
         owner_id: l.owner_id, stage_id: l.stage_id, status_id: l.status_id,
@@ -299,6 +299,17 @@ export function makeHandoutDb(init: Partial<FakeHandoutState> = {}) {
     if (s.startsWith('UPDATE lead_handout_item SET actioned_at')) {
       const i = st.items.find((x) => Number(x.id) === Number(params[0]));
       if (i) { i.actioned_at = new Date().toISOString(); i.disposition_id = params[1] ?? null; }
+      return [];
+    }
+    // DEF-S2-07 — the follow-up this batch already created for the lead
+    if (s.startsWith('SELECT id FROM follow_up WHERE id')) {
+      const f = st.followups.find((x: any) => Number(x.id) === Number(params[0])
+        && x.status === 'pending' && !x.deleted_at);
+      return f ? [{ id: f.id }] : [];
+    }
+    if (s.startsWith('UPDATE lead_handout_item SET follow_up_id')) {
+      const i = st.items.find((x) => Number(x.id) === Number(params[0]));
+      if (i) i.follow_up_id = Number(params[1]);
       return [];
     }
     if (s.startsWith('UPDATE lead_handout_item SET disposition_id')) {
@@ -386,7 +397,7 @@ export function makeHandout(
   } = {},
 ) {
   const followups = opts.followups
-    ?? ({ create: async () => ({ id: 1 }) } as unknown as FollowUpsService);
+    ?? ({ create: async () => ({ id: 1 }), update: async () => ({ id: 1 }) } as unknown as FollowUpsService);
   return new HandoutService(
     db, opts.resolver ?? allResolver, makeEnforcer(opts.denyScope, opts.denyStrictScope), followups,
   );

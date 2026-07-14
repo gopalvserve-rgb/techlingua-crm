@@ -19,6 +19,9 @@ export const LEAD_IMPORT_FIELDS: FieldDef[] = [
   { key: 'phone', label: 'Mobile Number', required: true, aliases: ['phone', 'mobile', 'mobileno', 'mobilenumber', 'phoneno', 'phonenumber', 'contact', 'contactno', 'whatsapp', 'cell'] },
   { key: 'email', label: 'Email', aliases: ['email', 'emailid', 'emailaddress', 'mail'] },
   { key: 'alt_phone', label: 'Alternate Phone', aliases: ['altphone', 'alternatephone', 'alternatemobile', 'phone2', 'secondaryphone'] },
+  // NB: bare 'whatsapp' stays an alias of `phone` (a sheet with only a WhatsApp
+  // column is a phone column). An explicit "WhatsApp Number" maps here.
+  { key: 'whatsapp_phone', label: 'WhatsApp Number', aliases: ['whatsappnumber', 'whatsappno', 'whatsappphone', 'wanumber', 'wano'] },
   { key: 'state', label: 'State', aliases: ['state'], hint: 'State master' },
   { key: 'city', label: 'City', aliases: ['city', 'town'], hint: 'City master' },
   { key: 'course', label: 'Course', aliases: ['course', 'coursename', 'program', 'programme', 'interestedin'], hint: 'Course master' },

@@ -1,4 +1,5 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { NotConfiguredException } from '../common/not-configured.exception';
 import { DatabaseService } from '../database/database.service';
 
 /**
@@ -23,7 +24,7 @@ export const SMS_NOT_CONFIGURED_MSG = 'SMS gateway not configured — add SMS AP
 class NotConfiguredProvider implements SmsProvider {
   readonly name = 'not_configured';
   async send(): Promise<void> {
-    throw new ServiceUnavailableException(SMS_NOT_CONFIGURED_MSG);
+    throw new NotConfiguredException(SMS_NOT_CONFIGURED_MSG);
   }
 }
 

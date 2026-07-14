@@ -3,6 +3,8 @@ import {
 } from './error-log.service';
 import { redact } from '../common/redact';
 import { DatabaseService } from '../database/database.service';
+import { PgExceptionFilter } from '../common/pg-exception.filter';
+import { isNotConfigured, NotConfiguredException } from '../common/not-configured.exception';
 
 describe('error-log classify (capture policy)', () => {
   it('logs every 5xx as error', () => {
@@ -121,5 +123,45 @@ describe('error-log capture fail-safety', () => {
     expect((params[6] as string).length).toBeLessThanOrEqual(MAX_STACK + 20); // stack truncated
     expect(params[11]).toContain('[redacted]');                 // meta redacted
     expect(params[11]).not.toContain('nope');
+  });
+});
+
+/**
+ * DEF-S2-05 — "Pull now" on a Google Sheet channel with no credentials yet is a
+ * documented, expected 503. It must NOT put a red `level=error` row in the client's
+ * Error Log every time he clicks it. Same for an OTP before the SMS gateway exists.
+ */
+describe('DEF-S2-05 — an expected "not configured" 503 never reaches the Error Log', () => {
+  const host = (path: string) => ({
+    switchToHttp: () => ({
+      getResponse: () => ({ status: () => ({ json: (b: unknown) => b }) }),
+      getRequest: () => ({ path, method: 'POST', body: {}, headers: {} }),
+    }),
+  } as any);
+
+  const filterWith = () => {
+    const captured: any[] = [];
+    const log = { capture: async (e: any) => { captured.push(e); } } as unknown as ErrorLogService;
+    return { filter: new PgExceptionFilter(log), captured };
+  };
+
+  it('a NotConfiguredException still answers 503 but writes NO error_log row', () => {
+    const { filter, captured } = filterWith();
+    filter.catch(new NotConfiguredException('Not configured — still needed: Spreadsheet ID'),
+      host('/api/channels/3/poll'));
+    expect(captured).toHaveLength(0);
+  });
+
+  it('a REAL 500 on the same path is still captured as level=error', () => {
+    const { filter, captured } = filterWith();
+    filter.catch(new Error('boom'), host('/api/channels/3/poll'));
+    expect(captured).toHaveLength(1);
+    expect(captured[0].level).toBe('error');
+  });
+
+  it('the exception is still a 503 for the caller (clean degradation, not a swallow)', () => {
+    expect(new NotConfiguredException('x').getStatus()).toBe(503);
+    expect(isNotConfigured(new NotConfiguredException('x'))).toBe(true);
+    expect(isNotConfigured(new Error('x'))).toBe(false);
   });
 });

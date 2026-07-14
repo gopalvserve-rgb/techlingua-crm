@@ -134,9 +134,19 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
     if (s.startsWith('SELECT field_key FROM custom_field_def')) return [{ field_key: 'batch' }, { field_key: 'ref' }];
 
     // ---- idempotency ledger ----------------------------------------------
-    if (s.startsWith('SELECT lead_id, outcome FROM lead_ingest_record')) {
+    if (/^SELECT (id, )?lead_id, outcome FROM lead_ingest_record/.test(s)) {
       const hit = st.ledger.find((l) => Number(l.source_id) === Number(params[0]) && l.dedupe_key === params[1]);
       return hit ? [hit] : [];
+    }
+    // DEF-S2-01 — "is the lead this ledger row points at still alive?"
+    if (s.startsWith('SELECT id FROM lead WHERE id')) {
+      return st.leads.filter((l) => Number(l.id) === Number(params[0])
+        && (!s.includes('deleted_at IS NULL') || !l.deleted_at)).map((l) => ({ id: l.id }));
+    }
+    if (s.startsWith('DELETE FROM lead_ingest_record WHERE id')) {
+      const i = st.ledger.findIndex((l) => Number(l.id) === Number(params[0]));
+      if (i >= 0) st.ledger.splice(i, 1);
+      return [];
     }
 
     // ---- duplicate lookup --------------------------------------------------

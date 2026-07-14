@@ -62,7 +62,7 @@ export interface LeadFilters {
 }
 
 export interface CreateLeadDto {
-  full_name: string; phone: string; email?: string; alt_phone?: string;
+  full_name: string; phone: string; email?: string; alt_phone?: string; whatsapp_phone?: string;
   campaign_id: number; source_id: number;
   owner_id?: number; stage_id?: number; status_id?: number;
   priority?: 'low' | 'med' | 'high'; temperature?: 'hot' | 'warm' | 'cold'; score?: number;
@@ -71,13 +71,13 @@ export interface CreateLeadDto {
 }
 
 const LEAD_UPDATABLE = [
-  'full_name', 'phone', 'email', 'alt_phone', 'priority', 'temperature', 'score',
+  'full_name', 'phone', 'email', 'alt_phone', 'whatsapp_phone', 'priority', 'temperature', 'score',
   'state_id', 'city_id', 'course_id', 'qualification_id', 'budget_id',
   'next_follow_up_at', 'custom_fields', 'is_active',
 ] as const;
 
 const LEAD_SELECT = `
-  SELECT l.id, l.full_name, l.phone, l.email, l.alt_phone, l.priority, l.temperature, l.score,
+  SELECT l.id, l.full_name, l.phone, l.email, l.alt_phone, l.whatsapp_phone, l.priority, l.temperature, l.score,
          l.branch_id, l.vertical_id, l.pipeline_id, l.campaign_id, l.source_id,
          l.stage_id, l.status_id, l.owner_id, l.team_id,
          l.next_follow_up_at, l.last_activity_at, l.is_duplicate, l.custom_fields,
@@ -210,6 +210,7 @@ export class LeadsService {
 
     const payload: IngestPayload = {
       full_name: dto.full_name, phone: dto.phone, email: dto.email, alt_phone: dto.alt_phone,
+      whatsapp_phone: dto.whatsapp_phone,
       state: dto.state_id, city: dto.city_id, course: dto.course_id,
       qualification: dto.qualification_id, budget: dto.budget_id,
       status: dto.status_id, stage: dto.stage_id,
@@ -279,7 +280,9 @@ export class LeadsService {
       if (dto[col] === undefined) continue;
       let val = col === 'custom_fields' ? JSON.stringify(dto[col] ?? {}) : dto[col];
       // DEF-QA4-02: phones are normalised on write everywhere, not only on create
-      if ((col === 'phone' || col === 'alt_phone') && val != null) val = normalizePhone(String(val));
+      if ((col === 'phone' || col === 'alt_phone' || col === 'whatsapp_phone') && val != null) {
+        val = String(val).trim() === '' ? null : normalizePhone(String(val));
+      }
       if (col === 'priority' && !['low', 'med', 'high'].includes(String(val))) throw new BadRequestException('invalid priority');
       if (col === 'temperature' && val != null && !['hot', 'warm', 'cold'].includes(String(val))) throw new BadRequestException('invalid temperature');
       set(col, val as unknown);

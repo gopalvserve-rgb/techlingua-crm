@@ -268,6 +268,62 @@ describe('HandoutService — the working queue', () => {
     });
   });
 
+  // DEF-S2-07 (QA-10) — re-actioning the same lead must RESCHEDULE its follow-up
+  it('DEF-S2-07: re-actioning a lead reschedules its follow-up instead of creating a second one', async () => {
+    const { db, st } = makeHandoutDb({ leads: poolLeads(2) });
+    let fSeq = 0;
+    const create = jest.fn(async (dto: any) => {
+      const row = { id: ++fSeq, lead_id: dto.lead_id, status: 'pending', scheduled_at: dto.scheduled_at, deleted_at: null };
+      st.followups.push(row);
+      return row;
+    });
+    const update = jest.fn(async (id: number, dto: any) => {
+      const row = st.followups.find((f: any) => Number(f.id) === Number(id));
+      if (row) Object.assign(row, dto);
+      return row;
+    });
+    const svc = makeHandout(db, { followups: { create, update } as unknown as FollowUpsService });
+    const out = await svc.pull(CAMPAIGN_ID, AGENT_A, ALL_SCOPE, 2);
+    const leadId = out.leads[0].id;
+
+    await svc.action(out.handout!.id, {
+      lead_id: leadId, disposition_id: 81, note: 'Call back tomorrow',
+      next_follow_up_at: '2026-07-15T10:00:00Z',
+    }, AGENT_A, ALL_SCOPE);
+    // the agent re-opens the same lead in the batch and changes the date
+    const cur = await svc.action(out.handout!.id, {
+      lead_id: leadId, disposition_id: 82, note: 'Actually next week',
+      next_follow_up_at: '2026-07-20T10:00:00Z',
+    }, AGENT_A, ALL_SCOPE);
+
+    expect(create).toHaveBeenCalledTimes(1);              // exactly ONE follow-up ever created
+    expect(update).toHaveBeenCalledTimes(1);              // the second action rescheduled it
+    expect(update.mock.calls[0][1]).toMatchObject({ scheduled_at: '2026-07-20T10:00:00Z' });
+    expect(st.followups).toHaveLength(1);
+    expect(st.followups[0].scheduled_at).toBe('2026-07-20T10:00:00Z');
+    expect(cur.handout.actioned_count).toBe(1);          // still not double-counted
+  });
+
+  it('DEF-S2-07: if the agent COMPLETED the follow-up, a re-action creates a fresh one', async () => {
+    const { db, st } = makeHandoutDb({ leads: poolLeads(2) });
+    let fSeq = 0;
+    const create = jest.fn(async (dto: any) => {
+      const row = { id: ++fSeq, lead_id: dto.lead_id, status: 'pending', scheduled_at: dto.scheduled_at, deleted_at: null };
+      st.followups.push(row);
+      return row;
+    });
+    const svc = makeHandout(db, { followups: { create, update: jest.fn() } as unknown as FollowUpsService });
+    const out = await svc.pull(CAMPAIGN_ID, AGENT_A, ALL_SCOPE, 2);
+    const leadId = out.leads[0].id;
+
+    await svc.action(out.handout!.id, { lead_id: leadId, next_follow_up_at: '2026-07-15T10:00:00Z' }, AGENT_A, ALL_SCOPE);
+    st.followups[0].status = 'done';                     // the agent ticked it off
+    await svc.action(out.handout!.id, { lead_id: leadId, next_follow_up_at: '2026-07-22T10:00:00Z' }, AGENT_A, ALL_SCOPE);
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(st.followups).toHaveLength(2);
+  });
+
   it('rejects a lead that is not in the batch, and one that was reassigned away', async () => {
     const { db, st } = makeHandoutDb({ leads: poolLeads(12) });
     const svc = makeHandout(db);

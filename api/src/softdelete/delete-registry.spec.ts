@@ -93,4 +93,20 @@ describe('DELETE_REGISTRY coverage', () => {
     expect(DELETE_REGISTRY['master:course'].scopedKind).toBe('master');
     expect(DELETE_REGISTRY.role.scopedKind).toBeUndefined();
   });
+
+  // DEF-S2-06 — the Deleted Items screen said "Citie" and "Lead Statuse"
+  it('master entity labels are properly singular (no naive de-pluralising)', () => {
+    expect(DELETE_REGISTRY['master:city'].label).toBe('City');
+    expect(DELETE_REGISTRY['master:status'].label).toBe('Lead Status');
+    expect(DELETE_REGISTRY['master:course'].label).toBe('Course');
+    expect(DELETE_REGISTRY['master:followup_type'].label).toBe('Follow-up Type');
+    // the two the client would have seen: "Citie" (Cities) and "Lead Statuse" (Lead Statuses)
+    for (const key of Object.keys(DELETE_REGISTRY).filter((k) => k.startsWith('master:'))) {
+      const label = DELETE_REGISTRY[key].label;
+      expect(label).not.toMatch(/ie$/);        // Citie
+      expect(label).not.toMatch(/use$/);       // Statuse
+      expect(label.trim()).toBe(label);
+      expect(label.length).toBeGreaterThan(0);
+    }
+  });
 });

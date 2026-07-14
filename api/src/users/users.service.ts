@@ -51,6 +51,8 @@ export interface CreateUserDto {
     role_id: number; branch_id?: number | null; vertical_id?: number | null;
     pipeline_id?: number | null; campaign_id?: number | null; team_id?: number | null;
   }>;
+  /** QA-10 sweep: the Add User form offers a Status — honour it on create too. */
+  status?: 'active' | 'disabled';
 }
 
 @Injectable()
@@ -151,12 +153,16 @@ export class UsersService {
       if (dup) throw new ConflictException(`Email already exists: ${email}`);
     }
     const hash = dto.password ? await bcrypt.hash(dto.password, 10) : null;
+    if (dto.status != null && !['active', 'disabled'].includes(dto.status)) {
+      throw new BadRequestException("invalid status — expected 'active' or 'disabled'");
+    }
+    const status = dto.status ?? null;
 
     return this.db.tx(async (c) => {
       const u = await c.query(
-        `INSERT INTO "user" (org_id, name, email, phone, password_hash, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, name, email, phone, status`,
-        [org, dto.name.trim(), email, phone, hash, actorId],
+        `INSERT INTO "user" (org_id, name, email, phone, password_hash, status, created_by)
+         VALUES ($1,$2,$3,$4,$5,COALESCE($6, 'active'),$7) RETURNING id, name, email, phone, status`,
+        [org, dto.name.trim(), email, phone, hash, status, actorId],
       );
       const userId = u.rows[0].id;
       for (const a of dto.assignments ?? []) {
