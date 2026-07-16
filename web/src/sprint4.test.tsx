@@ -95,6 +95,8 @@ const SETTINGS = {
     { key: 'business_hours', label: 'Business hours', blurb: 'hours', editor: 'business_hours' },
     { key: 'notification_matrix', label: 'Notification matrix', blurb: 'matrix', editor: 'matrix' },
     { key: 'numbering_series', label: 'Numbering series', blurb: 'numbers', editor: 'numbering' },
+    // Sprint 5 — the approval policy card
+    { key: 'enrolment_approvals', label: 'Enrolment approvals', blurb: 'optional approval per step', editor: 'approvals' },
     {
       key: 'lead_score_config', label: 'Lead score bands', blurb: 'bands', readonly: true,
       managedOn: 'Marketing & Lead Management › Lead Scoring',
@@ -111,7 +113,10 @@ const SETTINGS = {
       },
     },
     notification_matrix: { escalation: { in_app: true, email: true, sms: false, whatsapp: false } },
-    numbering_series: { lead: { prefix: 'LD-', next: 1 } },
+    // Sprint 5: `numbering_series` is NO LONGER an app_setting value — migration 029
+    // moved it to the `number_series` table and deleted the row. The card reads
+    // /numbering (see NUMBERING below), so there is deliberately nothing here.
+    numbering_series: {},
     lead_score_config: { hot: 70 },
   },
   providers: [
@@ -173,7 +178,38 @@ vi.mock('./api', () => ({
   },
 }));
 
+/** Sprint 5 — the numbering card reads the TABLE, not app_setting. */
+const NUMBERING = {
+  kinds: [
+    { key: 'quotation', label: 'Quotations' }, { key: 'enrolment', label: 'Enrolments' },
+    { key: 'receipt', label: 'Fee receipts' }, { key: 'invoice', label: 'Invoices (Phase 3)' },
+  ],
+  series: [
+    {
+      id: 3, kind: 'quotation', label: 'Quotations', branch_id: null, vertical_id: null,
+      branch_name: null, vertical_name: null, prefix: 'QT-', suffix: '', next_number: 7,
+      padding: 4, reset_period: 'yearly', period_token: '2026', preview: 'QT-2026/0007',
+    },
+    {
+      id: 4, kind: 'receipt', label: 'Fee receipts', branch_id: 9, vertical_id: null,
+      branch_name: 'Vikaspuri', vertical_name: null, prefix: 'VKP/RCP-', suffix: '', next_number: 1,
+      padding: 4, reset_period: 'yearly', period_token: '2026', preview: 'VKP/RCP-2026/0001',
+    },
+  ],
+};
+
+/** Sprint 5 — DEFAULT OFF. §5 says "optional"; the default invents no bureaucracy. */
+const APPROVAL_POLICY = {
+  enabled: false,
+  steps: [
+    { key: 'closure', label: 'Enrolment closure', enabled: true, roles: ['Branch Manager', 'Vertical Manager'] },
+    { key: 'discount', label: 'Discount above threshold', enabled: false, roles: ['Branch Manager'], discount_pct_over: 10 },
+  ],
+};
+
 const routeGet = (path: string) => {
+  if (path.startsWith('/numbering')) return Promise.resolve(NUMBERING);
+  if (path.startsWith('/enrolments/approval-policy')) return Promise.resolve(APPROVAL_POLICY);
   if (path.startsWith('/templates/catalog')) return Promise.resolve(CATALOG);
   if (path.startsWith('/templates')) return Promise.resolve([TEMPLATE, EMAIL_TEMPLATE]);
   if (path.startsWith('/journeys/triggers')) return Promise.resolve(TRIGGERS);
@@ -648,15 +684,53 @@ describe('Administration › Settings', () => {
     expect((control('Hot at score ≥') as HTMLInputElement).disabled).toBe(true);
   });
 
-  it('NUMBERING SERIES renders its JSON and refuses to save nonsense', async () => {
+  /**
+   * SPRINT 5 CHANGED THIS DELIBERATELY.
+   *
+   * Numbering used to be a JSON textarea over `app_setting.numbering_series`. Sprint 5 is
+   * the first thing that ALLOCATES from it, and allocation needs atomicity and a row per
+   * branch / vertical — so the truth moved to the `number_series` TABLE and this card
+   * became a real editor reading `/numbering`. Migration 029 carries the old JSON across
+   * and DELETES the app_setting row, because two places to edit one number is how you get
+   * two different numbers.
+   *
+   * The old assertion (a textarea holding 'LD-') is therefore GONE ON PURPOSE, and these
+   * replace it. See docs/dev/07-sprint5-implementation.md.
+   */
+  it('NUMBERING SERIES is a real editor over the number_series table, not a JSON blob', async () => {
     render(<Settings />);
     await screen.findByText('Numbering series');
-    const ta = screen.getByLabelText('numbering_series') as HTMLTextAreaElement;
-    expect(ta.value).toContain('LD-');
-    fireEvent.change(ta, { target: { value: '{not json' } });
-    const card = screen.getByText('Numbering series').closest('.card')!;
-    fireEvent.click(card.querySelector('.btn.primary') as HTMLButtonElement);
-    expect(await screen.findByText('That is not valid JSON.')).toBeTruthy();
+    // no raw-JSON escape hatch survives
+    expect(screen.queryByLabelText('numbering_series')).toBeNull();
+    // it reads the TABLE, not app_setting
+    expect(get).toHaveBeenCalledWith('/numbering');
+    expect(await screen.findByText('Quotations')).toBeTruthy();
+    expect(screen.getByText('QT-2026/0007')).toBeTruthy();
+    expect(screen.getByText('Org-wide (fallback)')).toBeTruthy();
+  });
+
+  it('NUMBERING SERIES saves to /numbering — and never to /settings/numbering_series', async () => {
+    render(<Settings />);
+    await screen.findByText('Numbering series');
+    // two series in the fixture (the org-wide quotation one and a branch receipt
+    // override) — edit the first, which is the org-wide fallback.
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0]);
+    const prefix = await screen.findByLabelText('Prefix');
+    fireEvent.change(prefix, { target: { value: 'QUO-' } });
+    fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLButtonElement);
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/numbering', expect.objectContaining({ prefix: 'QUO-' })));
     expect(post).not.toHaveBeenCalledWith('/settings/numbering_series', expect.anything());
+  });
+
+  it('ENROLMENT APPROVALS is OFF by default, and turning it on is one settings write', async () => {
+    render(<Settings />);
+    await screen.findByText('Enrolment approvals');
+    const sel = screen.getByLabelText('Approvals') as HTMLSelectElement;
+    expect(sel.value).toBe('off');                       // §5 says optional; the default invents no bureaucracy
+    fireEvent.change(sel, { target: { value: 'on' } });
+    const card = screen.getByText('Enrolment approvals').closest('.card')!;
+    fireEvent.click(card.querySelector('.btn.primary') as HTMLButtonElement);
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/enrolments/approval-policy',
+      expect.objectContaining({ enabled: true })));
   });
 });

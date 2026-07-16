@@ -406,7 +406,12 @@ SAVERS['admin.pipelines'] = SAVERS['leads.pipelinemaster'];
 
 /* ------------------------------ inputs ------------------------------ */
 
-function LeadLookup({ value, onPick }: { value: string; onPick: (id: number | undefined, label: string) => void }) {
+export function LeadLookup({ value, onPick, inputId }: {
+  value: string; onPick: (id: number | undefined, label: string) => void;
+  /** so a caller's <label htmlFor> can point at the real input — a label with nothing
+   *  associated is orphaned text to a screen reader (and to the test harness). */
+  inputId?: string;
+}) {
   const [q, setQ] = useState(value);
   const [opts, setOpts] = useState<Array<{ id: number; full_name: string; phone: string }>>([]);
   useEffect(() => {
@@ -419,7 +424,7 @@ function LeadLookup({ value, onPick }: { value: string; onPick: (id: number | un
   }, [q]);
   return (
     <div>
-      <input className="ainp" placeholder="Search lead by name / phone…" value={q}
+      <input id={inputId} className="ainp" placeholder="Search lead by name / phone…" value={q}
         onChange={(e) => { setQ(e.target.value); onPick(undefined, e.target.value); }} />
       {opts.length > 0 && (
         <div className="card" style={{ marginTop: 4, maxHeight: 150, overflowY: 'auto' }}>

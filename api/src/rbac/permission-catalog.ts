@@ -49,4 +49,17 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // 'send' = despatch a message (a counsellor may message THEIR lead).
   // 'manage' = the opt-out list + retrying a failed send (admin / marketing).
   { module: 'message', label: 'Messages & Send Log', actions: ['read', 'send', 'manage'] },
+  // Sprint 5 (migration 029) — conversion & money-lite.
+  // 'send' on a quotation is distinct from 'message.send': despatching a PRICED OFFER is
+  // a commercial act, and a client may well want a telecaller who can message a lead but
+  // not quote one. Two permissions, because they are two decisions.
+  { module: 'quotation', label: 'Quotations', actions: ['read', 'create', 'update', 'delete', 'send'] },
+  // 'approve' is deliberately NOT granted to Counsellor/Team Leader in migration 029 —
+  // an approval a counsellor can grant himself is not an approval.
+  { module: 'enrolment', label: 'Enrolments (Sale Closure)', actions: ['read', 'create', 'update', 'delete', 'approve'] },
+  // 'collect' = take money at the desk. 'delete' = void a receipt, which is an admin act
+  // (it is a money record, not a typo in a note). Refunds are Phase 3 and are neither.
+  { module: 'fee', label: 'Fee Collection (lite)', actions: ['read', 'collect', 'delete'] },
+  { module: 'target', label: 'Monthly Targets', actions: ['read', 'manage'] },
+  { module: 'performance', label: 'Counsellor Performance', actions: ['read'] },
 ];

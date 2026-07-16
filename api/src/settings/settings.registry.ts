@@ -39,7 +39,7 @@ export interface SettingGroup {
   icon?: string;
   fields?: SettingField[];     // flat fields; groups with a bespoke editor omit them
   /** rendered by a purpose-built editor in the UI rather than the generic field list */
-  editor?: 'business_hours' | 'holidays' | 'numbering' | 'matrix' | 'channels';
+  editor?: 'business_hours' | 'holidays' | 'numbering' | 'matrix' | 'channels' | 'approvals';
   readonly?: boolean;
   /** where the client edits it instead, when it lives on another screen */
   managedOn?: string;
@@ -102,7 +102,16 @@ export const SETTING_GROUPS: SettingGroup[] = [
   },
   {
     key: 'numbering_series', label: 'Numbering series', icon: 'doc', editor: 'numbering',
-    blurb: 'Prefix and next number for leads, quotations, invoices and receipts. Used from Sprint 5.',
+    blurb: 'Prefix and next number for quotations, enrolments and fee receipts (and invoices, which Phase 3 uses). '
+      + 'A branch or vertical series overrides the org-wide one — most specific wins, the same rule the SLA policies use.',
+  },
+  {
+    // Sprint 5. Its value lives in `app_setting.enrolment_approvals`, but the card is a
+    // purpose-built editor: this is the one switch that changes how every sale closes,
+    // and a JSON textarea is not the place for it.
+    key: 'enrolment_approvals', label: 'Enrolment approvals', icon: 'check', editor: 'approvals',
+    blurb: 'Optional approval per step on sale closure. OFF by default — a counsellor closes a sale and it is closed. '
+      + 'Switched on, the same closure goes to an approval queue and cannot take a fee or count towards a target until approved.',
   },
   {
     key: 'handout_guard', label: 'Start Calling guardrail', icon: 'target',

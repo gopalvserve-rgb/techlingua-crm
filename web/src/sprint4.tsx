@@ -14,6 +14,7 @@ import { api } from './api';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { ApprovalPolicyCard, NumberingCard } from './sprint5';
 import { ensureFbSdk, launchEmbeddedSignup } from './whatsappsignup';
 
 /* ============================== types =============================== */
@@ -1358,6 +1359,10 @@ function HoursCard({ value, onSaved }: { value: Record<string, any>; onSaved: ()
 function MatrixCard({ value, onSaved }: { value: Record<string, any>; onSaved: () => void }) {
   const EVENTS = [['reminder', 'Follow-up reminder'], ['escalation', 'Overdue escalation'],
     ['sla_breach', 'SLA breach'], ['assignment', 'Lead assigned'], ['handout', 'Leads handed out'],
+    // Sprint 5 — only relevant when enrolment approvals are switched ON, but the row is
+    // always shown: a matrix that hides an event until some other screen is configured is
+    // how an admin discovers a notification he cannot find the switch for.
+    ['approval', 'Enrolment awaiting approval'],
     ['system', 'System / journeys']];
   const CH = ['in_app', 'email', 'sms', 'whatsapp'];
   const [m, setM] = useState<Record<string, Record<string, boolean>>>({ ...(value ?? {}) });
@@ -1521,7 +1526,12 @@ export function Settings() {
         const value = data?.values?.[g.key] ?? {};
         if (g.editor === 'business_hours') return <HoursCard key={g.key} value={value} onSaved={reload} />;
         if (g.editor === 'matrix') return <MatrixCard key={g.key} value={value} onSaved={reload} />;
-        if (g.editor === 'holidays' || g.editor === 'numbering') {
+        // Sprint 5: numbering is no longer a JSON blob in `app_setting` — it is the
+        // `number_series` TABLE that quotations/enrolments/receipts atomically allocate
+        // from, per branch and per vertical. It gets a real editor, and it is the ONLY
+        // place it is edited (migration 029 deleted the old row).
+        if (g.editor === 'numbering') return <NumberingCard key={g.key} />;
+        if (g.editor === 'holidays') {
           return (
             <div className="card" key={g.key}>
               <div className="card-head"><h3><Ic k={g.icon ?? 'cfg'} />{g.label}</h3></div>
@@ -1532,6 +1542,9 @@ export function Settings() {
             </div>
           );
         }
+        // Sprint 5: the approval policy is a real editor, not a JSON blob — it is the one
+        // switch that changes how every sale closes.
+        if (g.editor === 'approvals') return <ApprovalPolicyCard key={g.key} />;
         return <GroupCard key={g.key} group={g} value={value} onSaved={reload} />;
       })}
 

@@ -21,7 +21,10 @@ import { MessagingService } from '../messaging/messaging.service';
  * Adding a channel = one entry in CHANNELS. No caller changes.
  */
 
-export type NotificationType = 'reminder' | 'escalation' | 'assignment' | 'sla_breach' | 'handout' | 'system';
+// Sprint 5 adds 'approval' — an enrolment waiting on a manager. It is a first-class
+// type (not 'system') precisely so the notification MATRIX can route it: a client who
+// switches approvals on will want the approver emailed, not just belled.
+export type NotificationType = 'reminder' | 'escalation' | 'assignment' | 'sla_breach' | 'handout' | 'approval' | 'system';
 
 export interface NotifyMessage {
   /** the user who must know */
@@ -140,6 +143,9 @@ export class NotifierService {
       sla_breach: { in_app: true, email: true, sms: false, whatsapp: false },
       assignment: { in_app: true, email: false, sms: false, whatsapp: false },
       handout: { in_app: true, email: false, sms: false, whatsapp: false },
+      // an approval that sits unseen blocks a SALE, so email is on by default —
+      // the same reasoning as escalation. (It stays inert until SMTP exists.)
+      approval: { in_app: true, email: true, sms: false, whatsapp: false },
       system: { in_app: true, email: false, sms: false, whatsapp: false },
     }) as unknown as Promise<Record<string, Record<string, boolean>>>;
   }

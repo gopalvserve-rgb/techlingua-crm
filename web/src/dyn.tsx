@@ -27,6 +27,10 @@ import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
   BulkSms, BulkWhatsApp, EmailCampaigns, Journeys, Settings, Templates,
 } from './sprint4';
+import {
+  CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure,
+} from './sprint5';
+import { fmtINR } from './money';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -452,9 +456,58 @@ function QuickStats() {
         { lab: 'Follow-ups scheduled', val: String(s?.followups_scheduled ?? 0), ic: 'cal' },
       ]} />
 
-      <HBars title="This month vs target" rows={[]}
-        empty="Targets are set under Performance › Monthly Targets — progress bars appear once targets exist" />
+      <TargetBars />
     </>
+  );
+}
+
+/**
+ * "THIS MONTH VS TARGET" — the Sprint-3 widget's empty state, now wired (Sprint 5).
+ *
+ * PER ROLE, and per role it means something different, which is the whole point:
+ * a counsellor sees HIS OWN target; anyone else sees every target in their scope. That
+ * split is decided server-side by the ScopeResolver (`/performance/targets/dashboard`),
+ * never by a role name here — custom roles are first-class.
+ *
+ * With no targets set it renders EXACTLY the empty state it rendered before, pointing at
+ * the screen that fixes it. No targets is not an error, and it is never a fake bar.
+ */
+function TargetBars() {
+  const { can } = useAuth();
+  const { data } = useFetch<Array<{
+    label: string; scope_type: string;
+    enrolments: { actual: number; target: number; pct: number };
+    revenue: { actual_minor: number; target_minor: number; pct: number };
+  }>>(can('target.read') ? '/performance/targets/dashboard' : null);
+
+  // no permission = no widget at all, not an empty one that hints at data he cannot have
+  if (!can('target.read')) return null;
+
+  const rows = (data ?? []).flatMap((t) => {
+    const out: Array<{ label: string; val: string; pct: number; color: string }> = [];
+    const colour = (p: number) => (p >= 100 ? 'var(--green)' : p >= 60 ? 'var(--indigo)' : p >= 30 ? 'var(--amber)' : 'var(--rose)');
+    if (t.enrolments.target > 0) {
+      out.push({
+        label: `${t.label} — admissions ${t.enrolments.actual}/${t.enrolments.target}`,
+        val: `${t.enrolments.pct}%`,
+        pct: Math.min(100, t.enrolments.pct),
+        color: colour(t.enrolments.pct),
+      });
+    }
+    if (t.revenue.target_minor > 0) {
+      out.push({
+        label: `${t.label} — revenue ${fmtINR(t.revenue.actual_minor)}/${fmtINR(t.revenue.target_minor)}`,
+        val: `${t.revenue.pct}%`,
+        pct: Math.min(100, t.revenue.pct),
+        color: colour(t.revenue.pct),
+      });
+    }
+    return out;
+  });
+
+  return (
+    <HBars title="This month vs target" rows={rows}
+      empty="Targets are set under Performance › Monthly Targets — progress bars appear once targets exist" />
   );
 }
 
@@ -2349,6 +2402,12 @@ export const DYN: Record<string, () => JSX.Element> = {
   bulkSms: BulkSms,
   emailCampaigns: EmailCampaigns,
   settings: Settings,
+  // Sprint 5 — conversion & money-lite
+  quotations: Quotations,
+  saleClosure: SaleClosure,
+  monthlyTargets: MonthlyTargets,
+  counsellorPerformance: CounsellorPerformance,
+  feeCollection: FeeCollection,
   branches: Branches,
   verticals: Verticals,
   pipelines: Pipelines,

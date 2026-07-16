@@ -24,6 +24,11 @@ import { MessagingModule } from './messaging/messaging.module';
 import { TemplatesModule } from './templates/templates.module';
 import { JourneysModule } from './journeys/journeys.module';
 import { SettingsModule } from './settings/settings.module';
+import { NumberingModule } from './numbering/numbering.module';
+import { QuotationsModule } from './quotations/quotations.module';
+import { EnrolmentsModule } from './enrolments/enrolments.module';
+import { FeesModule } from './fees/fees.module';
+import { PerformanceModule } from './performance/performance.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -58,6 +63,12 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     TemplatesModule,    // dynamic templates per channel, merge variables, live preview
     JourneysModule,     // trigger -> conditions -> actions, idempotent, guard-railed
     SettingsModule,     // Administration › Settings: credentials (encrypted), hours, holidays, matrix, numbering
+    // Sprint 5 — conversion & money-lite
+    NumberingModule,    // @Global: the numbering series quotations/enrolments/receipts allocate from
+    QuotationsModule,   // line items, discounts, tax shown (NOT GST — Phase 3), PDF, send, revisions
+    EnrolmentsModule,   // sale closure + the OPTIONAL per-step approval queue (default OFF)
+    FeesModule,         // LITE fee receipt + collection entry (Razorpay capture = Phase 3)
+    PerformanceModule,  // monthly targets + counsellor performance, scoped by the ScopeResolver
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

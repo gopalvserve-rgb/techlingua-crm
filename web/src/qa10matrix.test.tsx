@@ -46,6 +46,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-libra
 import { AddModal, CampaignModal, SPEC_FORMS, SAVERS, EditSpec } from './forms';
 import { JourneyModal, TemplateModal, ChannelConfigModal, BlastModal, ProviderSpec } from './sprint4';
 import { RuleModal, PolicyModal, EventModal, BandModal, walkInEditSpec, referralEditSpec } from './sprint3';
+import { CollectModal, EnrolmentModal, NumberingModal, QuotationModal, TargetModal } from './sprint5';
 
 vi.mock('./auth', () => ({
   useAuth: () => ({ can: () => true, me: { user: { id: 1, name: 'Super Admin' } } }),
@@ -102,6 +103,38 @@ const getRoute = (path: string): Promise<unknown> => {
       { id: 50, channel: 'whatsapp', name: 'Welcome', wa_params: [], variables: [] },
       { id: 51, channel: 'whatsapp', name: 'Reminder', wa_params: [], variables: [] },
     ]);
+  }
+  /* ---- Sprint 5 ---- */
+  if (path.startsWith('/enrolments/meta')) {
+    return Promise.resolve({
+      payment_plans: [
+        { key: 'full', label: 'Full payment' }, { key: 'emi_3', label: '3 installments' },
+        { key: 'emi_6', label: '6 installments' }, { key: 'custom', label: 'Custom' },
+      ],
+      approvals: { enabled: false, steps: [] },
+    });
+  }
+  if (path.startsWith('/enrolments')) {
+    // the CollectModal's enrolment picker — TWO rows, so the probe can switch it
+    return Promise.resolve([
+      {
+        id: 61, enrolment_no: 'ENR-2026/0001', lead_name: 'Priya Sharma', course_name: 'IELTS',
+        net_fee_minor: 4_050_000, paid_minor: 0, balance_minor: 4_050_000, status: 'active',
+      },
+      {
+        id: 62, enrolment_no: 'ENR-2026/0002', lead_name: 'Ravi Nair', course_name: 'PTE',
+        net_fee_minor: 3_800_000, paid_minor: 1_000_000, balance_minor: 2_800_000, status: 'active',
+      },
+    ]);
+  }
+  if (path.startsWith('/fees/meta')) {
+    return Promise.resolve({
+      modes: [
+        { key: 'cash', label: 'Cash' }, { key: 'upi', label: 'UPI' }, { key: 'card', label: 'Card' },
+        { key: 'cheque', label: 'Cheque' }, { key: 'online', label: 'Online transfer' },
+      ],
+      online: { gateway_capture: false, phase: 3, note: 'Phase 3' },
+    });
   }
   if (path.startsWith('/roles')) return Promise.resolve([{ id: 11, name: 'Counsellor' }, { id: 12, name: 'Manager' }]);
   if (path.startsWith('/users')) return Promise.resolve(REF.users);   // the UserPicker's own fetch
@@ -185,6 +218,17 @@ const baseline = (label: string, c: HTMLElement): string => {
   if (t === 'email') return 'qa.baseline@techlingua.test';
   if (t === 'date') return '2026-07-20';
   if (t === 'datetime-local') return '2026-07-20T10:00';
+  // `month` and `time` were MISSING until Sprint 5, and the gap was not theoretical: the
+  // Monthly Target form's Month field fell through to the text branch, got "QA Month",
+  // which is not a valid month, so BOTH the baseline and the probe submitted the same
+  // empty value — and the matrix reported a perfectly good field as a PHANTOM.
+  //
+  // A generic harness that silently tests the wrong thing is worse than no harness (the
+  // `.btn.primary` lesson from the WhatsApp card). A harness that cries WOLF is the same
+  // bug wearing a different hat: the fix is to teach it the input type, never to exempt
+  // the field — an exemption would have hidden a real phantom here for ever.
+  if (t === 'month') return '2026-07';
+  if (t === 'time') return '09:30';
   if (t === 'password') return 'QaBaseline#1';
   if (t === 'tel') return '9810000011';
   return `QA ${label}`;
@@ -204,6 +248,8 @@ const variant = (label: string, c: HTMLElement): string => {
   if (t === 'email') return 'qa.variant@techlingua.test';
   if (t === 'date') return '2026-08-15';
   if (t === 'datetime-local') return '2026-08-15T16:45';
+  if (t === 'month') return '2026-11';                // see baseline()
+  if (t === 'time') return '17:45';
   if (t === 'password') return 'QaVariant#2';
   if (t === 'tel') return '9820000022';
   return `QA ${label} (probe)`;
@@ -610,6 +656,54 @@ const bespokeCases: Case[] = [
     render: () => render(<BlastModal channel="whatsapp" onClose={() => undefined} onSent={() => undefined} />),
     path: /^\/messages\/bulk$/,
   },
+  /* ================= SPRINT 5 — conversion & money-lite ================= */
+  /*
+   * These forms take PRICES and MONEY. A phantom field on the walk-in form lost a
+   * course fee nobody noticed; a phantom field here would misprice a customer or lose a
+   * payment. They go through exactly the same generic probe as everything else.
+   */
+  {
+    name: 'Quotation — Add (line items, discounts, tax)',
+    render: () => render(<QuotationModal onClose={() => undefined} />),
+    allow: {
+      // A one-line quotation is rendered by default, so the probe sees each line field
+      // exactly once. Every one of them IS sent (inside `items[0]`) and IS probed.
+      Number: 'display-only — the quote number is ALLOCATED SERVER-SIDE from the numbering series on save (atomically, so two counsellors cannot get the same one). There is nothing here for the user to type; the box shows "Allocated on save".',
+      'Line total': 'display-only — computed from Rate/Qty/Discount/Tax by money.ts and RE-COMPUTED server-side. The client never posts a total, so a total can never disagree with its lines.',
+    },
+    path: /^\/quotations$/,
+  },
+  {
+    name: 'Enrolment / Sale Closure — Add',
+    render: () => render(<EnrolmentModal onClose={() => undefined} />),
+    allow: {
+      'Net fee': 'display-only — DERIVED as Total fee less Discount, and re-derived server-side. A net the user could type is a net that can disagree with its own fee and discount, which is the kind of thing an accountant finds in April.',
+    },
+    path: /^\/enrolments$/,
+  },
+  {
+    name: 'Monthly target — Add',
+    render: () => render(<TargetModal onClose={() => undefined} />),
+    path: /^\/performance\/targets$/,
+  },
+  {
+    name: 'Fee collection — Record payment',
+    render: () => render(<CollectModal onClose={() => undefined} />),
+    path: /^\/fees\/collect$/,
+  },
+  {
+    name: 'Numbering series — Edit',
+    render: () => render(<NumberingModal
+      initial={{ id: 3, kind: 'quotation', prefix: 'QT-', suffix: '', next_number: 7, padding: 4, reset_period: 'yearly' }}
+      kinds={[{ key: 'quotation', label: 'Quotations' }, { key: 'receipt', label: 'Fee receipts' }]}
+      onClose={() => undefined} />),
+    allow: {
+      Document: 'LOCKED on an existing series — the `kind` is what the series IS, and changing it would silently renumber a different document type. A new series is created from the "Add" button, where the field is live.',
+      'The next number will be': 'display-only — a live preview assembled from Prefix / period / Next number / Padding, all four of which are themselves probed.',
+    },
+    path: /^\/numbering$/,
+  },
+
   /* ---- DEF-S34-03: the two Edit forms that did not exist until this commit ---- */
   {
     name: 'Edit Walk-in  [DEF-S34-03]',
@@ -642,6 +736,32 @@ beforeEach(() => { cleanup(); post.mockClear(); patch.mockClear(); });
 /* ========================================================================== */
 
 describe('QA-10 — every field a form RENDERS must reach the request body', () => {
+  /**
+   * THE HARNESS MUST KNOW EVERY INPUT TYPE THE APP RENDERS.
+   *
+   * If a form renders an input type `baseline()`/`variant()` do not handle, the probe
+   * feeds it a value the browser rejects, both passes submit the SAME empty value, and a
+   * perfectly good field is reported as a phantom. That is a FALSE ALARM, and a harness
+   * that cries wolf gets ignored — which is how the real phantom gets through.
+   *
+   * (This is exactly what Sprint 5's `type="month"` did on its first run.)
+   */
+  it('the matrix understands every input type any form actually renders', () => {
+    const KNOWN = ['text', 'number', 'email', 'date', 'datetime-local', 'month', 'time',
+      'password', 'tel', 'checkbox', 'search', 'url', ''];
+    const seen = new Set<string>();
+    for (const c of CASES) {
+      cleanup();
+      c.render();
+      for (const el of document.querySelectorAll('.add-modal .fld input')) {
+        seen.add((el as HTMLInputElement).type.toLowerCase());
+      }
+    }
+    cleanup();
+    expect(seen.size).toBeGreaterThan(4);
+    expect([...seen].filter((t) => !KNOWN.includes(t))).toEqual([]);
+  });
+
   it('the matrix covers every wired form in the app (nothing silently skipped)', () => {
     // if someone wires a new SAVER, it appears here automatically — and gets probed.
     for (const k of Object.keys(SAVERS)) expect(SPEC_FORMS[k], `SAVERS['${k}'] has no spec form`).toBeTruthy();

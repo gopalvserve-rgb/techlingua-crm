@@ -186,39 +186,16 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- Performance & Conversion ---------------- */
   { id: 'perf', label: 'Performance & Conversion', icon: 'perf', subs: [
-    { id: 'closure', label: 'Sale Closure', spec: {
-      sub: 'Lead marked Won on enrolment. Optional approval. Captures course, batch, fee, discount & payment.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Enrolments (MTD)', '0', 'check'), kpi('Revenue closed', '—', 'rupee'), kpi('Avg discount', '—', 'perf'), kpi('Pending approval', '0', 'clock')] },
-        { type: 'form', title: 'Closure capture', fields: [
-          { label: 'Course', ph: 'Course master', req: 1 }, { label: 'Batch', ph: 'Batch', req: 1 },
-          { label: 'Total fee', ph: '₹', req: 1 }, { label: 'Discount', ph: 'Role-based approval' },
-          { label: 'Payment plan', ph: 'Plan master' }, { label: 'First payment', ph: '₹', req: 1 },
-          { label: 'Approval', ph: 'Branch Manager', span: 2 }] },
-      ] } },
-    { id: 'quotes', label: 'Quotations', spec: {
-      sub: 'Fee proposals with line items, discounts, validity & approval. PDF + email/WhatsApp. Convert to invoice.',
-      actions: [['plus', 'New quotation', 'primary']], sprintNote: NOTE_S2,
-      blocks: [
-        emptyTable('Quotations', ['Quote #', 'Lead', 'Course', 'Amount', 'Validity', 'Status'], 'No quotations yet'),
-        { type: 'caps', title: 'Quotation features', items: [
-          cap('Line items & discounts', 'Per-item pricing'), cap('Validity & approval', 'Role-based discount limits'),
-          cap('PDF + WhatsApp/email', 'One-click send'), cap('Convert to invoice', 'On acceptance')] },
-      ] } },
-    { id: 'targets', label: 'Monthly Targets', spec: {
-      sub: 'Targets per counsellor / branch / vertical — admissions count & revenue, set monthly.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'hbars', title: 'Branch targets', rows: [], empty: 'Branch targets appear once monthly targets are set' },
-        emptyTable('Counsellor targets', ['Counsellor', 'Admissions target', 'Achieved', 'Revenue target', 'Achieved', '%'], 'No targets set yet'),
-      ] } },
-    { id: 'counsellor', label: 'Counsellor Performance', spec: {
-      sub: 'Leads handled, calls, conversion %, revenue, TAT, follow-up adherence & enrolments — with leaderboard.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        emptyTable('Leaderboard', ['#', 'Counsellor', 'Leads', 'Calls', 'Conv%', 'Enrol', 'Revenue', 'TAT', 'Adherence'], 'Leaderboard fills as leads & closures accumulate'),
-      ] } },
+    // Sprint 5 — all four are LIVE and read real data. The prototype's blocks are kept
+    // 1:1 by the dyn components (KPI strip, tables, hbars); only the fake numbers are gone.
+    { id: 'closure', label: 'Sale Closure', spec: { dyn: 'saleClosure',
+      sub: 'Lead marked Won on enrolment. Optional approval per step. Captures course, fee, discount, payment plan & start date.' } },
+    { id: 'quotes', label: 'Quotations', spec: { dyn: 'quotations',
+      sub: 'Fee proposals with line items, discounts, validity & revisions. PDF + email/WhatsApp. Convert to enrolment (GST invoicing is Phase 3).' } },
+    { id: 'targets', label: 'Monthly Targets', spec: { dyn: 'monthlyTargets',
+      sub: 'Targets per counsellor / branch / vertical — admissions count & revenue, set monthly.' } },
+    { id: 'counsellor', label: 'Counsellor Performance', spec: { dyn: 'counsellorPerformance',
+      sub: 'Leads handled, activity, conversion %, revenue, TAT, follow-up adherence & enrolments — with a leaderboard.' } },
   ] },
 
   /* ---------------- Engagement & Workflow ---------------- */
@@ -345,12 +322,11 @@ export const APP: ModuleItem[] = [
       sub: 'Auto GST invoices, separate numbering per branch & vertical, tax & proforma, PDF + email/WhatsApp.',
       actions: [['plus', 'New invoice', 'primary']], sprintNote: NOTE_S2,
       blocks: [emptyTable('Invoices', ['Invoice #', 'Student', 'Course', 'Amount', 'GST', 'Type', 'Status'], 'No invoices yet')] } },
-    { id: 'collection', label: 'Fee Collection', spec: {
-      sub: 'Cash, UPI, Card, Net Banking, Cheque, Razorpay, PhonePe, PayU. Partial payments. Auto receipts.',
-      actions: [['plus', 'Record payment', 'primary']], sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'donut', title: 'Collection by mode', center: '\u2014', slices: [], empty: 'No payments recorded yet' },
-        emptyTable('Recent collections', ['Receipt', 'Student', 'Amount', 'Mode', 'Branch', 'Status'], 'No payments recorded yet')] } },
+    // Sprint 5 — LITE fee collection is live: a receipt + a collection entry, partial
+    // payments, receipt PDF. Razorpay capture, GST invoices, dues/ageing and refunds are
+    // Phase 3 and the screen says so on its face rather than implying otherwise.
+    { id: 'collection', label: 'Fee Collection', spec: { dyn: 'feeCollection',
+      sub: 'Cash, UPI, Card, Cheque, Online (recorded by hand). Partial payments. Auto receipts + PDF. Razorpay capture is Phase 3.' } },
     { id: 'dues', label: 'Fee Dues', spec: {
       sub: 'Dues per student / installment, ageing buckets, automatic reminders (SMS/WhatsApp/email) & escalation.',
       sprintNote: NOTE_S2,

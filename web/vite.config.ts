@@ -8,7 +8,11 @@ export default defineConfig({
   // which the API-only jest suite structurally could not catch.
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.tsx'],
+    // `.ts` AS WELL AS `.tsx` — Sprint 5 added `money.test.ts` (pure functions, no JSX)
+    // and the old `*.test.tsx`-only glob SILENTLY SKIPPED IT. A test file that never runs
+    // is worse than no test file: it reports green and guards nothing. Same class as the
+    // qa10 harness clicking the wrong button.
+    include: ['src/**/*.test.{ts,tsx}'],
   },
   server: {
     port: 5173,
