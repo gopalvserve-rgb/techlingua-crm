@@ -31,6 +31,10 @@ import {
   CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure,
 } from './sprint5';
 import { fmtINR } from './money';
+import {
+  ActivityReport, Announcements, CampaignRoiReport, FunnelReport, KnowledgeBase, Notes,
+  ReportBuilder, SavedReports, ScheduledDelivery, TatReport, TeamChat,
+} from './sprint6';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -1842,43 +1846,26 @@ function Audit() {
   );
 }
 
-function ActivityReports() {
-  const { refreshTick } = useScreen();
-  const logs = useFetch<any[]>('/audit-logs?limit=500', [refreshTick]);
-  const rows = logs.data ?? [];
-  const todays = rows.filter((r) => new Date(r.occurred_at).toDateString() === new Date().toDateString());
-  const byUser = new Map<string, { logins: number; followups: number; edits: number }>();
-  rows.forEach((r) => {
-    const nm = r.actor_name ?? 'System';
-    const u = byUser.get(nm) ?? { logins: 0, followups: 0, edits: 0 };
-    if (r.action === 'login') u.logins++;
-    else if (String(r.entity_type).includes('follow-ups')) u.followups++;
-    else if (r.action === 'update' || r.action === 'create') u.edits++;
-    byUser.set(nm, u);
-  });
-  return (
-    <>
-      <Kpis items={[
-        { lab: 'Activities today', val: String(todays.length), ic: 'bolt' },
-        { lab: 'Calls', val: '—', ic: 'calls' },
-        { lab: 'WhatsApp', val: '—', ic: 'wa' },
-        { lab: 'Edits logged', val: String(rows.filter((r) => r.action === 'update').length), ic: 'note' },
-      ]} />
-      <TableCard title="User activity" cols={['User', 'Logins', 'Calls', 'Follow-ups', 'Edits']}
-        rows={[...byUser.entries()].map(([nm, u]) => [
-          { node: <span className="nm">{nm}</span> } as Cell, String(u.logins), '\u2014', String(u.followups), String(u.edits),
-        ])} empty="Activity accumulates as the team works" />
-    </>
-  );
-}
+/*
+ * ActivityReports and FunnelAnalytics USED TO LIVE HERE, and Sprint 6 deleted them.
+ *
+ * They fetched `/audit-logs?limit=500` and `/leads/summary` and did the aggregation IN
+ * THE BROWSER — which meant the "user activity" table was built from whatever 500 audit
+ * rows happened to come back, and one of its columns was called "Calls" with an em-dash
+ * in it. The real ones (reports/standard.service.ts) aggregate server-side, over the
+ * whole window, through the ScopeResolver, and say out loud why there is no Calls column.
+ *
+ * They are DELETED rather than left unused: a dead component that still renders is one
+ * `dyn` registry typo away from being live again, and it would look right.
+ */
 
-function FunnelAnalytics() {
-  const { refreshTick } = useScreen();
-  const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
-  return <Funnel title="Conversion funnel" rows={sum.data ? funnelRows(sum.data.by_stage) : []}
-    empty="The funnel fills as leads move through stages" />;
-}
-
+/**
+ * WORKSPACE > TASKS. It reads `/follow-ups` — the SAME endpoint, table, statuses and
+ * priorities as My Tasks, because the doc says "same fields & statuses as lead
+ * follow-ups" and a second task store with the same fields is the fork that forbids.
+ * See docs/dev/08 §5 for what that costs (a task must belong to a lead) and why the
+ * alternative was not worth risking on a live database in the last week of Phase 1.
+ */
 function WorkTasks() {
   const { refreshTick } = useScreen();
   const mine = useFetch<any[]>('/follow-ups?mine=1&status=pending&limit=50', [refreshTick]);
@@ -2419,8 +2406,21 @@ export const DYN: Record<string, () => JSX.Element> = {
   audit: Audit,
   errorLogs: ErrorLogs,
   deletedItems: DeletedItems,
-  activityReports: ActivityReports,
-  funnelAnalytics: FunnelAnalytics,
+  // Sprint 6 — Analytics & Reports (the old browser-side ActivityReports and
+  // FunnelAnalytics are replaced by the real, server-scoped ones in sprint6.tsx)
+  reportBuilder: ReportBuilder,
+  savedReports: SavedReports,
+  scheduledDelivery: ScheduledDelivery,
+  funnelAnalytics: FunnelReport,
+  tatReport: TatReport,
+  activityReports: ActivityReport,
+  campaignRoi: CampaignRoiReport,
+  // Sprint 6 — Workspace. `workTasks` is UNCHANGED and still reads /follow-ups: the
+  // Workspace task IS the follow-up task (docs/dev/08 §5).
+  teamChat: TeamChat,
+  workNotes: Notes,
+  knowledgeBase: KnowledgeBase,
+  announcements: Announcements,
   workTasks: WorkTasks,
   waChat: WaChat,
   sitemap: Sitemap,

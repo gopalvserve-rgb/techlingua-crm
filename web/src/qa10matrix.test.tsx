@@ -47,6 +47,9 @@ import { AddModal, CampaignModal, SPEC_FORMS, SAVERS, EditSpec } from './forms';
 import { JourneyModal, TemplateModal, ChannelConfigModal, BlastModal, ProviderSpec } from './sprint4';
 import { RuleModal, PolicyModal, EventModal, BandModal, walkInEditSpec, referralEditSpec } from './sprint3';
 import { CollectModal, EnrolmentModal, NumberingModal, QuotationModal, TargetModal } from './sprint5';
+import {
+  AnnouncementModal, ArticleModal, ChannelModal, NoteModal, ScheduleModal, ShareModal,
+} from './sprint6';
 
 vi.mock('./auth', () => ({
   useAuth: () => ({ can: () => true, me: { user: { id: 1, name: 'Super Admin' } } }),
@@ -187,6 +190,27 @@ const isLeadLookup = (el: HTMLElement) =>
 /** the searchable multi-select behind the campaign agent pool — not a plain <select> */
 const isUserPicker = (el: HTMLElement) => !!el.querySelector('.upick');
 
+/**
+ * A CHIP GROUP — a row of toggle buttons, not an <input>. Sprint 6 uses it for the report
+ * builder's columns and for the role pickers on Share / Schedule / Announcement.
+ *
+ * THE HARNESS WAS TAUGHT THIS RATHER THAN THE FIELDS BEING EXEMPTED, which is the same
+ * call the `type="month"` false alarm forced in Sprint 5, for the same reason: `controlOf`
+ * finds no <input> in a chip group, so the probe reported "renders no editable control" —
+ * a FALSE ALARM on four perfectly good fields. Allowlisting them would have silenced the
+ * warning AND hidden any real phantom that ever appeared in a chip group, for ever.
+ * A harness that cries wolf is the same bug as one that misses.
+ */
+const isChips = (el: HTMLElement) => !!el.querySelector('.chips');
+
+/** toggle the Nth chip (-1 = clear every selected chip) */
+const pickChip = (el: HTMLElement, n: number) => {
+  const chips = [...el.querySelectorAll('.chips button')] as HTMLButtonElement[];
+  if (!chips.length) return;
+  if (n < 0) { chips.filter((c) => c.className.includes('on')).forEach((c) => fireEvent.click(c)); return; }
+  fireEvent.click(chips[Math.min(n, chips.length - 1)]);
+};
+
 /** open the picker and toggle the Nth offered user (-1 = clear the selection) */
 const pickUser = async (el: HTMLElement, n: number) => {
   fireEvent.click(el.querySelector('.upick-ctl') as HTMLElement);
@@ -256,6 +280,7 @@ const variant = (label: string, c: HTMLElement): string => {
 };
 
 const setControl = async (el: HTMLElement, value: string) => {
+  if (isChips(el)) { pickChip(el, value === 'probe' ? 1 : value === '' ? -1 : 0); return; }
   if (isUserPicker(el)) { await pickUser(el, value === 'probe' ? 1 : value === '' ? -1 : 0); return; }
   if (isLeadLookup(el)) {
     const inp = el.querySelector('input') as HTMLInputElement;
@@ -299,7 +324,7 @@ const fillAll = async (probe?: string): Promise<Fld[]> => {
       done.add(f.label);
       seen.push(f);
       progressed = true;
-      const special = isUserPicker(f.el) || isLeadLookup(f.el);
+      const special = isUserPicker(f.el) || isLeadLookup(f.el) || isChips(f.el);
       if (!c && !special) continue;                                 // display-only (see EXEMPT)
       const isProbe = f.label === probe;
       const v = special
@@ -704,6 +729,57 @@ const bespokeCases: Case[] = [
     path: /^\/numbering$/,
   },
 
+  /* ================= SPRINT 6 — reports & workspace ==================== */
+  /*
+   * Four of these forms decide WHO SEES WHAT. A phantom field on the Share form is a
+   * report the client believes he shared and did not; a phantom on the Schedule form is
+   * a report that silently emails the wrong people, or nobody, every morning. They go
+   * through exactly the same generic probe as everything else — which is the point of
+   * the probe being generic.
+   */
+  {
+    name: 'Report — Share',
+    render: () => render(<ShareModal report={{ id: 1, name: 'Won this month', shares: [] }} onClose={() => undefined} />),
+    path: /^\/reports\/1\/share$/,
+  },
+  {
+    name: 'Report — Schedule delivery',
+    render: () => render(<ScheduleModal report={{ id: 1, name: 'Won this month' }} onClose={() => undefined} />),
+    path: /^\/reports\/schedules$/,
+  },
+  {
+    name: 'Workspace — New channel',
+    render: () => render(<ChannelModal onClose={() => undefined} />),
+    allow: {
+      // A vertical belongs to a branch, so the two together would let a client scope a
+      // channel to "Vikaspuri + a vertical that lives under Rohini" — a contradiction.
+      // Vertical narrows to the chosen branch; picking one is picking the branch too.
+      Vertical: 'cascade filter — a vertical already implies its branch, and both are sent; the probe cannot change it independently because the REF fixture has one vertical under one branch',
+    },
+    path: /^\/workspace\/channels$/,
+  },
+  {
+    name: 'Workspace — New note',
+    render: () => render(<NoteModal note={{}} onClose={() => undefined} />),
+    path: /^\/workspace\/notes$/,
+  },
+  {
+    name: 'Workspace — New KB article',
+    render: () => render(<ArticleModal article={{}} onClose={() => undefined} />),
+    allow: {
+      Vertical: 'cascade filter — see New channel',
+    },
+    path: /^\/workspace\/kb$/,
+  },
+  {
+    name: 'Workspace — New announcement',
+    render: () => render(<AnnouncementModal announcement={{}} onClose={() => undefined} />),
+    allow: {
+      Vertical: 'cascade filter — see New channel',
+    },
+    path: /^\/workspace\/announcements$/,
+  },
+
   /* ---- DEF-S34-03: the two Edit forms that did not exist until this commit ---- */
   {
     name: 'Edit Walk-in  [DEF-S34-03]',
@@ -762,6 +838,39 @@ describe('QA-10 — every field a form RENDERS must reach the request body', () 
     expect([...seen].filter((t) => !KNOWN.includes(t))).toEqual([]);
   });
 
+  /**
+   * THE SAME SELF-TEST, ONE LEVEL UP: the harness must understand every KIND OF CONTROL a
+   * form renders, not just every input TYPE.
+   *
+   * Sprint 6 shipped a chip-toggle (a row of <button>s) and the probe immediately reported
+   * four good fields as phantoms, because `controlOf` looks for `input, select, textarea`
+   * and found none. The fix was to teach it — but nothing would have FAILED if we had
+   * quietly allowlisted the fields instead, and the next chip-group phantom would have
+   * been invisible for ever.
+   *
+   * So: every `.fld` in every form must contain a control the harness can drive. A new
+   * widget fails this test on the day it is written, and whoever wrote it has to teach the
+   * harness rather than reach for the allowlist.
+   */
+  it('the matrix understands every KIND of control any form renders (not just <input> types)', () => {
+    const undrivable: string[] = [];
+    for (const c of CASES) {
+      cleanup();
+      c.render();
+      const allow = { ...(c.allow ?? {}) };
+      const locked = LOCKED[c.name] ?? [];
+      for (const f of fieldsNow()) {
+        if (allow[f.label] || locked.includes(f.label)) continue;   // documented display-only
+        const drivable = !!controlOf(f.el) || isChips(f.el) || isUserPicker(f.el) || isLeadLookup(f.el);
+        if (!drivable) undrivable.push(`${c.name} > ${f.label}`);
+      }
+    }
+    cleanup();
+    // If this is red, TEACH THE HARNESS (add an `isX`/`setControl` branch above).
+    // Do NOT add the field to EXEMPT — that hides every future phantom in that widget.
+    expect(undrivable).toEqual([]);
+  });
+
   it('the matrix covers every wired form in the app (nothing silently skipped)', () => {
     // if someone wires a new SAVER, it appears here automatically — and gets probed.
     for (const k of Object.keys(SAVERS)) expect(SPEC_FORMS[k], `SAVERS['${k}'] has no spec form`).toBeTruthy();
@@ -793,7 +902,7 @@ describe('QA-10 — every field a form RENDERS must reach the request body', () 
       // a field that renders NO control at all, and is not allowlisted, is a phantom by
       // definition — the user is shown a box that can never carry a value.
       const still = seen.find((x) => x.label === f.label);
-      if (still && !controlOf(still.el) && !isLeadLookup(still.el)) {
+      if (still && !controlOf(still.el) && !isLeadLookup(still.el) && !isChips(still.el)) {
         phantoms.push(`${f.label} (renders no editable control)`);
         continue;
       }

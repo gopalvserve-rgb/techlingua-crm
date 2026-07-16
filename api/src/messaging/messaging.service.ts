@@ -40,6 +40,10 @@ export interface QueueMessage {
   actor_id?: number | null;
   dedupe_key?: string | null;
   run_after?: Date | null;
+  /** EMAIL ONLY (Sprint 6). Stored in `message_attachment`, NOT in the row: bytes in a
+   *  JSONB column would bloat every send-log read for the benefit of the one caller that
+   *  attaches anything. Deleted with the message (ON DELETE CASCADE). */
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
   /** guardrails are for AUTOMATION. A human pressing Send is never silently deferred. */
   guarded?: boolean;
 }
@@ -225,6 +229,16 @@ export class MessagingService {
     );
     const id = Number(row!.id);
 
+    // ATTACHMENTS (Sprint 6). Written even when the row is `skipped`, so a send log
+    // entry saying "opted out" still shows WHAT would have gone.
+    for (const a of msg.attachments ?? []) {
+      await this.db.query(
+        `INSERT INTO message_attachment (message_id, filename, content_type, bytes)
+         VALUES ($1, $2, $3, $4)`,
+        [id, String(a.filename).slice(0, 200), a.contentType ?? 'application/octet-stream', a.content],
+      );
+    }
+
     // the WhatsApp/SMS extras live with the row so the worker needs no second lookup
     if (msg.wa_template_name || (msg.wa_params ?? []).length || msg.sms_sender_id || msg.sms_dlt_template_id) {
       await this.db.query(
@@ -255,6 +269,13 @@ export class MessagingService {
     if (!row) return 'missing';
 
     const send = (row.provider_response?._send ?? {}) as Record<string, unknown>;
+    // A second query, and only when the channel can carry one. The send log is read on
+    // every screen; the attachment is read once, at the moment of sending.
+    const atts = row.channel === 'email'
+      ? await this.db.query<any>(
+        `SELECT filename, content_type, bytes FROM message_attachment WHERE message_id = $1 ORDER BY id`, [id],
+      )
+      : [];
     const msg: OutboundMessage = {
       to: row.to_addr,
       subject: row.subject,
@@ -264,6 +285,9 @@ export class MessagingService {
       wa_params: (send.wa_params as string[]) ?? [],
       sms_sender_id: (send.sms_sender_id as string) ?? null,
       sms_dlt_template_id: (send.sms_dlt_template_id as string) ?? null,
+      attachments: atts.map((a) => ({
+        filename: a.filename, content: Buffer.from(a.bytes), contentType: a.content_type,
+      })),
     };
 
     try {

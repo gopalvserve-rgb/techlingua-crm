@@ -14,8 +14,7 @@
  * THE RUPEE SIGN — READ THIS BEFORE "FIXING" IT
  * =============================================================================
  * The PDFs render "Rs." and NOT "₹", on purpose. The base-14 fonts are encoded
- * WinAnsi; U+20B9 RUPEE SIGN does not exist in WinAnsiEncoding and has no glyph in
- * Helvetica — there is no character code that produces it. Printing it would emit a
+ * WinAnsi; U+20B9 RUPEE SIGN does not exist in WinAnsiEncoding and has no glyph for it in Helvetica — there is no character code that produces it. Printing it would emit a
  * wrong glyph or a blank box on the client's letterhead.
  *
  * Showing "₹" in a PDF requires EMBEDDING a font that has the glyph (a subset of, say,
@@ -138,11 +137,22 @@ export interface TextOpts {
  * bottom-left origin happens in one place, on the way out.
  */
 export class PdfPage {
+  /** A4 PORTRAIT — the default, and what every Sprint-5 document uses. */
   static readonly WIDTH = 595.28;
   static readonly HEIGHT = 841.89;
+  /** A4 LANDSCAPE — Sprint 6. A report is wide; a portrait report is a report with
+   *  three columns on it. */
+  static readonly LANDSCAPE_WIDTH = 841.89;
+  static readonly LANDSCAPE_HEIGHT = 595.28;
+
   private ops: string[] = [];
 
-  private y(v: number) { return PdfPage.HEIGHT - v; }
+  /** Page size is now PER PAGE, not a global constant.
+   *  It defaults to A4 portrait, so `new PdfPage()` behaves exactly as it did before —
+   *  the quotation and receipt documents are untouched, and pdf.spec.ts still pins them. */
+  constructor(readonly width: number = PdfPage.WIDTH, readonly height: number = PdfPage.HEIGHT) {}
+
+  private y(v: number) { return this.height - v; }
 
   text(s: string, x: number, y: number, o: TextOpts = {}): this {
     const size = o.size ?? 10;
@@ -219,8 +229,10 @@ export function buildPdf(pages: PdfPage[], meta: { title?: string; author?: stri
   for (const p of pages) {
     const stream = p.content;
     const contentId = add(`<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}\nendstream`);
+    // MediaBox reads the PAGE's own size, not the class constant — a landscape report
+    // and a portrait receipt can now live in the same writer.
     pageIds.push(add(
-      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${f(PdfPage.WIDTH)} ${f(PdfPage.HEIGHT)}] ` +
+      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${f(p.width)} ${f(p.height)}] ` +
       `/Resources ${resources} /Contents ${contentId} 0 R >>`,
     ));
   }

@@ -3,6 +3,7 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { FOLLOWUP_SCOPE_COLS, LEAD_SCOPE_COLS } from '../rbac/scope-cols';
+import { STAGE_COUNT_FROM, STAGE_COUNT_LIVE } from '../reports/shared-metrics';
 
 /**
  * ROLE-BASED DASHBOARDS (client decision, 14 Jul 2026).
@@ -127,10 +128,15 @@ export class DashboardService {
 
     const p2: unknown[] = [];
     const w2 = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p2);
+    // Sprint 6: the FROM and the live-row predicate are imported constants shared with
+    // the Funnel Analytics report (reports/shared-metrics.ts). The dashboard funnel and
+    // the funnel report must count the same leads, and reconcile.spec.ts fails if one of
+    // them is edited without the other. (DEF-S5-03: two screens, two definitions, one
+    // client who stopped believing either.)
     const byStage = await this.db.query(
       `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, COUNT(l.id)::int AS ct
-         FROM lead l JOIN pipeline_stage st ON st.id = l.stage_id
-        WHERE (${w2}) AND l.is_active AND l.deleted_at IS NULL
+         FROM ${STAGE_COUNT_FROM}
+        WHERE (${w2}) AND ${STAGE_COUNT_LIVE}
         GROUP BY st.id, st.name, st.stage_type, st.sort_order
         ORDER BY st.sort_order`, p2,
     );

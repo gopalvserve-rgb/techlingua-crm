@@ -457,47 +457,30 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- Analytics & Reports ---------------- */
   { id: 'analytics', label: 'Analytics & Reports', icon: 'analytics', subs: [
-    { id: 'standard', label: 'Reports', spec: {
-      sub: 'Replaces the Excel reports you maintain today — fixed & ready at launch.',
-      blocks: [{ type: 'table', title: 'Report catalog', cols: ['Report', 'Scope', 'Format', 'Schedule'], rows: [
-        ['Lead status report', 'By branch/vertical', 'Excel/PDF', 'Daily'],
-        ['Conversion report', 'By counsellor', 'Excel', 'Weekly'],
-        ['Collection report', 'By mode', 'Excel', 'Daily'],
-        ['Attendance report', 'By batch', 'Excel', 'Daily'],
-        ['Campaign performance', 'By source', 'Excel/PDF', 'Weekly']] }] } },
-    { id: 'builder', label: 'Report Builder', spec: {
-      sub: 'Self-service builder — pick fields, filters, save, schedule, export.',
-      blocks: [{ type: 'builder', title: 'Build a report', steps: [
-        { k: 'trig', t: 'Pick a data source', d: 'Leads / Students / Finance / Calls' },
-        { k: 'act', t: 'Choose fields', d: 'Drag columns' },
-        { k: 'cond', t: 'Apply filters', d: 'Branch, vertical, date range' },
-        { k: 'act', t: 'Save & schedule', d: 'Email delivery' },
-        { k: 'end', t: 'Export', d: 'Excel / PDF' }] }] } },
-    { id: 'campreports', label: 'Campaign Reports', spec: gen('Analytics & Reports', 'Campaign Reports') },
+    // Sprint 6 — all live. The catalog table is gone: the client's saved reports ARE the
+    // catalog, and a hardcoded list of reports that do not exist is the fake data this
+    // project's design rule forbids.
+    { id: 'standard', label: 'Reports', spec: { dyn: 'savedReports',
+      sub: 'Your saved reports — run, share, schedule or export any of them.' } },
+    { id: 'builder', label: 'Report Builder', spec: { dyn: 'reportBuilder',
+      sub: 'Self-service builder — pick a data source, columns, filters, grouping and a date range. Save it, share it, schedule it, export it.' } },
+    { id: 'campreports', label: 'Campaign Reports', spec: { dyn: 'campaignRoi',
+      sub: 'Spend, leads, enrolments, cost per lead and revenue, by campaign.' } },
     { id: 'activity', label: 'Activity Reports', spec: { dyn: 'activityReports',
-      sub: 'Track user activity — logins, calls, follow-ups, edits — by user / branch / period.' } },
-    { id: 'tat', label: 'TAT Reports', spec: {
-      sub: 'First response, time-in-stage & resolution turnaround.',
-      sprintNote: 'TAT numbers compute automatically as lead activity accumulates.',
-      blocks: [{ type: 'row2', cols: '1fr 1fr 1fr', items: [
-        { type: 'bignum', l: 'Avg first response', v: '—', s: 'Target: 5m SLA', tone: 'b-green' },
-        { type: 'bignum', l: 'Avg time in stage', v: '—', s: 'Contacted → Qualified', tone: 'b-indigo' },
-        { type: 'bignum', l: 'Avg resolution', v: '—', s: 'Lead → enrolment', tone: 'b-cyan' }] }] } },
+      sub: 'Track user activity — logins, follow-ups, notes and edits — by user / branch / period.' } },
+    { id: 'tat', label: 'TAT Reports', spec: { dyn: 'tatReport',
+      sub: 'First response, time-in-stage and lead-to-enrolment turnaround.' } },
     { id: 'funnel', label: 'Funnel Analytics', spec: { dyn: 'funnelAnalytics',
-      sub: 'Conversion ratios between every stage.' } },
-    { id: 'roi', label: 'Campaign ROI', spec: {
-      sub: 'Ad spend pulled from source. ROI per campaign / source.',
-      sprintNote: 'ROI computes once campaigns carry spend and leads convert.',
-      blocks: [emptyTable('Campaign ROI', ['Campaign', 'Source', 'Spend', 'Leads', 'CPL', 'Conv%', 'Revenue'], 'ROI appears when campaigns have spend & leads')] } },
+      sub: 'Stage-to-stage conversion and drop-off.' } },
+    { id: 'roi', label: 'Campaign ROI', spec: { dyn: 'campaignRoi',
+      sub: 'Ad spend from the campaign record. Cost per lead, cost per enrolment and return on spend.' } },
     { id: 'counseloranalytics', label: 'Counselor Analytics', spec: gen('Analytics & Reports', 'Counselor Analytics') },
     { id: 'counselorperf', label: 'Counselor Performance', spec: gen('Analytics & Reports', 'Counselor Performance') },
     { id: 'revanalytics', label: 'Revenue Analytics', spec: gen('Analytics & Reports', 'Revenue Analytics') },
     { id: 'studentanalytics', label: 'Student Analytics', spec: gen('Analytics & Reports', 'Student Analytics') },
     { id: 'forecasting', label: 'Forecasting', spec: gen('Analytics & Reports', 'Forecasting') },
-    { id: 'delivery', label: 'Scheduled Delivery', spec: {
-      sub: 'Export Excel / PDF, scheduled email delivery & embedded dashboards.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Scheduled reports', ['Report', 'Recipients', 'Frequency', 'Format', 'Next run'], 'No scheduled reports yet')] } },
+    { id: 'delivery', label: 'Scheduled Delivery', spec: { dyn: 'scheduledDelivery',
+      sub: 'Any saved report, emailed daily / weekly / monthly with the file attached. Pause it, run it now, and read the delivery history.' } },
   ] },
 
   /* ---------------- Workspace & Productivity ---------------- */
@@ -505,24 +488,19 @@ export const APP: ModuleItem[] = [
     { id: 'socialinbox', label: 'Social Inbox', spec: gen('Workspace & Productivity', 'Social Inbox') },
     { id: 'socialcomments', label: 'Social Comments', spec: gen('Workspace & Productivity', 'Social Comments') },
     { id: 'socialpublisher', label: 'Social Publisher', spec: gen('Workspace & Productivity', 'Social Publisher') },
-    { id: 'chat', label: 'Team Chat', spec: {
-      sub: 'Built-in internal messaging — channels, DMs & file sharing. No external Slack/Teams needed.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyList('Channels', 'Team chat opens in Sprint 3')] } },
+    { id: 'chat', label: 'Team Chat', spec: { dyn: 'teamChat',
+      sub: 'Built-in internal messaging — channels scoped to a branch, a vertical, or everyone. No external Slack/Teams needed.' } },
+    // TASKS ARE THE FOLLOW-UP MODULE. The doc says "same fields & statuses as lead
+    // follow-ups", and a second task screen with the same fields is the fork that
+    // sentence forbids: two "My Tasks" counts, two overdue sweeps, two answers.
     { id: 'tasks', label: 'Tasks', spec: { dyn: 'workTasks',
-      sub: 'Shared task management — same fields & statuses as lead follow-ups.' } },
-    { id: 'notes', label: 'Notes', spec: {
-      sub: 'Notes attached to records, plus shared / team notes.',
-      blocks: [{ type: 'caps', title: 'Notes', items: [
-        cap('Record notes', 'On lead / student'), cap('Team notes', 'Shared visibility'), cap('Pin & search', 'Quick recall')] }] } },
-    { id: 'kb', label: 'Knowledge Base', spec: {
-      sub: 'Internal staff KB — categories, search & access control.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('KB categories', ['Category', 'Articles', 'Access'], 'No KB articles yet')] } },
-    { id: 'announce', label: 'Announcements', spec: {
-      sub: 'Org / branch announcements with audience targeting & read tracking.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Announcements', ['Title', 'Audience', 'Sent', 'Read'], 'No announcements yet')] } },
+      sub: 'Shared task management — the same tasks, fields and statuses as lead follow-ups.' } },
+    { id: 'notes', label: 'Notes', spec: { dyn: 'workNotes',
+      sub: 'Private and shared notes, pinned and searchable.' } },
+    { id: 'kb', label: 'Knowledge Base', spec: { dyn: 'knowledgeBase',
+      sub: 'Internal staff KB — categories, search and access control.' } },
+    { id: 'announce', label: 'Announcements', spec: { dyn: 'announcements',
+      sub: 'Org / branch announcements with audience targeting and read tracking.' } },
     { id: 'docs', label: 'Shared Documents', spec: {
       sub: 'Documents shared inside internal team message.',
       sprintNote: NOTE_S2,

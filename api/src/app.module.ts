@@ -29,6 +29,8 @@ import { QuotationsModule } from './quotations/quotations.module';
 import { EnrolmentsModule } from './enrolments/enrolments.module';
 import { FeesModule } from './fees/fees.module';
 import { PerformanceModule } from './performance/performance.module';
+import { ReportsModule } from './reports/reports.module';
+import { WorkspaceModule } from './workspace/workspace.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -69,6 +71,10 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     EnrolmentsModule,   // sale closure + the OPTIONAL per-step approval queue (default OFF)
     FeesModule,         // LITE fee receipt + collection entry (Razorpay capture = Phase 3)
     PerformanceModule,  // monthly targets + counsellor performance, scoped by the ScopeResolver
+    // Sprint 6 — reports, workspace, hardening (closes Phase 1)
+    ReportsModule,      // the Report Builder + standard reports + exports + scheduled delivery
+    WorkspaceModule,    // team messages, notes, knowledge base, announcements
+                        // (TASKS are the follow-up module — reused, not forked)
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

@@ -22,6 +22,11 @@ export interface OutboundMessage {
   /** SMS only */
   sms_sender_id?: string | null;
   sms_dlt_template_id?: string | null;
+  /** EMAIL only (Sprint 6) — scheduled report delivery attaches the rendered file.
+   *  Ignored by every other transport: WhatsApp and SMS have no attachment concept, and
+   *  silently dropping one is better than a transport that throws on a field it does not
+   *  use. (Nothing queues an SMS with an attachment; the schedule worker is email-only.) */
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
 }
 
 export interface SendResult {
@@ -287,6 +292,9 @@ export class SmtpTransport implements Transport {
         replyTo: cfg.config.reply_to || undefined,
         subject: msg.subject || '(no subject)',
         html: msg.body,
+        attachments: (msg.attachments ?? []).map((a) => ({
+          filename: a.filename, content: a.content, contentType: a.contentType,
+        })),
         // an HTML-only email scores badly with spam filters and is unreadable in a
         // text client; strip the tags for the alternative part.
         text: String(msg.body).replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim(),

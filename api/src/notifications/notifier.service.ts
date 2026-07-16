@@ -86,8 +86,17 @@ const staffChannel = (key: 'email' | 'sms' | 'whatsapp', label: string): NotifyC
   key, label,
   async send(msg, { db, messaging }) {
     if (!messaging) return;   // the in-memory test double has no messaging
+    // DEF-S6-01. This read `SELECT email, mobile, name` — and THERE IS NO `mobile`
+    // COLUMN ON "user". The column is `phone` (migration 012 made it the mobile-first
+    // login identifier and never renamed it). Postgres would have thrown
+    // `column "mobile" does not exist` the first time an admin ticked SMS or WhatsApp
+    // in the notification matrix, which is the ONLY reason this has not fired yet:
+    // both channels are disabled by default, so no live request has ever reached this
+    // line. Every unit test passed because they all drive an in-memory double that
+    // never validates a column name — the DEF-S4-01 shape exactly.
+    // Found by extending the Sprint-5 schema guard over the notifier in Sprint 6.
     const u = await db.one<{ email: string | null; mobile: string | null; name: string }>(
-      `SELECT email, mobile, name FROM "user" WHERE id = $1`, [msg.userId],
+      `SELECT email, phone AS mobile, name FROM "user" WHERE id = $1`, [msg.userId],
     );
     const to = key === 'email' ? u?.email : u?.mobile;
     // a staff member with no mobile on file is not an error — just not reachable this way

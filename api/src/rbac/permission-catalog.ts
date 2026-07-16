@@ -32,7 +32,12 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'errorlog', label: 'Error Logs', actions: ['read', 'manage'] },
   // Soft delete (migration 015): restore + Deleted Items screen — Super/Org Admin
   { module: 'deleted', label: 'Deleted Items', actions: ['manage'] },
-  { module: 'report', label: 'Reports', actions: ['read', 'export'] },
+  // Sprint 6 (migration 031). 'read' and 'export' were catalogued in Sprint 1 and GRANTED
+  // TO NOBODY for five sprints — there was no report to read. 031 grants them, and adds
+  // the four the builder needs. 'share' and 'schedule' are deliberately separate from
+  // 'create': building a report for yourself is a counsellor's business; putting one in
+  // somebody else's list, or a FILE IN THEIR INBOX on a timer, is a manager's decision.
+  { module: 'report', label: 'Reports', actions: ['read', 'create', 'update', 'delete', 'share', 'schedule', 'export'] },
   { module: 'settings', label: 'Settings', actions: ['read', 'update'] },
   // Sprint 3 (migration 025) — working the lead
   { module: 'score', label: 'Lead Scoring', actions: ['read', 'manage'] },
@@ -62,4 +67,10 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'fee', label: 'Fee Collection (lite)', actions: ['read', 'collect', 'delete'] },
   { module: 'target', label: 'Monthly Targets', actions: ['read', 'manage'] },
   { module: 'performance', label: 'Counsellor Performance', actions: ['read'] },
+  // Sprint 6 — Workspace. 'post' covers writing a message, a note, and deleting YOUR OWN
+  // message; 'manage' is creating channels and deleting other people's posts. Guarding
+  // delete with 'manage' would stop a counsellor removing his own typo.
+  { module: 'workspace', label: 'Workspace (messages & notes)', actions: ['read', 'post', 'manage'] },
+  { module: 'kb', label: 'Knowledge Base', actions: ['read', 'manage'] },
+  { module: 'announcement', label: 'Announcements', actions: ['read', 'manage'] },
 ];

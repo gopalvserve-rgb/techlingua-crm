@@ -570,3 +570,31 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .cal-ev.overdue{background:rgba(244,63,94,.16);color:var(--danger);font-weight:600}
 .cal-ev.demo{background:rgba(34,211,238,.16)}
 .cal-more{font-size:10px;color:var(--text-dim)}
+
+/* ---- chips: a togglable palette. Used by the Sprint-4 template variable palette
+   (which shipped using these class names with NO CSS behind them at all — they
+   rendered as bare browser buttons) and by the Sprint-6 report builder's column,
+   group-by and role pickers. `.on` is the selected state. ---- */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{font-size:11.5px;font-weight:500;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;transition:.13s;font-family:inherit}
+.chip:hover{border-color:var(--primary);color:var(--text)}
+.chip.on{background:var(--primary);border-color:var(--primary);color:var(--primary-fg);font-weight:600}
+
+/* ---- workspace: the channel list + the message thread. Reuses the wa-* shell the
+   prototype already defines for WhatsApp Live Chat — same two-pane layout, same
+   surfaces, so Team Chat is not a second visual language. ---- */
+.wa-item{display:block;width:100%;text-align:left;padding:11px 15px;border:none;border-bottom:1px solid var(--border);background:none;cursor:pointer;transition:.13s;font-family:inherit}
+.wa-item:hover{background:var(--surface-2)}
+.wa-item.on{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--primary)}
+.wa-item .nm{display:block;font-weight:600;font-size:13px;color:var(--text)}
+.wa-item .sub{display:block;font-size:11px;color:var(--text-dim);margin-top:2px}
+.wa-msg{max-width:72%;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:9px 12px;position:relative}
+.wa-msg.mine{align-self:flex-end;background:var(--primary);border-color:var(--primary)}
+.wa-msg.mine .wa-body,.wa-msg.mine .wa-meta{color:var(--primary-fg)}
+.wa-msg.mine .wa-meta{opacity:.75}
+.wa-meta{font-size:10.5px;color:var(--text-dim);margin-bottom:3px}
+.wa-body{font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.wa-msg .icon-btn{position:absolute;top:5px;right:5px;opacity:0;transition:.13s}
+.wa-msg:hover .icon-btn{opacity:.7}
+.wa-compose{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--border);background:var(--surface)}
+.wa-compose .ainp{flex:1}

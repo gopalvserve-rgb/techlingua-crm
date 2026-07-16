@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
+import { ENROLMENT_COUNTS_AS_SOLD, ENROLMENT_REVENUE_COLUMN } from '../reports/shared-metrics';
 
 /**
  * COUNSELLOR PERFORMANCE — "leads handled, calls, conversion %, revenue, TAT,
@@ -120,10 +121,10 @@ export class PerformanceService {
                 WHERE sl.owner_id = p.user_id
                   AND sl.created_at >= w.d_from AND sl.created_at < w.d_to) AS leads,
               (SELECT count(*) FROM scoped_enr se, win w
-                WHERE se.counsellor_id = p.user_id AND se.status = 'active'
+                WHERE se.counsellor_id = p.user_id AND se.${ENROLMENT_COUNTS_AS_SOLD}
                   AND se.created_at >= w.d_from AND se.created_at < w.d_to) AS enrolments,
-              (SELECT COALESCE(sum(se.net_fee_minor), 0) FROM scoped_enr se, win w
-                WHERE se.counsellor_id = p.user_id AND se.status = 'active'
+              (SELECT COALESCE(sum(se.${ENROLMENT_REVENUE_COLUMN}), 0) FROM scoped_enr se, win w
+                WHERE se.counsellor_id = p.user_id AND se.${ENROLMENT_COUNTS_AS_SOLD}
                   AND se.created_at >= w.d_from AND se.created_at < w.d_to) AS revenue_minor,
               -- DEF-S5-03. Attribution is the ENROLMENT'S COUNSELLOR, never the
               -- receipt's received_by. An Accountant is the natural person to take a fee;
