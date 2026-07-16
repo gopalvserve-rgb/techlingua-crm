@@ -46,13 +46,36 @@ export function splitPhone(value: string | null | undefined): { dial: string; na
 export const joinPhone = (dial: string, national: string) =>
   (national.trim() ? `+${dial}${national.replace(/\D/g, '')}` : '');
 
+/**
+ * client update #5 — width of the country-code selector.
+ *
+ * It used to be a flat 108px, which is ~20px more than the control can ever need.
+ * That is invisible on a wide field but ruinous on a narrow one: the lead sheet lays
+ * Phone and WhatsApp out in a 2-column `.kv` grid inside a 486px sheet, so the field
+ * is only 219px — the 108px select ate 49% of it and left the number input 105px
+ * (81px of usable text width). A 10-digit Indian number renders at ~77px, so it sat
+ * flush against both edges, and any 11-12 digit international number overflowed and
+ * scrolled. That is the bug the client reported.
+ *
+ * The budget, measured in Chrome/Windows (the client's own browser) at the app's 13px
+ * Inter: the widest of the 18 options (a flag + a 3-digit dial, e.g. Oman +968) is
+ * 53.2px; + padding (9 + 4) + the native dropdown arrow (~22px) = 88.2px. 90px leaves
+ * ~2px of headroom so no dial code can truncate, and hands the ~18px the selector was
+ * wasting back to the number input — which is the flex:1 one, so it absorbs the freed
+ * space automatically in every container the field is used in.
+ *
+ * Keep in sync with phonefield.test.tsx, which pins this layout intent.
+ */
+export const CC_WIDTH = 90;
+
 export function PhoneInput({ value, onChange, placeholder, disabled }: {
   value: string; onChange: (v: string) => void; placeholder?: string; disabled?: boolean;
 }) {
   const { dial, national } = useMemo(() => splitPhone(value), [value]);
   return (
     <div style={{ display: 'flex', gap: 6 }}>
-      <select className="ainp" style={{ width: 108, flex: '0 0 auto' }} value={dial} disabled={disabled}
+      <select className="ainp" style={{ width: CC_WIDTH, flex: '0 0 auto', paddingLeft: 9, paddingRight: 4 }}
+        value={dial} disabled={disabled}
         aria-label="Country code"
         onChange={(e) => onChange(national ? joinPhone(e.target.value, national) : `+${e.target.value}`)}>
         {COUNTRIES.map((c) => <option key={c.iso} value={c.dial}>{c.flag} +{c.dial}</option>)}
