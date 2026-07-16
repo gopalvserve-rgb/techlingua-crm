@@ -182,6 +182,50 @@ describe('layout maths', () => {
     expect(textWidth(clipped, 9)).toBeLessThanOrEqual(120);
   });
 
+  /**
+   * THE LIVE SMOKE FOUND THIS, and nothing else could have.
+   *
+   * The first deployed quotation rendered its Discount and Tax columns ON TOP OF EACH
+   * OTHER — "10% 4,500.0018% 7,290.00" — because both columns were narrower than the
+   * text they had to hold. Every unit test passed, because they all asserted that the
+   * NUMBERS WERE PRESENT in the byte stream, never that they were READABLE.
+   *
+   * This measures the real text against the real column widths, for the widest values a
+   * fee quotation can plausibly carry. It is the assertion the old suite was missing.
+   */
+  it('NO CELL OVERRUNS ITS COLUMN — the "10% 4,500.0018%" collision, pinned', () => {
+    // the worst realistic case: a 100% discount on a lakh, and a two-decimal tax rate
+    const worst = {
+      ...QUOTE.items[0],
+      description: 'x', qty: 99,
+      unit_price_minor: 10_000_000,       // ₹1,00,000.00
+      discount_type: 'percent', discount_value: 100, discount_minor: 990_000_000,
+      tax_pct: 18.5, tax_minor: 99_000_000, total_minor: 990_000_000,
+    };
+    // must match documents.ts — if a column is re-sized there, re-size it here too
+    const widths = { desc: 150, qty: 28, rate: 76, disc: 92, tax: 88, amount: PdfPage.WIDTH - 84 - 434 };
+    const money = (m: number) => (m / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+
+    const cells: Array<[string, number]> = [
+      [String(worst.qty), widths.qty],
+      [money(worst.unit_price_minor), widths.rate],
+      [`${worst.discount_value}% ${money(worst.discount_minor)}`, widths.disc],
+      [`${worst.tax_pct}% ${money(worst.tax_minor)}`, widths.tax],
+      [money(worst.total_minor), widths.amount],
+    ];
+    const overflowing = cells
+      .filter(([text, w]) => textWidth(text, 9) > w - 8)
+      .map(([text, w]) => `"${text}" needs ${textWidth(text, 9).toFixed(1)}pt, column allows ${w - 8}pt`);
+    expect(overflowing).toEqual([]);
+  });
+
+  it('a long description is clipped rather than allowed to run into Qty', () => {
+    const items = [{ ...QUOTE.items[0], description: 'IELTS Academic Intensive Preparation Programme with Weekend Doubt Clearing and Mock Tests' }];
+    const s = quotationPdf({ ...QUOTE, items } as never, LH).toString('latin1');
+    expect(s).toContain('...');                       // it was clipped
+    expect(s).not.toContain('Weekend Doubt Clearing'); // the tail never reached the page
+  });
+
   it('a 50-line quotation still produces a parseable file (no infinite layout)', () => {
     const items = Array.from({ length: 50 }, (_, i) => ({ ...QUOTE.items[0], line_no: i + 1, description: `Line ${i + 1}` }));
     const buf = quotationPdf({ ...QUOTE, items } as never, LH);

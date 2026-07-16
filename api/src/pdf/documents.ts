@@ -121,13 +121,23 @@ export function quotationPdf(q: QuotationDoc, lh: Letterhead): Buffer {
   y = Math.max(ly, y + 50) + 12;
 
   // ---- items table
+  //
+  // COLUMN WIDTHS ARE NOT DECORATION. The first live PDF rendered
+  //     "10% 4,500.0018% 7,290.00"
+  // because Discount (66pt) and Tax (58pt) were too narrow for "10%  4,500.00" (~55pt of
+  // text plus padding), so the right-aligned strings ran into each other. Every unit test
+  // passed: they asserted the numbers were PRESENT, not that they were READABLE.
+  //
+  // So the widths below are sized for the worst realistic case ("100%  1,00,000.00"), and
+  // — more importantly — EVERY cell is now clipped to its own column by `cells.forEach`
+  // below, so no future value can silently overrun its neighbour. pdf.spec.ts asserts it.
   const cols = [
-    { x: M,          w: 214, label: 'Description',  align: 'left'  as const },
-    { x: M + 214,    w: 34,  label: 'Qty',          align: 'right' as const },
-    { x: M + 248,    w: 72,  label: 'Rate',         align: 'right' as const },
-    { x: M + 320,    w: 66,  label: 'Discount',     align: 'right' as const },
-    { x: M + 386,    w: 58,  label: 'Tax',          align: 'right' as const },
-    { x: M + 444,    w: W - 444, label: 'Amount',   align: 'right' as const },
+    { x: M,          w: 150, label: 'Description',  align: 'left'  as const },
+    { x: M + 150,    w: 28,  label: 'Qty',          align: 'right' as const },
+    { x: M + 178,    w: 76,  label: 'Rate',         align: 'right' as const },
+    { x: M + 254,    w: 92,  label: 'Discount',     align: 'right' as const },
+    { x: M + 346,    w: 88,  label: 'Tax',          align: 'right' as const },
+    { x: M + 434,    w: W - 434, label: 'Amount',   align: 'right' as const },
   ];
   p.rect(M, y - 3, W, 20, BG);
   for (const c of cols) p.text(c.label, c.x + 4, y + 10, { size: 8, font: 'Helvetica-Bold', color: MUTED, align: c.align, width: c.w - 8 });
@@ -136,15 +146,15 @@ export function quotationPdf(q: QuotationDoc, lh: Letterhead): Buffer {
   for (const it of q.items) {
     const disc = Number(it.discount_minor) > 0
       ? (it.discount_type === 'percent'
-        ? `${Number(it.discount_value)}%  ${money(it.discount_minor)}`
+        ? `${Number(it.discount_value)}% ${money(it.discount_minor)}`
         : money(it.discount_minor))
-      : '—';
-    const tax = Number(it.tax_pct) > 0 ? `${Number(it.tax_pct)}%  ${money(it.tax_minor)}` : '—';
+      : '-';
+    const tax = Number(it.tax_pct) > 0 ? `${Number(it.tax_pct)}% ${money(it.tax_minor)}` : '-';
     const cells = [
-      PdfPage.clip(it.description, cols[0].w - 8, 9),
-      String(it.qty), money(it.unit_price_minor), disc, tax, money(it.total_minor),
+      it.description, String(it.qty), money(it.unit_price_minor), disc, tax, money(it.total_minor),
     ];
-    cols.forEach((c, i) => p.text(cells[i], c.x + 4, y, {
+    // EVERY cell clipped to its own column — not just the description. See the note above.
+    cols.forEach((c, i) => p.text(PdfPage.clip(cells[i], c.w - 8, 9), c.x + 4, y, {
       size: 9, color: INK, align: c.align, width: c.w - 8,
     }));
     y += 8;
