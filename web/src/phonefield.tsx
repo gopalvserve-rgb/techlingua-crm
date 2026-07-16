@@ -47,7 +47,7 @@ export const joinPhone = (dial: string, national: string) =>
   (national.trim() ? `+${dial}${national.replace(/\D/g, '')}` : '');
 
 /**
- * client update #5 — width of the country-code selector.
+ * client update #6 — width of the country-code selector.
  *
  * It used to be a flat 108px, which is ~20px more than the control can ever need.
  * That is invisible on a wide field but ruinous on a narrow one: the lead sheet lays

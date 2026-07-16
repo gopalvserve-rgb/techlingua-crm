@@ -1,5 +1,5 @@
 /**
- * client update #5 regression — client UAT bug (Gopal): "the phone and WhatsApp number
+ * client update #6 regression — client UAT bug (Gopal): "the phone and WhatsApp number
  * fields are too small, while the country code field is unnecessarily large … the number
  * is overflowing outside the input box."
  *
