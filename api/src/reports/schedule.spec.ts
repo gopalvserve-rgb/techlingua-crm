@@ -217,6 +217,63 @@ describe('IT SENDS ONCE', () => {
     expect(queued).toHaveLength(1);             // AND no second email
   });
 
+  /**
+   * ==========================================================================
+   * DEF-S6-03 — THE TEST THAT WAS MISSING, AND THE LIVE SMOKE THAT FOUND IT.
+   * ==========================================================================
+   * Every "sends once" test above resets `next_run_at` BY HAND between the two calls,
+   * because that is how a second replica would find the row. That is a real scenario and
+   * those tests are right — but it is not what the "Send now" BUTTON does, and the hand
+   * reset masked the bug completely.
+   *
+   * Live, four presses produced FOUR delivery rows (2026-07-17, -18, -19, -20): each run
+   * advanced the clock, so the next press computed a run key for a DIFFERENT PERIOD and
+   * sailed through the idempotency gate — "delivering" days that had not happened, and
+   * pushing the client's real 08:00 report four days into the future.
+   *
+   * So this test presses the button four times, exactly as a user would, and touches
+   * NOTHING in between.
+   */
+  it('FOUR manual presses, nothing reset by hand -> ONE delivery row and the clock UNMOVED', async () => {
+    const { db, worker, queued } = build();
+    const before = db.schedules[0].next_run_at;
+
+    for (let i = 0; i < 4; i++) {
+      await worker.runSchedule(7, new Date('2026-07-16T14:00:00Z'), { advance: false });
+    }
+
+    expect(db.deliveries).toHaveLength(1);                 // <- was 4
+    expect(db.deliveries[0].run_key).toBe('2026-07-17');   // the CURRENT due period
+    expect(queued).toHaveLength(1);
+    // and the timer is exactly where it was — a manual press must not silently stop the
+    // client's daily report for four days
+    expect(db.schedules[0].next_run_at).toBe(before);
+  });
+
+  it('a manual press does NOT move the clock; the TIMER does', async () => {
+    const { db, worker } = build();
+    const before = db.schedules[0].next_run_at;
+    await worker.runSchedule(7, new Date('2026-07-17T02:30:00Z'), { advance: false });
+    expect(db.schedules[0].next_run_at).toBe(before);
+
+    // the timer path (default) advances it
+    const { db: db2, worker: w2 } = build();
+    await w2.runSchedule(7, new Date('2026-07-17T02:30:00Z'));
+    expect(new Date(db2.schedules[0].next_run_at).toISOString()).toBe('2026-07-18T02:30:00.000Z');
+  });
+
+  /** …and because the manual press consumed the period's key, the 08:00 timer correctly
+   *  declines to send a second copy of a report the client already has. */
+  it('after a manual press, the TIMER declines the same period', async () => {
+    const { db, worker, queued } = build();
+    await worker.runSchedule(7, new Date('2026-07-16T14:00:00Z'), { advance: false });
+    expect(queued).toHaveLength(1);
+    const fired = await worker.runSchedule(7, new Date('2026-07-17T02:30:00Z'));
+    expect(fired).toBe(false);
+    expect(queued).toHaveLength(1);
+    expect(db.deliveries).toHaveLength(1);
+  });
+
   it('a repeat does NOT advance the clock — the owner of the period does that', async () => {
     const { db, worker } = build();
     await worker.runSchedule(7, new Date('2026-07-17T02:30:00Z'));

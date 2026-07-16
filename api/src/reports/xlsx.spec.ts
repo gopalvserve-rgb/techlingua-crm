@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { inflateRawSync } from 'zlib';
-import { RUPEE, buildCsv, buildXlsx, excelSerial, xesc, zip } from './xlsx.util';
+import { RUPEE, buildCsv, buildXlsx, csvDate, excelSerial, xesc, zip } from './xlsx.util';
 
 /**
  * =============================================================================
@@ -212,6 +212,51 @@ describe('CSV', () => {
     const buf = buildCsv([{ label: 'Name', type: 'text' }], [['Priy\u0101']]);
     expect(buf[0]).toBe(0xEF); expect(buf[1]).toBe(0xBB); expect(buf[2]).toBe(0xBF);
     expect(buf.toString('utf8')).toContain('Priy\u0101');
+  });
+
+  /**
+   * DEF-S6-02, FOUND BY THE LIVE SMOKE AND NOT BY ANY OF THESE TESTS.
+   *
+   * Every fixture in this file passes a date as a STRING, because that is what a
+   * hand-written fixture looks like. `node-postgres` returns a real `Date` OBJECT, and
+   * `String(new Date())` is "Thu Jul 16 2026 13:56:11 GMT+0000 (Coordinated Universal
+   * Time)" — which is exactly what the client's first CSV export contained.
+   *
+   * So this test passes a REAL Date, deliberately. The double cannot be wrong about a
+   * type it never produces — the fix is to produce it.
+   */
+  it('a real Date OBJECT (what pg actually returns) formats, not Date.toString()', () => {
+    const out = buildCsv(
+      [{ label: 'When', type: 'datetime' }],
+      [[new Date('2026-07-16T13:56:11.000Z')]],
+    ).toString('utf8');
+    expect(out).toContain('2026-07-16 13:56');
+    expect(out).not.toContain('GMT');
+    expect(out).not.toContain('Coordinated Universal Time');
+  });
+
+  it('a date STRING formats identically — both paths agree', () => {
+    const asDate = buildCsv([{ label: 'When', type: 'datetime' }], [[new Date('2026-07-16T13:56:11.000Z')]]).toString('utf8');
+    const asString = buildCsv([{ label: 'When', type: 'datetime' }], [['2026-07-16T13:56:11.000Z']]).toString('utf8');
+    expect(asDate).toBe(asString);
+  });
+
+  it('a `date` column has no time on it', () => {
+    expect(csvDate(new Date('2026-07-16T13:56:11.000Z'), 'date')).toBe('2026-07-16');
+    expect(csvDate(new Date('2026-07-16T13:56:11.000Z'), 'datetime')).toBe('2026-07-16 13:56');
+  });
+
+  it('the format is sortable and unambiguous (not 7/8 vs 8/7)', () => {
+    const rows = [[new Date('2026-01-02T00:00:00Z')], [new Date('2026-02-01T00:00:00Z')]];
+    const out = buildCsv([{ label: 'When', type: 'date' }], rows).toString('utf8');
+    expect(out).toContain('2026-01-02');
+    expect(out).toContain('2026-02-01');
+    // as TEXT, 2026-01-02 sorts before 2026-02-01 — which is also the true order
+    expect(out.indexOf('2026-01-02')).toBeLessThan(out.indexOf('2026-02-01'));
+  });
+
+  it('a value that is not a date at all is passed through, not turned into "Invalid Date"', () => {
+    expect(csvDate('not a date', 'date')).toBe('not a date');
   });
 
   it('money is plain rupees with 2dp - a CSV has no number formats', () => {

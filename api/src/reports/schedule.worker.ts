@@ -94,8 +94,32 @@ export class ScheduleWorker implements OnModuleInit, OnModuleDestroy {
     return rows.map((r) => Number(r.id));
   }
 
-  /** Run ONE schedule. Public so schedule.spec.ts can drive it twice and prove it sends once. */
-  async runSchedule(id: number, now: Date = new Date()): Promise<boolean> {
+  /**
+   * Run ONE schedule. Public so schedule.spec.ts can drive it twice and prove it sends once.
+   *
+   * ============================================================================
+   * DEF-S6-03 — `advance` IS NOT AN OPTIONAL EXTRA. IT IS THE BUG THE LIVE SMOKE FOUND.
+   * ============================================================================
+   * This method used to advance `next_run_at` on EVERY run, including a manual "Send
+   * now". Live, that meant:
+   *
+   *   press Send now  -> delivers period 2026-07-17, next_run_at := the 18th
+   *   press it again  -> dueAt is now the 18th, so the run key is 2026-07-18 — A
+   *                      DIFFERENT PERIOD — so the idempotency gate lets it straight
+   *                      through and it "delivers" a day that has not happened yet.
+   *
+   * Four presses produced four delivery rows (the 17th, 18th, 19th, 20th) AND pushed the
+   * client's daily 08:00 report four days into the future, where it would silently not
+   * arrive. Every unit test passed, because each one RESET `next_run_at` by hand between
+   * the two calls — which is precisely the thing the real code does not do.
+   *
+   * So: only the TIMER advances the clock. A manual run delivers the CURRENT period and
+   * leaves the schedule alone — which also makes "Send now" idempotent for free (the
+   * second press hits the same run key and is declined), and means pressing it does not
+   * cause a second copy at 08:00.
+   */
+  async runSchedule(id: number, now: Date = new Date(), opts: { advance?: boolean } = {}): Promise<boolean> {
+    const advanceClock = opts.advance !== false;
     const s = await this.db.one<any>(
       `SELECT s.*, r.name AS report_name, r.entity, r.config
          FROM report_schedule s JOIN report_definition r ON r.id = s.report_id
@@ -132,7 +156,7 @@ export class ScheduleWorker implements OnModuleInit, OnModuleDestroy {
             : 'This schedule has no recipients.',
           recipients: recipients.map((r) => r.name),
         });
-        await this.advance(s, dueAt);
+        if (advanceClock) await this.advance(s, dueAt);
         return true;
       }
 
@@ -146,7 +170,7 @@ export class ScheduleWorker implements OnModuleInit, OnModuleDestroy {
           error: 'Email is not configured — add your SMTP details in Settings › Channels and this report will send on its next run. Nothing else needs changing.',
           recipients: withEmail.map((r) => r.name),
         });
-        await this.advance(s, dueAt);
+        if (advanceClock) await this.advance(s, dueAt);
         return true;
       }
 
@@ -190,14 +214,14 @@ export class ScheduleWorker implements OnModuleInit, OnModuleDestroy {
         recipients: withEmail.map((r) => r.name),
         message_ids: messageIds, file_name: filename, row_count: out.row_count,
       });
-      await this.advance(s, dueAt);
+      if (advanceClock) await this.advance(s, dueAt);
       return true;
     } catch (e) {
       // A FAILED RUN IS RECORDED WITH ITS REASON AND THE CLOCK STILL ADVANCES. A schedule
       // that stops for ever because one Tuesday's query threw is worse than one that
       // misses a Tuesday: the client would not notice until he needed the report.
       await this.finish(deliveryId, 'failed', { error: (e as Error).message?.slice(0, 500) ?? 'Unknown error' });
-      await this.advance(s, dueAt);
+      if (advanceClock) await this.advance(s, dueAt);
       this.log.error(`schedule ${id} failed: ${(e as Error).message}`);
       return true;
     }

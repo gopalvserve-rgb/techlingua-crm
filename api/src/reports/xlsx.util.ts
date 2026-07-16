@@ -290,6 +290,33 @@ ${sheet.columns.length ? `<autoFilter ref="A${headerRow}:${lastCol}${Math.max(he
 /* -------------------------------------------------------------------- CSV */
 
 /**
+ * DEF-S6-02 — a DATE IN A CSV.
+ *
+ * This function used to be `String(v)`. That is correct for text and a disaster for a
+ * date: `node-postgres` hands back a real `Date` OBJECT, and `String(new Date())` is
+ *
+ *     Thu Jul 16 2026 13:56:11 GMT+0000 (Coordinated Universal Time)
+ *
+ * — which is what the client's first CSV export actually contained, in every date column.
+ * Excel cannot parse it, cannot sort it, and it is 62 characters wide.
+ *
+ * EVERY UNIT TEST PASSED, because they all fed `buildCsv` a STRING (the fixtures are
+ * hand-written JSON, and the db doubles return strings). Only the live smoke, against
+ * real Postgres, produced a real Date. The same shape as DEF-S4-01: the double cannot
+ * be wrong about a type it never produces.
+ *
+ * `YYYY-MM-DD HH:mm` — sortable as text, unambiguous (no 7/8 vs 8/7), and Excel and
+ * Google Sheets both recognise it as a date on import. The .xlsx export writes a real
+ * serial date and is unaffected; this is the CSV's problem alone.
+ */
+export function csvDate(v: unknown, type: 'date' | 'datetime'): string {
+  const d = v instanceof Date ? v : new Date(String(v));
+  if (Number.isNaN(d.getTime())) return String(v);   // not a date after all — pass it through
+  const iso = d.toISOString();
+  return type === 'date' ? iso.slice(0, 10) : `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+}
+
+/**
  * CSV, with a UTF-8 BOM.
  *
  * The BOM is not cargo cult: without it, Excel on Windows opens a UTF-8 CSV in the
@@ -303,7 +330,10 @@ ${sheet.columns.length ? `<autoFilter ref="A${headerRow}:${lastCol}${Math.max(he
 export function buildCsv(columns: SheetColumn[], rows: unknown[][]): Buffer {
   const q = (v: unknown, type: CellType) => {
     if (v === null || v === undefined) return '';
-    let s = type === 'money' ? (Number(v) / 100).toFixed(2) : String(v);
+    let s: string;
+    if (type === 'money') s = (Number(v) / 100).toFixed(2);
+    else if (type === 'date' || type === 'datetime') s = csvDate(v, type);
+    else s = String(v);
     if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     return /["\,\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };

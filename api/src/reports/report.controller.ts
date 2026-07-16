@@ -182,7 +182,9 @@ export class ReportController {
   @RequirePermission('report.schedule')
   async runNow(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     await this.schedules.get(id, me, scope);   // 404 if not theirs
-    const ran = await this.scheduleWorker.runSchedule(id);
+    // advance: false — DEF-S6-03. A manual press must not move the schedule's own clock;
+    // it delivers the CURRENT period and leaves the timer exactly where it was.
+    const ran = await this.scheduleWorker.runSchedule(id, new Date(), { advance: false });
     return ran
       ? { ran: true, note: 'Delivery attempted — see the history below for the outcome.' }
       : { ran: false, note: 'This period has already been delivered. The next run is scheduled as shown.' };
