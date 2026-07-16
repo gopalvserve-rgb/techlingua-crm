@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 import { NotConfiguredException } from '../common/not-configured.exception';
 import { decryptSecret, encryptSecret, maskSecret, randomToken } from '../common/crypto.util';
-import { CHANNEL_LABEL, MSG_PROVIDERS, MsgChannel, MsgProviderSpec, missingRequirements, providersFor } from './providers';
+import { CHANNEL_LABEL, MSG_PROVIDERS, MsgChannel, MsgProviderSpec, isMultiProvider, missingRequirements, providersFor } from './providers';
 
 export interface ChannelConfigRow {
   id: number; org_id: number; channel: string; provider: string;
@@ -78,14 +78,20 @@ export class ChannelConfigService {
    * THE RESOLUTION RULE — vertical row, else org row. Returns null when nothing is stored
    * at all (a channel the client has never touched).
    */
-  async resolve(channel: MsgChannel, verticalId?: number | null): Promise<ResolvedConfig | null> {
+  async resolve(channel: MsgChannel, verticalId?: number | null, provider?: string | null): Promise<ResolvedConfig | null> {
+    // DEF-S5-04: on a multi-provider channel (`ai`) each provider has its own row, so
+    // "the ai config" is not a question with one answer — the caller must say WHICH.
+    // Without a provider we fall back to the most recently updated row rather than an
+    // arbitrary one, so a probe with no provider is at least deterministic.
     const row = await this.db.one<any>(
       `SELECT * FROM channel_config
         WHERE channel = $1 AND deleted_at IS NULL AND is_active
           AND (vertical_id = $2::bigint OR vertical_id IS NULL)
-        ORDER BY vertical_id NULLS LAST      -- the vertical row wins over the org row
+          AND ($3::varchar IS NULL OR provider = $3::varchar)
+        ORDER BY vertical_id NULLS LAST,     -- the vertical row wins over the org row
+                 updated_at DESC
         LIMIT 1`,
-      [channel, verticalId ?? null],
+      [channel, verticalId ?? null, provider ?? null],
     );
     if (!row) return null;
     return {
@@ -103,9 +109,9 @@ export class ChannelConfigService {
    * Every caller that actually SENDS uses this — so "not configured" is impossible to
    * forget and impossible to mistake for a bug.
    */
-  async require(channel: MsgChannel, verticalId?: number | null): Promise<ResolvedConfig> {
-    const cfg = await this.resolve(channel, verticalId);
-    const label = CHANNEL_LABEL[channel] ?? channel;
+  async require(channel: MsgChannel, verticalId?: number | null, provider?: string | null): Promise<ResolvedConfig> {
+    const cfg = await this.resolve(channel, verticalId, provider);
+    const label = provider ? (MSG_PROVIDERS[provider]?.label ?? channel) : (CHANNEL_LABEL[channel] ?? channel);
     if (!cfg) {
       throw new NotConfiguredException(
         `${label} is not configured — add it in Administration › Settings › Channels.`,
@@ -147,11 +153,23 @@ export class ChannelConfigService {
     }
     const orgId = await this.orgId();
 
+    /**
+     * WHICH ROW AM I EDITING? (DEF-S5-04)
+     *
+     * On a normal channel: the (channel, vertical) row — so switching SMS from MSG91 to
+     * Twilio REPLACES the gateway, which is the intent.
+     *
+     * On a multi-provider channel (`ai`): the (channel, PROVIDER, vertical) row — so
+     * saving Gemini leaves DeepSeek alone. This lookup ignoring the provider is precisely
+     * how saving one AI key silently destroyed the other.
+     */
+    const multi = isMultiProvider(spec.channel);
     const existing = await this.db.one<any>(
       `SELECT * FROM channel_config
         WHERE org_id = $1 AND channel = $2 AND COALESCE(vertical_id, -1) = COALESCE($3::bigint, -1)
+          AND ($4::varchar IS NULL OR provider = $4::varchar)
           AND deleted_at IS NULL`,
-      [orgId, spec.channel, verticalId],
+      [orgId, spec.channel, verticalId, multi ? spec.key : null],
     );
 
     const secrets = this.encryptIncoming(spec, dto?.secrets ?? {}, existing?.secrets ?? {});

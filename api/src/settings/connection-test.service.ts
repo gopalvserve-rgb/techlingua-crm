@@ -42,8 +42,10 @@ export class ConnectionTestService {
    * 503 naming the missing fields) when there is nothing to test — never a 500, and never
    * an Error-Log row.
    */
-  async probe(channel: MsgChannel, verticalId?: number | null): Promise<TestResult> {
-    const cfg = await this.configs.require(channel, verticalId);
+  async probe(channel: MsgChannel, verticalId?: number | null, provider?: string | null): Promise<TestResult> {
+    // `provider` matters on a multi-provider channel (`ai`) — see DEF-S5-04. Elsewhere it
+    // is null and the (channel, vertical) row is the only one there is.
+    const cfg = await this.configs.require(channel, verticalId, provider);
     const spec = MSG_PROVIDERS[cfg.provider];
     const caveat = spec?.testCaveat;
 

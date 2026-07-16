@@ -368,6 +368,30 @@ export const CHANNEL_LABEL: Record<MsgChannel, string> = {
 export const ALL_CHANNELS: MsgChannel[] = ['whatsapp', 'sms', 'email', 'calendar', 'payment', 'storage', 'ai'];
 
 /**
+ * CHANNELS WHERE SEVERAL PROVIDERS COEXIST, EACH WITH ITS OWN ROW (DEF-S5-04).
+ *
+ * Everywhere else, one provider per (channel, vertical) is the POINT: switching SMS from
+ * MSG91 to Twilio must REPLACE the row, because two live SMS gateways on one vertical is
+ * an ambiguity, not a feature — `resolve('sms')` would have to pick one and would
+ * eventually pick the wrong one. So those channels stay keyed on (channel, vertical).
+ *
+ * `ai` is genuinely different. PROJECT_STATUS §4.8 offers "DeepSeek **and/or** Gemini" and
+ * the Phase-2 features will choose per task, so they are not alternatives — they are two
+ * independent credentials. They shared `channel='ai'`, so saving Gemini silently
+ * OVERWROTE the DeepSeek key in place, with no warning (live: both returned `id: 17`).
+ * Keying `ai` rows on the PROVIDER too makes "and/or" true, which is what the card claims.
+ *
+ * The web already grouped these cards `byProvider`, so it needed no change — this was
+ * only ever a storage-key bug.
+ */
+export const MULTI_PROVIDER_CHANNELS: MsgChannel[] = ['ai'];
+
+/** Is this a channel where each provider keeps its OWN row, rather than replacing the others? */
+export function isMultiProvider(channel: string): boolean {
+  return MULTI_PROVIDER_CHANNELS.includes(channel as MsgChannel);
+}
+
+/**
  * Which required fields are still empty. An empty array = configured.
  * `generated` secrets never count as missing — we mint them ourselves.
  */

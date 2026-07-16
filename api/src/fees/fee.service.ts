@@ -5,6 +5,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { NumberingService } from '../numbering/numbering.service';
 import { formatINR, rupeesToMinor } from '../common/money.util';
 import { Letterhead, receiptPdf } from '../pdf/documents';
+import { paidAsAtMinor } from './as-at';
 
 /**
  * LITE FEE — a collection entry and a receipt. That is the WHOLE Phase-1 scope
@@ -138,6 +139,21 @@ export class FeeService {
     };
   }
 
+  /**
+   * One receipt, with `paid_minor` = **paid AS AT THIS RECEIPT** — not as at today.
+   *
+   * DEF-S5-02: this used to be a `LEFT JOIN LATERAL` keyed on `x.received_at <=
+   * fr.received_at` with no tiebreak. The collect form posts a DATE, so same-day receipts
+   * all sit at midnight, `<=` swept in the LATER ones too, and every same-day partial
+   * printed the FINAL balance — a false financial document handed to a customer.
+   *
+   * The arithmetic now lives in `paidAsAtMinor()`, a pure function over the enrolment's
+   * receipts, because **no unit test could reach it while it was SQL**: every fee spec
+   * drives a db double that returns whatever `paid_minor` it likes and never parses a
+   * predicate. Same-day partials are now pinned by fixtures in `as-at.spec.ts`, with no
+   * database. The receipt list is tiny (one enrolment's receipts), so the second query is
+   * cheap and this path is a receipt view / a PDF print, not a hot loop.
+   */
   async get(id: number, scope: ResolvedScope) {
     const params: unknown[] = [id];
     const w = this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params);
@@ -147,8 +163,7 @@ export class FeeService {
               c.name AS course_name, u.name AS received_by_name,
               b.name AS branch_name, b.address AS branch_address, b.contact_number AS branch_phone,
               b.email AS branch_email, v.name AS vertical_name,
-              o.name AS org_name, o.gst_no AS org_gst,
-              COALESCE(p.paid_minor, 0) AS paid_minor
+              o.name AS org_name, o.gst_no AS org_gst
          FROM fee_receipt fr
          JOIN enrolment e ON e.id = fr.enrolment_id
          JOIN lead l ON l.id = e.lead_id
@@ -157,16 +172,19 @@ export class FeeService {
          JOIN organisation o ON o.id = fr.org_id
          LEFT JOIN m_course c ON c.id = e.course_id
          LEFT JOIN "user" u ON u.id = fr.received_by
-         LEFT JOIN LATERAL (
-           SELECT COALESCE(sum(x.amount_minor), 0) AS paid_minor
-             FROM fee_receipt x
-            WHERE x.enrolment_id = fr.enrolment_id AND x.deleted_at IS NULL
-              AND x.received_at <= fr.received_at
-         ) p ON TRUE
         WHERE fr.id = $1::bigint AND fr.deleted_at IS NULL AND ${w}`,
       params,
     );
     if (!r) throw new NotFoundException('Receipt not found');
+
+    // Every LIVE receipt against the same enrolment. A soft-deleted receipt is not money,
+    // so it is excluded here rather than filtered later.
+    const siblings = await this.db.query<any>(
+      `SELECT id, amount_minor, received_at FROM fee_receipt
+        WHERE enrolment_id = $1::bigint AND deleted_at IS NULL`,
+      [r.enrolment_id],
+    );
+    r.paid_minor = paidAsAtMinor(siblings ?? [], r);
     return r;
   }
 

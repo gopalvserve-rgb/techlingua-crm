@@ -26,7 +26,10 @@ import { ResolvedScope } from '../rbac/rbac.types';
  *                  closes leads created last month — that is TRUE, and hiding it by
  *                  capping would be a lie. The screen says "of leads created in range".
  *   revenue        BOOKED (`net_fee_minor` of those enrolments), not collected.
- *   collected      cash actually receipted in the window. Shown SEPARATELY on purpose.
+ *   collected      cash receipted in the window AGAINST THIS COUNSELLOR'S ENROLMENTS —
+ *                  regardless of who physically took the money. Shown SEPARATELY from
+ *                  `revenue` on purpose: booked and collected are different questions.
+ *                  See THE ATTRIBUTION RULE below.
  *   activities     timeline events they logged — the "calls" column of the prototype,
  *                  honestly named, because TELEPHONY IS OUT OF SCOPE and we do not have
  *                  call counts. Dispositions + follow-ups + notes are what we DO have.
@@ -34,6 +37,28 @@ import { ResolvedScope } from '../rbac/rbac.types';
  *                  Sprint-3 table, not a second measurement.
  *   adherence      follow-ups completed on time / follow-ups due. A counsellor with
  *                  nothing due is shown "—", not 0% or 100%.
+ *
+ * =============================================================================
+ * THE ATTRIBUTION RULE — decision log #45 (DEF-S5-03)
+ * =============================================================================
+ * **Revenue and collected cash attribute to the ENROLMENT'S COUNSELLOR, regardless of who
+ * physically receipted the money. `fee_receipt.received_by` is the AUDIT RECORD of who took
+ * the cash and is never an attribution key.**
+ *
+ * Why: an **Accountant** (role 10) or a front-desk clerk is the natural person to take a
+ * fee, and in a branch with a cash counter that is the normal case, not an exception. The
+ * old code keyed `collected` on `received_by` and only ever considered people who owned a
+ * lead or counselled an enrolment — so an Accountant's receipt was credited to NOBODY and
+ * then vanished from the org-wide total, because the total was the sum of the rows. Live,
+ * `/fees/summary` reported Rs 50,000 while `/performance/summary` reported Rs 0.
+ *
+ * The rule is also the only one that means anything to the client: a counsellor's
+ * leaderboard answers *"how much of the fee I sold has actually come in?"* — a question
+ * about HIS enrolments. *"Which till took the cash?"* is a cashbook question, and the
+ * cashbook (`received_by`, on every receipt and its PDF) still answers it, unchanged.
+ *
+ * Sprint 6's reports read this service as the single source of truth, so this had to be
+ * right before anything was built on top of it.
  *
  * CALLS: the column exists in the prototype. It reports ACTIVITIES, and the UI labels
  * it "Activity". Telephony is out of scope (a standing project rule) — inventing a call
@@ -100,9 +125,15 @@ export class PerformanceService {
               (SELECT COALESCE(sum(se.net_fee_minor), 0) FROM scoped_enr se, win w
                 WHERE se.counsellor_id = p.user_id AND se.status = 'active'
                   AND se.created_at >= w.d_from AND se.created_at < w.d_to) AS revenue_minor,
+              -- DEF-S5-03. Attribution is the ENROLMENT'S COUNSELLOR, never the
+              -- receipt's received_by. An Accountant is the natural person to take a fee;
+              -- keying this on who physically keyed it in credited the money to nobody and
+              -- then DELETED it from the org-wide total. received_by remains the audit
+              -- record of who took the cash — it is not, and never was, a claim about
+              -- whose revenue it is. See THE ATTRIBUTION RULE in the header.
               (SELECT COALESCE(sum(fr.amount_minor), 0)
                  FROM fee_receipt fr JOIN scoped_enr se ON se.id = fr.enrolment_id, win w
-                WHERE fr.received_by = p.user_id AND fr.deleted_at IS NULL
+                WHERE se.counsellor_id = p.user_id AND fr.deleted_at IS NULL
                   AND fr.received_at >= w.d_from AND fr.received_at < w.d_to) AS collected_minor,
               (SELECT count(*) FROM lead_activity la JOIN scoped_leads sl ON sl.id = la.lead_id, win w
                 WHERE la.actor_id = p.user_id
@@ -160,10 +191,44 @@ export class PerformanceService {
     });
   }
 
+  /**
+   * ORG-WIDE CASH COLLECTED in the window, computed **directly from the scoped receipts**.
+   *
+   * DEF-S5-03: `summary()` used to add up the leaderboard's per-person rows, so any receipt
+   * that did not land on a person — an Accountant's, an Admin's — was silently dropped from
+   * the total. `/fees/summary` said Rs 50,000 and `/performance/summary` said Rs 0 AT THE
+   * SAME MOMENT. A total derived by summing rows can only ever be as complete as the row
+   * set; this one is derived from the money itself, so the two screens cannot disagree
+   * about cash again — which is the entire point of the booked-vs-collected discipline.
+   *
+   * Scoped on the ENROLMENT (the same fragment the leaderboard's enrolment aggregates use),
+   * so a counsellor's total is his own and cannot return branch numbers.
+   */
+  private async collectedMinor(scope: ResolvedScope, f: { from?: string; to?: string }): Promise<number> {
+    const params: unknown[] = [f.from ? String(f.from).slice(0, 10) : null, f.to ? String(f.to).slice(0, 10) : null];
+    const enrWhere = this.resolver.buildScopeWhere(scope, {
+      owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
+      vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
+    }, params);
+    const r = await this.db.one<any>(
+      `WITH win AS (
+         SELECT COALESCE($1::date, date_trunc('month', now())::date) AS d_from,
+                COALESCE($2::date, (date_trunc('month', now()) + INTERVAL '1 month')::date) AS d_to
+       )
+       SELECT COALESCE(sum(fr.amount_minor), 0) AS collected_minor
+         FROM fee_receipt fr
+         JOIN enrolment e ON e.id = fr.enrolment_id, win w
+        WHERE fr.deleted_at IS NULL AND e.deleted_at IS NULL AND ${enrWhere}
+          AND fr.received_at >= w.d_from AND fr.received_at < w.d_to`,
+      params,
+    );
+    return Number(r?.collected_minor ?? 0);
+  }
+
   /** The KPI strip above the leaderboard — the same window, the same scope. */
   async summary(scope: ResolvedScope, f: { from?: string; to?: string } = {}) {
     const rows = await this.leaderboard(scope, f);
-    const sum = (k: 'leads' | 'enrolments' | 'revenue_minor' | 'collected_minor') =>
+    const sum = (k: 'leads' | 'enrolments' | 'revenue_minor') =>
       rows.reduce((a, r) => a + (r[k] as number), 0);
     const leads = sum('leads');
     const enrolments = sum('enrolments');
@@ -173,7 +238,8 @@ export class PerformanceService {
       enrolments,
       conversion_pct: leads > 0 ? Math.round((enrolments * 1000) / leads) / 10 : 0,
       revenue_minor: sum('revenue_minor'),
-      collected_minor: sum('collected_minor'),
+      // NOT `sum('collected_minor')` — see collectedMinor(). This is the money, not the rows.
+      collected_minor: await this.collectedMinor(scope, f),
       best: rows[0] ? { user_name: rows[0].user_name, enrolments: rows[0].enrolments } : null,
     };
   }

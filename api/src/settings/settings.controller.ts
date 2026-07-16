@@ -97,13 +97,19 @@ export class SettingsController {
     const channel = String(dto?.channel ?? '') as MsgChannel;
     if (!CHANNEL_LABEL[channel]) throw new BadRequestException(`Unknown channel "${channel}".`);
     const verticalId = dto?.vertical_id ? Number(dto.vertical_id) : null;
+    // DEF-S5-04: on a multi-provider channel (`ai`) "test the ai channel" is not a
+    // question with one answer — DeepSeek and Gemini are two independent credentials. The
+    // card sends which one it is; without it we would probe an arbitrary row and report
+    // the wrong provider's verdict against the button the admin actually pressed.
+    const provider = dto?.provider ? String(dto.provider) : null;
+    if (provider && !MSG_PROVIDERS[provider]) throw new BadRequestException(`Unknown provider "${provider}".`);
 
     // throws NotConfiguredException (503 + the reason) when a credential is missing
-    const cfg = await this.configs.require(channel, verticalId);
+    const cfg = await this.configs.require(channel, verticalId, provider);
     const spec = MSG_PROVIDERS[cfg.provider];
 
     if (spec?.test !== 'send') {
-      const out = await this.tester.probe(channel, verticalId);
+      const out = await this.tester.probe(channel, verticalId, provider);
       return { mode: 'probe', ...out };
     }
 

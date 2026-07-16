@@ -968,6 +968,10 @@ export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
     try {
       const out = await api.post<TestOutcome>('/settings/channels/test', {
         channel: spec.channel, to: testTo,
+        // DEF-S5-04: DeepSeek and Gemini share channel 'ai' and are INDEPENDENT rows.
+        // Say which card was pressed, or the API probes an arbitrary one and reports the
+        // other provider's verdict.
+        provider: spec.key,
         vertical_id: spec.perVertical && verticalId ? Number(verticalId) : null,
       });
       setOutcome(out);

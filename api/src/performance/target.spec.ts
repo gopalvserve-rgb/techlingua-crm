@@ -117,8 +117,13 @@ describe('the dashboard bar means something different per role — and that is t
 });
 
 describe('counsellor performance', () => {
-  const psvc = (rows: unknown[]) => {
-    const db = { query: async () => rows };
+  // `one()` answers the org-wide collected-cash query, which summary() now runs DIRECTLY
+  // against the receipts instead of adding up the leaderboard rows (DEF-S5-03).
+  const psvc = (rows: unknown[], collected = 0) => {
+    const db = {
+      query: async () => rows,
+      one: async (q: string) => (/sum\(fr\.amount_minor\)/.test(q) ? { collected_minor: collected } : null),
+    };
     const resolver = { buildScopeWhere: () => '1=1' };
     return new PerformanceService(db as never, resolver as never);
   };
@@ -162,15 +167,30 @@ describe('counsellor performance', () => {
     expect(r.revenue_minor).not.toBe(r.collected_minor);
   });
 
-  it('the summary totals the same rows the leaderboard shows', async () => {
-    const s = await psvc([ROW, { ...ROW, user_id: 4, user_name: 'Ravi', leads: 10, enrolments: 1, revenue_minor: 1_000, collected_minor: 500 }])
-      .summary({} as never);
+  it('the summary totals the same rows the leaderboard shows — for the ROW-shaped columns', async () => {
+    const s = await psvc(
+      [ROW, { ...ROW, user_id: 4, user_name: 'Ravi', leads: 10, enrolments: 1, revenue_minor: 1_000, collected_minor: 500 }],
+      5_000_500,
+    ).summary({} as never);
     expect(s.counsellors).toBe(2);
     expect(s.leads).toBe(30);
     expect(s.enrolments).toBe(6);
     expect(s.conversion_pct).toBe(20);
     expect(s.revenue_minor).toBe(22_501_000);
     expect(s.best).toEqual({ user_name: 'Asha Rao', enrolments: 5 });
+  });
+
+  /**
+   * DEF-S5-03. `collected` is deliberately NOT in the list above any more. This test used
+   * to assert `summary().collected_minor === sum(rows.collected_minor)` — i.e. it PINNED
+   * THE DEFECT: a total that can only ever be as complete as the row set, so an
+   * Accountant's receipt (attributable to no row) was silently deleted from the org's cash.
+   * The total now comes from the receipts themselves. See attribution.spec.ts.
+   */
+  it('collected comes from the MONEY, not from the rows — even when they disagree', async () => {
+    const s = await psvc([ROW], 9_999_999).summary({} as never);
+    expect(s.collected_minor).toBe(9_999_999);
+    expect(s.collected_minor).not.toBe(ROW.collected_minor);
   });
 
   it('an empty scope is an empty leaderboard, not a crash', async () => {
