@@ -531,8 +531,17 @@ describe('Administration › Settings', () => {
     expect(await screen.findByText('SMTP (per vertical)')).toBeTruthy();
     expect(screen.getByText('WhatsApp — Meta Cloud API')).toBeTruthy();
     expect(screen.getByText('Razorpay (per vertical)')).toBeTruthy();
-    expect(screen.getByText(/BCL: Connected/)).toBeTruthy();
+    // "Connected" became FOUR distinct states. A stored-but-never-tested credential is
+    // "Configured", not "Verified" — the client must never read a saved key as a proven
+    // one. (See `integrationState`.)
+    expect(screen.getByText(/BCL: Configured — not yet tested/)).toBeTruthy();
     expect(screen.getAllByText('Not configured').length).toBeGreaterThan(0);
+  });
+
+  it('says AT A GLANCE what is still outstanding — no opening seven cards to find the empty one', async () => {
+    render(<Settings />);
+    await screen.findByText('SMTP (per vertical)');
+    expect(screen.getByText(/Still to set up/)).toBeTruthy();
   });
 
   it('states the secret policy the client keeps asking about', async () => {

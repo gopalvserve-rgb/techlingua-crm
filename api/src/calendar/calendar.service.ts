@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { SettingsService } from '../common/settings.service';
+import { ChannelConfigService, ResolvedConfig } from '../messaging/channel-config.service';
 import { NotConfiguredException } from '../common/not-configured.exception';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
@@ -51,6 +52,7 @@ export class CalendarService {
     private readonly resolver: ScopeResolverService,
     private readonly enforcer: ScopeEnforcerService,
     private readonly settings: SettingsService,
+    private readonly configs: ChannelConfigService,
   ) {}
 
   /* ------------------------------ the feed ------------------------------ */
@@ -226,14 +228,21 @@ export class CalendarService {
 
   /* ------------------------ Google / Outlook sync (BLOCKED) ------------------------ */
 
-  /** What the UI renders as the sync state. Never throws — it is a status, not an action. */
+  /**
+   * What the UI renders as the sync state. Never throws — it is a status, not an action.
+   *
+   * The credentials moved OUT of the plain `app_setting` blob and into `channel_config`
+   * (migration 028), because an OAuth client SECRET sitting unencrypted in a settings
+   * JSON column was a real exposure: everything else on this screen is AES-256-GCM at
+   * rest and masked on read, and this was not. Same rule now applies here.
+   */
   async syncStatus() {
-    const cfg = await this.settings.get('calendar_sync', { provider: null, enabled: false } as Record<string, unknown>);
-    const provider = (cfg.provider as string) || null;
+    const cfg = await this.configs.resolve('calendar', null);
+    const provider = cfg?.provider ?? null;
     const missing = this.missing(cfg);
     return {
       provider,
-      enabled: cfg.enabled === true,
+      enabled: !!cfg,
       configured: missing.length === 0 && !!provider,
       missing,
       note: missing.length
@@ -242,13 +251,13 @@ export class CalendarService {
     };
   }
 
-  private missing(cfg: Record<string, unknown>): string[] {
-    const provider = (cfg.provider as string) || null;
-    if (!provider) return ['Calendar provider (Google or Outlook)', 'OAuth client id + secret', 'A connected account'];
+  private missing(cfg: ResolvedConfig | null): string[] {
+    if (!cfg?.provider) return ['Calendar provider (Google or Outlook)', 'OAuth client id + secret', 'A connected account'];
     const out: string[] = [];
-    if (!cfg.client_id) out.push('OAuth client id');
-    if (!cfg.client_secret) out.push('OAuth client secret');
-    if (!cfg.refresh_token) out.push('A connected account (OAuth consent)');
+    if (!cfg.config.client_id) out.push('OAuth client id');
+    if (!cfg.secrets.client_secret) out.push('OAuth client secret');
+    // The consent is the step the client still has to take himself — name it.
+    if (!cfg.secrets.refresh_token) out.push('A connected account (OAuth consent)');
     return out;
   }
 
@@ -262,7 +271,7 @@ export class CalendarService {
     if (!status.configured) {
       throw new NotConfiguredException(
         `Calendar sync is not configured — still needed: ${status.missing.join(', ')}. ` +
-        'Add them in Settings › Integrations; the in-app calendar keeps working meanwhile.',
+        'Add them in Administration › Settings › Channels; the in-app calendar keeps working meanwhile.',
       );
     }
     // When credentials land, the provider client plugs in here — nothing else changes.

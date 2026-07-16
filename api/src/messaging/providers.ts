@@ -13,7 +13,7 @@
  * he pastes the values into Settings — no deploy.
  */
 
-export type MsgChannel = 'email' | 'sms' | 'whatsapp' | 'payment' | 'ai';
+export type MsgChannel = 'email' | 'sms' | 'whatsapp' | 'payment' | 'ai' | 'calendar' | 'storage';
 
 export interface MsgFieldSpec {
   key: string;
@@ -43,6 +43,21 @@ export interface MsgProviderSpec {
   secrets: MsgFieldSpec[];
   /** verbatim instructions rendered in the UI — this is what Gopal follows */
   setup: string[];
+  /**
+   * How "Test connection" behaves for this provider:
+   *   'send'  — actually delivers a message to an address the admin types (email/sms/whatsapp)
+   *   'probe' — calls the provider's own API read-only and reports what it said
+   *   'none'  — nothing to call (credentials only become meaningful after an OAuth consent)
+   */
+  test: 'send' | 'probe' | 'none';
+  /**
+   * Rendered verbatim next to a GREEN test result. The Tester found that MSG91 answers
+   * `type:success` to a BOGUS key — so a green result must never be allowed to read as
+   * "delivery proven". Every 'send' provider says what green actually means.
+   */
+  testCaveat?: string;
+  /** Shown in the UI when the stored config is not yet wired to anything live. */
+  storedOnly?: string;
 }
 
 const SPECS: MsgProviderSpec[] = [
@@ -71,6 +86,8 @@ const SPECS: MsgProviderSpec[] = [
       'Paste host, port, the from address and the app password here, choose the Vertical, and press Send test email.',
       'Repeat for every vertical that must send from a different address.',
     ],
+    test: 'send',
+    testCaveat: 'Green means your SMTP server accepted the mail for delivery. Check the inbox (and the spam folder) to confirm it actually landed.',
   },
 
   /* -------------------------------------------------------------------- SMS */
@@ -82,6 +99,8 @@ const SPECS: MsgProviderSpec[] = [
     perVertical: false,
     config: [
       { key: 'sender_id', label: 'DLT Sender ID', type: 'text', required: true, placeholder: 'TCHLNG', hint: '6 characters, approved on the DLT portal' },
+      { key: 'dlt_template_id', label: 'Default DLT Template ID', type: 'text', placeholder: '1707161234567890123', hint: 'Used when a message template does not carry its own DLT id — and for the OTP login SMS.' },
+      { key: 'otp_dlt_template_id', label: 'OTP DLT Template ID', type: 'text', placeholder: '1707161234567890123', hint: 'The DLT template registered for your login OTP text. Falls back to the default above.' },
       { key: 'route', label: 'Route', type: 'text', placeholder: '4', hint: '4 = transactional' },
       { key: 'country', label: 'Country code', type: 'text', placeholder: '91' },
     ],
@@ -90,7 +109,13 @@ const SPECS: MsgProviderSpec[] = [
       'Log in to MSG91 › Settings › API keys and copy the Auth Key.',
       'Register your Sender ID and every SMS template on the DLT portal (this is a legal requirement in India).',
       'Paste the Auth Key + Sender ID here. Put each approved DLT template id on its template in Message Templates.',
+      'Saving this ALSO switches on OTP login — the login OTP is sent through this same gateway.',
     ],
+    test: 'send',
+    // The Tester proved this: MSG91 answers `type:success` to a request signed with a
+    // BOGUS auth key. A green tick here therefore means "MSG91 accepted the request",
+    // NOT "the SMS was delivered". Saying so plainly is the whole point.
+    testCaveat: 'Green means MSG91 ACCEPTED the request — it does NOT prove delivery. MSG91 answers "success" even to a wrong Auth Key, and DLT rejections happen later, silently. Only an SMS actually arriving on the handset proves the gateway works.',
   },
   {
     key: 'sms_http',
@@ -105,6 +130,8 @@ const SPECS: MsgProviderSpec[] = [
       { key: 'body', label: 'Request body template', type: 'textarea', placeholder: '{"to":"{{to}}","message":"{{text}}","sender":"{{sender_id}}"}', hint: 'POST only. {{to}} {{text}} {{sender_id}} {{dlt_template_id}} are substituted.' },
       { key: 'headers', label: 'Extra headers (JSON)', type: 'textarea', placeholder: '{"Content-Type":"application/json"}' },
       { key: 'sender_id', label: 'Default DLT Sender ID', type: 'text', placeholder: 'TCHLNG' },
+      { key: 'dlt_template_id', label: 'Default DLT Template ID', type: 'text', placeholder: '1707161234567890123', hint: 'Substituted as {{dlt_template_id}} when a message template does not carry its own.' },
+      { key: 'otp_dlt_template_id', label: 'OTP DLT Template ID', type: 'text', hint: 'The DLT template registered for your login OTP text.' },
       { key: 'success_contains', label: 'Success marker', type: 'text', placeholder: 'success', hint: 'If the response body contains this, we treat the send as accepted. Leave blank to accept any 2xx.' },
     ],
     secrets: [
@@ -115,7 +142,10 @@ const SPECS: MsgProviderSpec[] = [
       'Paste the URL here. Use {{to}}, {{text}}, {{sender_id}}, {{dlt_template_id}} and {{api_key}} wherever the gateway expects those values.',
       'Paste the API key into the API key box (it is encrypted at rest and never shown again).',
       'Press Send test SMS to your own number.',
+      'Saving this ALSO switches on OTP login — the login OTP goes through this same gateway.',
     ],
+    test: 'send',
+    testCaveat: 'Green means your gateway returned a success response — it does NOT prove delivery. Many Indian gateways accept a request and drop it later at the DLT layer. Only an SMS arriving on the handset proves it works.',
   },
   {
     key: 'twilio',
@@ -131,7 +161,10 @@ const SPECS: MsgProviderSpec[] = [
     setup: [
       'Twilio console › Account Info: copy the Account SID and the Auth Token.',
       'Copy a Twilio phone number capable of SMS into "From number".',
+      'Saving this ALSO switches on OTP login — the login OTP goes through this same gateway.',
     ],
+    test: 'send',
+    testCaveat: 'Green means Twilio queued the message — it does NOT prove delivery. Check the handset.',
   },
 
   /* --------------------------------------------------------------- WHATSAPP */
@@ -139,27 +172,37 @@ const SPECS: MsgProviderSpec[] = [
     key: 'meta_cloud',
     channel: 'whatsapp',
     label: 'WhatsApp — Meta Cloud API',
-    blurb: 'Send approved template messages and (within the 24h window) free-form session messages. Delivery/read receipts and STOP replies arrive on the webhook.',
+    blurb: 'Click "Connect WhatsApp", log in to Meta, and we store the permanent token, the WABA, the phone number and the app secret ourselves — then subscribe the webhook for you. No token pasting, no 24-hour-token trap.',
     perVertical: false,
     config: [
-      { key: 'phone_number_id', label: 'Phone number ID', type: 'text', required: true, hint: 'Meta › WhatsApp › API Setup' },
-      { key: 'waba_id', label: 'WhatsApp Business Account ID', type: 'text' },
+      // ---- Embedded Signup: the two ids that make the Connect button work. Not secret
+      // in the same way (the App ID is public in the browser), but they live here with
+      // everything else so there is ONE place the client configures WhatsApp.
+      { key: 'app_id', label: 'Meta App ID', type: 'text', placeholder: '1234567890123456', hint: 'Meta for Developers › your app › Settings › Basic. Public — it ships to the browser.' },
+      { key: 'config_id', label: 'Embedded Signup Configuration ID', type: 'text', hint: 'Meta › Facebook Login for Business › Configurations. Required for the Connect WhatsApp button.' },
+      // ---- Filled BY Embedded Signup. Still editable, because the manual path must stay.
+      { key: 'phone_number_id', label: 'Phone number ID', type: 'text', required: true, hint: 'Filled automatically by Connect WhatsApp. Meta › WhatsApp › API Setup if you are doing it by hand.' },
+      { key: 'waba_id', label: 'WhatsApp Business Account ID', type: 'text', hint: 'Filled automatically by Connect WhatsApp.' },
+      { key: 'display_phone_number', label: 'Connected number', type: 'text', hint: 'Read from Meta after connecting.' },
+      { key: 'verified_name', label: 'Verified business name', type: 'text', hint: 'Read from Meta after connecting.' },
+      { key: 'connected_via', label: 'Connected via', type: 'text', hint: 'embedded_signup or manual — set by the system.' },
       { key: 'api_version', label: 'Graph API version', type: 'text', placeholder: 'v21.0' },
       { key: 'default_language', label: 'Default template language', type: 'text', placeholder: 'en' },
     ],
     secrets: [
-      { key: 'access_token', label: 'Permanent access token', type: 'password', required: true, hint: 'System-user token with whatsapp_business_messaging' },
-      { key: 'app_secret', label: 'App secret', type: 'password', hint: 'Used to verify the X-Hub-Signature-256 on the delivery webhook' },
-      { key: 'verify_token', label: 'Webhook verify token', type: 'password', generated: true, hint: 'We generate this — paste it into Meta' },
+      { key: 'access_token', label: 'Permanent access token', type: 'password', required: true, hint: 'Filled automatically by Connect WhatsApp (a business-integration system-user token — it does not expire). Only paste one by hand if you are using the advanced fallback.' },
+      { key: 'app_secret', label: 'App secret', type: 'password', hint: 'Meta › Settings › Basic › App Secret. Needed to exchange the login code AND to verify the X-Hub-Signature-256 on the delivery webhook.' },
+      { key: 'verify_token', label: 'Webhook verify token', type: 'password', generated: true, hint: 'We generate this — only needed for the manual webhook path.' },
     ],
     setup: [
-      'Meta for Developers › your app › WhatsApp › API Setup: copy the Phone number ID and the WhatsApp Business Account ID.',
-      'Create a SYSTEM USER with a PERMANENT access token holding whatsapp_business_messaging + whatsapp_business_management. (The 24-hour test token will stop working tomorrow.)',
-      'App Settings › Basic: copy the App Secret.',
-      'Paste all three here and Save. We then show you a Callback URL and a Verify Token.',
-      'Meta › WhatsApp › Configuration › Webhook: paste that Callback URL + Verify Token, and subscribe to the "messages" field.',
-      'Get your message templates APPROVED in Meta, then create a matching template here with the same name.',
+      'Meta for Developers › your app › Settings › Basic: copy the App ID and the App Secret into the two boxes below, and Save.',
+      'Add a "Facebook Login for Business" product, create a Configuration with the WhatsApp Embedded Signup use case, and copy its Configuration ID here.',
+      'In that same Login-for-Business product › Settings, add this CRM\'s address to "Valid OAuth Redirect URIs" — otherwise Meta silently closes the popup.',
+      'Press CONNECT WHATSAPP and log in with the Facebook account that owns the WhatsApp Business Account. Pick (or create) the WABA and the phone number in Meta\'s dialog.',
+      'That is it. We exchange the login for a PERMANENT token and subscribe the webhook automatically. Templates still have to be approved inside Meta before you can send them.',
     ],
+    test: 'probe',
+    testCaveat: 'Green means Meta accepted the stored token and returned this phone number\'s details. Sending still requires an APPROVED template.',
   },
 
   /* ---------------------------------------------------------------- PAYMENT */
@@ -183,6 +226,9 @@ const SPECS: MsgProviderSpec[] = [
       'Choose the Vertical this account belongs to and Save. Repeat per vertical.',
       'Razorpay › Settings › Webhooks: add a webhook and copy its secret here (needed in Phase 3).',
     ],
+    test: 'probe',
+    testCaveat: 'Green means Razorpay accepted the Key ID + Key Secret. No payment is created and no money moves.',
+    storedOnly: 'STORED, NOT YET CHARGING. The keys are saved and verified now; fee collection starts using them in Sprint 5 / Phase 3.',
   },
 
   /* --------------------------------------------------------------------- AI */
@@ -198,6 +244,8 @@ const SPECS: MsgProviderSpec[] = [
     ],
     secrets: [{ key: 'api_key', label: 'API key', type: 'password', required: true }],
     setup: ['DeepSeek platform › API keys › Create new key. Paste it here.'],
+    test: 'probe',
+    storedOnly: 'STORED, NOT YET ACTIVE. The key is saved and verified now; the AI features that use it land in Phase 2.',
   },
   {
     key: 'gemini',
@@ -208,6 +256,93 @@ const SPECS: MsgProviderSpec[] = [
     config: [{ key: 'model', label: 'Model', type: 'text', placeholder: 'gemini-2.0-flash' }],
     secrets: [{ key: 'api_key', label: 'API key', type: 'password', required: true }],
     setup: ['Google AI Studio › Get API key. Paste it here.'],
+    test: 'probe',
+    storedOnly: 'STORED, NOT YET ACTIVE. The key is saved and verified now; the AI features that use it land in Phase 2.',
+  },
+
+  /* --------------------------------------------------------------- CALENDAR */
+  /**
+   * THE GAP THIS CLOSES: calendar sync used to keep its OAuth client id AND CLIENT
+   * SECRET in the plain `app_setting` JSON blob — unencrypted, and readable by anyone
+   * with settings.read. Moving it here puts it behind the same AES-256-GCM + masking
+   * as every other credential. Migration 028 carries any existing value across and
+   * blanks the plaintext copy.
+   */
+  {
+    key: 'google_oauth',
+    channel: 'calendar',
+    label: 'Google Calendar sync',
+    blurb: 'Two-way sync between the CRM calendar and Google Calendar. The in-app calendar works fully without this — only the sync is blocked.',
+    perVertical: false,
+    config: [
+      { key: 'client_id', label: 'OAuth client ID', type: 'text', required: true, placeholder: '1234-abc.apps.googleusercontent.com' },
+      { key: 'calendar_id', label: 'Calendar ID', type: 'text', placeholder: 'primary' },
+    ],
+    secrets: [
+      { key: 'client_secret', label: 'OAuth client secret', type: 'password', required: true },
+      { key: 'refresh_token', label: 'Refresh token', type: 'password', hint: 'Filled by the OAuth consent — you do not paste this by hand.' },
+    ],
+    setup: [
+      'Google Cloud Console › APIs & Services › Credentials › Create OAuth client ID (type: Web application).',
+      'Add this CRM\'s address as an Authorized redirect URI, and enable the Google Calendar API for the project.',
+      'Paste the client ID + client secret here and Save, then press Connect account to grant consent.',
+    ],
+    test: 'none',
+    storedOnly: 'STORED. An OAuth client id + secret cannot be verified without a user consent — press Connect account to finish, and the sync lights up then.',
+  },
+  {
+    key: 'outlook_oauth',
+    channel: 'calendar',
+    label: 'Outlook Calendar sync',
+    blurb: 'Two-way sync between the CRM calendar and Outlook / Microsoft 365.',
+    perVertical: false,
+    config: [
+      { key: 'client_id', label: 'Application (client) ID', type: 'text', required: true },
+      { key: 'tenant_id', label: 'Directory (tenant) ID', type: 'text', placeholder: 'common' },
+    ],
+    secrets: [
+      { key: 'client_secret', label: 'Client secret', type: 'password', required: true },
+      { key: 'refresh_token', label: 'Refresh token', type: 'password', hint: 'Filled by the OAuth consent.' },
+    ],
+    setup: [
+      'Azure Portal › App registrations › New registration.',
+      'Certificates & secrets › New client secret. Copy the VALUE (not the id).',
+      'API permissions: add Calendars.ReadWrite (delegated). Paste both values here, then press Connect account.',
+    ],
+    test: 'none',
+    storedOnly: 'STORED. Needs an OAuth consent before the sync can run — press Connect account.',
+  },
+
+  /* ---------------------------------------------------------------- STORAGE */
+  {
+    key: 'cloudflare',
+    channel: 'storage',
+    label: 'Cloudflare (R2, DNS, CDN)',
+    blurb: 'R2 object storage for uploads and static assets, plus the DNS zone and cache purge. Per PHASE1_DEV_PLAN §5.',
+    perVertical: false,
+    config: [
+      { key: 'zone', label: 'Domain / zone', type: 'text', required: true, placeholder: 'crm.techlingua.in', hint: 'The zone the CRM runs on — it must already be on Cloudflare DNS.' },
+      { key: 'zone_id', label: 'Zone ID', type: 'text', hint: 'Cloudflare dashboard › your domain › Overview (right column). Needed for cache purge.' },
+      { key: 'account_id', label: 'Account ID', type: 'text', required: true, hint: 'Cloudflare dashboard › R2 › Overview. Part of the R2 endpoint.' },
+      { key: 'r2_bucket', label: 'R2 bucket name', type: 'text', required: true, placeholder: 'techlingua-crm-assets' },
+      { key: 'r2_public_domain', label: 'R2 public/custom domain', type: 'text', placeholder: 'assets.techlingua.in', hint: 'Where public assets are served from.' },
+      { key: 'plan', label: 'Plan level', type: 'select', opts: ['Free', 'Pro', 'Business', 'Enterprise'], hint: 'Affects cache rules, WAF and image resizing.' },
+    ],
+    secrets: [
+      { key: 'api_token', label: 'API token', type: 'password', required: true, hint: 'Scoped to R2 read/write + DNS edit + Cache Purge for this zone.' },
+      { key: 'r2_access_key_id', label: 'R2 access key ID', type: 'password', required: true },
+      { key: 'r2_secret_access_key', label: 'R2 secret access key', type: 'password', required: true },
+    ],
+    setup: [
+      'Cloudflare dashboard › Manage Account › API Tokens › Create Token. Give it R2 read/write, DNS edit and Cache Purge on your zone.',
+      'Cloudflare › R2 › Create bucket (e.g. techlingua-crm-assets), then Manage R2 API Tokens › Create to get the access key id + secret.',
+      'Copy the Account ID from the R2 Overview page and the Zone ID from your domain\'s Overview page.',
+      'Paste everything here and press Test connection — we verify the API token against Cloudflare.',
+    ],
+    test: 'probe',
+    // Honesty about scope: the client asked to store these NOW. The R2 wiring is a
+    // separate piece of work and pretending otherwise would be a lie on the screen.
+    storedOnly: 'STORED AND VERIFIED, NOT YET SERVING. We check the token works and remember the bucket/zone, but uploads still go to the app server — the R2 upload path and the CDN cutover are a separate task. Nothing here changes how the app behaves today.',
   },
 ];
 
@@ -215,8 +350,22 @@ export const MSG_PROVIDERS: Record<string, MsgProviderSpec> = Object.fromEntries
 
 export const providersFor = (channel: MsgChannel): MsgProviderSpec[] => SPECS.filter((s) => s.channel === channel);
 
-/** The channels that actually SEND a message (as opposed to payment/AI config). */
+/** The channels that actually SEND a message (as opposed to payment/AI/infra config). */
 export const SENDING_CHANNELS: MsgChannel[] = ['email', 'sms', 'whatsapp'];
+
+/** Human names, used by `require()`'s 503 text and by the Settings UI. */
+export const CHANNEL_LABEL: Record<MsgChannel, string> = {
+  email: 'Email (SMTP)',
+  sms: 'SMS',
+  whatsapp: 'WhatsApp',
+  payment: 'Payment gateway',
+  ai: 'AI',
+  calendar: 'Calendar sync',
+  storage: 'Cloudflare storage',
+};
+
+/** Every channel the Settings screen renders, in the order it renders them. */
+export const ALL_CHANNELS: MsgChannel[] = ['whatsapp', 'sms', 'email', 'calendar', 'payment', 'storage', 'ai'];
 
 /**
  * Which required fields are still empty. An empty array = configured.

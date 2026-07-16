@@ -53,6 +53,7 @@ export function makeSprint4Db(over: Partial<S4State> = {}) {
     ...over,
   };
   let msgSeq = 100; let runSeq = 500; let fuSeq = 900; let ooSeq = 10;
+  let cfgSeq = st.channelConfigs.reduce((m, c) => Math.max(m, c.id), 0);
 
   const exec = (sql: string, params: unknown[] = []): { rows: any[]; rowCount: number } => {
     const s = sql.replace(/\s+/g, ' ').trim();
@@ -79,6 +80,46 @@ export function makeSprint4Db(over: Partial<S4State> = {}) {
       // ORDER BY vertical_id NULLS LAST -> the VERTICAL row wins over the org row
       rows.sort((a, b) => (a.vertical_id === null ? 1 : 0) - (b.vertical_id === null ? 1 : 0));
       return R(rows.slice(0, 1));
+    }
+
+    // --- the WRITE side of the credential store (Settings save + Embedded Signup) ---
+    // Modelled properly, because "the token is encrypted at rest and masked on read" is
+    // exactly the claim these tests exist to prove — a stub that swallowed the write
+    // would make that proof worthless.
+    if (/SELECT id FROM organisation ORDER BY id LIMIT 1/.test(s)) return R([{ id: 1 }]);
+
+    if (/SELECT \* FROM channel_config WHERE org_id = \$1 AND channel = \$2/.test(s)) {
+      const ch = String(params[1]);
+      const vid = params[2] == null ? null : Number(params[2]);
+      return R(st.channelConfigs.filter((c) => c.channel === ch && (c.vertical_id ?? null) === vid));
+    }
+    if (/UPDATE channel_config SET provider = \$2/.test(s)) {
+      const row = st.channelConfigs.find((c) => c.id === Number(params[0]));
+      if (!row) return R([]);
+      row.provider = String(params[1]);
+      row.config = JSON.parse(String(params[2]));
+      row.secrets = JSON.parse(String(params[3]));
+      if (params[4] != null) row.is_active = !!params[4];
+      return R([row]);
+    }
+    if (/INSERT INTO channel_config/.test(s)) {
+      const row = {
+        id: ++cfgSeq, channel: String(params[1]), provider: String(params[2]),
+        vertical_id: params[3] == null ? null : Number(params[3]),
+        config: JSON.parse(String(params[4])), secrets: JSON.parse(String(params[5])),
+        is_active: params[6] === false ? false : true,
+      };
+      st.channelConfigs.push(row);
+      return R([row]);
+    }
+    if (/FROM channel_config c\s+LEFT JOIN vertical v/.test(s) && /WHERE c\.id = \$1/.test(s)) {
+      const row = st.channelConfigs.find((c) => c.id === Number(params[0]));
+      return R(row ? [{ ...row, vertical_name: null }] : []);
+    }
+    if (/UPDATE channel_config SET last_test_at/.test(s)) {
+      const row = st.channelConfigs.find((c) => c.id === Number(params[0])) as any;
+      if (row) { row.last_test_ok = params[1]; row.last_test_error = params[2]; row.last_test_at = new Date(); }
+      return R([]);
     }
 
     /* -------------------------------------------------------------- opt_out */

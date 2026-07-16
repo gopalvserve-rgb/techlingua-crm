@@ -284,8 +284,14 @@ const calls = () => [...post.mock.calls, ...patch.mock.calls];
 /** Click the modal's primary action and return the request body — or null if the form
  *  refused to submit (a cleared required field). */
 const submit = async (): Promise<{ path: string; body: unknown } | null> => {
-  const btn = document.querySelector('.add-modal .btn.primary') as HTMLButtonElement;
-  if (btn.disabled) return null;                       // e.g. a blast with no template
+  // The SAVE action is the primary button in the modal FOOTER (`.af`). Prefer it
+  // explicitly: some modals now carry a primary button in the BODY too (WhatsApp's
+  // "Connect WhatsApp"), and a bare `.btn.primary` picks that one instead — which
+  // looked exactly like "the form does not submit". Fall back to the old selector so
+  // every form without a footer keeps behaving as before.
+  const btn = (document.querySelector('.add-modal .af .btn.primary')
+    ?? document.querySelector('.add-modal .btn.primary')) as HTMLButtonElement;
+  if (!btn || btn.disabled) return null;               // e.g. a blast with no template
   fireEvent.click(btn);
   for (let i = 0; i < 12 && !calls().length; i++) await flush();          // the saver's promise chain
   for (let i = 0; i < 6 && !calls().length; i++) await flush(5);          // …anything genuinely async
@@ -422,6 +428,101 @@ const SMTP_SPEC: ProviderSpec = {
   setup: [],
 };
 
+/* ---------------------------------------------------------------------------
+ * THE NEW CREDENTIAL FIELD-SETS.
+ *
+ * ChannelConfigModal is ONE generic form driven by a provider spec, so a new
+ * provider is not a new component — but it IS a new set of fields, rendered
+ * through code paths the SMTP spec never exercises: `select`, `bool`, and a
+ * secrets list longer than two. Those are exactly the shapes the three phantom
+ * bugs hid in. Each spec below mirrors the real one in api/src/messaging/providers.ts.
+ * ------------------------------------------------------------------------- */
+
+const CLOUDFLARE_SPEC: ProviderSpec = {
+  key: 'cloudflare', channel: 'storage', label: 'Cloudflare (R2, DNS, CDN)', blurb: '',
+  perVertical: false, test: 'probe',
+  config: [
+    { key: 'zone', label: 'Domain / zone', type: 'text', required: true },
+    { key: 'zone_id', label: 'Zone ID', type: 'text' },
+    { key: 'account_id', label: 'Account ID', type: 'text', required: true },
+    { key: 'r2_bucket', label: 'R2 bucket name', type: 'text', required: true },
+    { key: 'r2_public_domain', label: 'R2 public/custom domain', type: 'text' },
+    // the `select` path — untested by the SMTP spec
+    { key: 'plan', label: 'Plan level', type: 'select', opts: ['Free', 'Pro', 'Business', 'Enterprise'] },
+  ],
+  secrets: [
+    { key: 'api_token', label: 'API token', type: 'password', required: true },
+    { key: 'r2_access_key_id', label: 'R2 access key ID', type: 'password', required: true },
+    { key: 'r2_secret_access_key', label: 'R2 secret access key', type: 'password', required: true },
+  ],
+  setup: [],
+};
+
+const WHATSAPP_SPEC: ProviderSpec = {
+  key: 'meta_cloud', channel: 'whatsapp', label: 'WhatsApp — Meta Cloud API', blurb: '',
+  perVertical: false, test: 'probe',
+  config: [
+    { key: 'app_id', label: 'Meta App ID', type: 'text' },
+    { key: 'config_id', label: 'Embedded Signup Configuration ID', type: 'text' },
+    { key: 'phone_number_id', label: 'Phone number ID', type: 'text', required: true },
+    { key: 'waba_id', label: 'WhatsApp Business Account ID', type: 'text' },
+    { key: 'display_phone_number', label: 'Connected number', type: 'text' },
+    { key: 'verified_name', label: 'Verified business name', type: 'text' },
+    { key: 'connected_via', label: 'Connected via', type: 'text' },
+    { key: 'api_version', label: 'Graph API version', type: 'text' },
+    { key: 'default_language', label: 'Default template language', type: 'text' },
+  ],
+  secrets: [
+    { key: 'access_token', label: 'Permanent access token', type: 'password', required: true },
+    { key: 'app_secret', label: 'App secret', type: 'password' },
+    { key: 'verify_token', label: 'Webhook verify token', type: 'password', generated: true },
+  ],
+  setup: [],
+};
+
+const RAZORPAY_SPEC: ProviderSpec = {
+  key: 'razorpay', channel: 'payment', label: 'Razorpay (per vertical)', blurb: '',
+  perVertical: true, test: 'probe',
+  config: [
+    { key: 'key_id', label: 'Key ID', type: 'text', required: true },
+    { key: 'currency', label: 'Currency', type: 'text' },
+    { key: 'account_label', label: 'Settlement account label', type: 'text' },
+  ],
+  secrets: [
+    { key: 'key_secret', label: 'Key Secret', type: 'password', required: true },
+    { key: 'webhook_secret', label: 'Webhook secret', type: 'password' },
+  ],
+  setup: [],
+};
+
+const CALENDAR_SPEC: ProviderSpec = {
+  key: 'google_oauth', channel: 'calendar', label: 'Google Calendar sync', blurb: '',
+  perVertical: false, test: 'none',
+  config: [
+    { key: 'client_id', label: 'OAuth client ID', type: 'text', required: true },
+    { key: 'calendar_id', label: 'Calendar ID', type: 'text' },
+  ],
+  secrets: [
+    { key: 'client_secret', label: 'OAuth client secret', type: 'password', required: true },
+    { key: 'refresh_token', label: 'Refresh token', type: 'password' },
+  ],
+  setup: [],
+};
+
+const SMS_SPEC: ProviderSpec = {
+  key: 'msg91', channel: 'sms', label: 'MSG91 (India, DLT)', blurb: '',
+  perVertical: false, test: 'send',
+  config: [
+    { key: 'sender_id', label: 'DLT Sender ID', type: 'text', required: true },
+    { key: 'dlt_template_id', label: 'Default DLT Template ID', type: 'text' },
+    { key: 'otp_dlt_template_id', label: 'OTP DLT Template ID', type: 'text' },
+    { key: 'route', label: 'Route', type: 'text' },
+    { key: 'country', label: 'Country code', type: 'text' },
+  ],
+  secrets: [{ key: 'authkey', label: 'Auth Key', type: 'password', required: true }],
+  setup: [],
+};
+
 const bespokeCases: Case[] = [
   {
     name: 'Campaign (NeoDove) — Add',
@@ -471,6 +572,36 @@ const bespokeCases: Case[] = [
   {
     name: 'Channel config (SMTP) — Add',
     render: () => render(<ChannelConfigModal spec={SMTP_SPEC} existing={null}
+      onClose={() => undefined} onSaved={() => undefined} />),
+    path: /^\/settings\/channels\/save$/,
+  },
+  {
+    name: 'Channel config (Cloudflare) — Add',
+    render: () => render(<ChannelConfigModal spec={CLOUDFLARE_SPEC} existing={null}
+      onClose={() => undefined} onSaved={() => undefined} />),
+    path: /^\/settings\/channels\/save$/,
+  },
+  {
+    name: 'Channel config (WhatsApp / Embedded Signup) — Add',
+    render: () => render(<ChannelConfigModal spec={WHATSAPP_SPEC} existing={null}
+      onClose={() => undefined} onSaved={() => undefined} />),
+    path: /^\/settings\/channels\/save$/,
+  },
+  {
+    name: 'Channel config (Razorpay, per vertical) — Add',
+    render: () => render(<ChannelConfigModal spec={RAZORPAY_SPEC} existing={null}
+      onClose={() => undefined} onSaved={() => undefined} />),
+    path: /^\/settings\/channels\/save$/,
+  },
+  {
+    name: 'Channel config (Google Calendar) — Add',
+    render: () => render(<ChannelConfigModal spec={CALENDAR_SPEC} existing={null}
+      onClose={() => undefined} onSaved={() => undefined} />),
+    path: /^\/settings\/channels\/save$/,
+  },
+  {
+    name: 'Channel config (SMS / MSG91 + DLT) — Add',
+    render: () => render(<ChannelConfigModal spec={SMS_SPEC} existing={null}
       onClose={() => undefined} onSaved={() => undefined} />),
     path: /^\/settings\/channels\/save$/,
   },

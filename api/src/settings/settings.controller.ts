@@ -4,7 +4,9 @@ import { SettingsService } from '../common/settings.service';
 import { DatabaseService } from '../database/database.service';
 import { ChannelConfigService } from '../messaging/channel-config.service';
 import { MessagingService } from '../messaging/messaging.service';
-import { MsgChannel } from '../messaging/providers';
+import { CHANNEL_LABEL, MSG_PROVIDERS, MsgChannel } from '../messaging/providers';
+import { ConnectionTestService } from './connection-test.service';
+import { WhatsAppSignupService } from './whatsapp-signup.service';
 import { GROUP_BY_KEY, SETTING_GROUPS } from './settings.registry';
 
 interface Me { id: number; name: string; email?: string }
@@ -22,6 +24,8 @@ export class SettingsController {
     private readonly db: DatabaseService,
     private readonly configs: ChannelConfigService,
     private readonly messaging: MessagingService,
+    private readonly tester: ConnectionTestService,
+    private readonly signup: WhatsAppSignupService,
   ) {}
 
   /** The registry + every group's current value — one call renders the whole screen. */
@@ -75,23 +79,36 @@ export class SettingsController {
   }
 
   /**
-   * SEND TEST MESSAGE. The single most useful button on this screen: it proves the
-   * credentials work BEFORE a journey uses them on a real lead. A not-configured channel
-   * answers with a clean 503 naming exactly what is missing.
+   * TEST CONNECTION — one button, two honest behaviours.
+   *
+   *   'send'  (email/sms/whatsapp-manual) — actually deliver to an address the admin types.
+   *   'probe' (whatsapp/razorpay/cloudflare/ai) — call the provider read-only and report
+   *           what it said. Creates nothing, charges nothing, sends nothing.
+   *
+   * Either way the RESULT IS SPECIFIC, and a green result carries the provider's caveat
+   * verbatim — because "MSG91 said success" and "the SMS was delivered" are not the same
+   * sentence, and the client must not be allowed to read one as the other.
+   *
+   * A not-configured channel answers with a clean 503 naming exactly what is missing.
    */
   @Post('channels/test')
   @RequirePermission('settings.update')
   async test(@Body() dto: any, @CurrentUser() me: Me) {
     const channel = String(dto?.channel ?? '') as MsgChannel;
-    if (!['email', 'sms', 'whatsapp'].includes(channel)) {
-      throw new BadRequestException('Only Email, SMS and WhatsApp can be test-sent.');
-    }
-    const to = String(dto?.to ?? '').trim();
-    if (!to) throw new BadRequestException('Where should the test go? Enter your own email or mobile number.');
+    if (!CHANNEL_LABEL[channel]) throw new BadRequestException(`Unknown channel "${channel}".`);
     const verticalId = dto?.vertical_id ? Number(dto.vertical_id) : null;
 
     // throws NotConfiguredException (503 + the reason) when a credential is missing
     const cfg = await this.configs.require(channel, verticalId);
+    const spec = MSG_PROVIDERS[cfg.provider];
+
+    if (spec?.test !== 'send') {
+      const out = await this.tester.probe(channel, verticalId);
+      return { mode: 'probe', ...out };
+    }
+
+    const to = String(dto?.to ?? '').trim();
+    if (!to) throw new BadRequestException('Where should the test go? Enter your own email or mobile number.');
 
     const out = await this.messaging.sendNow({
       channel,
@@ -111,6 +128,37 @@ export class SettingsController {
       guarded: false,
     });
     await this.configs.recordTest(cfg.id, out.status === 'sent', out.status === 'sent' ? null : out.reason);
-    return out;
+    return {
+      mode: 'send',
+      ok: out.status === 'sent',
+      message: out.status === 'sent'
+        ? `Accepted by ${spec.label} for delivery to ${to}.`
+        : (out.reason || `Test ${out.status}`),
+      caveat: out.status === 'sent' ? spec.testCaveat : undefined,
+      ...out,
+    };
+  }
+
+  /* ------------------------- WHATSAPP EMBEDDED SIGNUP ------------------------- */
+
+  /**
+   * What the browser needs to open Meta's dialog (app id + config id). The app SECRET
+   * is never part of this response — the code exchange happens server-side.
+   */
+  @Get('whatsapp/embedded-signup')
+  @RequirePermission('settings.read')
+  signupInfo() {
+    return this.signup.launchInfo();
+  }
+
+  /**
+   * The browser posts back Meta's one-time `code` plus the phone_number_id / waba_id it
+   * received on the postMessage. We exchange it for a PERMANENT token, store it encrypted
+   * and subscribe the webhook. The client never handles a token.
+   */
+  @Post('whatsapp/embedded-signup')
+  @RequirePermission('settings.update')
+  signupExchange(@Body() dto: any, @CurrentUser() me: Me) {
+    return this.signup.exchange(dto ?? {}, Number(me.id));
   }
 }

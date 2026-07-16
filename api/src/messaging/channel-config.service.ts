@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 import { NotConfiguredException } from '../common/not-configured.exception';
 import { decryptSecret, encryptSecret, maskSecret, randomToken } from '../common/crypto.util';
-import { MSG_PROVIDERS, MsgChannel, MsgProviderSpec, missingRequirements, providersFor } from './providers';
+import { CHANNEL_LABEL, MSG_PROVIDERS, MsgChannel, MsgProviderSpec, missingRequirements, providersFor } from './providers';
 
 export interface ChannelConfigRow {
   id: number; org_id: number; channel: string; provider: string;
@@ -105,7 +105,7 @@ export class ChannelConfigService {
    */
   async require(channel: MsgChannel, verticalId?: number | null): Promise<ResolvedConfig> {
     const cfg = await this.resolve(channel, verticalId);
-    const label = { email: 'Email (SMTP)', sms: 'SMS', whatsapp: 'WhatsApp', payment: 'Payment gateway', ai: 'AI' }[channel];
+    const label = CHANNEL_LABEL[channel] ?? channel;
     if (!cfg) {
       throw new NotConfiguredException(
         `${label} is not configured — add it in Administration › Settings › Channels.`,

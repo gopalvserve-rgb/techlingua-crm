@@ -1,5 +1,10 @@
 import { SETTING_GROUPS, GROUP_BY_KEY } from './settings.registry';
 import { SettingsController } from './settings.controller';
+import { ConnectionTestService } from './connection-test.service';
+import { WhatsAppSignupService } from './whatsapp-signup.service';
+
+/** No unit test may touch the network. If one tries, it fails loudly rather than hanging. */
+const noNet = (async () => { throw new Error('network access is not allowed in unit tests'); }) as any;
 import { ChannelConfigService } from '../messaging/channel-config.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { MSG_PROVIDERS, missingRequirements, providersFor } from '../messaging/providers';
@@ -20,7 +25,12 @@ describe('the settings registry — the client edits ALL of this without a deplo
     // developer knew about. They are Settings groups now.
     expect(GROUP_BY_KEY.escalation_policy).toBeTruthy();
     expect(GROUP_BY_KEY.handout_guard).toBeTruthy();
-    expect(GROUP_BY_KEY.calendar_sync).toBeTruthy();
+    // calendar_sync is NO LONGER a group: migration 028 moved it into the ENCRYPTED
+    // credential store, because its OAuth CLIENT SECRET was sitting in a plaintext
+    // app_setting blob while every other secret on this screen was encrypted.
+    expect(GROUP_BY_KEY.calendar_sync).toBeUndefined();
+    expect(providersFor('calendar').map((p) => p.key).sort()).toEqual(['google_oauth', 'outlook_oauth']);
+    expect(MSG_PROVIDERS.google_oauth.secrets.map((f) => f.key)).toContain('client_secret');
   });
 
   it('the SCORE BANDS stay on the Lead Scoring screen — one number, one place to edit it', () => {
@@ -203,7 +213,8 @@ describe('DEF-S4-03 (found by the live smoke) — the test send carries the VERT
       queued.push(m as unknown as Record<string, unknown>);
       return { id: 1, status: 'sent' };
     });
-    const ctrl = new SettingsController(settings4(), db, configs, messaging);
+    const ctrl = new SettingsController(settings4(), db, configs, messaging,
+      new ConnectionTestService(configs, noNet), new WhatsAppSignupService(configs, noNet));
     return { ctrl, queued, st };
   };
 
@@ -226,18 +237,27 @@ describe('DEF-S4-03 (found by the live smoke) — the test send carries the VERT
     const { db } = makeSprint4Db();
     const configs = new ChannelConfigService(db);
     const messaging = new MessagingService(db, configs, settings4());
-    const ctrl = new SettingsController(settings4(), db, configs, messaging);
+    const ctrl = new SettingsController(settings4(), db, configs, messaging,
+      new ConnectionTestService(configs, noNet), new WhatsAppSignupService(configs, noNet));
     await expect(ctrl.test({ channel: 'whatsapp', to: '+919810000001' }, { id: 1, name: 'A' }))
       .rejects.toMatchObject({ notConfigured: true });
   });
 
-  it('only a SENDING channel can be test-sent (Razorpay/AI have nothing to send)', async () => {
+  // Razorpay/AI/Cloudflare are no longer refused — they are PROBED instead of sent.
+  // With nothing stored, the answer must still be the clean 503, not a 500.
+  it('an unconfigured non-sending channel probes to a clean 503, not an error', async () => {
     const { ctrl } = wire();
-    await expect(ctrl.test({ channel: 'payment', to: 'x' }, { id: 1, name: 'A' })).rejects.toThrow(/Email, SMS and WhatsApp/);
+    await expect(ctrl.test({ channel: 'payment' }, { id: 1, name: 'A' }))
+      .rejects.toMatchObject({ notConfigured: true });
+  });
+
+  it('an unknown channel is refused outright', async () => {
+    const { ctrl } = wire();
+    await expect(ctrl.test({ channel: 'nonsense' }, { id: 1, name: 'A' })).rejects.toThrow(/Unknown channel/);
   });
 
   it('a test with no recipient is refused before any credential is touched', async () => {
     const { ctrl } = wire();
-    await expect(ctrl.test({ channel: 'email', to: '' }, { id: 1, name: 'A' })).rejects.toThrow(/Where should the test go/);
+    await expect(ctrl.test({ channel: 'email', to: '', vertical_id: 7 }, { id: 1, name: 'A' })).rejects.toThrow(/Where should the test go/);
   });
 });

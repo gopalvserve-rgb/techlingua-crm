@@ -14,7 +14,9 @@
  *   · notification_channels(Sprint 3) -> ABSORBED into `notification_matrix`, which says
  *                                        which EVENT goes to which CHANNEL. The old row is
  *                                        still honoured as a master on/off switch.
- *   · calendar_sync        (Sprint 3) -> Settings › Integrations
+ *   · calendar_sync        (Sprint 3) -> RETIRED by migration 028: the OAuth client
+ *                           secret belongs in the ENCRYPTED channel_config store, not in a
+ *                           plaintext app_setting blob. Now Settings › Channels › Calendar.
  *   · handout_guard        (Sprint 2) -> Settings › Leads
  *   · sms_provider         (Sprint 2) -> SUPERSEDED by channel_config(channel='sms').
  *                                        SmsService reads the new store first and falls
@@ -108,14 +110,6 @@ export const SETTING_GROUPS: SettingGroup[] = [
     fields: [
       { key: 'enabled', label: 'Enabled', type: 'bool' },
       { key: 'max_open_per_agent', label: 'Max un-worked leads an agent may hold', type: 'number' },
-    ],
-  },
-  {
-    key: 'calendar_sync', label: 'Calendar sync', icon: 'cal',
-    blurb: 'Google / Outlook two-way sync. The calendar works fully without this; only sync is credential-blocked.',
-    fields: [
-      { key: 'provider', label: 'Provider', type: 'select', opts: ['', 'google', 'outlook'] },
-      { key: 'client_id', label: 'OAuth client id', type: 'text' },
     ],
   },
   {

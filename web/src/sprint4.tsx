@@ -14,6 +14,7 @@ import { api } from './api';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { ensureFbSdk, launchEmbeddedSignup } from './whatsappsignup';
 
 /* ============================== types =============================== */
 
@@ -57,6 +58,20 @@ export interface ChannelCfg {
 export interface ProviderSpec {
   key: string; channel: string; label: string; blurb: string; perVertical: boolean;
   config: FieldSpec[]; secrets: FieldSpec[]; setup: string[];
+  /** 'send' delivers a real message; 'probe' calls the provider read-only; 'none' cannot be checked */
+  test?: 'send' | 'probe' | 'none';
+  /** rendered next to a GREEN result — what the pass actually proves, and what it does not */
+  testCaveat?: string;
+  /** rendered always — what is stored vs. what is actually live (e.g. Cloudflare R2) */
+  storedOnly?: string;
+}
+export interface TestOutcome {
+  mode?: string; ok?: boolean; message?: string; caveat?: string; storedOnly?: string;
+  detail?: string; status?: string; reason?: string;
+}
+export interface SignupInfo {
+  app_id: string; config_id: string; ready: boolean; missing: string[];
+  connected: boolean; connected_via: string; display_phone_number: string;
 }
 export interface FieldSpec {
   key: string; label: string; type: string; hint?: string; placeholder?: string;
@@ -85,6 +100,38 @@ const STATUS_BADGE: Record<string, [string, string]> = {
 const CFG_BADGE: Record<string, [string, string]> = {
   connected: ['Connected', 'b-green'],
   not_configured: ['Not configured', 'b-amber'],
+  inactive: ['Paused', 'b-gray'],
+};
+
+export type IntegrationState = 'not_configured' | 'configured' | 'verified' | 'failed' | 'inactive';
+
+/**
+ * THE FOUR-STATE BADGE the client reads at a glance.
+ *
+ * "Configured" and "Verified" are deliberately DIFFERENT words. Credentials that are
+ * merely saved have never been proven; credentials that passed a Test connection have.
+ * Collapsing the two would tell him a Razorpay key works when nobody has ever asked
+ * Razorpay — which is exactly the class of mistake this whole screen exists to prevent.
+ */
+export function integrationState(cfg: ChannelCfg | null | undefined): IntegrationState {
+  if (!cfg) return 'not_configured';
+  if (!cfg.is_active) return 'inactive';
+  if (cfg.missing?.length) return 'not_configured';
+  if (cfg.last_test_ok === true) return 'verified';
+  if (cfg.last_test_ok === false) return 'failed';
+  return 'configured';
+}
+
+/** Worst-first, so a provider with one broken vertical never reads as Verified. */
+export const STATE_RANK: Record<IntegrationState, number> = {
+  failed: 0, not_configured: 1, inactive: 2, configured: 3, verified: 4,
+};
+
+export const STATE_BADGE: Record<IntegrationState, [string, string]> = {
+  not_configured: ['Not configured', 'b-amber'],
+  configured: ['Configured — not yet tested', 'b-cyan'],
+  verified: ['Verified', 'b-green'],
+  failed: ['Test failed', 'b-red'],
   inactive: ['Paused', 'b-gray'],
 };
 const JOURNEY_BADGE: Record<string, [string, string]> = {
@@ -890,9 +937,16 @@ export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
+  const [outcome, setOutcome] = useState<TestOutcome | null>(null);
+  const [signup, setSignup] = useState<SignupInfo | null>(null);
+  const [sdkReady, setSdkReady] = useState(false);
 
   const setC = (k: string, v: unknown) => setConfig((c) => ({ ...c, [k]: v }));
-  const sendable = ['email', 'sms', 'whatsapp'].includes(spec.channel);
+  // 'send' providers need somewhere to send TO; 'probe' providers need nothing.
+  const mode = spec.test ?? 'send';
+  const sendable = mode === 'send';
+  const testable = mode !== 'none';
+  const isWhatsApp = spec.channel === 'whatsapp';
   const webhookUrl = typeof location !== 'undefined' ? `${location.origin}/api/webhooks/whatsapp` : '';
 
   const save = async () => {
@@ -909,14 +963,56 @@ export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
   };
 
   const test = async () => {
-    setErr(''); setMsg(''); setBusy(true);
+    setErr(''); setMsg(''); setOutcome(null); setBusy(true);
     try {
-      const out = await api.post<{ status: string; reason?: string }>('/settings/channels/test', {
+      const out = await api.post<TestOutcome>('/settings/channels/test', {
         channel: spec.channel, to: testTo,
         vertical_id: spec.perVertical && verticalId ? Number(verticalId) : null,
       });
-      if (out.status === 'sent') setMsg('Test message sent. Check your inbox / phone.');
-      else setErr(out.reason || `Test ${out.status}`);
+      setOutcome(out);
+      if (!out.ok) setErr(out.message || out.reason || 'The test did not pass.');
+      onSaved();      // pull the fresh Verified / Test failed badge back into the list
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  /* ---------------------- WHATSAPP EMBEDDED SIGNUP ---------------------- */
+
+  // Preload the SDK the moment the card is on screen. Loading it inside the click
+  // handler means Chrome has already expired the user gesture by the time FB.login
+  // runs, and blocks the popup — the SaaS learned this the hard way.
+  useEffect(() => {
+    if (spec.channel !== 'whatsapp') return;
+    let dead = false;
+    api.get<SignupInfo>('/settings/whatsapp/embedded-signup')
+      .then((i) => {
+        if (dead) return;
+        setSignup(i);
+        if (i.app_id) ensureFbSdk(i.app_id).then(() => !dead && setSdkReady(true)).catch(() => undefined);
+      })
+      .catch(() => undefined);
+    return () => { dead = true; };
+  }, [spec.channel]);
+
+  const connectWhatsApp = async () => {
+    setErr(''); setMsg(''); setOutcome(null);
+    if (!signup?.ready) {
+      setErr(`Save your Meta App ID, Configuration ID and App secret first — still missing: ${(signup?.missing ?? []).join(', ')}.`);
+      return;
+    }
+    if (!sdkReady) { setErr('The Facebook SDK is still loading — press Connect WhatsApp again in a moment.'); return; }
+    setBusy(true);
+    try {
+      // MUST be called synchronously from this click, or Chrome blocks the popup.
+      const payload = await launchEmbeddedSignup(signup.config_id);
+      const r = await api.post<{ display_phone_number: string; waba_id: string; subscribed: boolean; subscribe_error: string | null; warning: string | null }>(
+        '/settings/whatsapp/embedded-signup', payload,
+      );
+      let m = `Connected ${r.display_phone_number || 'your WhatsApp number'} (WABA ${r.waba_id}). A permanent token is stored — you never have to paste one.`;
+      if (r.subscribed) m += ' The webhook is subscribed automatically.';
+      if (r.warning) m += ` ${r.warning}`;
+      setMsg(m);
+      if (!r.subscribed) setErr(`Connected, but subscribing the webhook failed: ${r.subscribe_error}. Delivery receipts will not arrive until this is fixed.`);
+      onSaved();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
 
@@ -962,6 +1058,50 @@ export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
         </div>
         <div className="abody">
           <p className="sub" style={{ marginTop: 0 }}>{spec.blurb}</p>
+
+          {spec.storedOnly ? (
+            <div className="notice" style={{ marginTop: 0 }}><Ic k="doc" /><div>{spec.storedOnly}</div></div>
+          ) : null}
+
+          {/* ---------- EMBEDDED SIGNUP: the whole point of the WhatsApp card ---------- */}
+          {isWhatsApp ? (
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div className="card-head"><h3><Ic k="wa" />Connect WhatsApp</h3></div>
+              <div className="card-pad">
+                {signup?.connected && signup.connected_via === 'embedded_signup' ? (
+                  <div className="notice ok"><Ic k="check" /><div>
+                    Connected{signup.display_phone_number ? <> as <b>{signup.display_phone_number}</b></> : null} via
+                    Meta login. A <b>permanent</b> token is stored — there is no 24-hour token to re-paste.
+                    Press <b>Connect WhatsApp</b> again to switch to a different number.
+                  </div></div>
+                ) : (
+                  <p className="sub" style={{ marginTop: 0 }}>
+                    Press the button, log in to Meta, and pick your WhatsApp Business Account.
+                    We store the <b>permanent</b> access token, the WABA and the phone number, and
+                    subscribe the webhook for you. <b>You never paste a token.</b>
+                  </p>
+                )}
+                {signup && !signup.ready ? (
+                  <div className="notice warn"><Ic k="bolt" /><div>
+                    Fill in and <b>Save</b> these first, then press Connect WhatsApp:{' '}
+                    <b>{(signup.missing ?? []).join(', ') || 'Meta App ID, Configuration ID, App secret'}</b>.
+                  </div></div>
+                ) : null}
+                <button className="btn primary" disabled={busy || !signup?.ready} onClick={connectWhatsApp}>
+                  <Ic k="wa" />Connect WhatsApp
+                </button>
+                <details style={{ marginTop: 10 }}>
+                  <summary className="sub">Advanced — connect by pasting a token instead</summary>
+                  <p className="sub">
+                    Only needed if Embedded Signup cannot be used (no Login-for-Business
+                    configuration, or a number managed outside your Meta app). Paste the
+                    Phone number ID and a <b>permanent</b> system-user access token in the
+                    fields below and press Save. A 24-hour test token will stop working tomorrow.
+                  </p>
+                </details>
+              </div>
+            </div>
+          ) : null}
 
           <div className="card" style={{ marginBottom: 12 }}>
             <div className="card-head"><h3><Ic k="doc" />What you need to do</h3></div>
@@ -1009,21 +1149,69 @@ export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
             </div>
           )}
 
-          {sendable && existing && (
+          {/* ---------------------------- TEST CONNECTION ----------------------------
+              One button, two honest behaviours. A 'send' provider delivers a real
+              message; a 'probe' provider calls the provider's API read-only. Either
+              way the RESULT IS SPECIFIC, and a PASS carries the caveat verbatim —
+              because "the gateway accepted it" and "the customer got it" are not the
+              same sentence, and MSG91 answers `success` to a bogus key. */}
+          {testable && existing && (
             <div className="card" style={{ marginTop: 12 }}>
-              <div className="card-head"><h3><Ic k="bolt" />Send a test message</h3></div>
+              <div className="card-head">
+                <h3><Ic k="bolt" />{sendable ? 'Send a test message' : 'Test connection'}</h3>
+              </div>
               <div className="card-pad">
                 <div className="form-grid">
-                  <div className="fld">
-                    <label htmlFor="cf-testto">{spec.channel === 'email' ? 'Your email' : 'Your mobile'}</label>
-                    <input id="cf-testto" className="ainp" value={testTo} onChange={(e) => setTestTo(e.target.value)}
-                      placeholder={spec.channel === 'email' ? 'you@techlingua.in' : '+919810000001'} />
-                  </div>
+                  {sendable ? (
+                    <div className="fld">
+                      <label htmlFor="cf-testto">{spec.channel === 'email' ? 'Your email' : 'Your mobile'}</label>
+                      <input id="cf-testto" className="ainp" value={testTo} onChange={(e) => setTestTo(e.target.value)}
+                        placeholder={spec.channel === 'email' ? 'you@techlingua.in' : '+919810000001'} />
+                    </div>
+                  ) : (
+                    <div className="fld span2">
+                      <p className="sub" style={{ margin: 0 }}>
+                        We call {spec.label} with the stored credentials and tell you exactly what it said.
+                        Nothing is created, nothing is charged, no message is sent.
+                      </p>
+                    </div>
+                  )}
                   <div className="fld">
                     <label>&nbsp;</label>
-                    <button className="btn" disabled={busy || !testTo} onClick={test}><Ic k="check" />Send test</button>
+                    <button className="btn" disabled={busy || (sendable && !testTo)} onClick={test}>
+                      <Ic k="check" />{sendable ? 'Send test' : 'Test connection'}
+                    </button>
                   </div>
                 </div>
+
+                {outcome ? (
+                  <>
+                    <div className={`notice ${outcome.ok ? 'ok' : 'err'}`} style={{ marginTop: 10 }}>
+                      <Ic k={outcome.ok ? 'check' : 'bolt'} /><div>{outcome.message}</div>
+                    </div>
+                    {/* THE CAVEAT. Never hidden behind a disclosure — a green tick that
+                        overclaims is how a client concludes his SMS gateway works when
+                        it does not. */}
+                    {outcome.ok && outcome.caveat ? (
+                      <div className="notice warn" style={{ marginTop: 8 }}>
+                        <Ic k="bolt" /><div><b>What this does and does not prove:</b> {outcome.caveat}</div>
+                      </div>
+                    ) : null}
+                    {outcome.detail ? (
+                      <details style={{ marginTop: 8 }}>
+                        <summary className="sub">What {spec.label} actually replied</summary>
+                        <pre className="mono" style={{ whiteSpace: 'pre-wrap', fontSize: 11 }}>{outcome.detail}</pre>
+                      </details>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {existing?.last_test_at && !outcome ? (
+                  <div className="sub" style={{ marginTop: 8 }}>
+                    Last tested {fmt(existing.last_test_at)} —{' '}
+                    {existing.last_test_ok ? <b>passed</b> : <>failed: {existing.last_test_error}</>}
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -1239,6 +1427,15 @@ export function Settings() {
     return m;
   }, [channels]);
 
+  /** Providers with nothing usable stored yet — the "what do I still owe you" list. */
+  const outstanding = useMemo(
+    () => providers.filter((p) => {
+      const rows = byProvider[p.key] ?? [];
+      return !rows.length || rows.every((r) => integrationState(r) === 'not_configured');
+    }),
+    [providers, byProvider],
+  );
+
   return (
     <>
       {/* CHANNELS & CREDENTIALS — the reason this screen exists */}
@@ -1246,12 +1443,31 @@ export function Settings() {
         <div className="card-head"><h3><Ic k="bolt" />Channels &amp; credentials</h3></div>
         <div className="card-pad">
           <p className="sub" style={{ marginTop: 0 }}>
-            WhatsApp, SMS, SMTP <b>per vertical</b>, the Razorpay gateway <b>per vertical</b>, and the AI keys.
-            Every secret is <b>encrypted at rest</b> and <b>masked on read</b> — we can show you that a
-            credential is set, and let you replace it, but never show it back to you.
+            WhatsApp, SMS, SMTP <b>per vertical</b>, Google Calendar, Cloudflare, the Razorpay
+            gateway <b>per vertical</b>, and the AI keys. Every secret is <b>encrypted at rest</b> and
+            <b> masked on read</b> — we can show you that a credential is set, and let you replace it,
+            but never show it back to you. Nothing here needs a developer or a deploy.
           </p>
+
+          {/* WHAT IS STILL MISSING, AT A GLANCE. The client should never have to open
+              seven cards to find out which one is empty. */}
+          {outstanding.length ? (
+            <div className="notice warn"><Ic k="bolt" /><div>
+              <b>Still to set up ({outstanding.length}):</b> {outstanding.map((p) => p.label).join(' · ')}.
+              Everything else in the CRM works meanwhile — an unconfigured channel simply says so.
+            </div></div>
+          ) : (
+            <div className="notice ok"><Ic k="check" /><div>
+              Every integration is configured. Press <b>Test connection</b> on any of them to re-check it.
+            </div></div>
+          )}
+
           {providers.map((p) => {
             const rows = byProvider[p.key] ?? [];
+            const worst = rows.length
+              ? rows.map(integrationState).sort((a, b) => STATE_RANK[a] - STATE_RANK[b])[0]
+              : 'not_configured';
+            const [label, cls] = STATE_BADGE[worst];
             return (
               <div className="cfg-row" key={p.key}>
                 <div className="ci"><Ic k="cfg" /></div>
@@ -1259,15 +1475,17 @@ export function Settings() {
                   <div className="ct">{p.label}</div>
                   <div className="cs">
                     {rows.length
-                      ? rows.map((r) => `${r.vertical_name ?? 'Org-wide'}: ${CFG_BADGE[r.status][0]}`).join(' · ')
+                      ? rows.map((r) => `${r.vertical_name ?? 'Org-wide'}: ${STATE_BADGE[integrationState(r)][0]}`).join(' · ')
                       : p.blurb}
+                    {rows.length && rows[0].missing?.length
+                      ? <> — <b>missing: {rows[0].missing.join(', ')}</b></>
+                      : null}
+                    {worst === 'failed' && rows[0]?.last_test_error
+                      ? <> — <b>{rows[0].last_test_error}</b></>
+                      : null}
                   </div>
                 </div>
-                <span className="cv">
-                  {rows.length
-                    ? <span className={`bdg ${CFG_BADGE[rows[0].status][1]}`}>{CFG_BADGE[rows[0].status][0]}</span>
-                    : <span className="bdg b-amber">Not configured</span>}
-                </span>
+                <span className="cv"><span className={`bdg ${cls}`}>{label}</span></span>
                 <button className="btn sm" onClick={() => setModal({ spec: p, existing: rows[0] ?? null })}>
                   <Ic k="cfg" />{rows.length ? 'Edit' : 'Configure'}
                 </button>
@@ -1279,6 +1497,23 @@ export function Settings() {
               </div>
             );
           })}
+
+          {/* The Google Sheet credentials live on the Lead Capture screen with the rest of
+              that channel's config. Pointing at them beats duplicating them: two places to
+              edit one credential is how you end up with two different credentials. */}
+          <div className="cfg-row">
+            <div className="ci"><Ic k="cfg" /></div>
+            <div className="cg">
+              <div className="ct">Google Sheet pull (lead capture)</div>
+              <div className="cs">
+                The service-account JSON / API key and the Spreadsheet ID for the Sheet-pull
+                channel are entered with that channel, on <b>Marketing &amp; Lead Management ›
+                Lead Capture</b> — one channel, one place.
+              </div>
+            </div>
+            <span className="cv" />
+            <a className="btn sm" href="#/marketing/capture"><Ic k="cfg" />Open Lead Capture</a>
+          </div>
         </div>
       </div>
 

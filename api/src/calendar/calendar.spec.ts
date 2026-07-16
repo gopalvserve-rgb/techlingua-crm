@@ -1,4 +1,7 @@
 import { CalendarService } from './calendar.service';
+import { ChannelConfigService } from '../messaging/channel-config.service';
+import { makeSprint4Db } from '../messaging/sprint4.testkit';
+import { encryptSecret } from '../common/crypto.util';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { DatabaseService } from '../database/database.service';
@@ -18,6 +21,14 @@ const scope = (over: Partial<ResolvedScope>): ResolvedScope => ({
 const OWN = scope({ filters: [{ kind: 'own', userId: 3 }] });
 const ADMIN = scope({ all: true });
 
+/**
+ * The OAuth credentials moved from the plain `app_setting` blob into the ENCRYPTED
+ * `channel_config` store (migration 028) — an OAuth client secret must not sit in
+ * clear text next to the business hours. `build()` takes the same shape it always
+ * did, so every assertion below still means exactly what it meant; only the place
+ * the credential lives has changed, and it is now exercised through the REAL
+ * ChannelConfigService (so the encryption is on the path, not stubbed out).
+ */
 function build(settingValue: Record<string, unknown> | null = null) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const db = {
@@ -25,11 +36,26 @@ function build(settingValue: Record<string, unknown> | null = null) {
     one: async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return {}; },
   } as unknown as DatabaseService;
   const settings = {
-    get: async (_k: string, fallback: Record<string, unknown>) => ({ ...fallback, ...(settingValue ?? {}) }),
+    get: async (_k: string, fallback: Record<string, unknown>) => ({ ...fallback }),
     set: async () => undefined,
   } as any;
   const enforcer = { assertRefInScope: async () => undefined } as any;
-  return { svc: new CalendarService(db, new ScopeResolverService(), enforcer, settings), calls };
+
+  const rows: any[] = [];
+  if (settingValue?.provider) {
+    const secrets: Record<string, string> = {};
+    if (settingValue.client_secret) secrets.client_secret = encryptSecret(String(settingValue.client_secret));
+    if (settingValue.refresh_token) secrets.refresh_token = encryptSecret(String(settingValue.refresh_token));
+    rows.push({
+      id: 1, channel: 'calendar',
+      provider: settingValue.provider === 'outlook' ? 'outlook_oauth' : 'google_oauth',
+      vertical_id: null, is_active: true,
+      config: settingValue.client_id ? { client_id: settingValue.client_id } : {},
+      secrets,
+    });
+  }
+  const configs = new ChannelConfigService(makeSprint4Db({ channelConfigs: rows }).db);
+  return { svc: new CalendarService(db, new ScopeResolverService(), enforcer, settings, configs), calls };
 }
 
 describe('Google / Outlook sync — NOT CONFIGURED (credential-blocked, by design)', () => {
