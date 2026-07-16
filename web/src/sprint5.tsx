@@ -23,6 +23,7 @@ import { LeadLookup } from './forms';
 import {
   DiscountType, LineDraft, computeTotals, fmtINR, minorToInput, parseRupees,
 } from './money';
+import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
 
 /* ==================================================================== */
 /*  shared bits                                                          */
@@ -80,15 +81,22 @@ const emptyLine = (): LineDraft => ({
 });
 
 /**
+ * A quotation form is opened in one of three modes. DEF-S16-01 existed because only two
+ * of them had a door: `revise` was implemented end-to-end in the API and never rendered.
+ */
+export type QuoteMode = 'create' | 'edit' | 'revise';
+
+/**
  * THE QUOTATION BUILDER.
  *
  * The totals under the lines are computed by `money.ts`, which mirrors the API's rules
  * exactly — and the API recomputes everything anyway, so a drift here can only ever show
  * a preview that the save corrects. `money.test.ts` pins both to the same example.
  */
-export function QuotationModal({ initial, leadId, onClose, onSaved }: {
-  initial?: any; leadId?: number; onClose: () => void; onSaved?: () => void;
+export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSaved }: {
+  initial?: any; leadId?: number; mode?: QuoteMode; onClose: () => void; onSaved?: () => void;
 }) {
+  const revising = mode === 'revise';
   const ref = useRef_();
   const [lead, setLead] = useState<number | undefined>(initial?.lead_id ?? leadId);
   const [leadLabel, setLeadLabel] = useState<string>(initial?.lead_name ?? '');
@@ -144,10 +152,24 @@ export function QuotationModal({ initial, leadId, onClose, onSaved }: {
           tax_pct: l.tax_pct || '0',
         })),
       };
-      const r = initial?.id
-        ? await api.patch(`/quotations/${initial.id}`, body)
-        : await api.post('/quotations', body);
-      toast(initial?.id ? 'Quotation updated' : `Quotation ${(r as any)?.quote_no ?? ''} created`);
+      /**
+       * DEF-S16-01. Three verbs, one form — because a revision IS the quotation form,
+       * with the parent's numbers already in it. The API decides what each one means:
+       *   revise -> POST /revise  : a NEW version; v1 survives byte-identically.
+       *   edit   -> PATCH /:id    : drafts only; the API refuses a sent quote.
+       *   create -> POST          : a new quotation, a new number.
+       * `lead_id` is deliberately NOT sent when revising — `revise()` inherits the
+       * parent's lead and path and never re-derives them from a client payload, so a
+       * revision cannot be moved to a different customer.
+       */
+      const r = revising
+        ? await api.post(`/quotations/${initial.id}/revise`, { ...body, lead_id: undefined })
+        : initial?.id
+          ? await api.patch(`/quotations/${initial.id}`, body)
+          : await api.post('/quotations', body);
+      toast(revising
+        ? `Revision ${(r as any)?.quote_no ?? ''} created as a draft`
+        : initial?.id ? 'Quotation updated' : `Quotation ${(r as any)?.quote_no ?? ''} created`);
       onSaved?.(); onClose();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
@@ -156,15 +178,24 @@ export function QuotationModal({ initial, leadId, onClose, onSaved }: {
     <div className="add-scrim">
       <div className="add-modal" style={{ maxWidth: 940 }}>
         <div className="ah">
-          <h3><Ic k={initial?.id ? 'pencil' : 'plus'} />{initial?.id ? `Edit ${initial.quote_no}` : 'New quotation'}</h3>
+          <h3>
+            <Ic k={revising ? 'refresh' : initial?.id ? 'pencil' : 'plus'} />
+            {revising ? `Revise ${initial.quote_no}` : initial?.id ? `Edit ${initial.quote_no}` : 'New quotation'}
+          </h3>
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
         </div>
         <div className="abody">
           <div className="form-grid">
             <div className="fld span2">
               <label htmlFor="q-lead">Lead <span className="star">*</span></label>
-              <LeadLookup inputId="q-lead" value={leadLabel} onPick={(id, label) => { setLead(id); setLeadLabel(label); }} />
-              <div className="fhint">The branch, vertical, pipeline and campaign are taken from the lead — a quotation cannot contradict its own lead's path.</div>
+              {revising
+                ? <input id="q-lead" className="ainp" value={leadLabel} readOnly disabled />
+                : <LeadLookup inputId="q-lead" value={leadLabel} onPick={(id, label) => { setLead(id); setLeadLabel(label); }} />}
+              <div className="fhint">
+                {revising
+                  ? 'A revision stays with its own quotation\u2019s lead — the same customer, a new version. Quote somebody else and it is a new quotation, not a revision.'
+                  : 'The branch, vertical, pipeline and campaign are taken from the lead — a quotation cannot contradict its own lead\u2019s path.'}
+              </div>
             </div>
             <div className="fld">
               <label htmlFor="q-valid">Valid until</label>
@@ -174,8 +205,14 @@ export function QuotationModal({ initial, leadId, onClose, onSaved }: {
             </div>
             <div className="fld">
               <label htmlFor="q-number">Number</label>
-              <input id="q-number" className="ainp" value={initial?.quote_no ?? 'Allocated on save'} readOnly disabled />
-              <div className="fhint">From the numbering series for this branch / vertical.</div>
+              <input id="q-number" className="ainp"
+                value={revising ? `${String(initial.quote_no).replace(/-R\d+$/, '')}-R\u2026` : initial?.quote_no ?? 'Allocated on save'}
+                readOnly disabled />
+              <div className="fhint">
+                {revising
+                  ? `${initial.quote_no} keeps its number and its record. The revision is the same number with the next -R suffix, allocated on save.`
+                  : 'From the numbering series for this branch / vertical.'}
+              </div>
             </div>
           </div>
 
@@ -294,7 +331,11 @@ export function QuotationModal({ initial, leadId, onClose, onSaved }: {
         <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy} onClick={save}>
-            <Ic k="check" />{busy ? 'Saving…' : initial?.id ? 'Save changes' : 'Save quotation'}
+            {/* The verb matters: a revision does not "save changes" to the sent quote —
+              * it leaves that quote exactly as the customer received it and creates the
+              * next version alongside it. Saying "Save changes" here would describe the
+              * one thing the API refuses to do. */}
+            <Ic k="check" />{busy ? 'Saving…' : revising ? 'Create revision' : initial?.id ? 'Save changes' : 'Save quotation'}
           </button>
         </div>
       </div>
@@ -437,7 +478,7 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
   const { can } = useAuth();
   const [send, setSend] = useState(false);
   const [markSent, setMarkSent] = useState(false);
-  const [edit, setEdit] = useState(false);
+  const [edit, setEdit] = useState<QuoteMode | null>(null);
   const [busy, setBusy] = useState(false);
   const q = data;
   if (!q) return null;
@@ -530,7 +571,30 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
           <button className="btn" onClick={onClose}>Close</button>
           <button className="btn ghost" onClick={() => openPdf(`/quotations/${id}/pdf`)}><Ic k="doc" />PDF</button>
           {q.status === 'draft' && can('quotation.update') && (
-            <button className="btn ghost" onClick={() => setEdit(true)}><Ic k="pencil" />Edit</button>
+            <button className="btn ghost" onClick={() => setEdit('edit')}><Ic k="pencil" />Edit</button>
+          )}
+          {/*
+            * DEF-S16-01 — THE DOOR.
+            *
+            * `revise()` has been complete and correct in the API since Sprint 5 and
+            * nothing in `web/src` ever called it. The API refuses to edit a sent quote
+            * with the words "create a revision instead" — and there was no Revise button
+            * to press, so a sent quotation whose price had to change was a DEAD END: the
+            * counsellor's only exits were Accept, Reject, or build a new quotation from
+            * scratch, which takes a new number and breaks the version chain that is the
+            * whole point of the feature. Renegotiating a price is the normal case.
+            *
+            * `quotation.create` is the permission because a revision IS a creation — it
+            * is what the API's own @RequirePermission on POST /:id/revise asks for, and
+            * these two must not drift (a button that 403s is worse than no button).
+            *
+            * `route-reachability.spec.ts` now fails the build if any route loses its
+            * caller, so this class of defect cannot ship silently again.
+            */}
+          {q.status === 'sent' && can('quotation.create') && (
+            <button className="btn ghost" disabled={busy} onClick={() => setEdit('revise')}>
+              <Ic k="refresh" />Revise
+            </button>
           )}
           {['draft', 'sent'].includes(q.status) && can('quotation.send') && (
             <button className="btn ghost" onClick={() => setSend(true)}><Ic k="send" />Send</button>
@@ -551,7 +615,10 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
       </div>
       {send && <SendQuoteModal quote={q} onClose={() => setSend(false)} onSent={() => { reload(); onChanged(); }} />}
       {markSent && <MarkSentModal quote={q} onClose={() => setMarkSent(false)} onDone={() => { reload(); onChanged(); }} />}
-      {edit && <QuotationModal initial={q} onClose={() => setEdit(false)} onSaved={() => { reload(); onChanged(); }} />}
+      {edit && (
+        <QuotationModal initial={q} mode={edit} onClose={() => setEdit(null)}
+          onSaved={() => { reload(); onChanged(); }} />
+      )}
     </div>
   );
 }
@@ -1068,7 +1135,10 @@ export function CounsellorPerformance() {
       <Kpis items={[
         { lab: 'Leads', val: String(s?.leads ?? 0), ic: 'leads' },
         { lab: 'Enrolments', val: String(s?.enrolments ?? 0), ic: 'check' },
-        { lab: 'Conversion', val: s ? `${s.conversion_pct}%` : '—', ic: 'target' },
+        // OBS-S16-05: this is NOT the funnel's conversion and must not share its name —
+        // the denominator is the counsellor's OWN leads. QA-16 saw 50% and 100% at the
+        // same moment, both captioned "Conversion".
+        { lab: CONVERSION_LABEL_COUNSELLOR, val: s ? `${s.conversion_pct}%` : '—', ic: 'target' },
         { lab: 'Revenue booked', val: s ? fmtINR(s.revenue_minor) : '—', ic: 'rupee' },
       ]} />
       <TableCard

@@ -4,6 +4,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { validateDistributionConfig, validateDuplicacyConfig } from './campaign-config.validator';
+import { requireDateString } from '../common/date.util';
 
 /**
  * Hierarchy CRUD: Branch > Vertical > Pipeline (+stages) > Campaign > Source.
@@ -79,11 +80,9 @@ export class HierarchyService {
 
   /** A date input sends '' when cleared — that is NULL, not an invalid date (22P02). */
   static date(v?: string | null): string | null {
-    if (v === undefined || v === null) return null;
-    const t = String(v).trim();
-    if (t === '') return null;
-    if (!/^\d{4}-\d{2}-\d{2}/.test(t)) throw new BadRequestException(`invalid date: ${v} (expected YYYY-MM-DD)`);
-    return t.slice(0, 10);
+    return requireDateString(v, () => {
+      throw new BadRequestException(`invalid date: ${v} (expected YYYY-MM-DD)`);
+    });
   }
 
   /** Form sends the prototype labels ("Company Branch" / "Franchise Branch"); store the enum. */

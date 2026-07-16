@@ -8,6 +8,7 @@ import { TemplateService } from '../templates/template.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { computeLine, computeTotals, LineComputed, rupeesToMinor } from '../common/money.util';
 import { Letterhead, quotationPdf } from '../pdf/documents';
+import { requireDateString } from '../common/date.util';
 
 /**
  * QUOTATIONS — fee proposals with line items, discounts, tax SHOWN, a validity date,
@@ -546,11 +547,20 @@ export class QuotationService {
 
   /* ---------------------------------------------------------------- helpers */
 
+  /**
+   * DEF-S16-02. This used to be `String(v).slice(0, 10)`, and `update()`/`revise()` both
+   * call it as `validUntil(dto?.valid_until ?? cur.valid_until)`. `cur.valid_until` is a
+   * `date` column read back through `get()`, so node-postgres hands over a **Date** and
+   * `String(aDate).slice(0, 10)` is `"Mon Aug 31"` — the regex refused it and the
+   * fallback returned 400. The `??` safety net could never once execute.
+   *
+   * The parsing now lives in `common/date.util.ts` for the whole codebase; only the
+   * client's sentence stays here.
+   */
   private validUntil(v: unknown): string | null {
-    if (!v) return null;
-    const s = String(v).slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new BadRequestException('The validity date must be a date.');
-    return s;
+    return requireDateString(v, () => {
+      throw new BadRequestException('The validity date must be a date.');
+    });
   }
 
   /**

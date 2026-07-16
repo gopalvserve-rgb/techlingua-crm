@@ -21,6 +21,7 @@ import { Cell, Funnel, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { UserPicker } from './userpicker';
 import { fmtINR } from './money';
+import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 
 /* ==================================================================== */
 /*  shared                                                               */
@@ -842,7 +843,7 @@ export function FunnelReport() {
         { lab: 'Leads', val: String(d.data?.totals?.leads ?? 0), ic: 'leads' },
         { lab: 'Won', val: String(d.data?.totals?.won ?? 0), ic: 'check' },
         { lab: 'Lost', val: String(d.data?.totals?.lost ?? 0), ic: 'x' },
-        { lab: 'Conversion', val: `${d.data?.totals?.conversion_pct ?? 0}%`, ic: 'bolt' },
+        { lab: CONVERSION_LABEL_LEAD_WON, val: `${d.data?.totals?.conversion_pct ?? 0}%`, ic: 'bolt' },
       ]} />
       <Funnel title="Stage-to-stage conversion" rows={rows}
         empty="The funnel fills as leads move through stages" />

@@ -8,6 +8,7 @@ import { normalizePhone } from '../common/phone.util';
 import { ChannelConfigService } from './channel-config.service';
 import { MsgChannel, SENDING_CHANNELS } from './providers';
 import { OutboundMessage, PermanentSendError, Transport, transportFor } from './transports';
+import { toDateString } from '../common/date.util';
 
 /**
  * The send log is LEAD data, so it scopes on exactly the LEAD's columns — the same
@@ -83,7 +84,7 @@ export function nextSendableTime(
   if (!hours?.enabled) return at;
   const toLocal = (d: Date) => new Date(d.getTime() + tzOffsetMinutes * 60_000);
   const toUtc = (d: Date) => new Date(d.getTime() - tzOffsetMinutes * 60_000);
-  const holidaySet = new Set(holidays.map((h) => String(h).slice(0, 10)));
+  const holidaySet = new Set(holidays.map((h) => toDateString(h)).filter(Boolean) as string[]);
 
   let local = toLocal(at);
   for (let i = 0; i < 14; i++) {   // a fortnight of closed days would be a configuration error

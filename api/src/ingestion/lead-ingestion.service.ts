@@ -13,6 +13,7 @@ import {
 import { LeadMergeService } from './merge.service';
 import { JourneyService } from '../journeys/journey.service';
 import { MERGEABLE_FIELDS } from './merge.util';
+import { toDateString } from '../common/date.util';
 
 /** Campaign duplicacy_config (migration 002). */
 export interface DuplicacyConfig {
@@ -245,7 +246,7 @@ export class LeadIngestionService {
       // DEF-S2-03: WhatsApp Number is a real, stored contact field
       whatsapp_phone: p.whatsapp_phone ? normalizePhone(String(p.whatsapp_phone)) : null,
       // an unparseable date must not fail the whole ingest — it just means no birthday journey
-      dob: p.dob && /^\d{4}-\d{2}-\d{2}/.test(String(p.dob)) ? String(p.dob).slice(0, 10) : null,
+      dob: toDateString(p.dob) ?? null,
       state_id: this.master(target, 'state', 'State', p.state),
       city_id: this.master(target, 'city', 'City', p.city),
       course_id: this.master(target, 'course', 'Course', p.course),

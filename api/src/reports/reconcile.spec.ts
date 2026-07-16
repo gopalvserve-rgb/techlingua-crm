@@ -8,6 +8,10 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { DatabaseService } from '../database/database.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
 import { ResolvedScope } from '../rbac/rbac.types';
+import {
+  leadWonConversionPct, counsellorConversionPct,
+  CONVERSION_LABEL_LEAD_WON, CONVERSION_LABEL_COUNSELLOR,
+} from './shared-metrics';
 import { entityByKey } from './entities';
 import {
   ENROLMENT_COUNTS_AS_SOLD, ENROLMENT_REVENUE_COLUMN, STAGE_COUNT_FROM, STAGE_COUNT_LIVE,
@@ -250,5 +254,59 @@ describe('the TAT report reads the SPRINT-3 clocks, not a new measurement', () =
     const fr = db.find(/lead_sla sla/)!;
     expect(fr).toContain('percentile_disc(0.5)');
     expect(fr).toContain('avg(');
+  });
+});
+
+/**
+ * =============================================================================
+ * OBS-S16-05 — THE CLIENT MUST NOT SEE THREE DIFFERENT CONVERSION RATES.
+ * =============================================================================
+ *
+ * QA-16: funnel 50%, Counsellor Performance 100%, dashboard rounded differently — all
+ * correct, all different, and `conversion_pct` was NOT in shared-metrics.ts despite
+ * `docs/dev/08` §2 claiming it was. Two independent definitions that happened to agree
+ * is the DEF-S5-03 shape without the bug. These tests make the drift impossible.
+ */
+describe('conversion % — two questions, two names, one definition each', () => {
+  it('the dashboard and the funnel report call THE SAME FUNCTION (they cannot disagree)', () => {
+    const dash = readFileSync(join(__dirname, '..', 'dashboard', 'dashboard.service.ts'), 'utf8');
+    const funnel = readFileSync(join(__dirname, 'standard.service.ts'), 'utf8');
+    for (const src of [dash, funnel]) {
+      expect(src).toContain('leadWonConversionPct');
+      expect(src).toContain('shared-metrics');
+    }
+    // and neither has kept a hand-rolled copy of the arithmetic
+    for (const src of [dash, funnel]) {
+      expect(/Math\.round\(\(?\s*won\s*[*/]/.test(src)).toBe(false);
+    }
+  });
+
+  it('THE BUG QA-16 WOULD HAVE FOUND NEXT: the dashboard used to round to a whole number', () => {
+    // 1 won of 3 leads. The old dashboard said 33; the funnel said 33.3. Same question,
+    // same moment, two answers — which is exactly the complaint DEF-S5-03 generated.
+    expect(leadWonConversionPct(1, 3)).toBe(33.3);
+    expect(Math.round((1 / 3) * 100)).toBe(33);          // <- what the dashboard used to do
+    expect(leadWonConversionPct(2, 4)).toBe(50);
+    expect(leadWonConversionPct(0, 0)).toBe(0);          // no leads is 0%, not NaN
+  });
+
+  it('counsellor conversion is a DIFFERENT question and is allowed to differ', () => {
+    // QA-16's live numbers: 4 leads, 2 won, but only 2 leads OWNED by a counsellor.
+    expect(leadWonConversionPct(2, 4)).toBe(50);
+    expect(counsellorConversionPct(2, 2)).toBe(100);
+    // ...and it is NOT capped: a counsellor may close last month's leads this month.
+    expect(counsellorConversionPct(3, 2)).toBe(150);
+  });
+
+  it('the two are LABELLED differently, so 50% and 100% are not both called "Conversion"', () => {
+    expect(CONVERSION_LABEL_LEAD_WON).not.toBe(CONVERSION_LABEL_COUNSELLOR);
+    expect(CONVERSION_LABEL_LEAD_WON).toMatch(/lead/i);
+    expect(CONVERSION_LABEL_COUNSELLOR).toMatch(/counsellor/i);
+  });
+
+  it('PerformanceService uses the counsellor definition, not the lead→won one', () => {
+    const perf = readFileSync(join(__dirname, '..', 'performance', 'performance.service.ts'), 'utf8');
+    expect(perf).toContain('counsellorConversionPct');
+    expect(perf).not.toContain('leadWonConversionPct');
   });
 });

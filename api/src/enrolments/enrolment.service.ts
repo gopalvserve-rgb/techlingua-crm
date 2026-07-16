@@ -5,6 +5,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { NumberingService } from '../numbering/numbering.service';
 import { rupeesToMinor } from '../common/money.util';
 import { ApprovalService, requiredSteps } from './approval.service';
+import { requireDateString } from '../common/date.util';
 
 /**
  * ENROLMENT — the SALE CLOSURE record. "Sale closure = enrolment" (§5).
@@ -397,11 +398,11 @@ export class EnrolmentService {
     return { fee_minor, discount_minor, net_fee_minor: fee_minor - discount_minor, first_payment_minor };
   }
 
+  /** DEF-S16-02's sibling: identical shape, one call away from the identical bug. */
   private date(v: unknown): string | null {
-    if (!v) return null;
-    const s = String(v).slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new BadRequestException('The start date must be a date.');
-    return s;
+    return requireDateString(v, () => {
+      throw new BadRequestException('The start date must be a date.');
+    });
   }
 
   private async assertQuotationUsable(quotationId: number, leadId: number) {

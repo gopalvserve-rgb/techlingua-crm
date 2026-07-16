@@ -7,6 +7,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
+import { toDateString } from '../common/date.util';
 
 /**
  * CALENDAR — follow-ups, demos and meetings on one view.
@@ -60,11 +61,15 @@ export class CalendarService {
   private window(from?: string, to?: string) {
     const iso = (d: Date) => d.toISOString().slice(0, 10);
     const now = new Date();
-    const f = from ? String(from).slice(0, 10) : iso(new Date(now.getFullYear(), now.getMonth(), 1));
-    const t = to ? String(to).slice(0, 10) : iso(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-      throw new BadRequestException('from / to must be YYYY-MM-DD dates');
-    }
+    // Tri-state: `undefined` = not a date (400); `null` = absent (default). Conflating
+    // them turns a malformed window into a silently different one — see dashboard.service.
+    const parse = (v: unknown, dflt: string) => {
+      const d = toDateString(v);
+      if (d === undefined) throw new BadRequestException('from / to must be YYYY-MM-DD dates');
+      return d ?? dflt;
+    };
+    const f = parse(from, iso(new Date(now.getFullYear(), now.getMonth(), 1)));
+    const t = parse(to, iso(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
     if (f > t) throw new BadRequestException('"from" must not be after "to"');
     return { from: f, to: t };
   }

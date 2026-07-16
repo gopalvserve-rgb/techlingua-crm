@@ -594,6 +594,28 @@ const SMS_SPEC: ProviderSpec = {
   setup: [],
 };
 
+/**
+ * A SENT quotation, as `GET /quotations/:id` returns it — the state the Revise form is
+ * opened from. It exists here because DEF-S16-01's Revise button is a NEW WIRED FORM, and
+ * every wired form goes through the phantom probe. A revision misprices a customer just
+ * as effectively as a first quotation does.
+ */
+const SENT_QUOTE = {
+  id: 1, quote_no: 'QT-2026/0001', version: 1, status: 'sent', valid_until: '2026-08-15',
+  lead_id: 31, lead_name: 'Priya Sharma', notes: 'Weekend batch', terms: '50% on enrolment',
+  subtotal_minor: 4_500_000, discount_minor: 450_000, tax_minor: 729_000, total_minor: 4_779_000,
+  items: [{
+    line_no: 1, course_id: 21, description: 'IELTS Academic', course_name: 'IELTS', qty: 1,
+    unit_price_minor: 4_500_000, discount_type: 'percent', discount_value: '10',
+    discount_minor: 450_000, tax_pct: '18', tax_minor: 729_000, total_minor: 4_779_000,
+  }],
+};
+
+const QUOTE_ALLOW = {
+  Number: 'display-only — the quote number is ALLOCATED SERVER-SIDE from the numbering series on save (atomically, so two counsellors cannot get the same one). There is nothing here for the user to type; the box shows "Allocated on save".',
+  'Line total': 'display-only — computed from Rate/Qty/Discount/Tax by money.ts and RE-COMPUTED server-side. The client never posts a total, so a total can never disagree with its lines.',
+};
+
 const bespokeCases: Case[] = [
   {
     name: 'Campaign (NeoDove) — Add',
@@ -687,16 +709,33 @@ const bespokeCases: Case[] = [
    * course fee nobody noticed; a phantom field here would misprice a customer or lose a
    * payment. They go through exactly the same generic probe as everything else.
    */
+
+
   {
     name: 'Quotation — Add (line items, discounts, tax)',
     render: () => render(<QuotationModal onClose={() => undefined} />),
-    allow: {
-      // A one-line quotation is rendered by default, so the probe sees each line field
-      // exactly once. Every one of them IS sent (inside `items[0]`) and IS probed.
-      Number: 'display-only — the quote number is ALLOCATED SERVER-SIDE from the numbering series on save (atomically, so two counsellors cannot get the same one). There is nothing here for the user to type; the box shows "Allocated on save".',
-      'Line total': 'display-only — computed from Rate/Qty/Discount/Tax by money.ts and RE-COMPUTED server-side. The client never posts a total, so a total can never disagree with its lines.',
-    },
+    // A one-line quotation is rendered by default, so the probe sees each line field
+    // exactly once. Every one of them IS sent (inside `items[0]`) and IS probed.
+    allow: QUOTE_ALLOW,
     path: /^\/quotations$/,
+  },
+  /*
+   * DEF-S16-01 — THE REVISE FORM, PROBED LIKE EVERY OTHER.
+   *
+   * The defect was a form with no door. Having built the door, the form behind it gets
+   * the same treatment as the rest: render the real modal, discover every field from the
+   * DOM, and prove each one can change the request body. A phantom here would silently
+   * drop a renegotiated price into a version the customer is then quoted from — which is
+   * the walk-in course-fee bug (DEF-S34-02) wearing a suit.
+   */
+  {
+    name: 'Quotation — Revise  [DEF-S16-01]',
+    render: () => render(<QuotationModal initial={SENT_QUOTE} mode="revise" onClose={() => undefined} />),
+    allow: {
+      ...QUOTE_ALLOW,
+      Number: 'display-only — a revision KEEPS its parent\'s number and takes the next -R suffix, allocated server-side on save. The box shows "QT-2026/0001-R…".',
+    },
+    path: /^\/quotations\/1\/revise$/,
   },
   {
     name: 'Enrolment / Sale Closure — Add',
@@ -801,6 +840,10 @@ const bespokeCases: Case[] = [
 const LOCKED: Record<string, string[]> = {
   'Edit Walk-in  [DEF-S34-03]': ['Branch', 'Vertical', 'Pipeline', 'Campaign', 'Lead Source'],
   'Edit Referral  [DEF-S34-03]': ['Branch', 'Vertical', 'Pipeline', 'Campaign', 'Lead Source'],
+  // A revision inherits its parent's lead and path — `revise()` never re-derives them
+  // from the client payload, so a revision cannot be moved to another customer. The
+  // field renders read-only on purpose; it is locked, not phantom.
+  'Quotation — Revise  [DEF-S16-01]': ['Lead', 'Number'],
 };
 
 const CASES: Case[] = [...specCases, ...bespokeCases];

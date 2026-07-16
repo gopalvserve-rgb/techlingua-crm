@@ -4,6 +4,7 @@ import {
   CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure,
   CollectModal, EnrolmentModal, SendQuoteModal,
 } from './sprint5';
+import { CONVERSION_LABEL_COUNSELLOR, CONVERSION_LABEL_LEAD_WON } from './metrics';
 
 /**
  * SPRINT 5 — every new screen RENDERED in jsdom.
@@ -160,7 +161,19 @@ describe('Quotations', () => {
     QUOTES[0] = { ...draft, status: 'sent' } as never;
   });
 
-  it('a SENT quotation offers Accepted / Rejected, not Edit', async () => {
+  /**
+   * DEF-S16-01 — THE TEST THIS FILE SHOULD ALWAYS HAVE HAD.
+   *
+   * The version below used to end at `not.toContain('Edit')`, with the comment
+   * "a SENT quote is revised, not edited" — and NEVER ASSERTED THAT REVISE EXISTED.
+   * It encoded the intention and pinned the absence of the wrong button, so it stayed
+   * green for the entire life of the defect: the API refused to edit a sent quote and
+   * told the counsellor to "create a revision instead", and there was no Revise button
+   * anywhere in the app. A sent quotation whose price had to change was a dead end.
+   *
+   * Asserting the absence of a button is worth almost nothing on its own. Assert the DOOR.
+   */
+  it('a SENT quotation offers Accepted / Rejected and REVISE, not Edit', async () => {
     render(<Quotations />);
     fireEvent.click(await screen.findByText('QT-2026/0001'));
     await screen.findByText('Line items');
@@ -171,6 +184,67 @@ describe('Quotations', () => {
     expect(footer.textContent).toContain('Rejected');
     expect(footer.textContent).toContain('PDF');
     expect(footer.textContent).not.toContain('Edit');    // a SENT quote is revised, not edited
+    expect(footer.textContent).toContain('Revise');      // ...and REVISE is how (DEF-S16-01)
+  });
+
+  it('Revise opens the quotation prefilled — the counsellor renegotiates, he does not retype', async () => {
+    render(<Quotations />);
+    fireEvent.click(await screen.findByText('QT-2026/0001'));
+    await screen.findByText('Line items');
+    fireEvent.click(screen.getByText('Revise'));
+    // the form is the quotation form, titled as a revision, carrying v1's lines
+    expect(await screen.findByText('Revise QT-2026/0001')).toBeTruthy();
+    expect((document.getElementById('q-valid') as HTMLInputElement).value).toBe('2026-08-15');
+    expect((document.querySelector('.add-modal input[value="IELTS Academic"]') as HTMLInputElement)
+      ?? screen.getByDisplayValue('IELTS Academic')).toBeTruthy();
+  });
+
+  it('Revise POSTs to /revise — NOT to PATCH, which the API refuses on a sent quote', async () => {
+    render(<Quotations />);
+    fireEvent.click(await screen.findByText('QT-2026/0001'));
+    await screen.findByText('Line items');
+    fireEvent.click(screen.getByText('Revise'));
+    await screen.findByText('Revise QT-2026/0001');
+    // "Create revision", not "Save changes" — the button says what actually happens.
+    fireEvent.click(screen.getByText('Create revision'));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    const [path, body] = post.mock.calls[post.mock.calls.length - 1];
+    expect(path).toBe('/quotations/1/revise');
+    // and the revision does NOT carry a lead_id: revise() inherits the parent's lead and
+    // path, so a revision can never be moved to a different customer.
+    expect((body as any).lead_id).toBeUndefined();
+    expect((body as any).items.length).toBeGreaterThan(0);
+  });
+
+  it('the lead is LOCKED on a revision — a revision is the same customer, a new version', async () => {
+    render(<Quotations />);
+    fireEvent.click(await screen.findByText('QT-2026/0001'));
+    await screen.findByText('Line items');
+    fireEvent.click(screen.getByText('Revise'));
+    await screen.findByText('Revise QT-2026/0001');
+    expect((document.getElementById('q-lead') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('Revise is RBAC-gated on quotation.create — the same permission the API asks for', async () => {
+    // a button that 403s is worse than no button.
+    can.mockImplementation((k: string) => k !== 'quotation.create');
+    render(<Quotations />);
+    fireEvent.click(await screen.findByText('QT-2026/0001'));
+    await screen.findByText('Line items');
+    expect(document.querySelector('.add-modal .af')!.textContent).not.toContain('Revise');
+  });
+
+  it('a DRAFT is edited, not revised — there is nothing to preserve yet', async () => {
+    cleanup();
+    const draft = { ...QUOTES[0], status: 'draft' };
+    QUOTES[0] = draft as never;
+    render(<Quotations />);
+    fireEvent.click(await screen.findByText('QT-2026/0001'));
+    await screen.findByText('Line items');
+    const footer = document.querySelector('.add-modal .af')!;
+    expect(footer.textContent).toContain('Edit');
+    expect(footer.textContent).not.toContain('Revise');
+    QUOTES[0] = { ...draft, status: 'sent' } as never;
   });
 });
 
@@ -347,5 +421,31 @@ describe('Counsellor Performance', () => {
     empty = true;
     render(<CounsellorPerformance />);
     expect(await screen.findByText(/Leaderboard fills as leads & closures accumulate/)).toBeTruthy();
+  });
+});
+
+/**
+ * OBS-S16-05 — THE CLIENT MUST NOT SEE TWO NUMBERS CALLED THE SAME THING.
+ *
+ * QA-16, live, at one moment: the funnel report said 50% and Counsellor Performance said
+ * 100%, both captioned "Conversion". Both were correct — they answer different questions
+ * — so the fix is not to make them agree, it is to stop calling them the same thing.
+ * A shared server-side definition with two different captions on it is still two
+ * different numbers as far as Gopal is concerned.
+ *
+ * The label is pinned HERE, next to the screen that renders it: deleting the distinction
+ * fails a test, exactly as deleting the MSG91 caveat now does.
+ */
+describe('OBS-S16-05 — conversion is NAMED, not just "Conversion"', () => {
+  it('Counsellor Performance says COUNSELLOR conversion, and names its denominator', async () => {
+    render(<CounsellorPerformance />);
+    expect(await screen.findByText(CONVERSION_LABEL_COUNSELLOR)).toBeTruthy();
+    expect(CONVERSION_LABEL_COUNSELLOR).toMatch(/own leads/i);
+    // and it is NOT the funnel's caption
+    expect(screen.queryByText(CONVERSION_LABEL_LEAD_WON)).toBeNull();
+  });
+
+  it('the two labels are different — the whole point', () => {
+    expect(CONVERSION_LABEL_COUNSELLOR).not.toBe(CONVERSION_LABEL_LEAD_WON);
   });
 });

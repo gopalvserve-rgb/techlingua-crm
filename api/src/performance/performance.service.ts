@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
-import { ENROLMENT_COUNTS_AS_SOLD, ENROLMENT_REVENUE_COLUMN } from '../reports/shared-metrics';
+import { ENROLMENT_COUNTS_AS_SOLD, ENROLMENT_REVENUE_COLUMN, counsellorConversionPct } from '../reports/shared-metrics';
+import { toDateString } from '../common/date.util';
 
 /**
  * COUNSELLOR PERFORMANCE — "leads handled, calls, conversion %, revenue, TAT,
@@ -80,8 +81,8 @@ export class PerformanceService {
    * set, so a counsellor cannot appear in one column and vanish from another.
    */
   async leaderboard(scope: ResolvedScope, f: { from?: string; to?: string } = {}) {
-    const from = f.from ? `${String(f.from).slice(0, 10)}` : null;
-    const to = f.to ? `${String(f.to).slice(0, 10)}` : null;
+    const from = toDateString(f.from) ?? null;
+    const to = toDateString(f.to) ?? null;
 
     // WHICH USERS. The scope is applied to the LEADS a user owns — a counsellor's own
     // scope resolves to `l.owner_id = me`, so the user set collapses to himself.
@@ -178,7 +179,9 @@ export class PerformanceService {
         leads,
         enrolments,
         // NOT capped at 100 — see the header. A counsellor may close last month's leads.
-        conversion_pct: leads > 0 ? Math.round((enrolments * 1000) / leads) / 10 : 0,
+        // OBS-S16-05: the definition lives in shared-metrics.ts, named so it cannot be
+        // confused with the funnel's lead→won rate (a different denominator).
+        conversion_pct: counsellorConversionPct(enrolments, leads),
         revenue_minor: Number(r.revenue_minor ?? 0),
         collected_minor: Number(r.collected_minor ?? 0),
         activities: Number(r.activities ?? 0),
@@ -206,7 +209,7 @@ export class PerformanceService {
    * so a counsellor's total is his own and cannot return branch numbers.
    */
   private async collectedMinor(scope: ResolvedScope, f: { from?: string; to?: string }): Promise<number> {
-    const params: unknown[] = [f.from ? String(f.from).slice(0, 10) : null, f.to ? String(f.to).slice(0, 10) : null];
+    const params: unknown[] = [toDateString(f.from) ?? null, toDateString(f.to) ?? null];
     const enrWhere = this.resolver.buildScopeWhere(scope, {
       owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
@@ -237,7 +240,7 @@ export class PerformanceService {
       counsellors: rows.length,
       leads,
       enrolments,
-      conversion_pct: leads > 0 ? Math.round((enrolments * 1000) / leads) / 10 : 0,
+      conversion_pct: counsellorConversionPct(enrolments, leads),
       revenue_minor: sum('revenue_minor'),
       // NOT `sum('collected_minor')` — see collectedMinor(). This is the money, not the rows.
       collected_minor: await this.collectedMinor(scope, f),

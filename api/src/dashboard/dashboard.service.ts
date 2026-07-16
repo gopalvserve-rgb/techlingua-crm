@@ -3,7 +3,8 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { FOLLOWUP_SCOPE_COLS, LEAD_SCOPE_COLS } from '../rbac/scope-cols';
-import { STAGE_COUNT_FROM, STAGE_COUNT_LIVE } from '../reports/shared-metrics';
+import { STAGE_COUNT_FROM, STAGE_COUNT_LIVE, leadWonConversionPct } from '../reports/shared-metrics';
+import { toDateString } from '../common/date.util';
 
 /**
  * ROLE-BASED DASHBOARDS (client decision, 14 Jul 2026).
@@ -68,11 +69,17 @@ export class DashboardService {
   private range(from?: string, to?: string): { from: string; to: string } {
     const iso = (d: Date) => d.toISOString().slice(0, 10);
     const now = new Date();
-    const f = from ? String(from).slice(0, 10) : iso(new Date(now.getFullYear(), now.getMonth(), 1));
-    const t = to ? String(to).slice(0, 10) : iso(now);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-      throw new BadRequestException('from / to must be YYYY-MM-DD dates');
-    }
+    // THE TRI-STATE MATTERS. `toDateString` returns `undefined` for "that is not a date"
+    // and `null` for "there wasn't one" — and they must NOT be conflated: defaulting an
+    // INVALID range to the current month turns `?from=last-tuesday` from a 400 into a
+    // silently different answer, which is the widening bug this project keeps meeting.
+    const parse = (v: unknown, dflt: string) => {
+      const d = toDateString(v);
+      if (d === undefined) throw new BadRequestException('from / to must be YYYY-MM-DD dates');
+      return d ?? dflt;
+    };
+    const f = parse(from, iso(new Date(now.getFullYear(), now.getMonth(), 1)));
+    const t = parse(to, iso(now));
     if (f > t) throw new BadRequestException('"from" must not be after "to"');
     return { from: f, to: t };
   }
@@ -268,7 +275,9 @@ export class DashboardService {
       range: { from, to },
       view: viewOf(scope),
       ...row, ...fu,
-      conversion_rate: leads > 0 ? Math.round((won / leads) * 100) : 0,
+      // OBS-S16-05: one definition, imported — and one decimal, like every other
+      // reader. This used to round to a whole number all by itself.
+      conversion_rate: leadWonConversionPct(won, leads),
     };
   }
 }

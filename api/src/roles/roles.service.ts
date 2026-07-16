@@ -7,6 +7,11 @@ export interface RoleDto { name: string; description?: string }
 export interface MatrixEntry {
   permission_key: string;
   record_scope: RecordScope;
+  /**
+   * DEF-S16-03 — ACCEPTED BY THE TYPE, REFUSED BY THE API. See `setMatrix()`.
+   * It stays on the interface so the refusal has something to name, and so the day
+   * Phase 2 implements enforcement the shape is already agreed.
+   */
   field_scope?: { allow?: string[]; deny?: string[] } | null;
 }
 
@@ -95,6 +100,37 @@ export class RolesService {
     }
     const valid: RecordScope[] = ['own', 'team', 'branch', 'vertical', 'pipeline', 'campaign', 'all'];
 
+    /**
+     * DEF-S16-03 — FIELD SCOPE IS REFUSED, NOT SILENTLY IGNORED.
+     *
+     * The API used to ACCEPT and PERSIST `field_scope`. `ScopeResolverService` then
+     * faithfully computed `allowedFields`/`deniedFields` from it — and **no caller in the
+     * entire API ever read them**, on responses OR on writes. `docs/dev/08` §8 claimed
+     * they were "honoured on writes". They were not. They were consumed by nothing.
+     *
+     * Nothing was broken on the client's system: the Roles UI exposes record scope only,
+     * and `field_scope` is NULL on all 587 live `role_permission` rows. But a security
+     * control that STORES a setting, DISPLAYS IT BACK as configured, and ENFORCES NOTHING
+     * is a worse failure mode than the feature being absent — it reports success and does
+     * nothing, and the next person to read §8 would have trusted half of it.
+     *
+     * So: refuse it, with a sentence that says why and when. A control that cannot be set
+     * cannot lie. Phase 2 implements enforcement (a response interceptor for reads, a
+     * body filter for writes) and deletes this block.
+     *
+     * RECORD SCOPE — the half that decides whether you see the ROW AT ALL, and the
+     * material half — is enforced everywhere and is untouched by this.
+     */
+    const withFieldScope = entries.filter((e) => e.field_scope != null);
+    if (withFieldScope.length) {
+      throw new BadRequestException(
+        'Field-level scope is not supported yet — it would be stored and enforced by nothing, '
+        + 'which is worse than not offering it. Remove `field_scope` from '
+        + `${withFieldScope.map((e) => e.permission_key).join(', ')} and use record_scope, `
+        + 'which IS enforced on every read and write. Field scope arrives in Phase 2.',
+      );
+    }
+
     return this.db.tx(async (c) => {
       await c.query(`DELETE FROM role_permission WHERE role_id = $1`, [roleId]);
       for (const e of entries) {
@@ -103,9 +139,10 @@ export class RolesService {
         }
         const perm = await c.query(`SELECT id FROM permission WHERE key = $1`, [e.permission_key]);
         if (!perm.rowCount) throw new BadRequestException(`unknown permission: ${e.permission_key}`);
+        // field_scope is written NULL, always — see the refusal above.
         await c.query(
-          `INSERT INTO role_permission (role_id, permission_id, record_scope, field_scope) VALUES ($1,$2,$3,$4)`,
-          [roleId, perm.rows[0].id, e.record_scope, e.field_scope ? JSON.stringify(e.field_scope) : null],
+          `INSERT INTO role_permission (role_id, permission_id, record_scope, field_scope) VALUES ($1,$2,$3,NULL)`,
+          [roleId, perm.rows[0].id, e.record_scope],
         );
       }
       return { role_id: roleId, granted: entries.length };

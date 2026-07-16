@@ -8,6 +8,7 @@ import { MsgChannel } from '../messaging/providers';
 import {
   RenderedTemplate, SAMPLE_VARS, TemplateVars, VARIABLE_CATALOG, renderTemplate, variablesOf,
 } from './template.engine';
+import { toDateString } from '../common/date.util';
 
 const CHANNELS: MsgChannel[] = ['whatsapp', 'sms', 'email'];
 
@@ -192,7 +193,10 @@ export class TemplateService {
       lead: {
         name: l.full_name, phone: l.phone, email: l.email, whatsapp: l.whatsapp_phone ?? l.phone,
         city: l.city, score: l.score, temperature: l.temperature, priority: l.priority,
-        dob: l.dob ? String(l.dob).slice(0, 10) : null,
+        // DEF-S16-02 (third instance, and the only customer-visible one): `lead.dob` is a
+        // DATE column (migration 026), so this was `String(aDate).slice(0, 10)` ->
+        // "Mon Aug 31" inside a real message. Found by sweeping the pattern, not the site.
+        dob: toDateString(l.dob) ?? null,
       },
       course: l.course, course_fee: l.course_fee,
       counsellor: l.counsellor, branch: l.branch, vertical: l.vertical, pipeline: l.pipeline,

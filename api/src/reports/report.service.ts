@@ -5,6 +5,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { REPORT_ENTITIES, ReportEntity, entityByKey } from './entities';
 import { BuiltQuery, ReportConfig, buildReportQuery, shapeRow } from './query-builder';
+import { toDateString } from '../common/date.util';
 
 export interface Me { id: number; name?: string }
 
@@ -244,8 +245,8 @@ export class ReportService {
       sort: arr(raw?.sort).map((s: any) => ({ col: String(s?.col ?? ''), dir: s?.dir === 'asc' ? 'asc' : 'desc' })),
       date_field: raw?.date_field ? String(raw.date_field) : undefined,
       date_preset: raw?.date_preset ?? 'all',
-      date_from: raw?.date_from ? String(raw.date_from).slice(0, 10) : undefined,
-      date_to: raw?.date_to ? String(raw.date_to).slice(0, 10) : undefined,
+      date_from: toDateString(raw?.date_from) ?? undefined,
+      date_to: toDateString(raw?.date_to) ?? undefined,
       limit: raw?.limit ? Number(raw.limit) : undefined,
     };
   }

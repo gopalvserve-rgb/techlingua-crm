@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ColType, ReportColumn, ReportEntity, columnByKey, isFilterable, isGroupable } from './entities';
+import { toDateString } from '../common/date.util';
 
 /**
  * =============================================================================
@@ -245,8 +246,8 @@ export function buildReportQuery(
     }
     let from: string | null; let to: string | null;
     if (config.date_preset === 'custom') {
-      from = config.date_from ? String(config.date_from).slice(0, 10) : null;
-      to = config.date_to ? String(config.date_to).slice(0, 10) : null;
+      from = toDateString(config.date_from) ?? null;
+      to = toDateString(config.date_to) ?? null;
       // `to` is INCLUSIVE for a human ("1st to 31st") and EXCLUSIVE in SQL, or the
       // 31st's rows vanish. Adding a day here is the difference between a report the
       // client trusts and one he corrects by hand every month.

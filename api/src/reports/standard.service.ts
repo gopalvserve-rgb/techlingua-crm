@@ -8,7 +8,9 @@ import { Me, ReportService } from './report.service';
 import {
   ENROLMENT_COUNTS_AS_SOLD, SLA_ELAPSED_COLUMN, SLA_FIRST_RESPONSE_METRIC,
   STAGE_COUNT_FROM, STAGE_COUNT_LIVE,
+  leadWonConversionPct,
 } from './shared-metrics';
+import { toDateString } from '../common/date.util';
 
 /**
  * THE STANDARD REPORTS — the four the client asked for by name (§5):
@@ -35,7 +37,7 @@ export class StandardReportService {
   }
 
   private window(f: { from?: string; to?: string }) {
-    return [f.from ? String(f.from).slice(0, 10) : null, f.to ? String(f.to).slice(0, 10) : null];
+    return [toDateString(f.from) ?? null, toDateString(f.to) ?? null];
   }
 
   /* ==================================================================== FUNNEL */
@@ -96,9 +98,10 @@ export class StandardReportService {
       stages: steps,
       totals: {
         leads: entered, won, lost,
-        // Overall conversion is won/ALL leads in the window — the same arithmetic the
-        // dashboard's "won" KPI implies. It is NOT the product of the step ratios.
-        conversion_pct: entered === 0 ? 0 : Math.round((won * 1000) / entered) / 10,
+        // Overall conversion is won/ALL leads in the window — THE SAME FUNCTION the
+        // dashboard calls, not the same arithmetic retyped (OBS-S16-05). It is NOT the
+        // product of the step ratios.
+        conversion_pct: leadWonConversionPct(won, entered),
       },
       scope: { unrestricted: scope.all === true },
     };

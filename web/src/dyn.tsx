@@ -35,6 +35,7 @@ import {
   ActivityReport, Announcements, CampaignRoiReport, FunnelReport, KnowledgeBase, Notes,
   ReportBuilder, SavedReports, ScheduledDelivery, TatReport, TeamChat,
 } from './sprint6';
+import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -453,7 +454,9 @@ function QuickStats() {
         { lab: 'Leads', val: String(s?.leads ?? 0), ic: 'leads' },
         { lab: 'Conversions', val: String(s?.won ?? 0), ic: 'check' },
         { lab: 'Lost', val: String(s?.lost ?? 0), ic: 'clock' },
-        { lab: 'Conversion rate', val: s ? `${s.conversion_rate}%` : '—', ic: 'target' },
+        // OBS-S16-05: named, not just 'Conversion rate' — the funnel report shows the
+        // SAME number, and Counsellor Performance shows a different one.
+        { lab: CONVERSION_LABEL_LEAD_WON, val: s ? `${s.conversion_rate}%` : '—', ic: 'target' },
         { lab: 'Hot leads', val: String(s?.hot ?? 0), ic: 'bolt' },
         { lab: 'Duplicates', val: String(s?.duplicates ?? 0), ic: 'users' },
         { lab: 'Follow-ups done', val: String(s?.followups_done ?? 0), ic: 'check' },
