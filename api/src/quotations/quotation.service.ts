@@ -453,8 +453,10 @@ export class QuotationService {
     const q = await this.get(id, scope);
     const allowed = QUOTE_TRANSITIONS[q.status as QuoteStatus] ?? [];
     if (!allowed.includes(to)) {
+      // "A accepted quotation" is what the client reads on his own screen. An/a matters.
+      const article = /^[aeiou]/i.test(String(q.status)) ? 'An' : 'A';
       throw new BadRequestException(
-        `A ${q.status} quotation cannot be marked ${to}.` +
+        `${article} ${q.status} quotation cannot be marked ${to}.` +
         (allowed.length ? ` From ${q.status} it can only become: ${allowed.join(', ')}.` : ' It is already decided — create a revision instead.'),
       );
     }

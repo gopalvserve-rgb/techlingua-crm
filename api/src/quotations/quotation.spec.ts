@@ -86,6 +86,14 @@ describe('the status machine — a quotation is a document, not a free-for-all',
       .rejects.toThrow(/A draft quotation cannot be marked accepted.*can only become: sent/s);
   });
 
+  it('gets the article right — the client reads this ("An accepted", not "A accepted")', async () => {
+    const s = svc();
+    (s as any).get = async () => ({ id: 1, quote_no: 'QT-1', status: 'accepted', lead_id: 5 });
+    await expect(s.decide(1, 'sent' as never, {}, { id: 3 }, {} as never)).rejects.toThrow(/^An accepted quotation/);
+    (s as any).get = async () => ({ id: 1, quote_no: 'QT-1', status: 'expired', lead_id: 5 });
+    await expect(s.decide(1, 'sent' as never, {}, { id: 3 }, {} as never)).rejects.toThrow(/^An expired quotation/);
+  });
+
   it('refuses to re-decide a decided quote and points at revision', async () => {
     const s = svc();
     (s as any).get = async () => ({ id: 1, quote_no: 'QT-1', status: 'accepted', lead_id: 5 });

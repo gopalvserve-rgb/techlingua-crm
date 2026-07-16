@@ -255,11 +255,23 @@ export class EnrolmentService {
    *   rejected                        -> rejected (which frees the lead to enrol again).
    */
   async settleApproval(enrolmentId: number, approved: boolean, actorId: number) {
+    // DEF-S5-01 (found by the LIVE smoke): this used to select `e.*` and hand the
+    // ENROLMENT row to winLead(), which reads `lead.id` / `lead.stage_id`. So it ran
+    //     UPDATE lead SET stage_id = <won> WHERE id = <the ENROLMENT's id>
+    // — the WRONG ROW. It silently did nothing here only because no lead happened to
+    // share an id with the enrolment; on the client's data it would eventually mark a
+    // completely unrelated customer as Enrolled. The lead is now selected explicitly,
+    // aliased, and its columns are named — see winLead()'s signature.
     const e = await this.db.one<any>(
-      `SELECT e.*, l.full_name FROM enrolment e JOIN lead l ON l.id = e.lead_id WHERE e.id = $1::bigint`,
+      `SELECT e.id, e.enrolment_no, e.status, e.lead_id,
+              l.id AS l_id, l.pipeline_id AS l_pipeline_id, l.stage_id AS l_stage_id, l.full_name
+         FROM enrolment e
+         JOIN lead l ON l.id = e.lead_id
+        WHERE e.id = $1::bigint AND e.deleted_at IS NULL`,
       [enrolmentId],
     );
     if (!e) throw new NotFoundException('Enrolment not found');
+    const lead = { id: Number(e.l_id), pipeline_id: e.l_pipeline_id, stage_id: e.l_stage_id };
 
     if (!approved) {
       await this.db.tx(async (c) => {
@@ -278,7 +290,7 @@ export class EnrolmentService {
           WHERE id = $1::bigint AND status = 'pending_approval'`,
         [enrolmentId],
       );
-      await this.winLead(c, e, actorId, e.enrolment_no);
+      await this.winLead(c, lead, actorId, e.enrolment_no);
       await this.activity(c, Number(e.lead_id), actorId, `Enrolment ${e.enrolment_no} approved — active`);
     });
     return { id: enrolmentId, status: 'active' };
@@ -426,7 +438,15 @@ export class EnrolmentService {
    * If the pipeline has no won stage we do NOT invent one and we do NOT fail: a stage
    * taxonomy must never block revenue.
    */
-  private async winLead(c: any, lead: any, actorId: number, enrolmentNo: string) {
+  private async winLead(
+    c: any,
+    /** THE LEAD — explicitly typed, because the alternative was DEF-S5-01: an `any` let
+     *  settleApproval() hand this the ENROLMENT row and update the wrong lead. */
+    lead: { id: number; pipeline_id: number | string | null; stage_id: number | string | null },
+    actorId: number,
+    enrolmentNo: string,
+  ) {
+    if (!lead.id) throw new Error('winLead: no lead id — refusing to update an unknown row');
     if (!lead.pipeline_id) return;
     const st = await c.query(
       `SELECT id, name FROM pipeline_stage
