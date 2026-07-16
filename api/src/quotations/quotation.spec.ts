@@ -117,6 +117,39 @@ describe('a SENT quotation is evidence', () => {
   });
 });
 
+describe('MARK AS SENT — the offline despatch (found missing by the LIVE smoke)', () => {
+  /**
+   * On a system with NO SMTP and NO WhatsApp — which is this client's system today —
+   * `send()` always fails, so `draft` was a DEAD END: no accept, no enrolment, no
+   * revenue. The whole conversion flow was build-blocked by a missing credential, which
+   * the project's own rule forbids. `markSent()` is the way a counsellor records "I
+   * printed it and handed it across the desk", which is also just what actually happens.
+   */
+  const s = svc();
+
+  it('moves a draft to sent WITHOUT any channel being configured', async () => {
+    (s as any).get = async () => ({ id: 1, quote_no: 'QT-1', status: 'draft', lead_id: 5 });
+    (s as any).db = { tx: async (fn: any) => fn({ query: async () => ({ rows: [] }) }) };
+    await expect(s.markSent(1, { how: 'handed_over' }, { id: 3 }, {} as never))
+      .resolves.toMatchObject({ status: 'sent', how: 'handed_over' });
+  });
+
+  it('records HOW it went out — so the send log and the quotation cannot disagree', async () => {
+    (s as any).get = async () => ({ id: 1, quote_no: 'QT-1', status: 'draft', lead_id: 5 });
+    const notes: string[] = [];
+    (s as any).db = { tx: async (fn: any) => fn({ query: async (_q: string, p: unknown[]) => { if (p?.[1]) notes.push(String(p[1])); return { rows: [] }; } }) };
+    await s.markSent(1, { how: 'emailed' }, { id: 3 }, {} as never);
+    expect(notes.join(' ')).toMatch(/emailed outside the CRM/);
+  });
+
+  it('refuses an unexplained despatch, and refuses to re-send a decided quote', async () => {
+    (s as any).get = async () => ({ id: 1, quote_no: 'QT-1', status: 'draft', lead_id: 5 });
+    await expect(s.markSent(1, { how: 'telepathy' }, { id: 3 }, {} as never)).rejects.toThrow(/Say how it went out/);
+    (s as any).get = async () => ({ id: 1, quote_no: 'QT-1', status: 'accepted', lead_id: 5 });
+    await expect(s.markSent(1, { how: 'handed_over' }, { id: 3 }, {} as never)).rejects.toThrow(/already accepted/);
+  });
+});
+
 describe('SEND degrades cleanly when the channel is not configured', () => {
   const quote = {
     id: 1, quote_no: 'QT-2026/0001', status: 'draft', lead_id: 31,

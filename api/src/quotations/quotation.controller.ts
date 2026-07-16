@@ -81,6 +81,13 @@ export class QuotationController {
     return this.svc.send(id, dto, me, scope);
   }
 
+  /** "I handed it to him" — the offline despatch. See QuotationService.markSent(). */
+  @Post(':id/mark-sent')
+  @RequirePermission('quotation.send')
+  markSent(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.markSent(id, dto, me, scope);
+  }
+
   @Post(':id/accept')
   @RequirePermission('quotation.update')
   accept(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {

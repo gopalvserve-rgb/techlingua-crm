@@ -376,6 +376,59 @@ export function SendQuoteModal({ quote, onClose, onSent }: { quote: any; onClose
   );
 }
 
+/**
+ * "MARK AS SENT" — the offline despatch.
+ *
+ * THE LIVE SMOKE FOUND THE HOLE THIS FILLS: with no SMTP and no WhatsApp configured —
+ * which is this client's system today — `Send` always fails, so a quotation could never
+ * leave DRAFT, never be accepted, and never become an enrolment. The whole conversion
+ * flow was blocked by a missing credential, which the project's own rule forbids.
+ *
+ * It is also just true to life: a counsellor prints the PDF and hands it across the desk.
+ */
+function MarkSentModal({ quote, onClose, onDone }: { quote: any; onClose: () => void; onDone: () => void }) {
+  const [how, setHow] = useState('handed_over');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const go = async () => {
+    setBusy(true); setErr('');
+    try { await api.post(`/quotations/${quote.id}/mark-sent`, { how }); toast('Marked as sent'); onDone(); onClose(); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 520 }}>
+        <div className="ah">
+          <h3><Ic k="check" />Mark {quote.quote_no} as sent</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld span2">
+              <label htmlFor="ms-how">How did it reach the customer? <span className="star">*</span></label>
+              <select id="ms-how" className="ainp" value={how} onChange={(e) => setHow(e.target.value)}>
+                <option value="handed_over">I handed it over in person</option>
+                <option value="emailed">I emailed it myself</option>
+                <option value="whatsapp">I sent it on WhatsApp myself</option>
+                <option value="other">Some other way</option>
+              </select>
+              <div className="fhint">
+                Recorded on the lead's timeline. Use <b>Send</b> instead if you want the CRM to despatch it
+                and track delivery — that needs the channel configured in Settings.
+              </div>
+            </div>
+          </div>
+          {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={go}><Ic k="check" />{busy ? 'Saving…' : 'Mark as sent'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The quotation sheet — lines, totals, revisions, and every action it can take. */
 function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
   id: number; onClose: () => void; onChanged: () => void; onEnrol: (prefill: any) => void;
@@ -383,6 +436,7 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
   const { data, reload } = useFetch<any>(`/quotations/${id}`);
   const { can } = useAuth();
   const [send, setSend] = useState(false);
+  const [markSent, setMarkSent] = useState(false);
   const [edit, setEdit] = useState(false);
   const [busy, setBusy] = useState(false);
   const q = data;
@@ -481,6 +535,9 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
           {['draft', 'sent'].includes(q.status) && can('quotation.send') && (
             <button className="btn ghost" onClick={() => setSend(true)}><Ic k="send" />Send</button>
           )}
+          {q.status === 'draft' && can('quotation.send') && (
+            <button className="btn ghost" onClick={() => setMarkSent(true)}><Ic k="check" />Mark as sent</button>
+          )}
           {q.status === 'sent' && can('quotation.update') && (
             <>
               <button className="btn ghost" disabled={busy} onClick={() => void act('reject', 'Marked rejected')}><Ic k="x" />Rejected</button>
@@ -493,6 +550,7 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
         </div>
       </div>
       {send && <SendQuoteModal quote={q} onClose={() => setSend(false)} onSent={() => { reload(); onChanged(); }} />}
+      {markSent && <MarkSentModal quote={q} onClose={() => setMarkSent(false)} onDone={() => { reload(); onChanged(); }} />}
       {edit && <QuotationModal initial={q} onClose={() => setEdit(false)} onSaved={() => { reload(); onChanged(); }} />}
     </div>
   );

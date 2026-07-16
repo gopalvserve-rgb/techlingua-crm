@@ -139,6 +139,27 @@ describe('Quotations', () => {
     expect(screen.getByText('-₹5,000.00')).toBeTruthy();       // the discount, shown negative
   });
 
+  /**
+   * THE LIVE SMOKE FOUND THIS. With no channel configured, `Send` always fails, so a
+   * DRAFT was a dead end — no accept, no enrolment, no revenue, until the client pastes
+   * an SMTP password. "Mark as sent" is the offline despatch a counsellor actually uses.
+   */
+  it('a DRAFT offers "Mark as sent" — the conversion flow is NOT blocked on a credential', async () => {
+    render(<Quotations />);
+    fireEvent.click(await screen.findByText('QT-2026/0001'));
+    await screen.findByText('Line items');
+    // the fixture quote is `sent`, so re-check against a draft
+    cleanup();
+    const draft = { ...QUOTES[0], status: 'draft' };
+    QUOTES[0] = draft as never;
+    render(<Quotations />);
+    fireEvent.click(await screen.findByText('QT-2026/0001'));
+    await screen.findByText('Line items');
+    const footer = document.querySelector('.add-modal .af')!;
+    expect(footer.textContent).toContain('Mark as sent');
+    QUOTES[0] = { ...draft, status: 'sent' } as never;
+  });
+
   it('a SENT quotation offers Accepted / Rejected, not Edit', async () => {
     render(<Quotations />);
     fireEvent.click(await screen.findByText('QT-2026/0001'));

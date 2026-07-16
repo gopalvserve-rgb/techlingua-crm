@@ -407,6 +407,47 @@ export class QuotationService {
       + `\nDo let me know if you have any questions.\n\n{{counsellor}}\n{{branch}} · {{org}}`;
   }
 
+  /**
+   * MARK AS SENT — "I gave it to him."
+   *
+   * THE LIVE SMOKE FOUND THE HOLE THIS FILLS. `send()` is the only other way out of
+   * `draft`, and it only succeeds when a channel is configured. So on a system with no
+   * SMTP and no WhatsApp — which is this client's system TODAY — a quotation could never
+   * leave draft, could never be accepted, and could never become an enrolment. The whole
+   * conversion flow was credential-blocked, which flatly contradicts the project's own
+   * rule that everything is credential-blocked but nothing is BUILD-blocked.
+   *
+   * It is also just true to life: a counsellor prints the PDF and hands it across the
+   * desk, or sends it from his own phone. That is a real "sent", and the CRM must be able
+   * to record it rather than pretend it did not happen.
+   *
+   * It is deliberately a SEPARATE action from `send()`, and it records HOW it went out,
+   * so the send log and the quotation never disagree about whether WE despatched it.
+   */
+  async markSent(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const q = await this.get(id, scope);
+    if (q.status !== 'draft') {
+      throw new BadRequestException(`${q.quote_no} is already ${q.status}.`);
+    }
+    const how = String(dto?.how ?? 'handed_over');
+    const HOW: Record<string, string> = {
+      handed_over: 'handed to the customer in person',
+      emailed: 'emailed outside the CRM',
+      whatsapp: 'sent on WhatsApp outside the CRM',
+      other: 'sent outside the CRM',
+    };
+    if (!HOW[how]) throw new BadRequestException('Say how it went out: handed_over, emailed, whatsapp or other.');
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE quotation SET status = 'sent', sent_at = COALESCE(sent_at, now()), updated_at = now()
+          WHERE id = $1::bigint AND status = 'draft'`,
+        [id],
+      );
+      await this.activity(c, Number(q.lead_id), me.id, `Quotation ${q.quote_no} ${HOW[how]}`);
+    });
+    return { id, status: 'sent', how };
+  }
+
   /** ACCEPT / REJECT / EXPIRE — the only status writes, and they obey QUOTE_TRANSITIONS. */
   async decide(id: number, to: QuoteStatus, dto: any, me: { id: number }, scope: ResolvedScope) {
     const q = await this.get(id, scope);
