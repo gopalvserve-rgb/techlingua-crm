@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -49,6 +49,13 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   // Phase 3 owns invoicing. The series exists so the numbering screen is complete and
   // Phase 3 needs no migration; NOTHING allocates from it today.
   invoice:   { prefix: 'INV-', reset: 'yearly', label: 'Invoices (Phase 3)' },
+  // `lead` is CARRIED FORWARD, not invented: the client had configured it in the old
+  // `app_setting.numbering_series` JSON, so migration 029 brought it across rather than
+  // silently dropping his setting. Nothing allocates a lead number today — leads are
+  // identified by phone (the de-dup key), not by a serial — so the label says so plainly.
+  // Without this entry the row rendered as a bare lowercase "lead" and its Edit button
+  // 400'd on an "Unknown numbering series", which the live smoke surfaced.
+  lead:      { prefix: 'LD-', reset: 'none', label: 'Leads (not currently numbered)' },
 };
 
 export interface SeriesRow {

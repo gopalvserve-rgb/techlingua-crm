@@ -99,6 +99,16 @@ describe('allocation', () => {
   });
 });
 
+describe('the migrated `lead` series', () => {
+  it('is a KNOWN kind, so its row is labelled and its Edit button works', async () => {
+    // it came across from the client's old app_setting JSON. It was rendering as a bare
+    // lowercase "lead" and Edit 400'd with "Unknown numbering series" — found live.
+    const { db } = fakeDb({ 'FROM organisation': [{ id: 1 }], 'INSERT INTO number_series': [{ id: 9 }] });
+    const svc = new NumberingService(db as never);
+    await expect(svc.save({ kind: 'lead', next_number: 1, reset_period: 'none' }, 1)).resolves.toBeDefined();
+  });
+});
+
 describe('admin CRUD', () => {
   it('refuses to delete the ORG-WIDE series — it is every branch\'s fallback', async () => {
     const { db } = fakeDb({ 'FROM number_series': [{ id: 3, kind: 'quotation', branch_id: null, vertical_id: null }] });
