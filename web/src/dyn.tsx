@@ -9,7 +9,7 @@ import { Ic, checkS } from './icons';
 import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { AddModal, CampaignModal, need, EditSpec } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
@@ -593,9 +593,13 @@ function QuickContact() {
         <div className="stack">
           <div className="card"><div className="card-head"><h3><Ic k="bolt" />Campaigns</h3></div>
             <div className="card-pad">
-              <select className="ainp" value={scope.campaign ?? ''} onChange={(e) => setScope((s) => ({ ...s, campaign: e.target.value ? Number(e.target.value) : undefined }))}>
-                <option value="">Select Campaigns</option>
-                {ref.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {/* UAT-R2 #3 — Quick Contact showed ALL org campaigns here. Constrain to the
+                  chosen Branch › Vertical › Pipeline path (same `campaigns` list as the scope
+                  select above); disabled with a hint until a Pipeline is picked. */}
+              <select className="ainp" disabled={!scope.pipeline}
+                value={scope.campaign ?? ''} onChange={(e) => setScope((s) => ({ ...s, campaign: e.target.value ? Number(e.target.value) : undefined }))}>
+                <option value="">{scope.pipeline ? 'Select Campaigns' : 'Select a Pipeline first…'}</option>
+                {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div></div>
           <div className="card"><div className="card-head"><h3><Ic k="leads" />Contact Source</h3></div>
@@ -633,6 +637,9 @@ function LeadsAll() {
   const ref = useRef_();
   const [f, setF] = useState<{
     branch?: number; vertical?: number; pipeline?: number; campaign?: number;
+    // UAT-R2 #26/#14 — Source, Status, Owner and a created-date range are filterable too,
+    // and the hierarchy dropdowns follow Branch › Vertical › Pipeline › Campaign › Source.
+    source?: number; status?: number; owner?: number; from?: string; to?: string;
     // Sprint 3 — the score BAND is filterable, and SLA breaches are their own filter
     temperature?: string; sla?: boolean; sort: string; q: string;
   }>({ q: '', sort: 'recent' });
@@ -641,6 +648,11 @@ function LeadsAll() {
   if (f.vertical) params.set('vertical_id', String(f.vertical));
   if (f.pipeline) params.set('pipeline_id', String(f.pipeline));
   if (f.campaign) params.set('campaign_id', String(f.campaign));
+  if (f.source) params.set('source_id', String(f.source));
+  if (f.status) params.set('status_id', String(f.status));
+  if (f.owner) params.set('owner_id', String(f.owner));
+  if (f.from) params.set('created_from', f.from);
+  if (f.to) params.set('created_to', f.to);
   if (f.temperature) params.set('temperature', f.temperature);
   if (f.sla) params.set('sla_breached', '1');
   if (f.sort && f.sort !== 'recent') params.set('sort', f.sort);
@@ -662,10 +674,22 @@ function LeadsAll() {
   return (
     <>
       <div className="filters">
-        {chip('Branch', 'branch', f.branch, ref.branches, (v) => setF((x) => ({ ...x, branch: v, vertical: undefined, pipeline: undefined, campaign: undefined })))}
-        {chip('Vertical', 'grid', f.vertical, ref.verticals.filter((v) => !f.branch || Number(v.branch_id) === f.branch), (v) => setF((x) => ({ ...x, vertical: v, pipeline: undefined, campaign: undefined })))}
-        {chip('Pipeline', 'list', f.pipeline, ref.pipelines.filter((p) => !f.vertical || Number(p.vertical_id) === f.vertical), (v) => setF((x) => ({ ...x, pipeline: v, campaign: undefined })))}
-        {chip('Campaign', 'bolt', f.campaign, ref.campaigns.filter((c) => !f.pipeline || Number(c.pipeline_id) === f.pipeline), (v) => setF((x) => ({ ...x, campaign: v })))}
+        {/* UAT-R2 #14/#26 — filters follow Branch › Vertical › Pipeline › Campaign › Source;
+            each dropdown is filtered by its parent and every descendant filter resets when a
+            parent changes, so a stale (now out-of-scope) filter can never stay applied. */}
+        {chip('Branch', 'branch', f.branch, ref.branches, (v) => setF((x) => ({ ...x, branch: v, vertical: undefined, pipeline: undefined, campaign: undefined, source: undefined })))}
+        {chip('Vertical', 'grid', f.vertical, ref.verticals.filter((v) => !f.branch || Number(v.branch_id) === f.branch), (v) => setF((x) => ({ ...x, vertical: v, pipeline: undefined, campaign: undefined, source: undefined })))}
+        {chip('Pipeline', 'list', f.pipeline, ref.pipelines.filter((p) => !f.vertical || Number(p.vertical_id) === f.vertical), (v) => setF((x) => ({ ...x, pipeline: v, campaign: undefined, source: undefined })))}
+        {chip('Campaign', 'bolt', f.campaign, ref.campaigns.filter((c) => !f.pipeline || Number(c.pipeline_id) === f.pipeline), (v) => setF((x) => ({ ...x, campaign: v, source: undefined })))}
+        {chip('Source', 'leads', f.source, ref.sources.filter((so) => !f.campaign || Number(so.campaign_id) === f.campaign), (v) => setF((x) => ({ ...x, source: v })))}
+        {chip('Status', 'check', f.status, ref.statuses, (v) => setF((x) => ({ ...x, status: v })))}
+        {chip('Owner', 'users', f.owner, selectableUsers(ref.users), (v) => setF((x) => ({ ...x, owner: v })))}
+        <div className="fchip" data-testid="date-from"><Ic k="clock" />From
+          <input type="date" aria-label="Created from" value={f.from ?? ''}
+            onChange={(e) => setF((x) => ({ ...x, from: e.target.value || undefined }))} /></div>
+        <div className="fchip" data-testid="date-to"><Ic k="clock" />To
+          <input type="date" aria-label="Created to" value={f.to ?? ''}
+            onChange={(e) => setF((x) => ({ ...x, to: e.target.value || undefined }))} /></div>
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / email…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         {/* Sprint 3 — the band is FILTERABLE (client requirement). These chips are real. */}
         <div className="fchip" data-testid="band-filter">
@@ -938,6 +962,10 @@ function Branches() {
       children: ref.verticals.filter((v) => Number(v.branch_id) === Number(b.id)).map((v) => ({
         label: v.name, icon: 'grid',
         tag: `${ref.pipelines.filter((p) => Number(p.vertical_id) === Number(v.id)).length} pipelines`,
+        // UAT-R2 #21 — show the Pipeline level so the tree reads Branch → Vertical → Pipeline.
+        children: ref.pipelines.filter((p) => Number(p.vertical_id) === Number(v.id)).map((p) => ({
+          label: p.name, icon: 'list', tag: p.code ? String(p.code) : undefined,
+        })),
       })),
     })),
   }];

@@ -45,9 +45,9 @@ const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
 export const CASCADE: Array<{ src: NonNullable<FormField['src']>; parent: string; fk: string; strict?: boolean }> = [
   { src: 'verticals', parent: 'Branch', fk: 'branch_id', strict: true },
   { src: 'verticals', parent: 'Branch Access', fk: 'branch_id' },
-  { src: 'pipelines', parent: 'Vertical', fk: 'vertical_id' },
-  { src: 'campaigns', parent: 'Pipeline', fk: 'pipeline_id' },
-  { src: 'sources', parent: 'Campaign', fk: 'campaign_id' },
+  { src: 'pipelines', parent: 'Vertical', fk: 'vertical_id', strict: true },
+  { src: 'campaigns', parent: 'Pipeline', fk: 'pipeline_id', strict: true },
+  { src: 'sources', parent: 'Campaign', fk: 'campaign_id', strict: true },
   { src: 'cities', parent: 'State', fk: 'parent_id' },
 ];
 
@@ -342,7 +342,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
     return 'Task created';
   },
   'admin.branches': async (vals, ids) => {
-    await api.post('/branches', {
+    const row = await api.post<Named>('/branches', {
       name: need(vals['Branch Name'], 'Branch name is required'),
       code: need(vals['Branch Code'], 'Branch code is required'),
       address: vals['Address'] || undefined,
@@ -355,10 +355,10 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       // QA-10 sweep: the Status select on the Add form must be honoured on create
       is_active: vals['Status'] !== 'Inactive',
     });
-    return 'Branch created';
+    return { msg: 'Branch created', row };
   },
   'admin.verticals': async (vals, ids) => {
-    await api.post('/verticals', {
+    const row = await api.post<Named>('/verticals', {
       branch_id: need(ids['Branch'], 'Pick a branch'),
       name: need(vals['Vertical Name'], 'Vertical name is required'),
       code: need(vals['Vertical Code'], 'Vertical code is required'),
@@ -366,29 +366,30 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       description: vals['Description'] || undefined,
       is_active: vals['Status'] !== 'Inactive',
     });
-    return 'Vertical created';
+    return { msg: 'Vertical created', row };
   },
   'leads.pipelinemaster': async (vals, ids) => {
-    await api.post('/pipelines', {
+    const row = await api.post<Named>('/pipelines', {
       vertical_id: need(ids['Vertical'], 'Pick a vertical'),
       name: need(vals['Pipeline Name'], 'Pipeline name is required'),
       code: need(vals['Pipeline Code'], 'Pipeline code is required'),
       owner_user_id: ids['Pipeline Owner'] ?? undefined,
       is_active: vals['Status'] !== 'Inactive',
     });
-    return 'Pipeline created (default stages added)';
+    return { msg: 'Pipeline created (default stages added)', row };
   },
   'leads.sources': async (vals, ids) => {
     // UAT-R2 #4 — channel + cost_per_lead no longer collected; backend keeps its defaults.
-    await api.post('/sources', {
+    // UAT-R2 #17 — return the created row so a ＋ quick-add auto-selects it live.
+    const row = await api.post<Named>('/sources', {
       campaign_id: need(ids['Campaign'], 'Pick a campaign'),
       name: need(vals['Source Name'], 'Source name is required'),
       is_active: vals['Status'] !== 'Inactive',
     });
-    return 'Source connected';
+    return { msg: 'Source connected', row };
   },
   'admin.users': async (vals, ids) => {
-    await api.post('/users', {
+    const row = await api.post<Named>('/users', {
       name: need(vals['Full Name'], 'Name is required'),
       phone: need(vals['Mobile Number'], 'Mobile Number is required'),
       email: vals['Email ID'] || undefined,
@@ -401,7 +402,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       // QA-10 sweep: Status is a live select on Add User — honour it (same mapping as Edit)
       status: vals['Status'] === 'Deactivated' ? 'disabled' : 'active',
     });
-    return 'User created';
+    return { msg: 'User created', row };
   },
 };
 SAVERS['students.courses'] = async (vals, ids) => {
@@ -529,7 +530,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   const [ids, setIds] = useState<Ids>(edit?.initialIds ?? {});
   const [masterAdd, setMasterAdd] = useState<{ type: string; field: string } | null>(null);
   const [masterForm, setMasterForm] = useState<{ form: string; field: string } | null>(null);
-  const [subForm, setSubForm] = useState<string | null>(null);
+  const [subForm, setSubForm] = useState<{ form: string; field: string } | null>(null);
   const [subCampaign, setSubCampaign] = useState(false);
   const [extras, setExtras] = useState<Record<string, Named[]>>({});
   const [roles, setRoles] = useState<Named[]>([]);
@@ -578,6 +579,16 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       const pid = ids[cc.parent];
       if (pid != null) list = list.filter((o) => Number((o as any)[cc.fk]) === Number(pid));
       else if (cc.strict && cascadeParent(cc.parent)) list = [];
+    }
+    // UAT-R2 #16 — a Course belongs to ONE Branch → ONE Vertical (update #7 stored
+    // meta.branch_id / meta.vertical_id). On any form that carries a Branch and/or Vertical
+    // selection, offer ONLY the courses whose Branch+Vertical match — in Leads and Walk-in
+    // exactly, and harmlessly elsewhere (an 'auto' Branch/Vertical sets no id, so the list
+    // stays full, as before).
+    if (f.src === 'courses') {
+      const bid = ids['Branch']; const vid = ids['Vertical'];
+      if (bid != null) list = list.filter((o) => Number((o as any).meta?.branch_id) === Number(bid));
+      if (vid != null) list = list.filter((o) => Number((o as any).meta?.vertical_id) === Number(vid));
     }
     const fresh = (extras[f.label] ?? []).filter((e) => !list.some((o) => Number(o.id) === Number(e.id)));
     let out = [...list, ...fresh];
@@ -771,7 +782,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
         if (mf) setMasterForm({ form: mf, field: f.label }); // full management-screen form
         else if (mt) setMasterAdd({ type: mt, field: f.label });
         else if (isCamp) setSubCampaign(true);
-        else if (hf) setSubForm(hf.form);
+        else if (hf) setSubForm({ form: hf.form, field: f.label });
         else toast('Manage master lists under Administration › Settings');
       }}>＋ Master</a>
     );
@@ -833,7 +844,16 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
             ref.reload();
           }} />
       )}
-      {subForm && <AddModal formKey={subForm} onClose={() => setSubForm(null)} onSaved={() => ref.reload()} />}
+      {subForm && <AddModal formKey={subForm.form} onClose={() => setSubForm(null)}
+        onSaved={() => ref.reload()}
+        onSavedRow={(row) => {
+          // UAT-R2 #17 — a Source (or other hierarchy master) added via ＋ quick-add must
+          // appear in this dropdown and be selected WITHOUT a page refresh. Inject the new
+          // row into the live options (extras) and auto-select it, exactly like ＋ Master.
+          setExtras((x) => ({ ...x, [subForm.field]: [...(x[subForm.field] ?? []), row] }));
+          setField(subForm.field, row.name, Number(row.id));
+          ref.reload();
+        }} />}
       {subCampaign && <CampaignModal onClose={() => setSubCampaign(false)} onSaved={() => ref.reload()} />}
     </div>
   );

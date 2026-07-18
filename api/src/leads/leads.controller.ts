@@ -23,6 +23,7 @@ export class LeadsController {
       branch_id: num(q.branch_id), vertical_id: num(q.vertical_id), pipeline_id: num(q.pipeline_id),
       campaign_id: num(q.campaign_id), stage_id: num(q.stage_id), status_id: num(q.status_id),
       owner_id: num(q.owner_id), source_id: num(q.source_id), temperature: q.temperature || undefined,
+      created_from: q.created_from || undefined, created_to: q.created_to || undefined,
       // Sprint 3 — the score BAND is filterable and sortable; SLA breaches are filterable
       sla_breached: q.sla_breached === '1' || q.sla_breached === 'true',
       flagged: q.flagged === '1' || q.flagged === 'true',

@@ -64,6 +64,8 @@ export interface LeadFilters {
   flagged?: boolean;
   /** Sprint 3 — the band must be SORTABLE too. */
   sort?: string;
+  /** UAT-R2 #26 — created-date range (YYYY-MM-DD), inclusive of both ends. */
+  created_from?: string; created_to?: string;
   q?: string; limit?: number; offset?: number;
 }
 
@@ -167,6 +169,9 @@ export class LeadsService {
     if (f.owner_id) eq('l.owner_id', f.owner_id);
     if (f.source_id) eq('l.source_id', f.source_id);
     if (f.temperature) eq('l.temperature', f.temperature);
+    // UAT-R2 #26 — created-date range: `to` is made inclusive by using < next day.
+    if (f.created_from) { params.push(f.created_from); where.push(`l.created_at >= $${params.length}::date`); }
+    if (f.created_to) { params.push(f.created_to); where.push(`l.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
     if (f.flagged) where.push('l.is_flagged');
     if (f.sla_breached) {
       where.push(`EXISTS (SELECT 1 FROM lead_sla s

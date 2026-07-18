@@ -91,3 +91,35 @@ describe('the list carries what the badges need', () => {
     expect(sql).toContain('AS sla_breached');
   });
 });
+
+/**
+ * UAT-R2 #26 — the Lead list carries a created-date RANGE filter. `to` is inclusive of the
+ * whole day (built as `< next day`), and both bounds are BOUND parameters, never inlined.
+ */
+describe('UAT-R2 #26 — the created-date range is filterable', () => {
+  it('?created_from narrows to leads created on/after the date (bound param)', async () => {
+    const { svc, calls } = build();
+    await svc.list(ALL, { created_from: '2026-07-01' });
+    const c = calls.find((x) => /FROM lead l\s+JOIN branch/.test(x.sql))!;
+    expect(c.sql).toContain('l.created_at >= $1::date');
+    expect(c.params[0]).toBe('2026-07-01');
+  });
+
+  it('?created_to is inclusive of the whole day (< next day) and bound', async () => {
+    const { svc, calls } = build();
+    await svc.list(ALL, { created_to: '2026-07-31' });
+    const c = calls.find((x) => /FROM lead l\s+JOIN branch/.test(x.sql))!;
+    expect(c.sql.replace(/\s+/g, ' ')).toContain("l.created_at < ($1::date + INTERVAL '1 day')");
+    expect(c.params[0]).toBe('2026-07-31');
+  });
+
+  it('both bounds together narrow to the closed range', async () => {
+    const { svc, listSql, calls } = build();
+    await svc.list(ALL, { created_from: '2026-07-01', created_to: '2026-07-31' });
+    const sql = listSql().replace(/\s+/g, ' ');
+    expect(sql).toContain('l.created_at >= $1::date');
+    expect(sql).toContain("l.created_at < ($2::date + INTERVAL '1 day')");
+    const c = calls.find((x) => /FROM lead l\s+JOIN branch/.test(x.sql))!;
+    expect(c.params.slice(0, 2)).toEqual(['2026-07-01', '2026-07-31']);
+  });
+});

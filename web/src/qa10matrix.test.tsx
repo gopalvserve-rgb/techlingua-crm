@@ -68,7 +68,9 @@ const REF = {
   sources: [{ id: 7, name: 'Meta Ads', campaign_id: 5 }],
   // the LEAD SOURCE MASTER (m_source) — "How did you hear about us?" (DEF-S34-02)
   masterSources: [{ id: 81, name: 'Google Ads' }, { id: 82, name: 'Hoarding' }],
-  courses: [{ id: 21, name: 'IELTS', meta: { fee: 45000 } }, { id: 22, name: 'PTE', meta: { fee: 38000 } }],
+  // UAT-R2 #16 — a Course belongs to ONE Branch (9) → ONE Vertical (1); both rows carry
+  // the same branch/vertical so the differential probe can still switch IELTS↔PTE.
+  courses: [{ id: 21, name: 'IELTS', meta: { fee: 45000, branch_id: 9, vertical_id: 1 } }, { id: 22, name: 'PTE', meta: { fee: 38000, branch_id: 9, vertical_id: 1 } }],
   statuses: [{ id: 31, name: 'New' }, { id: 32, name: 'Contacted' }],
   followupTypes: [{ id: 41, name: 'Call' }, { id: 42, name: 'Visit' }],
   dispositions: [{ id: 51, name: 'Interested' }, { id: 52, name: 'Busy' }],
