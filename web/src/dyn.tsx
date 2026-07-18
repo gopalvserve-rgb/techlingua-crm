@@ -10,7 +10,7 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
-import { AddModal, CampaignModal, need, EditSpec } from './forms';
+import { AddModal, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
@@ -1263,19 +1263,25 @@ function Pipelines() {
   return (
     <>
       <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
-      <TableCard title="Pipelines" cols={['Pipeline', 'Branch', 'Vertical', 'Stages', 'Status', 'Actions']}
+      {/* UAT-R2 #7 — the list reads in hierarchy order Branch \u203a Vertical \u203a Pipeline
+          (columns and row order); the api sorts by branch, vertical, then pipeline name. */}
+      <TableCard title="Pipelines" cols={['Branch', 'Vertical', 'Pipeline', 'Stages', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((pl) => [
-          { node: <span className="nm">{pl.name}</span> } as Cell,
           String(pl.branch_name ?? '\u2014'),
           String(pl.vertical_name ?? '\u2014'),
+          { node: <span className="nm">{pl.name}</span> } as Cell,
           stagesBy[Number(pl.id)] ?? '\u2026',
           toggleCell({
             active: pl.is_active !== false, name: pl.name, entity: 'Pipeline', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/pipelines/${pl.id}`, { is_active: next }); after(); },
           }),
           rowActions({
-            onView: () => setView(pl), onEdit: canEdit ? () => setEdit(pl) : undefined,
+            onView: () => setView(pl), onEdit: canEdit ? async () => {
+              // UAT-R2 #9 — load the live stages so the Edit form's stage editor prefills them.
+              const st = await api.get<any[]>(`/pipelines/${pl.id}/stages`).catch(() => []);
+              setEdit({ ...pl, _stages: st });
+            } : undefined,
             onDelete: can('pipeline.delete') ? () => del.openDelete(Number(pl.id), pl.name) : undefined,
             extra: [{ k: 'cfg', title: 'Stages (configurator)', onClick: () => setConfig(pl) }],
           }),
@@ -1291,12 +1297,16 @@ function Pipelines() {
               'Pipeline Name': edit.name ?? '', 'Pipeline Code': edit.code ?? '',
               'Branch': edit.branch_name ?? '', 'Vertical': edit.vertical_name ?? '',
               'Pipeline Owner': edit.owner_name ?? '',
-              'Pipeline Stages': 'Use the Stages action on the row to configure',
+              // UAT-R2 #9 — the live stages prefill the editor (add / edit / reorder / delete persist on save).
+              'Pipeline Stages': JSON.stringify((edit._stages ?? []).map((st: any) => ({
+                id: Number(st.id), name: st.name, stage_type: st.stage_type,
+                is_default: st.is_default === true, is_active: st.is_active !== false,
+              }))),
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
             initialIds: { 'Pipeline Owner': edit.owner_user_id ? Number(edit.owner_user_id) : undefined },
-            // parent links + the stage set (edited in the Stage Configurator) stay locked (DEF-2)
-            lock: ['Branch', 'Vertical', 'Pipeline Stages'],
+            // only the immutable parent links stay locked (DEF-2); stages are editable here now.
+            lock: ['Branch', 'Vertical'],
             submit: async (vals, ids) => {
               await api.patch(`/pipelines/${edit.id}`, {
                 name: need(vals['Pipeline Name'], 'Pipeline name is required'),
@@ -1304,7 +1314,11 @@ function Pipelines() {
                 owner_user_id: ids['Pipeline Owner'] ?? null,
                 is_active: vals['Status'] !== 'Inactive',
               });
-              return 'Pipeline updated';
+              const original: StageRow[] = (edit._stages ?? []).map((st: any) => ({
+                id: Number(st.id), name: st.name, stage_type: st.stage_type,
+                is_default: st.is_default === true, is_active: st.is_active !== false,
+              }));
+              return reconcilePipelineStages(Number(edit.id), original, parseStageRows(vals['Pipeline Stages']));
             },
           }} />
       )}

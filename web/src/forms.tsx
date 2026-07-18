@@ -369,14 +369,20 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
     return { msg: 'Vertical created', row };
   },
   'leads.pipelinemaster': async (vals, ids) => {
+    // UAT-R2 #9 — the stages the user built with "Add row" are persisted verbatim; an
+    // empty editor falls back to the default stage set (backend HierarchyService.buildStageSeed).
+    const stages = parseStageRows(vals['Pipeline Stages'])
+      .filter((s) => s.name.trim())
+      .map((s) => ({ name: s.name.trim(), stage_type: s.stage_type, is_default: !!s.is_default }));
     const row = await api.post<Named>('/pipelines', {
       vertical_id: need(ids['Vertical'], 'Pick a vertical'),
       name: need(vals['Pipeline Name'], 'Pipeline name is required'),
       code: need(vals['Pipeline Code'], 'Pipeline code is required'),
       owner_user_id: ids['Pipeline Owner'] ?? undefined,
       is_active: vals['Status'] !== 'Inactive',
+      stages: stages.length ? stages : undefined,
     });
-    return { msg: 'Pipeline created (default stages added)', row };
+    return { msg: stages.length ? `Pipeline created with ${stages.length} stage${stages.length > 1 ? 's' : ''}` : 'Pipeline created (default stages added)', row };
   },
   'leads.sources': async (vals, ids) => {
     // UAT-R2 #4 — channel + cost_per_lead no longer collected; backend keeps its defaults.
@@ -508,6 +514,129 @@ export interface EditSpec {
   /** labels whose "required" star is dropped in edit mode (e.g. Password = leave blank to keep) */
   optional?: string[];
   submit: (vals: Vals, ids: Ids) => Promise<string>;
+}
+
+/* ------------------------------------------------------------------ *
+ * UAT-R2 #9 — Pipeline "Add row" stage editor.                        *
+ * The old `table` field rendered a dead "+ Add row" label with no     *
+ * handler and no state, so nothing was ever collected — the exact bug *
+ * the client hit. This is a real, structured sub-editor: add / edit / *
+ * reorder / delete stage rows, one default landing stage, serialised  *
+ * into the field's value as JSON so the saver can persist it.         *
+ * ------------------------------------------------------------------ */
+export type StageRow = { id?: number; name: string; stage_type: string; is_default?: boolean; is_active?: boolean };
+
+export function parseStageRows(v: unknown): StageRow[] {
+  if (typeof v !== 'string' || !v.trim()) return [];
+  try {
+    const a = JSON.parse(v);
+    if (!Array.isArray(a)) return [];
+    return a
+      .filter((x) => x && typeof x === 'object' && typeof (x as any).name === 'string')
+      .map((x: any) => ({
+        id: x.id != null ? Number(x.id) : undefined,
+        name: String(x.name),
+        stage_type: ['open', 'won', 'lost'].includes(x.stage_type) ? x.stage_type : 'open',
+        is_default: x.is_default === true,
+        is_active: x.is_active !== false,
+      }));
+  } catch { return []; }
+}
+
+/**
+ * UAT-R2 #9 (Edit) — persist the stage edits made in the Add/Edit Pipeline form's stage
+ * editor against the live pipeline: create new rows, patch changed ones, delete removed
+ * ones (the backend 409-guards a stage that still holds leads — we surface that and keep
+ * the stage), then reorder to the final sequence. Returns a human message.
+ */
+export async function reconcilePipelineStages(
+  pipelineId: number, original: StageRow[], finalRows: StageRow[],
+): Promise<string> {
+  const rows = finalRows.filter((r) => r.name.trim());
+  // 1) create new rows (no id) — appended, id captured for the reorder
+  for (const r of rows) {
+    if (r.id == null) {
+      const created = await api.post<{ id: number }>(`/pipelines/${pipelineId}/stages`, {
+        name: r.name.trim(), stage_type: r.stage_type, is_default: false,
+      });
+      r.id = Number(created.id);
+    } else {
+      await api.patch(`/stages/${r.id}`, {
+        name: r.name.trim(), stage_type: r.stage_type, is_active: r.is_active !== false,
+      });
+    }
+  }
+  // 2) exactly one default landing stage
+  const def = rows.find((r) => r.is_default) ?? rows[0];
+  if (def?.id != null) await api.patch(`/stages/${def.id}`, { is_default: true });
+  // 3) delete rows the user removed (guard: a stage with leads stays, with a notice)
+  const keep = new Set(rows.map((r) => r.id));
+  const blocked: number[] = [];
+  const warnings: string[] = [];
+  for (const o of original) {
+    if (o.id != null && !keep.has(o.id)) {
+      try { await api.del(`/stages/${o.id}`); }
+      catch (e: any) { blocked.push(o.id); warnings.push(e?.message || `Could not delete "${o.name}"`); }
+    }
+  }
+  // 4) reorder to the final sequence (blocked-delete stages retained at the end)
+  const order = [...rows.map((r) => r.id), ...blocked].filter((x): x is number => x != null);
+  if (order.length) await api.put(`/pipelines/${pipelineId}/stages/order`, { order });
+  if (warnings.length) throw new Error(warnings.join(' '));
+  return `Pipeline updated (${rows.length} stage${rows.length === 1 ? '' : 's'})`;
+}
+
+function StageTableField({ value, disabled, onChange }: {
+  value: string; disabled?: boolean; onChange: (json: string) => void;
+}) {
+  const [rows, setRows] = useState<StageRow[]>(() => parseStageRows(value));
+  const commit = (next: StageRow[]) => { setRows(next); onChange(JSON.stringify(next)); };
+  const add = () => commit([...rows, { name: '', stage_type: 'open', is_default: rows.length === 0, is_active: true }]);
+  const setName = (i: number, name: string) => commit(rows.map((r, j) => (j === i ? { ...r, name } : r)));
+  const setType = (i: number, stage_type: string) => commit(rows.map((r, j) => (j === i ? { ...r, stage_type } : r)));
+  const setDefault = (i: number) => commit(rows.map((r, j) => ({ ...r, is_default: j === i })));
+  const remove = (i: number) => {
+    const next = rows.filter((_, j) => j !== i);
+    if (next.length && !next.some((r) => r.is_default)) next[0] = { ...next[0], is_default: true };
+    commit(next);
+  };
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= rows.length) return;
+    const n = [...rows]; [n[i], n[j]] = [n[j], n[i]]; commit(n);
+  };
+  return (
+    <div className="sc-rows" data-stage-editor>
+      {rows.length === 0 && (
+        <div className="empty-note" style={{ padding: '6px 2px', textAlign: 'left' }}>
+          No stages added — click <b>＋ Add row</b> to build this pipeline's stages, or leave empty to seed the default set.
+        </div>
+      )}
+      {rows.map((r, i) => (
+        <div className="sc-row" key={i}>
+          <span className="sc-row-ord">{i + 1}</span>
+          <input className="ainp" placeholder="Stage name (e.g. Contacted)" value={r.name} disabled={disabled}
+            onChange={(e) => setName(i, e.target.value)} />
+          <select className="ainp sc-row-type" value={r.stage_type} disabled={disabled}
+            onChange={(e) => setType(i, e.target.value)}>
+            <option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option>
+          </select>
+          <label className="sc-row-def" title="Default landing stage — new leads start here">
+            <input type="radio" name="stage-default-row" checked={!!r.is_default} disabled={disabled}
+              onChange={() => setDefault(i)} />Default
+          </label>
+          <span className="sc-row-mv">
+            <button type="button" className="sc-row-btn" title="Move up" disabled={disabled || i === 0} onClick={() => move(i, -1)}>↑</button>
+            <button type="button" className="sc-row-btn" title="Move down" disabled={disabled || i === rows.length - 1} onClick={() => move(i, 1)}>↓</button>
+            <button type="button" className="sc-row-btn danger" title="Remove stage" disabled={disabled} onClick={() => remove(i)}><Ic k="x" w={2.6} /></button>
+          </span>
+        </div>
+      ))}
+      {!disabled && (
+        <button type="button" className="sc-addrow" onClick={add}><Ic k="plus" w={2.6} />Add row</button>
+      )}
+    </div>
+  );
 }
 
 export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
@@ -752,9 +881,8 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       </div>
     );
     if (t === 'table') return (
-      <div className="ainp" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-dim)' }}>
-        <span>{f.hint || 'Add rows'}</span><span style={{ color: 'var(--primary)', fontWeight: 600 }}>+ Add row</span>
-      </div>
+      <StageTableField value={v} disabled={!!edit?.lock?.includes(f.label)}
+        onChange={(json) => setField(f.label, json)} />
     );
     return <input className="ainp" type="text" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
   };

@@ -159,3 +159,57 @@ describe('stage configurator — delete guard + reorder', () => {
     await expect(svc.reorderStages(7, 'nope')).rejects.toThrow(BadRequestException);
   });
 });
+
+/**
+ * UAT-R2 #9 — the Add-Pipeline stage editor's "Add row" persists.
+ * createPipeline now seeds the exact stages the user built (or the default set when none).
+ */
+describe('createPipeline — custom stage seed (UAT-R2 #9)', () => {
+  it('buildStageSeed: empty / non-array -> the default six-stage set with one default', () => {
+    for (const input of [undefined, null, [], 'x', {}]) {
+      const seed = HierarchyService.buildStageSeed(input as unknown);
+      expect(seed).toHaveLength(6);
+      expect(seed[0]).toEqual(['New Lead', 'open', true]);
+      expect(seed.filter((s) => s[2])).toHaveLength(1);
+    }
+  });
+
+  it('buildStageSeed: custom rows are kept verbatim & in order, blanks dropped, first is default when none marked', () => {
+    const seed = HierarchyService.buildStageSeed([
+      { name: '  Enquiry ' }, { name: '' }, { name: 'Demo', stage_type: 'open' }, { name: 'Won', stage_type: 'won' },
+    ]);
+    expect(seed).toEqual([['Enquiry', 'open', true], ['Demo', 'open', false], ['Won', 'won', false]]);
+  });
+
+  it('buildStageSeed: honours the marked default and validates stage_type', () => {
+    const seed = HierarchyService.buildStageSeed([
+      { name: 'A' }, { name: 'B', is_default: true }, { name: 'C' },
+    ]);
+    expect(seed.map((s) => s[2])).toEqual([false, true, false]);
+    expect(() => HierarchyService.buildStageSeed([{ name: 'X', stage_type: 'bogus' }])).toThrow(BadRequestException);
+  });
+
+  it('createPipeline seeds the user stages (not the default set) when stages are supplied', async () => {
+    const { db, svc } = mkSvc();
+    db.on((sql) => (sql.startsWith('SELECT org_id, branch_id FROM vertical') ? [{ org_id: '1', branch_id: '9' }] : null));
+    db.on((sql) => (sql.startsWith('INSERT INTO pipeline ') ? [{ id: 55, name: 'P' }] : null));
+    await svc.createPipeline(
+      { vertical_id: 1, name: 'P', code: 'p', stages: [{ name: 'Enquiry' }, { name: 'Visited' }, { name: 'Enrolled', stage_type: 'won', is_default: true }] },
+      1,
+    );
+    const stageInserts = db.calls.filter((c) => c.sql.startsWith('INSERT INTO pipeline_stage'));
+    expect(stageInserts).toHaveLength(3);
+    // [pipeline_id, name, sort_order, stage_type, is_default, created_by]
+    expect(stageInserts.map((c) => [c.params[1], c.params[2], c.params[3], c.params[4]])).toEqual([
+      ['Enquiry', 0, 'open', false], ['Visited', 1, 'open', false], ['Enrolled', 2, 'won', true],
+    ]);
+  });
+
+  it('createPipeline falls back to the default six stages when the editor is empty', async () => {
+    const { db, svc } = mkSvc();
+    db.on((sql) => (sql.startsWith('SELECT org_id, branch_id FROM vertical') ? [{ org_id: '1', branch_id: '9' }] : null));
+    db.on((sql) => (sql.startsWith('INSERT INTO pipeline ') ? [{ id: 56, name: 'P' }] : null));
+    await svc.createPipeline({ vertical_id: 1, name: 'P', code: 'p' }, 1);
+    expect(db.calls.filter((c) => c.sql.startsWith('INSERT INTO pipeline_stage'))).toHaveLength(6);
+  });
+});

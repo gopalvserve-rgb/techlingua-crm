@@ -187,15 +187,48 @@ export class HierarchyService {
                       LEFT JOIN "user" ou ON ou.id = p.owner_user_id
                 WHERE ${where} AND p.deleted_at IS NULL${HierarchyService.activeFilter('p', includeInactive)}`;
     if (verticalId) { params.push(verticalId); sql += ` AND p.vertical_id = $${params.length}`; }
-    return this.db.query(sql + ` ORDER BY p.name`, params);
+    // UAT-R2 #7 — list in hierarchy order Branch \u203a Vertical \u203a Pipeline.
+    return this.db.query(sql + ` ORDER BY b.name, v.name, p.name`, params);
   }
 
-  async createPipeline(dto: { vertical_id: number; name: string; code: string; owner_user_id?: number | null; is_active?: boolean }, actorId: number) {
+  /**
+   * UAT-R2 #9 — the Add-Pipeline form's stage editor now sends the stages the user built
+   * with "Add row". When a non-empty `stages` array is supplied it is seeded verbatim (in
+   * order); when omitted/empty we keep seeding the default six-stage set so a quick pipeline
+   * still gets a working flow. Exactly one stage is the default landing stage: the one the
+   * user marked, else the first.
+   */
+  static buildStageSeed(stages: unknown): Array<[string, string, boolean]> {
+    const defaults: Array<[string, string, boolean]> = [
+      ['New Lead', 'open', true], ['Contacted', 'open', false], ['Counselling', 'open', false],
+      ['Negotiation', 'open', false], ['Enrolled', 'won', false], ['Lost', 'lost', false],
+    ];
+    if (!Array.isArray(stages) || stages.length === 0) return defaults;
+    const seed: Array<[string, string, boolean]> = [];
+    let defaultAt = -1;
+    for (const raw of stages) {
+      const s = (raw ?? {}) as { name?: unknown; stage_type?: unknown; is_default?: unknown };
+      const name = String(s.name ?? '').trim();
+      if (!name) continue;
+      if (name.length > 60) throw new BadRequestException('a stage name must be 60 characters or fewer');
+      const type = s.stage_type == null ? 'open' : String(s.stage_type);
+      if (!['open', 'won', 'lost'].includes(type)) throw new BadRequestException('stage_type must be open|won|lost');
+      if (s.is_default === true && defaultAt === -1) defaultAt = seed.length;
+      seed.push([name, type, false]);
+    }
+    if (seed.length === 0) return defaults;
+    if (seed.length > 40) throw new BadRequestException('a pipeline can carry at most 40 stages');
+    seed[defaultAt === -1 ? 0 : defaultAt][2] = true;
+    return seed;
+  }
+
+  async createPipeline(dto: { vertical_id: number; name: string; code: string; owner_user_id?: number | null; is_active?: boolean; stages?: unknown }, actorId: number) {
     if (!dto?.vertical_id || !dto?.name || !dto?.code) throw new BadRequestException('vertical_id, name and code are required');
     const v = await this.db.one<{ org_id: string; branch_id: string }>(
       `SELECT org_id, branch_id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [dto.vertical_id],
     );
     if (!v) throw new NotFoundException('vertical not found');
+    const seed = HierarchyService.buildStageSeed(dto.stages);
     return this.db.tx(async (c) => {
       const p = await c.query(
         `INSERT INTO pipeline (org_id, branch_id, vertical_id, name, code, owner_user_id, is_active, created_by)
@@ -203,13 +236,8 @@ export class HierarchyService {
         [Number(v.org_id), Number(v.branch_id), dto.vertical_id, dto.name.trim(), dto.code.trim().toUpperCase(),
           dto.owner_user_id ?? null, dto.is_active ?? null, actorId],
       );
-      // every pipeline starts with a default stage set (editable afterwards)
-      const defaults: Array<[string, string, boolean]> = [
-        ['New Lead', 'open', true], ['Contacted', 'open', false], ['Counselling', 'open', false],
-        ['Negotiation', 'open', false], ['Enrolled', 'won', false], ['Lost', 'lost', false],
-      ];
       let sort = 0;
-      for (const [name, type, isDefault] of defaults) {
+      for (const [name, type, isDefault] of seed) {
         await c.query(
           `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, created_by)
            VALUES ($1,$2,$3,$4,$5,$6)`,

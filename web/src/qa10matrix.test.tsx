@@ -424,7 +424,7 @@ const EXEMPT: Record<string, Allow> = {
   },
   'leads.pipelinemaster': {
     Branch: 'cascade filter only — a pipeline\'s parent is the VERTICAL (pipeline.vertical_id); the branch is derived from it, so sending both could contradict itself',
-    'Pipeline Stages': 'type "table" — the create endpoint seeds the default stage set; stages are edited in the Stage Configurator, not here',
+    'Pipeline Stages': 'type "table" — a structured multi-row stage sub-editor (add / edit / reorder / delete rows, one default). The generic single-field differential probe cannot drive a multi-row widget; its full add/persist/prefill behaviour is proven end-to-end in pipeline-stages.test.tsx instead (UAT-R2 #9).',
   },
   'admin.users': {
     // nothing exempt — every field on Add User reaches the API

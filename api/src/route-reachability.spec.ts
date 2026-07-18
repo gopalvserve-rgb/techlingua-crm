@@ -299,8 +299,9 @@ const UNREACHABLE_BACKLOG: Record<string, string> = {
     'Manually firing a journey (the "run it now" a marketer wants while testing) has no button; the UI only lists /journeys/runs.',
   'POST /scoring/recompute':
     'A manual full rescore. Scoring is event-driven plus an ageing sweep (which is why nobody has missed it), but there is no way to force one after a bulk rule edit.',
-  'PUT /pipelines/:id/stages/order':
-    'STAGE REORDERING. The Stage Configurator ships "insert-at-position" and saves stages individually; this bulk-order endpoint is not called. Verify whether reordering actually works through another path before wiring or deleting.',
+  // UAT-R2 #9 — STAGE REORDERING is now WIRED: the Add/Edit Pipeline stage editor's
+  // reconcile calls PUT /pipelines/:id/stages/order to persist the final order. Removed
+  // from the quarantine (the census may shrink, never grow).
 };
 
 /** The census as it stood when this guard was written (commit under Phase-1 sign-off).

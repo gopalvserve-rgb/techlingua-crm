@@ -598,3 +598,23 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .wa-msg:hover .icon-btn{opacity:.7}
 .wa-compose{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--border);background:var(--surface)}
 .wa-compose .ainp{flex:1}
+
+/* UAT-R2 #9 — Pipeline "Add row" stage editor (inside the Add/Edit Pipeline form). */
+.sc-rows{display:flex;flex-direction:column;gap:8px}
+.sc-row{display:flex;align-items:center;gap:8px}
+.sc-row-ord{flex:none;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:var(--text-muted);background:var(--surface-3);border:1px solid var(--border)}
+.sc-row .ainp{flex:1;min-width:0}
+.sc-row .ainp.sc-row-type{flex:0 0 96px}
+.sc-row-def{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-muted);white-space:nowrap;cursor:pointer}
+.sc-row-def input{accent-color:var(--primary)}
+.sc-row-mv{flex:none;display:inline-flex;gap:4px}
+.sc-row-btn{width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);
+  color:var(--text-muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:13px;line-height:1}
+.sc-row-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+.sc-row-btn:disabled{opacity:.4;cursor:not-allowed}
+.sc-row-btn.danger:hover:not(:disabled){border-color:var(--danger);color:var(--danger)}
+.sc-addrow{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;margin-top:2px;padding:7px 12px;border-radius:8px;
+  border:1px dashed color-mix(in srgb,var(--primary) 45%,var(--border));background:var(--primary-soft);color:var(--primary);
+  font-weight:600;font-size:12.5px;cursor:pointer}
+.sc-addrow:hover{border-style:solid}
