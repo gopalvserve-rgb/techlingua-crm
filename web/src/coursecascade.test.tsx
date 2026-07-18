@@ -25,6 +25,7 @@ const REF = {
   ],
   pipelines: [], campaigns: [], sources: [], masterSources: [], courses: [],
   statuses: [], followupTypes: [], dispositions: [], budgets: [], users: [],
+  trainings: [], visitPurposes: [], walkinStatuses: [],
   states: [], cities: [], loaded: true, reload: () => undefined,
 };
 vi.mock('./refdata', async (importOriginal) => {

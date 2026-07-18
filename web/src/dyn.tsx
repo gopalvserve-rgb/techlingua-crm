@@ -897,18 +897,14 @@ function Sources() {
             title: `Edit Source \u2014 ${edit.name}`,
             initialVals: {
               'Source Name': edit.name ?? '', 'Campaign': edit.campaign_name ?? '',
-              'Source Category': edit.channel ?? 'manual',
-              'Cost per Lead (if fixed/paid)': edit.cost_per_lead != null && Number(edit.cost_per_lead) !== 0
-                ? String(Number(edit.cost_per_lead)) : '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
             // only the parent link is immutable (DEF-2)
             lock: ['Campaign'],
+            // UAT-R2 #4 — Source Category + Cost per Lead removed; backend keeps existing values.
             submit: async (vals) => {
               await api.patch(`/sources/${edit.id}`, {
                 name: need(vals['Source Name'], 'Source name is required'),
-                channel: vals['Source Category'] || 'manual',
-                cost_per_lead: vals['Cost per Lead (if fixed/paid)'] || 0,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Source updated';

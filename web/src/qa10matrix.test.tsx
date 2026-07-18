@@ -73,6 +73,10 @@ const REF = {
   followupTypes: [{ id: 41, name: 'Call' }, { id: 42, name: 'Visit' }],
   dispositions: [{ id: 51, name: 'Interested' }, { id: 52, name: 'Busy' }],
   budgets: [{ id: 61, name: '< 50k' }, { id: 62, name: '50k+' }],
+  // UAT-R2 masters — TWO rows each so the differential probe can switch the value.
+  trainings: [{ id: 71, name: 'Online', code: 'ONLINE' }, { id: 72, name: 'Offline', code: 'OFFLINE' }],
+  visitPurposes: [{ id: 73, name: 'Admission enquiry', code: 'ADM_ENQ' }, { id: 74, name: 'Fee query', code: 'FEE_QUERY' }],
+  walkinStatuses: [{ id: 75, name: 'Waiting', code: 'waiting' }, { id: 76, name: 'Converted', code: 'converted' }],
   users: [{ id: 3, name: 'Asha Rao', status: 'active' }, { id: 4, name: 'Ravi Nair', status: 'active' }],
   states: [{ id: 1, name: 'Delhi' }],
   cities: [{ id: 2, name: 'New Delhi', parent_id: 1 }],

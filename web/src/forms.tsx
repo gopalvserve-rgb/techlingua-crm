@@ -18,6 +18,10 @@ export interface FormField {
   src?: keyof Pick<RefData, 'branches' | 'verticals' | 'pipelines' | 'campaigns' | 'sources' | 'masterSources' | 'users' | 'courses' | 'followupTypes' | 'dispositions' | 'statuses' | 'budgets' | 'states' | 'cities'>;
   /** default value on the ADD form (never on Edit — an edit prefill always wins). */
   def?: string;
+  /** UAT-R2 — a STRING-valued select whose options come from a master list (RefData key).
+   *  Unlike `src` (which stores an id and cascades), `mopts` stores the master's NAME, so
+   *  the column/JSON stays text and edit-prefill is trivial. Carries the ＋ Master add. */
+  mopts?: keyof Pick<RefData, 'trainings' | 'visitPurposes' | 'walkinStatuses'>;
   /** client update #5 (Task module only) — render the logged-in user as "Myself",
    *  pinned to the top of the user list and selected by default. Scoped per field,
    *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
@@ -54,8 +58,8 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Date of Birth', 'date', 0, 0, 'used by the Birthday automation journey'),
     F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'),
     F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'), F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
-    F('Course', 'select', 0, 0, 'master', 'courses'), F('Training Mode', 'select', 0, ['Online', 'Offline', 'Hybrid', 'Bootcamp']), F('Course Fee', 'number'), F('City / Location', 'text'),
-    F('Lead Owner / Assigned Counsellor', 'select', 0, 0, 'Users', 'users'), F('Lead Stage / Status', 'select', 0, 0, 'default: New', 'statuses'),
+    F('Course', 'select', 0, 0, 'master', 'courses'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Course Fee', 'number'), F('City / Location', 'text'),
+    F('Lead Owner / Assigned Counsellor', 'select', 0, 0, 'Users', 'users'), F('Lead Status', 'select', 0, 0, 'default: New', 'statuses'),
     F('Next Follow-up Date', 'datetime'), F('Created On', 'auto', 0, 0, 'Auto-stamped · edit permission by Admin'), F('Remarks / Notes', 'textarea')] },
   // Sprint 3 — a walk-in creates a REAL lead, and every lead carries the FULL path
   // (Org > Branch > Vertical > Pipeline > Campaign > Source). The prototype's walk-in form
@@ -67,7 +71,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
     F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped'),
-    F('Purpose of Visit', 'select', 1, ['Admission enquiry', 'Fee query', 'Document submission', 'Other']), F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
+    { ...F('Purpose of Visit', 'select', 1, 0, 'master'), mopts: 'visitPurposes' }, F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
     // DEF-S34-02 — these three RENDERED but were never SENT and had no columns (migration 027).
     F('Course Fee', 'number', 0, 0, 'auto-filled from the Course master \u00b7 editable'),
     F('How did you hear about us?', 'select', 0, 0, 'Lead Source master', 'masterSources'),
@@ -86,10 +90,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'), F('Incentive / Reward Applicable', 'text', 0, 0, 'auto-computed'),
     F('Referral Status', 'select', 1, ['Pending', 'Converted', 'Rewarded', 'Rejected'])] },
+  // UAT-R2 #4 — Source Category, Cost per Lead removed (backend keeps its defaults). Campaign
+  // stays: it is the required parent that supplies the source's Branch › Vertical › Pipeline path.
   'leads.sources': { title: 'Add Lead Source', fields: [
     F('Source Name', 'text', 1), F('Campaign', 'select', 1, 0, 'parent link', 'campaigns'),
-    F('Source Category', 'select', 1, ['meta', 'google', 'justdial', 'indiamart', 'form', 'sheet', 'webhook', 'walkin', 'referral', 'manual'], 'channel'),
-    F('Cost per Lead (if fixed/paid)', 'number'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'leads.pipelinemaster': { title: 'Add Pipeline', fields: [
     F('Pipeline Name', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline Code', 'text', 1, 0, 'e.g. ADM'), F('Pipeline Stages', 'table', 0, 0, 'Default stage set added — edit after create'), F('Pipeline Owner', 'select', 0, 0, 'Users', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
@@ -126,7 +131,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // it, so the two dropdowns did nothing — the bug the client reported.
   'students.courses': { title: 'Add Course', fields: [
     F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
-    F('Duration', 'number', 0, 0, 'weeks / months'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), F('Training Mode', 'select', 0, ['Online', 'Offline', 'Hybrid', 'Bootcamp']), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Duration', 'number', 0, 0, 'weeks / months'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
     F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
     F('Start Date', 'date', 1), F('End Date', 'date', 1), F('Class Timing', 'text', 1), F('Capacity (Max Seats)', 'number', 1), F('Trainer / Faculty Assigned', 'select', 0, 0, 'Employee master', 'users'),
@@ -304,7 +309,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
       course_id: ids['Course'],
       owner_id: ids['Lead Owner / Assigned Counsellor'],
-      status_id: ids['Lead Stage / Status'],
+      status_id: ids['Lead Status'],
       next_follow_up_at: vals['Next Follow-up Date'] || undefined,
       note: vals['Remarks / Notes'] || undefined,
       custom_fields: vals['Training Mode'] || vals['City / Location'] || vals['Course Fee']
@@ -374,11 +379,10 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
     return 'Pipeline created (default stages added)';
   },
   'leads.sources': async (vals, ids) => {
+    // UAT-R2 #4 — channel + cost_per_lead no longer collected; backend keeps its defaults.
     await api.post('/sources', {
       campaign_id: need(ids['Campaign'], 'Pick a campaign'),
       name: need(vals['Source Name'], 'Source name is required'),
-      channel: vals['Source Category'] || 'manual',
-      cost_per_lead: vals['Cost per Lead (if fixed/paid)'] || 0,
       is_active: vals['Status'] !== 'Inactive',
     });
     return 'Source connected';
@@ -469,6 +473,10 @@ const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
   // "How did you hear about us?" -> the Lead Source MASTER (m_source), so ＋ Master adds
   // a new one exactly the way every other master-backed select does.
   masterSources: 'source',
+};
+/** mopts (string-valued master selects) -> generic master type key (POST /api/masters/<type>). */
+const MOPTS_MASTER: Record<NonNullable<FormField['mopts']>, string> = {
+  trainings: 'training', visitPurposes: 'visit_purpose', walkinStatuses: 'walkin_status',
 };
 /** Masters whose dedicated management screen has a richer form: ＋ Master opens that
  *  full form (client: adding a Course from a lead must show all course fields,
@@ -626,6 +634,19 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
         </div>
       );
     }
+    // UAT-R2 — a STRING-valued select whose options come from a master (RefData) list,
+    // plus any value just quick-added via ＋ Master. Stores the NAME (text), not an id.
+    if (t === 'select' && f.mopts) {
+      const base: Named[] = (ref as any)[f.mopts] ?? [];
+      const fresh = (extras[f.label] ?? []).filter((e) => !base.some((o) => o.name === e.name));
+      const list = [...base, ...fresh];
+      return (
+        <select className="ainp" value={v} onChange={(e) => setField(f.label, e.target.value)}>
+          <option value="">Select…</option>
+          {list.map((o) => <option key={o.id} value={o.name}>{o.name}</option>)}
+        </select>
+      );
+    }
     if (t === 'select' && f.src) {
       const list = srcOptions(f);
       // Branch › Vertical (and the rest of the chain): the child is disabled with a "pick
@@ -728,7 +749,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   };
 
   const isMaster = (f: FormField) => (f.type === 'select' || f.type === 'multiselect') &&
-    (/master/i.test(f.hint || '') || /\b(course|vertical|pipeline|campaign|branch|source|stage|status|tag|batch|payment plan|payment terms|qualification|budget|designation|department|training mode)\b/i.test(f.label));
+    (!!f.mopts || /master/i.test(f.hint || '') || /\b(course|vertical|pipeline|campaign|branch|source|stage|status|tag|batch|payment plan|payment terms|qualification|budget|designation|department|training mode)\b/i.test(f.label));
 
   /** ＋ Master → inline add modal. Rule: opens the same form as the master's own
    *  management screen — rich masters (Course) open their full spec form, generic
@@ -737,7 +758,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   const masterLink = (f: FormField) => {
     if (!isMaster(f)) return null;
     if (edit?.lock?.includes(f.label)) return null;
-    const mt = f.src ? SRC_MASTER[f.src] : undefined;
+    const mt = (f.src ? SRC_MASTER[f.src] : undefined) ?? (f.mopts ? MOPTS_MASTER[f.mopts] : undefined);
     const mf = f.src ? SRC_MASTER_FORM[f.src] : undefined;
     const hf = f.src ? SRC_FORM[f.src] : undefined;
     const isCamp = f.src === 'campaigns';

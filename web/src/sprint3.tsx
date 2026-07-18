@@ -13,6 +13,7 @@ import { Cell, HBars, Kpis, TableCard, TempBadge, renderCell } from './renderer'
 import { toast, useFetch, useRef_ } from './refdata';
 import { ConfirmModal, DetailModal, KV, Section, fmtFull, rowActions } from './rowactions';
 import { AddModal, EditSpec, need } from './forms';
+import { AddMasterModal } from './mastermodal';
 import { ScreenCtx } from './dyn';
 
 const useScreen = () => useContext(ScreenCtx);
@@ -917,14 +918,26 @@ export const referralEditSpec = (r: any, after: () => void): EditSpec => ({
   },
 });
 
+// #19 (UAT-R2) — the walk-in status LIST is now the m_walkin_status MASTER (RefData.walkinStatuses).
+// This map survives only as a COLOUR + label fallback for the seeded codes (badges look the same);
+// a client-added status renders with a neutral badge.
 const WALKIN_STATUS: Record<string, [string, string]> = {
   waiting: ['Waiting', 'b-amber'], in_progress: ['In progress', 'b-indigo'],
   converted: ['Converted', 'b-green'], closed: ['Closed', 'b-gray'],
+};
+/** label + badge-colour for a walk-in status code, master name first, colour-map second. */
+const walkInStatusCell = (code: string, master: Array<{ name: string; code?: string }>): [string, string] => {
+  const m = master.find((x) => x.code === code);
+  const label = m?.name ?? WALKIN_STATUS[code]?.[0] ?? code;
+  const colour = WALKIN_STATUS[code]?.[1] ?? 'b-gray';
+  return [label, colour];
 };
 
 export function WalkIns() {
   const { openLead, refreshTick, bump, openAdd } = useScreen();
   const { can } = useAuth();
+  const ref = useRef_();
+  const [addStatus, setAddStatus] = useState(false);
   const [today, setToday] = useState(true);
   const sum = useFetch<any>('/walk-ins/summary', [refreshTick]);
   const list = useFetch<any[]>(`/walk-ins?limit=100${today ? '&today=1' : ''}`, [today, refreshTick]);
@@ -971,8 +984,10 @@ export function WalkIns() {
               aria-label={`Status for ${w.visitor_name}`}
               value={w.status} disabled={!can('walkin.update')}
               onClick={(e) => e.stopPropagation()}
-              onChange={(e) => setStatus(Number(w.id), e.target.value)}>
-              {Object.keys(WALKIN_STATUS).map((k) => <option key={k} value={k}>{WALKIN_STATUS[k][0]}</option>)}
+              onChange={(e) => { if (e.target.value === '__add__') { setAddStatus(true); return; } setStatus(Number(w.id), e.target.value); }}>
+              {((ref.walkinStatuses ?? []).length ? ref.walkinStatuses : Object.keys(WALKIN_STATUS).map((k) => ({ id: k, name: WALKIN_STATUS[k][0], code: k })))
+                .map((o: any) => <option key={o.id} value={o.code ?? o.id}>{o.name}</option>)}
+              {can('master.create') && <option value="__add__">＋ Add status…</option>}
             </select>
           ) } as Cell,
           // DEF-S34-03: Edit opens the WALK-IN, not the lead it created. (The lead is still
@@ -1013,7 +1028,7 @@ export function WalkIns() {
               ['Branch', view.branch_name || '—'],
               ['Vertical', view.vertical_name || '—'],
               ['Assigned to', view.counsellor_name || '—'],
-              ['Status', renderCell({ b: WALKIN_STATUS[view.status] ?? ['—', 'b-gray'] })],
+              ['Status', renderCell({ b: walkInStatusCell(view.status, (ref.walkinStatuses ?? []) as any) })],
               ['Lead', view.lead_id
                 ? <a style={{ cursor: 'pointer', color: 'var(--primary)' }}
                     onClick={() => { setView(null); openLead(Number(view.lead_id)); }}>Open lead #{view.lead_id}</a>
@@ -1027,6 +1042,11 @@ export function WalkIns() {
       {edit && (
         <AddModal formKey="dash.walkins" onClose={() => setEdit(null)}
           edit={walkInEditSpec(edit, after)} />
+      )}
+      {/* #19 — quick-add a Walk-in Status value without leaving the list. */}
+      {addStatus && (
+        <AddMasterModal type="walkin_status" onClose={() => setAddStatus(false)}
+          onCreated={() => { ref.reload(); after(); }} />
       )}
     </>
   );

@@ -17,6 +17,10 @@ export const MASTER_TYPES: Record<string, { table: string; label: string; singul
   tag: { table: 'm_tag', label: 'Tags', singular: 'Tag' },
   followup_type: { table: 'm_followup_type', label: 'Follow-up Types', singular: 'Follow-up Type' },
   disposition: { table: 'm_disposition', label: 'Dispositions', singular: 'Disposition' },
+  // UAT-R2 Batch A — masters that used to be hard-coded inline selects.
+  training: { table: 'm_training', label: 'Training Modes', singular: 'Training Mode' },                   // #5
+  visit_purpose: { table: 'm_visit_purpose', label: 'Purposes of Visit', singular: 'Purpose of Visit' },  // #18
+  walkin_status: { table: 'm_walkin_status', label: 'Walk-in Statuses', singular: 'Walk-in Status' },      // #19
 };
 
 export interface MasterDto {

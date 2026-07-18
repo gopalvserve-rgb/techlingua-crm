@@ -43,7 +43,10 @@ export const REFERRAL_SCOPE_COLS: ScopeColumnMap = {
   campaign: 'COALESCE(r.campaign_id, rl.campaign_id)',
 };
 
-const WALKIN_STATUS = ['waiting', 'in_progress', 'converted', 'closed'];
+// #19 (UAT-R2) — walk-in status is now a MASTER (m_walkin_status). These four are the
+// base fallback (they seed the master and match the old CHECK), so validation still works
+// on a DB where the master has not been seeded yet (and in the unit doubles).
+const WALKIN_STATUS_BASE = ['waiting', 'in_progress', 'converted', 'closed'];
 const REFERRAL_STATUS = ['pending', 'converted', 'rewarded', 'rejected'];
 const REFERRER_TYPES = ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner'];
 
@@ -167,12 +170,27 @@ export class CaptureService {
     );
   }
 
+  /** #19 — allowed walk-in statuses = the base four + any active m_walkin_status code the
+   *  client has added. A DB without the master (or a unit double) falls back to the base. */
+  private async allowedWalkInStatuses(): Promise<Set<string>> {
+    const allowed = new Set<string>(WALKIN_STATUS_BASE);
+    try {
+      const rows = await this.db.query<{ code: string | null }>(
+        `SELECT code FROM m_walkin_status WHERE is_active AND deleted_at IS NULL AND code IS NOT NULL`);
+      for (const r of rows) if (r.code) allowed.add(String(r.code));
+    } catch { /* master table absent — the base set stands */ }
+    return allowed;
+  }
+
   async createWalkIn(dto: WalkInDto, actorId: number, scope: ResolvedScope) {
     for (const f of ['visitor_name', 'phone', 'branch_id', 'vertical_id', 'campaign_id', 'source_id', 'counsellor_id'] as const) {
       if (!dto?.[f]) throw new BadRequestException(`${f} is required`);
     }
-    if (dto.status && !WALKIN_STATUS.includes(String(dto.status))) {
-      throw new BadRequestException(`status must be one of: ${WALKIN_STATUS.join(', ')}`);
+    if (dto.status) {
+      const allowed = await this.allowedWalkInStatuses();
+      if (!allowed.has(String(dto.status))) {
+        throw new BadRequestException(`status must be one of: ${[...allowed].join(', ')}`);
+      }
     }
     // RBAC: the campaign, source and counsellor must all be inside the caller's scope
     await this.enforcer.assertRefInScope(scope, 'campaign', Number(dto.campaign_id), actorId);
@@ -293,8 +311,11 @@ export class CaptureService {
       `SELECT * FROM walk_in WHERE id = $1 AND deleted_at IS NULL`, [id],
     );
     if (!before) throw new NotFoundException('walk-in not found');
-    if (dto.status && !WALKIN_STATUS.includes(String(dto.status))) {
-      throw new BadRequestException(`status must be one of: ${WALKIN_STATUS.join(', ')}`);
+    if (dto.status) {
+      const allowed = await this.allowedWalkInStatuses();
+      if (!allowed.has(String(dto.status))) {
+        throw new BadRequestException(`status must be one of: ${[...allowed].join(', ')}`);
+      }
     }
     if (dto.counsellor_id != null && Number(dto.counsellor_id) !== Number(before.counsellor_id)) {
       await this.enforcer.assertRefInScope(scope, 'user', Number(dto.counsellor_id), actorId);

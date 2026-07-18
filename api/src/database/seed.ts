@@ -64,6 +64,15 @@ async function seed(c: PoolClient) {
     ['Connected', 'CONN'], ['Not Reachable', 'NR'], ['Busy', 'BUSY'],
     ['Call Back', 'CB'], ['Interested', 'INT'], ['Not Interested', 'NI'],
   ]);
+  // UAT-R2 Batch A — masters that used to be hard-coded inline selects.
+  await master('m_training', [['Online', 'ONLINE'], ['Offline', 'OFFLINE'], ['Hybrid', 'HYBRID'], ['Bootcamp', 'BOOTCAMP']]);   // #5
+  await master('m_visit_purpose', [                                                                                             // #18
+    ['Admission enquiry', 'ADM_ENQ'], ['Fee query', 'FEE_QUERY'], ['Document submission', 'DOC_SUB'], ['Other', 'OTHER'],
+  ]);
+  await master('m_walkin_status', [                                                                                             // #19
+    // codes MATCH walk_in.status values so existing rows keep rendering
+    ['Waiting', 'waiting'], ['In progress', 'in_progress'], ['Converted', 'converted'], ['Closed', 'closed'],
+  ]);
   const metaSourceId = (await c.query(`SELECT id FROM m_source WHERE org_id=$1 AND code='META'`, [org])).rows[0].id as Id;
 
   // ---- hierarchy: branches > verticals > pipelines/stages > campaign > source

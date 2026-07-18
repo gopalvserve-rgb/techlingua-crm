@@ -14,6 +14,7 @@ export const MASTER_LABELS: Record<string, string> = {
   state: 'State', city: 'City', source: 'Source', course: 'Course',
   qualification: 'Qualification', budget: 'Budget', status: 'Status',
   tag: 'Tag', followup_type: 'Follow-up Type', disposition: 'Disposition',
+  training: 'Training Mode', visit_purpose: 'Purpose of Visit', walkin_status: 'Walk-in Status',
 };
 
 /** "Data Science & AI" -> "DATA_SCIENCE_AI" — editable suggestion, never forced. */

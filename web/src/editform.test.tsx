@@ -145,7 +145,7 @@ const CASES: Array<{ name: string; formKey: string; spec: EditSpec }> = [
     name: 'Source', formKey: 'leads.sources',
     spec: {
       title: 'Edit Source', lock: ['Campaign'], submit: vi.fn(),
-      initialVals: { 'Source Name': 'Meta Ads', 'Source Category': 'meta', 'Cost per Lead (if fixed/paid)': '250', Status: 'Active' },
+      initialVals: { 'Source Name': 'Meta Ads', Status: 'Active' },  // UAT-R2 #4 — Category + Cost removed
     },
   },
   {

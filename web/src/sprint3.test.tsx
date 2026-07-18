@@ -27,6 +27,7 @@ const REF = {
   campaigns: [{ id: 5, name: 'Meta Jul', pipeline_id: 4 }],
   sources: [{ id: 7, name: 'Meta Ads', campaign_id: 5 }],
   courses: [{ id: 21, name: 'IELTS' }], statuses: [], followupTypes: [], dispositions: [], budgets: [],
+  trainings: [], visitPurposes: [], walkinStatuses: [{ id: 75, name: 'Waiting', code: 'waiting' }, { id: 76, name: 'Converted', code: 'converted' }],
   users: [{ id: 3, name: 'Asha Rao', status: 'active' }], states: [], cities: [],
   loaded: true, reload: () => undefined,
 };
