@@ -1447,8 +1447,9 @@ const courseEditSpec = (edit: any): EditSpec => ({
     'Status': edit.is_active === false ? 'Inactive' : 'Active',
   },
   initialIds: {
+    // Branch › Vertical — prefill both so the Configure Course form reopens cascading.
+    'Branch': (edit.meta as any)?.branch_id ? Number((edit.meta as any).branch_id) : undefined,
     'Vertical': (edit.meta as any)?.vertical_id ? Number((edit.meta as any).vertical_id) : undefined,
-    'Applicable Branch(es)': (edit.meta as any)?.branch_id ? Number((edit.meta as any).branch_id) : undefined,
   },
   submit: async (vals, ids) => {
     await api.patch(`/masters/course/${edit.id}`, {
@@ -1459,8 +1460,8 @@ const courseEditSpec = (edit: any): EditSpec => ({
         mode: vals['Training Mode'] || undefined,
         duration: vals['Duration'] || undefined,
         fee: vals['Standard Fee'] || undefined,
-        vertical_id: ids['Vertical'] ?? undefined,
-        branch_id: ids['Applicable Branch(es)'] ?? undefined,
+        branch_id: need(ids['Branch'], 'Pick a Branch'),
+        vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
         eligibility: vals['Eligibility Criteria'] || undefined,
       },
       is_active: vals['Status'] !== 'Inactive',
@@ -1489,11 +1490,11 @@ function Courses() {
         rows={rows.map((c) => [
           { mono: String(c.code ?? '\u2014') } as Cell,
           { node: <span className="nm">{c.name}</span> } as Cell,
-          String((c.meta as any)?.vertical ?? 'All'),
+          String(nameOf(ref.verticals, (c.meta as any)?.vertical_id) ?? (c.meta as any)?.vertical ?? '\u2014'),
           String((c.meta as any)?.mode ?? '\u2014'),
           String((c.meta as any)?.duration ?? '\u2014'),
           String((c.meta as any)?.fee ?? '\u2014'),
-          'All',
+          String(nameOf(ref.branches, (c.meta as any)?.branch_id) ?? '\u2014'),
           toggleCell({
             active: c.is_active !== false, name: c.name, entity: 'Course', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/masters/course/${c.id}`, { is_active: next }); after(); },
@@ -1510,6 +1511,8 @@ function Courses() {
             <KV rows={[
               ['Name', view.name],
               ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
+              ['Branch', nameOf(ref.branches, (view.meta as any)?.branch_id) ?? '\u2014'],
+              ['Vertical', nameOf(ref.verticals, (view.meta as any)?.vertical_id) ?? '\u2014'],
               ['Training mode', String((view.meta as any)?.mode ?? '\u2014')],
               ['Duration', String((view.meta as any)?.duration ?? '\u2014')],
               ['Standard fee', String((view.meta as any)?.fee ?? '\u2014')],

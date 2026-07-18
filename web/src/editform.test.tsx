@@ -153,7 +153,7 @@ const CASES: Array<{ name: string; formKey: string; spec: EditSpec }> = [
     spec: {
       title: 'Edit Course', submit: vi.fn(),
       initialVals: { 'Course Name': 'Java', 'Course Code': 'JV', 'Eligibility Criteria': 'Graduate', Status: 'Active' },
-      initialIds: { Vertical: 1, 'Applicable Branch(es)': 9 },
+      initialIds: { Branch: 9, Vertical: 1 },
     },
   },
   {

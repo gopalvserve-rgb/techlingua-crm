@@ -32,6 +32,21 @@ export const SELF_LABEL = 'Myself';
 const _BR = ['—'], _VERT = ['—'], _PIPE = ['—'], _COURSE = ['—'], _USERS = ['—'];
 const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
 
+/**
+ * THE HIERARCHY CASCADE, declared once. A child <select> is filtered to its parent's
+ * choice, is EMPTY (and disabled) until the parent is picked, and RESETS when the parent
+ * changes — so a stale child id (e.g. a Vertical from a different Branch) can never reach
+ * the payload. Course configuration follows Branch › Vertical exactly like the lead forms.
+ */
+export const CASCADE: Array<{ src: NonNullable<FormField['src']>; parent: string; fk: string; strict?: boolean }> = [
+  { src: 'verticals', parent: 'Branch', fk: 'branch_id', strict: true },
+  { src: 'verticals', parent: 'Branch Access', fk: 'branch_id' },
+  { src: 'pipelines', parent: 'Vertical', fk: 'vertical_id' },
+  { src: 'campaigns', parent: 'Pipeline', fk: 'pipeline_id' },
+  { src: 'sources', parent: 'Campaign', fk: 'campaign_id' },
+  { src: 'cities', parent: 'State', fk: 'parent_id' },
+];
+
 export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> = {
   'leads.all': { title: 'Add Lead', fields: [
     F('Name', 'text', 1), F('Mobile Number', 'tel', 1, 0, 'de-dup key'), F('Alternate Number', 'tel'), F('WhatsApp Number', 'tel'), F('Email ID', 'email'),
@@ -104,8 +119,13 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Batch', 'select', 1, _PIPE, 'filtered by Course · seat-checked'), F('Admission Number', 'auto', 1, 0, 'Auto-generated'), F('Admission Date', 'date', 1),
     F('Fee Plan / Payment Plan', 'select', 1, _PLAN, 'Payment Plan master'), F('Counsellor / Admission Owner', 'auto', 1, 0, 'Auto-filled from Sales Closure'),
     F('Documents Submitted', 'file', 1, 0, 'checklist / upload'), F('Admission Status', 'select', 1, ['Confirmed', 'Provisional', 'Cancelled'])] },
+  // Client update #7 (Branch › Vertical) — a Course belongs to ONE Branch → ONE Vertical.
+  // Branch comes first; Vertical is filtered by (and empty until) the chosen Branch, using
+  // the same cascade engine as the lead forms (CASCADE / srcOptions). The old form put
+  // Vertical first and offered a lone "Applicable Branch(es)" select that never related to
+  // it, so the two dropdowns did nothing — the bug the client reported.
   'students.courses': { title: 'Add Course', fields: [
-    F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Vertical', 'select', 0, 0, 'master', 'verticals'), F('Applicable Branch(es)', 'select', 0, 0, 'multi-select · master', 'branches'),
+    F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Duration', 'number', 0, 0, 'weeks / months'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), F('Training Mode', 'select', 0, ['Online', 'Offline', 'Hybrid', 'Bootcamp']), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
     F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
@@ -388,8 +408,8 @@ SAVERS['students.courses'] = async (vals, ids) => {
       mode: vals['Training Mode'] || undefined,
       duration: vals['Duration'] || undefined,
       fee: vals['Standard Fee'] || undefined,
-      vertical_id: ids['Vertical'] ?? undefined,
-      branch_id: ids['Applicable Branch(es)'] ?? undefined,
+      branch_id: need(ids['Branch'], 'Pick a Branch'),
+      vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
       eligibility: vals['Eligibility Criteria'] || undefined,
     },
     is_active: vals['Status'] !== 'Inactive',
@@ -532,17 +552,25 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
 
   if (!spec) return null;
 
+  /** Is `label` a real parent <select> on THIS form? (Not an 'auto' display field.) */
+  const cascadeParent = (label: string) =>
+    spec.fields.some((x) => x.label === label && !!x.src && (x.type === 'select' || x.type === 'multiselect'));
+
   const srcOptions = (f: FormField): Named[] => {
     let list: Named[] = (ref as any)[f.src!] ?? [];
     // DEF-1: never offer a deactivated user — but keep the one already selected (edit/prefill).
     if (f.src === 'users') list = selectableUsers(list, ids[f.label] ?? null);
-    // cascade by parent selection where the hierarchy applies
-    if (f.src === 'verticals' && ids['Branch']) list = list.filter((v) => Number(v.branch_id) === ids['Branch']);
-    if (f.src === 'verticals' && ids['Branch Access']) list = list.filter((v) => Number(v.branch_id) === ids['Branch Access']);
-    if (f.src === 'pipelines' && ids['Vertical']) list = list.filter((p) => Number(p.vertical_id) === ids['Vertical']);
-    if (f.src === 'campaigns' && ids['Pipeline']) list = list.filter((c) => Number(c.pipeline_id) === ids['Pipeline']);
-    if (f.src === 'sources' && ids['Campaign']) list = list.filter((s) => Number(s.campaign_id) === ids['Campaign']);
-    if (f.src === 'cities' && ids['State']) list = list.filter((c) => Number(c.parent_id) === ids['State']);
+    // cascade by parent selection where the hierarchy applies. A child is filtered to its
+    // parent's choice; where the parent select is present on THIS form but not yet chosen,
+    // the child is EMPTY (you can't pick a Vertical before its Branch). Forms that carry a
+    // child without its parent select (e.g. Admission, whose Branch is auto-filled) keep the
+    // full list, exactly as before.
+    for (const cc of CASCADE) {
+      if (f.src !== cc.src) continue;
+      const pid = ids[cc.parent];
+      if (pid != null) list = list.filter((o) => Number((o as any)[cc.fk]) === Number(pid));
+      else if (cc.strict && cascadeParent(cc.parent)) list = [];
+    }
     const fresh = (extras[f.label] ?? []).filter((e) => !list.some((o) => Number(o.id) === Number(e.id)));
     let out = [...list, ...fresh];
     // client update #5 — Task module: the logged-in user shows as "Myself", pinned first.
@@ -553,9 +581,20 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     return out;
   };
 
+  // Changing a parent RESETS every descendant select, so a stale child id (a Vertical left
+  // over from another Branch) can never be submitted. Walks the CASCADE transitively:
+  // Branch → Vertical → Pipeline → Campaign → Lead Source.
   const setField = (label: string, value: string, id?: number) => {
-    setVals((x) => ({ ...x, [label]: value }));
-    setIds((x) => ({ ...x, [label]: id }));
+    const clear: string[] = [];
+    const walk = (parent: string) => {
+      for (const cf of spec.fields) {
+        if (!cf.src || clear.includes(cf.label)) continue;
+        if (CASCADE.some((cc) => cc.src === cf.src && cc.parent === parent)) { clear.push(cf.label); walk(cf.label); }
+      }
+    };
+    walk(label);
+    setVals((x) => { const n = { ...x, [label]: value }; for (const k of clear) delete n[k]; return n; });
+    setIds((x) => { const n = { ...x, [label]: id }; for (const k of clear) delete n[k]; return n; });
   };
 
   const save = async () => {
@@ -589,13 +628,17 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     }
     if (t === 'select' && f.src) {
       const list = srcOptions(f);
+      // Branch › Vertical (and the rest of the chain): the child is disabled with a "pick
+      // the parent first" hint until its parent select carries a value.
+      const parentCfg = CASCADE.find((cc) => cc.src === f.src && cc.strict && cascadeParent(cc.parent));
+      const blocked = !!parentCfg && ids[parentCfg.parent] == null;
       // client update #3 — course fee auto-fetch from the Course master (meta.fee)
       const courseFee = f.src === 'courses' && ids[f.label]
         ? (list.find((o) => Number(o.id) === Number(ids[f.label])) as any)?.meta?.fee
         : undefined;
       return (
         <>
-          <select className="ainp" value={ids[f.label] ?? ''}
+          <select className="ainp" disabled={blocked} value={ids[f.label] ?? ''}
             onChange={(e) => {
               const id = e.target.value ? Number(e.target.value) : undefined;
               const nm = list.find((o) => Number(o.id) === id)?.name ?? '';
@@ -608,7 +651,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
                 }
               }
             }}>
-            <option value="">Select…</option>
+            <option value="">{blocked ? `Select ${parentCfg!.parent} first…` : 'Select…'}</option>
             {list.map((o) => <option key={o.id} value={o.id}>{o.name}{o.branch_name ? ` · ${o.branch_name}` : ''}</option>)}
           </select>
           {courseFee != null && courseFee !== '' && (
