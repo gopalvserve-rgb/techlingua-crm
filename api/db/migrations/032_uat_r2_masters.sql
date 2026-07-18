@@ -59,29 +59,29 @@ END $$;
 -- tenant); each row guarded so a re-run or a client edit is never clobbered.
 -- ---------------------------------------------------------------------------
 DO $$
-DECLARE org_id BIGINT;
+DECLARE v_org BIGINT;
 BEGIN
-  SELECT id INTO org_id FROM organisation ORDER BY id LIMIT 1;
-  IF org_id IS NULL THEN RETURN; END IF;   -- fresh DB: seed.ts seeds these instead
+  SELECT id INTO v_org FROM organisation ORDER BY id LIMIT 1;
+  IF v_org IS NULL THEN RETURN; END IF;   -- fresh DB: seed.ts seeds these instead
 
   -- #5 Training (was: Online / Offline / Hybrid / Bootcamp)
   INSERT INTO m_training (org_id, name, code, sort_order)
-  SELECT org_id, v.name, v.code, v.ord
+  SELECT v_org, v.name, v.code, v.ord
     FROM (VALUES ('Online','ONLINE',0),('Offline','OFFLINE',1),('Hybrid','HYBRID',2),('Bootcamp','BOOTCAMP',3)) AS v(name,code,ord)
-   WHERE NOT EXISTS (SELECT 1 FROM m_training m WHERE m.org_id = org_id AND lower(m.name) = lower(v.name));
+   WHERE NOT EXISTS (SELECT 1 FROM m_training m WHERE m.org_id = v_org AND lower(m.name) = lower(v.name));
 
   -- #18 Purpose of Visit (was: Admission enquiry / Fee query / Document submission / Other)
   INSERT INTO m_visit_purpose (org_id, name, code, sort_order)
-  SELECT org_id, v.name, v.code, v.ord
+  SELECT v_org, v.name, v.code, v.ord
     FROM (VALUES ('Admission enquiry','ADM_ENQ',0),('Fee query','FEE_QUERY',1),('Document submission','DOC_SUB',2),('Other','OTHER',3)) AS v(name,code,ord)
-   WHERE NOT EXISTS (SELECT 1 FROM m_visit_purpose m WHERE m.org_id = org_id AND lower(m.name) = lower(v.name));
+   WHERE NOT EXISTS (SELECT 1 FROM m_visit_purpose m WHERE m.org_id = v_org AND lower(m.name) = lower(v.name));
 
   -- #19 Walk-in Status. Codes MATCH the existing walk_in.status values so every stored
   -- row keeps rendering; the client can now add his own (e.g. No-show) from Masters.
   INSERT INTO m_walkin_status (org_id, name, code, sort_order)
-  SELECT org_id, v.name, v.code, v.ord
+  SELECT v_org, v.name, v.code, v.ord
     FROM (VALUES ('Waiting','waiting',0),('In progress','in_progress',1),('Converted','converted',2),('Closed','closed',3)) AS v(name,code,ord)
-   WHERE NOT EXISTS (SELECT 1 FROM m_walkin_status m WHERE m.org_id = org_id AND lower(m.code) = lower(v.code));
+   WHERE NOT EXISTS (SELECT 1 FROM m_walkin_status m WHERE m.org_id = v_org AND lower(m.code) = lower(v.code));
 END $$;
 
 -- ---------------------------------------------------------------------------
