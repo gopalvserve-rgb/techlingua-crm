@@ -78,6 +78,15 @@ export class HierarchyController {
     return this.h.updateCampaign(id, dto, u.id, s);
   }
 
+  // UAT-R2 #24 — pause / resume ONE agent on a campaign (Campaign Settings).
+  @Patch('campaigns/:id/agents/:userId/pause') @RequirePermission('campaign.update') @ScopedEntity('campaign')
+  pauseCampaignAgent(
+    @Param('id', ParseIntPipe) id: number, @Param('userId', ParseIntPipe) userId: number,
+    @Body() dto: { paused?: boolean }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
+  ) {
+    return this.h.setAgentPause(id, userId, dto?.paused === true, u.id, s);
+  }
+
   // ---- sources ----
   @Get('sources') @RequirePermission('source.read')
   listSources(@CurrentScope() s: ResolvedScope, @Query('campaign_id') campaignId?: string, @Query('include_inactive') inc?: string) {

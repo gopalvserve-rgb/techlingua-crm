@@ -891,12 +891,16 @@ export const referralEditSpec = (r: any, after: () => void): EditSpec => ({
     'Lead Source': r.source_name ?? '',
     'Course Interested': r.course_name ?? '',
     'Incentive / Reward Applicable': r.incentive ?? '',
+    // #20 — prefill the Assigned Counsellor (label for display; id below drives it)
+    'Assigned Counsellor': r.owner_name ?? '',
     'Referral Status': REF_STATUS[String(r.status)]?.[0] ?? 'Pending',
   },
   initialIds: {
     'Branch': num(r.branch_id), 'Vertical': num(r.vertical_id), 'Pipeline': num(r.pipeline_id),
     'Campaign': num(r.campaign_id), 'Lead Source': num(r.source_id),
     'Course Interested': num(r.course_id),
+    // assigned_counsellor_id when set, else the lead's current owner (legacy referrals)
+    'Assigned Counsellor': num(r.assigned_counsellor_id ?? r.owner_id),
   },
   lock: PATH_LOCK,
   submit: async (vals, ids) => {
@@ -911,6 +915,7 @@ export const referralEditSpec = (r: any, after: () => void): EditSpec => ({
       relationship: vals['Relationship to Referrer'] || null,
       course_id: ids['Course Interested'] ?? null,
       incentive: vals['Incentive / Reward Applicable'] || null,
+      owner_id: ids['Assigned Counsellor'] ?? null,   // #20 — re-assigns the referral's lead
       status: (vals['Referral Status'] || 'Pending').toLowerCase(),
     });
     after();
@@ -943,6 +948,9 @@ export function WalkIns() {
   const list = useFetch<any[]>(`/walk-ins?limit=100${today ? '&today=1' : ''}`, [today, refreshTick]);
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
+  // #19 — Delete action for walk-in records (soft-delete, RBAC-gated, confirm).
+  const [del, setDel] = useState<any | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
   const rows = list.data ?? [];
   const after = () => { list.reload(); sum.reload(); bump(); };
 
@@ -995,6 +1003,7 @@ export function WalkIns() {
           rowActions({
             onView: () => setView(w),
             onEdit: can('walkin.update') ? () => setEdit(w) : undefined,
+            onDelete: can('walkin.delete') ? () => setDel(w) : undefined,
           }),
         ])}
         empty="No walk-ins recorded yet — add one and it becomes an assigned lead immediately" />
@@ -1042,6 +1051,18 @@ export function WalkIns() {
       {edit && (
         <AddModal formKey="dash.walkins" onClose={() => setEdit(null)}
           edit={walkInEditSpec(edit, after)} />
+      )}
+      {/* #19 — Delete a walk-in record (soft-delete; the lead it created is kept). */}
+      {del && (
+        <ConfirmModal title="Delete walk-in" danger busy={delBusy} confirmLabel="Delete"
+          body={<>Delete the walk-in for <b>{del.visitor_name}</b>? This removes the walk-in record.{del.lead_id ? ' The lead it created is kept.' : ''}</>}
+          onConfirm={async () => {
+            setDelBusy(true);
+            try { await api.del(`/walk-ins/${del.id}`); toast('Walk-in deleted'); setDel(null); after(); }
+            catch (e: any) { toast(e.message, true); }
+            finally { setDelBusy(false); }
+          }}
+          onClose={() => setDel(null)} />
       )}
       {/* #19 — quick-add a Walk-in Status value without leaving the list. */}
       {addStatus && (

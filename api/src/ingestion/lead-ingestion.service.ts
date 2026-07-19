@@ -289,16 +289,30 @@ export class LeadIngestionService {
 
   // ---- duplicate detection (NeoDove §4) ------------------------------------
 
-  async findDuplicate(phone: string, target: IngestTarget) {
+  /**
+   * NeoDove §4 duplicate detection. The match key is the PHONE, but UAT-R2 #22 —
+   * "WhatsApp Group duplicate validation" — extends it: an incoming lead is a
+   * duplicate when EITHER its phone OR its WhatsApp number matches EITHER the
+   * phone OR the WhatsApp number of an existing lead in scope. Every number is
+   * canonical E.164, so the comparison is exact and country-aware.
+   *
+   * `numbers` = the incoming lead's contact numbers (its phone plus, when it
+   * differs, its WhatsApp number). Scope (campaign / pipeline / global) is the
+   * campaign's configured `check_scope`, unchanged.
+   */
+  async findDuplicate(numbers: string | string[], target: IngestTarget) {
+    const nums = [...new Set((Array.isArray(numbers) ? numbers : [numbers]).map((n) => n).filter(Boolean))];
+    if (!nums.length) return null;
     const scope = target.duplicacy.check_scope ?? 'this_campaign';
-    const params: unknown[] = [phone];
+    const params: unknown[] = [nums];
     let extra = '';
     if (scope === 'this_campaign') { params.push(target.campaign_id); extra = `AND l.campaign_id = $${params.length}`; }
     else if (scope === 'this_pipeline') { params.push(target.pipeline_id); extra = `AND l.pipeline_id = $${params.length}`; }
     return this.db.one<{ id: string; owner_id: string | null; stage_type: string | null }>(
       `SELECT l.id, l.owner_id, st.stage_type
          FROM lead l LEFT JOIN pipeline_stage st ON st.id = l.stage_id
-        WHERE l.phone = $1 AND l.is_active AND l.deleted_at IS NULL ${extra}
+        WHERE (l.phone = ANY($1::text[]) OR l.whatsapp_phone = ANY($1::text[]))
+          AND l.is_active AND l.deleted_at IS NULL ${extra}
         ORDER BY l.id LIMIT 1`,
       params,
     );
@@ -337,6 +351,21 @@ export class LeadIngestionService {
       );
       const ok = new Set(live.map((r) => Number(r.id)));
       pool = pool.filter((id) => ok.has(id));
+      // UAT-R2 #24 — a PAUSED agent (campaign_agent_pause) is skipped by round-robin
+      // AND by conditional distribution, and resumes the instant it is un-paused.
+      // Guarded: a DB without the table (or a unit double that does not model it)
+      // simply yields no pauses — the documented default.
+      if (pool.length) {
+        try {
+          const paused = await this.db.query<{ user_id: string }>(
+            `SELECT user_id FROM campaign_agent_pause
+              WHERE campaign_id = $1 AND paused AND user_id = ANY($2::bigint[])`,
+            [target.campaign_id, pool],
+          );
+          const off = new Set(paused.map((r) => Number(r.user_id)));
+          if (off.size) pool = pool.filter((id) => !off.has(id));
+        } catch { /* table absent — no agent is paused */ }
+      }
     }
     return { pool, note };
   }
@@ -397,8 +426,8 @@ export class LeadIngestionService {
     // 2) normalise + resolve (throws IngestValidationError -> dead-letter, no retry)
     const lead = this.normalise(payload, target);
 
-    // 3) duplicate check (phone key, campaign-configured scope)
-    const dup = await this.findDuplicate(lead.phone, target);
+    // 3) duplicate check (phone + WhatsApp cross-match, campaign-configured scope — #22)
+    const dup = await this.findDuplicate([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[], target);
     const action: DuplicateAction = policy === 'always_create'
       ? 'create'
       : ((target.duplicacy.on_duplicate ?? 'ignore') as DuplicateAction);

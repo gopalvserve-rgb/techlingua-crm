@@ -426,3 +426,103 @@ describe('LeadIngestionService', () => {
     });
   });
 });
+
+/* ========================================================================== */
+/*  UAT-R2 #22 — WhatsApp Group duplicate validation (phone <-> whatsapp       */
+/*  cross-matching), plus every duplicacy SCOPE; and #24 agent pause.          */
+/* ========================================================================== */
+describe('#22 — duplicate detection cross-matches phone AND WhatsApp', () => {
+  const seed = (over: Record<string, unknown> = {}) => ([{
+    id: 900, full_name: 'Existing', phone: '+919811100050', whatsapp_phone: '+919811100051',
+    campaign_id: 5, pipeline_id: 4, is_active: true, deleted_at: null, stage_id: 51, owner_id: 11,
+    ...over,
+  }]);
+
+  it('incoming PHONE that matches an existing WHATSAPP number is a duplicate', async () => {
+    const { db, st } = makeFakeDb({ leads: seed() });
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest({ full_name: 'New', phone: '9811100051', external_id: 'W1' }, ctx());
+    expect(out.status).toBe('duplicate');
+    expect(out.duplicate_of).toBe(900);
+    expect(st.leads).toHaveLength(1);                 // ignore rule -> no second lead
+  });
+
+  it('incoming WHATSAPP that matches an existing PHONE number is a duplicate', async () => {
+    const { db } = makeFakeDb({ leads: seed() });
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest(
+      { full_name: 'New', phone: '9811109999', whatsapp_phone: '9811100050', external_id: 'W2' }, ctx());
+    expect(out.status).toBe('duplicate');
+    expect(out.duplicate_of).toBe(900);
+  });
+
+  it('incoming WHATSAPP that matches an existing WHATSAPP number is a duplicate', async () => {
+    const { db } = makeFakeDb({ leads: seed() });
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest(
+      { full_name: 'New', phone: '9811109999', whatsapp_phone: '9811100051', external_id: 'W3' }, ctx());
+    expect(out.status).toBe('duplicate');
+    expect(out.duplicate_of).toBe(900);
+  });
+
+  it('no shared number on either field -> a normal new lead', async () => {
+    const { db, st } = makeFakeDb({ leads: seed() });
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest(
+      { full_name: 'New', phone: '9811108888', whatsapp_phone: '9811108889', external_id: 'W4' }, ctx());
+    expect(out.status).toBe('created');
+    expect(st.leads).toHaveLength(2);
+  });
+
+  it('SCOPE this_campaign — a match in a DIFFERENT campaign is NOT a duplicate', async () => {
+    const { db, st } = makeFakeDb({ leads: seed({ campaign_id: 99 }) });   // default scope = this_campaign
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest({ full_name: 'New', phone: '9811100050', external_id: 'S1' }, ctx());
+    expect(out.status).toBe('created');
+    expect(st.leads).toHaveLength(2);
+  });
+
+  it('SCOPE this_pipeline — a WhatsApp match across campaigns in the SAME pipeline IS a duplicate', async () => {
+    const { db } = makeFakeDb({
+      leads: seed({ campaign_id: 99, pipeline_id: 4 }),
+      duplicacy: { check_scope: 'this_pipeline', match_key: 'phone', on_duplicate: 'ignore', open_reassign_same_user: true },
+    });
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest(
+      { full_name: 'New', phone: '9811109999', whatsapp_phone: '9811100050', external_id: 'S2' }, ctx());
+    expect(out.status).toBe('duplicate');
+    expect(out.duplicate_of).toBe(900);
+  });
+
+  it('SCOPE global — a match in any campaign/pipeline IS a duplicate', async () => {
+    const { db } = makeFakeDb({
+      leads: seed({ campaign_id: 99, pipeline_id: 88 }),
+      duplicacy: { check_scope: 'global', match_key: 'phone', on_duplicate: 'ignore', open_reassign_same_user: true },
+    });
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest({ full_name: 'New', phone: '9811100051', external_id: 'S3' }, ctx());
+    expect(out.status).toBe('duplicate');
+    expect(out.duplicate_of).toBe(900);
+  });
+});
+
+describe('#24 — a PAUSED agent is skipped by distribution, an un-paused one is not', () => {
+  it('equal round-robin skips the paused agent (12), rotates over the rest', async () => {
+    const { db, st } = makeFakeDb({ pausedAgents: [{ campaign_id: 5, user_id: 12 }] });
+    const { svc } = makeIngestion(db);
+    for (let i = 1; i <= 3; i++) {
+      await svc.ingest({ full_name: `L${i}`, phone: `98111002${10 + i}`, external_id: `P${i}` }, ctx());
+    }
+    expect(st.leads.map((l) => l.owner_id)).toEqual([11, 13, 11]);   // 12 never receives a lead
+  });
+
+  it('#23 — a campaign MANAGER is not in the agent pool, so it receives no auto-assigned leads', async () => {
+    // managers live in campaign_manager, never in distribution_config.agent_user_ids.
+    const { db, st } = makeFakeDb({ distribution: { mode: 'equal', agent_user_ids: [11] } });
+    const { svc } = makeIngestion(db);
+    for (let i = 1; i <= 2; i++) {
+      await svc.ingest({ full_name: `M${i}`, phone: `98111003${10 + i}`, external_id: `M${i}` }, ctx());
+    }
+    expect(st.leads.map((l) => l.owner_id)).toEqual([11, 11]);       // only the pool member
+  });
+});

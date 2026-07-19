@@ -192,6 +192,7 @@ export class CaptureService {
         throw new BadRequestException(`status must be one of: ${[...allowed].join(', ')}`);
       }
     }
+    this.assertNotPastVisit(dto.visited_at);   // #19 — no past Date of Visit
     // RBAC: the campaign, source and counsellor must all be inside the caller's scope
     await this.enforcer.assertRefInScope(scope, 'campaign', Number(dto.campaign_id), actorId);
     await this.enforcer.assertRefInScope(scope, 'source', Number(dto.source_id), actorId);
@@ -233,6 +234,25 @@ export class CaptureService {
     // the walk_in row now exists -> the `walk_in` scoring rule (+25) can see it
     if (outcome?.lead_id) await this.scoring.safeRescore(outcome.lead_id);
     return { ...row, lead_id: outcome?.lead_id ?? null, duplicate_of: outcome?.duplicate_of ?? null };
+  }
+
+  /**
+   * UAT-R2 #19 — a walk-in's Date of Visit may NOT be in the past. The visit is
+   * happening now (or is being scheduled for today), so a date before today is a
+   * data-entry error. Compared on the UTC calendar day; the form also sets the
+   * input's min to today, so this is the server-side backstop.
+   */
+  private assertNotPastVisit(visited_at: string | null | undefined): void {
+    if (visited_at == null || String(visited_at).trim() === '') return;
+    const d = new Date(visited_at);
+    if (isNaN(d.getTime())) throw new BadRequestException('Date of Visit is not a valid date/time');
+    // A `datetime-local` value carries no timezone — it is wall-clock in the process's
+    // local zone, so the "today" comparison must use LOCAL calendar days (not UTC), or
+    // a picked time before the UTC midnight of a non-UTC zone reads as yesterday.
+    const day = (x: Date) => Date.UTC(x.getFullYear(), x.getMonth(), x.getDate());
+    if (day(d) < day(new Date())) {
+      throw new BadRequestException('Date of Visit cannot be in the past');
+    }
   }
 
   /** Course Fee arrives from a number input as a string; '' means "cleared". */
@@ -316,6 +336,11 @@ export class CaptureService {
       if (!allowed.has(String(dto.status))) {
         throw new BadRequestException(`status must be one of: ${[...allowed].join(', ')}`);
       }
+    }
+    // #19 — a walk-in's Date of Visit may not be moved into the past. Only checked
+    // when it actually CHANGES, so re-saving an older walk-in is never blocked.
+    if (dto.visited_at !== undefined && String(dto.visited_at ?? '') !== String(before.visited_at ?? '')) {
+      this.assertNotPastVisit(dto.visited_at);
     }
     if (dto.counsellor_id != null && Number(dto.counsellor_id) !== Number(before.counsellor_id)) {
       await this.enforcer.assertRefInScope(scope, 'user', Number(dto.counsellor_id), actorId);
@@ -441,7 +466,7 @@ export class CaptureService {
       // selected here — including referred_whatsapp / referred_email and the path.
       `SELECT r.id, r.referrer_type, r.referrer_name, r.referrer_phone, r.referred_name,
               r.referred_phone, r.referred_whatsapp, r.referred_email, r.relationship,
-              r.incentive, r.status, r.lead_id,
+              r.incentive, r.status, r.lead_id, r.assigned_counsellor_id,
               r.branch_id, r.vertical_id, r.campaign_id, r.source_id, r.course_id, r.created_at,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               cmp.name AS campaign_name, cmp.pipeline_id, pl.name AS pipeline_name,
@@ -521,14 +546,15 @@ export class CaptureService {
       `INSERT INTO referral (org_id, branch_id, vertical_id, campaign_id, source_id, lead_id,
                              referrer_type, referrer_name, referrer_phone, referred_name,
                              referred_phone, referred_whatsapp, referred_email, relationship,
-                             course_id, incentive, status, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+                             course_id, incentive, status, created_by, assigned_counsellor_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
       [org, Number(dto.branch_id), Number(dto.vertical_id), Number(dto.campaign_id),
         Number(dto.source_id), outcome.lead_id ?? null,
         dto.referrer_type, dto.referrer_name, dto.referrer_phone ?? null, dto.referred_name,
         dto.referred_phone, dto.referred_whatsapp ?? null, dto.referred_email ?? null,
         dto.relationship ?? null, dto.course_id ?? null,
-        dto.incentive ?? null, dto.status ?? 'pending', actorId],
+        dto.incentive ?? null, dto.status ?? 'pending', actorId,
+        dto.owner_id ? Number(dto.owner_id) : null],
     );
     await this.scoring.safeRescore(outcome.lead_id);   // the +20 referral rule can now see it
     return { ...row, lead_id: outcome.lead_id, duplicate_of: outcome.duplicate_of ?? null };
@@ -540,7 +566,7 @@ export class CaptureService {
    * every field the Edit form renders (the path stays locked — it is the lead's parent
    * link), and `web/src/qa10matrix.test.tsx` fails the build if the two drift apart.
    */
-  async updateReferral(id: number, dto: Partial<ReferralDto>, _actorId: number, _scope: ResolvedScope) {
+  async updateReferral(id: number, dto: Partial<ReferralDto>, actorId: number, scope: ResolvedScope) {
     const before = await this.db.one<Record<string, any>>(
       `SELECT * FROM referral WHERE id = $1 AND deleted_at IS NULL`, [id],
     );
@@ -562,6 +588,21 @@ export class CaptureService {
       params.push(dto[c] === '' ? null : dto[c]);
       sets.push(`${c} = $${params.length}`);
     }
+    // #20 — Assigned Counsellor. Validated (active, in scope) exactly like the
+    // walk-in counsellor; persisted on the referral and (below) applied to the
+    // lead's owner so re-assigning a referral re-assigns its lead.
+    let reassignOwner: number | null | undefined;
+    if (dto.owner_id !== undefined) {
+      reassignOwner = dto.owner_id ? Number(dto.owner_id) : null;
+      if (reassignOwner != null) {
+        await this.enforcer.assertRefInScope(scope, 'user', reassignOwner, actorId);
+        const u = await this.db.one(
+          `SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [reassignOwner]);
+        if (!u) throw new BadRequestException('assigned counsellor must be an active user');
+      }
+      params.push(reassignOwner);
+      sets.push(`assigned_counsellor_id = $${params.length}`);
+    }
     if (!sets.length) throw new BadRequestException('nothing to update');
     params.push(id);
     const row = await this.db.one<Record<string, any>>(
@@ -582,6 +623,12 @@ export class CaptureService {
       if (dto.course_id !== undefined) put('course_id', dto.course_id || null);
       if (lsets.length) {
         await this.db.query(`UPDATE lead SET ${lsets.join(', ')}, updated_at = now() WHERE id = $1`, lp);
+      }
+      // #20 — re-assigning the referral re-assigns its lead (assign-on-add stays true).
+      if (reassignOwner !== undefined) {
+        await this.db.query(`UPDATE lead SET owner_id = $2, updated_at = now() WHERE id = $1`,
+          [Number(before.lead_id), reassignOwner]);
+        await this.sla.safe(() => this.sla.onLeadTouched(Number(before.lead_id)), 'referral reassign');
       }
       await this.scoring.safeRescore(Number(before.lead_id));
     }

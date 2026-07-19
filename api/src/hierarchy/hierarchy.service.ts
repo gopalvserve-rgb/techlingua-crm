@@ -414,7 +414,12 @@ export class HierarchyService {
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 'c.branch_id', vertical: 'c.vertical_id', pipeline: 'c.pipeline_id', campaign: 'c.id',
     }, params);
-    let sql = `SELECT c.*, p.name AS pipeline_name, v.name AS vertical_name, b.name AS branch_name
+    let sql = `SELECT c.*, p.name AS pipeline_name, v.name AS vertical_name, b.name AS branch_name,
+                 COALESCE((SELECT json_agg(cm.user_id ORDER BY cm.user_id)
+                             FROM campaign_manager cm WHERE cm.campaign_id = c.id), '[]'::json) AS manager_user_ids,
+                 COALESCE((SELECT json_agg(cap.user_id ORDER BY cap.user_id)
+                             FROM campaign_agent_pause cap WHERE cap.campaign_id = c.id AND cap.paused), '[]'::json)
+                   AS paused_agent_user_ids
                  FROM campaign c JOIN pipeline p ON p.id = c.pipeline_id
                  JOIN vertical v ON v.id = c.vertical_id JOIN branch b ON b.id = c.branch_id
                 WHERE ${where} AND c.deleted_at IS NULL${HierarchyService.activeFilter('c', includeInactive)}`;
@@ -428,6 +433,8 @@ export class HierarchyService {
     // DEF-S2-02 — rendered on the campaign modal since day one, stored since migration 024
     campaign_type?: string | null; marketing_channel?: string | null;
     start_date?: string | null; end_date?: string | null;
+    // UAT-R2 #23 — campaign managers (management/visibility only, NOT the agent pool)
+    manager_user_ids?: number[];
   }, actorId: number, scope: ResolvedScope) {
     if (!dto?.pipeline_id || !dto?.name) throw new BadRequestException('pipeline_id and name are required');
     // NeoDove configs are validated strictly on create AND update (QA DEF-2).
@@ -456,7 +463,11 @@ export class HierarchyService {
         HierarchyService.date(dto.start_date), HierarchyService.date(dto.end_date),
         dto.is_active ?? null, actorId],
     );
-    return rows[0];
+    const created = rows[0] as Record<string, unknown>;
+    // #23 — managers are a SEPARATE set from the distribution agent pool; a manager
+    // is never added to distribution_config, so a manager receives no auto-assigned leads.
+    const managerIds = await this.replaceManagers(Number(created.id), dto.manager_user_ids, actorId, scope);
+    return { ...created, manager_user_ids: managerIds, paused_agent_user_ids: [] };
   }
 
   async updateCampaign(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
@@ -479,9 +490,72 @@ export class HierarchyService {
     for (const k of ['start_date', 'end_date'] as const) {
       if (dto[k] !== undefined) dto = { ...dto, [k]: HierarchyService.date(dto[k] as string | null) };
     }
-    return this.genericUpdate('campaign', id, dto,
-      ['name', 'utm', 'cost', 'priority', 'distribution_config', 'duplicacy_config',
-        'campaign_type', 'marketing_channel', 'start_date', 'end_date', 'is_active']);
+    // #23 — managers are applied separately (they are not a campaign column).
+    const managerProvided = dto.manager_user_ids !== undefined;
+    let managerIds: number[] | undefined;
+    if (managerProvided) managerIds = await this.replaceManagers(id, dto.manager_user_ids as number[], actorId, scope);
+    const COLS = ['name', 'utm', 'cost', 'priority', 'distribution_config', 'duplicacy_config',
+      'campaign_type', 'marketing_channel', 'start_date', 'end_date', 'is_active'];
+    if (!COLS.some((k) => dto[k] !== undefined)) {
+      // only managers (or agent-pause) changed — nothing to UPDATE on the row itself.
+      const row = await this.db.one<Record<string, unknown>>(
+        `SELECT * FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [id]);
+      if (!row) throw new NotFoundException('campaign not found');
+      return managerProvided ? { ...row, manager_user_ids: managerIds } : row;
+    }
+    const updated = await this.genericUpdate('campaign', id, dto, COLS);
+    return managerProvided ? { ...updated, manager_user_ids: managerIds } : updated;
+  }
+
+  /**
+   * #23 — replace a campaign's manager set. Managers are validated exactly like
+   * distribution agents (active, existing, in the caller's scope) but are stored
+   * in `campaign_manager`, entirely separate from `distribution_config` — so a
+   * manager is NEVER placed in the round-robin / conditional pool.
+   */
+  private async replaceManagers(
+    campaignId: number, ids: number[] | undefined, actorId: number, scope: ResolvedScope,
+  ): Promise<number[]> {
+    const list = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (list.length) {
+      const rows = await this.db.query<{ id: string }>(
+        `SELECT id FROM "user" WHERE id = ANY($1::bigint[]) AND status = 'active' AND deleted_at IS NULL`, [list]);
+      const ok = new Set(rows.map((r) => Number(r.id)));
+      const bad = list.filter((id) => !ok.has(id));
+      if (bad.length) {
+        throw new BadRequestException(
+          `manager_user_ids references unknown, inactive or deleted user id(s): ${bad.join(', ')}`);
+      }
+      for (const id of list) await this.enforcer.assertRefInScope(scope, 'user', id, actorId);
+    }
+    await this.db.query(`DELETE FROM campaign_manager WHERE campaign_id = $1`, [campaignId]);
+    for (const uid of list) {
+      await this.db.query(
+        `INSERT INTO campaign_manager (campaign_id, user_id, created_by) VALUES ($1,$2,$3)
+         ON CONFLICT (campaign_id, user_id) DO NOTHING`, [campaignId, uid, actorId]);
+    }
+    return list;
+  }
+
+  /**
+   * #24 — pause/resume ONE agent on ONE campaign. A paused agent is skipped by the
+   * distribution engine (LeadIngestionService.resolvePool) and resumes when set
+   * back to active. Upserted so a repeated toggle never duplicates a row.
+   */
+  async setAgentPause(
+    campaignId: number, userId: number, paused: boolean, actorId: number, scope: ResolvedScope,
+  ) {
+    await this.enforcer.assertRefInScope(scope, 'campaign', campaignId, actorId);
+    const u = await this.db.one<{ id: string }>(
+      `SELECT id FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [userId]);
+    if (!u) throw new BadRequestException('unknown user');
+    await this.db.query(
+      `INSERT INTO campaign_agent_pause (campaign_id, user_id, paused, updated_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (campaign_id, user_id)
+       DO UPDATE SET paused = EXCLUDED.paused, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+      [campaignId, userId, !!paused, actorId]);
+    return { campaign_id: campaignId, user_id: userId, paused: !!paused };
   }
 
   // ---- sources ------------------------------------------------------------

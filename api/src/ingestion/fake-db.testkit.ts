@@ -28,6 +28,7 @@ export interface FakeState {
   distribution: any;
   duplicacy: any;
   stages: FakeStage[];
+  pausedAgents: Array<{ campaign_id: number; user_id: number }>;
 }
 
 const DEFAULT_STAGES: FakeStage[] = [
@@ -104,6 +105,7 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
     distribution: { mode: 'equal', agent_user_ids: [11, 12, 13] },
     duplicacy: { check_scope: 'this_campaign', match_key: 'phone', on_duplicate: 'ignore', open_reassign_same_user: true },
     stages: DEFAULT_STAGES,
+    pausedAgents: [],
     ...init,
   };
   let seq = 100;
@@ -151,17 +153,27 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
 
     // ---- duplicate lookup --------------------------------------------------
     if (s.includes('FROM lead l LEFT JOIN pipeline_stage st')) {
-      const phone = params[0];
+      // #22 — the incoming numbers are an array; a lead matches when EITHER its
+      // phone OR its whatsapp_phone equals ANY of them (WhatsApp cross-match).
+      const nums = (Array.isArray(params[0]) ? params[0] : [params[0]]) as string[];
       const byCampaign = s.includes('l.campaign_id =');
       const byPipeline = s.includes('l.pipeline_id =');
       const scopeVal = byCampaign || byPipeline ? Number(params[1]) : null;
-      const hit = st.leads.find((l) => l.phone === phone && !l.deleted_at && l.is_active !== false
+      const hit = st.leads.find((l) => (nums.includes(l.phone) || (l.whatsapp_phone && nums.includes(l.whatsapp_phone)))
+        && !l.deleted_at && l.is_active !== false
         && (scopeVal == null
           || (byCampaign ? Number(l.campaign_id) === scopeVal : Number(l.pipeline_id) === scopeVal)));
       if (!hit) return [];
       return [{ id: hit.id, owner_id: hit.owner_id, stage_type: stageOf(hit.stage_id)?.stage_type ?? 'open' }];
     }
 
+    if (s.startsWith('SELECT user_id FROM campaign_agent_pause')) {
+      const cid = Number(params[0]);
+      const ids = (params[1] as number[]) ?? [];
+      return st.pausedAgents
+        .filter((p) => Number(p.campaign_id) === cid && ids.includes(Number(p.user_id)))
+        .map((p) => ({ user_id: p.user_id }));
+    }
     if (s.startsWith('SELECT id FROM "user" WHERE id = ANY')) {
       return (params[0] as number[]).filter((id) => st.users.includes(id)).map((id) => ({ id }));
     }

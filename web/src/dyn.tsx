@@ -524,6 +524,10 @@ function QuickContact() {
   const [scope, setScope] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number }>({});
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  // #10 — Alternate Mobile Number + WhatsApp Number, using the international PhoneInput
+  // like the main mobile field. Searchable here; and carried on the Add Lead form.
+  const [altPhone, setAltPhone] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
   const [email, setEmail] = useState('');
   const [results, setResults] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -533,7 +537,7 @@ function QuickContact() {
   const campaigns = ref.campaigns.filter((c) => !scope.pipeline || Number(c.pipeline_id) === scope.pipeline);
 
   const search = async () => {
-    const q = (phone || name).trim();
+    const q = (phone || altPhone || whatsapp || name).trim();
     // phone values carry "+<dial><national>" — search by digits, country-agnostic
     setBusy(true);
     try {
@@ -579,6 +583,10 @@ function QuickContact() {
                 <div style={{ flex: 1, minWidth: 0 }}><PhoneInput value={phone} onChange={setPhone} placeholder="Contact Number" /></div>
                 <button className="verify" style={{ position: 'static', flex: '0 0 auto' }} title="Verify" onClick={() => toast('Number verification lands with the messaging integration (Sprint 3)')}><Ic k="check" w={2.6} /></button>
               </div></div>
+            <div className="fld"><label>Alternate Mobile Number</label>
+              <PhoneInput value={altPhone} onChange={setAltPhone} placeholder="Alternate Mobile Number" /></div>
+            <div className="fld"><label>WhatsApp Number</label>
+              <PhoneInput value={whatsapp} onChange={setWhatsapp} placeholder="WhatsApp Number" /></div>
             <div className="fld span2"><label>Email</label><input className="ainp" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           </div>
           <div className="sechead">Custom Contact Property</div>
@@ -1340,10 +1348,38 @@ const PRIORITY_LABEL: Record<string, string> = { low: 'Low', med: 'Medium', high
 
 const OP_LABEL: Record<string, string> = { equals: '=', not_equals: '≠', contains: 'contains', in: 'in' };
 
-function CampaignView({ campaign, leadCount, onClose }: { campaign: any; leadCount: number; onClose: () => void }) {
+function CampaignView({ campaign, leadCount, onClose, onChanged }: { campaign: any; leadCount: number; onClose: () => void; onChanged?: () => void }) {
   const ref = useRef_();
+  const { can } = useAuth();
+  const canEdit = can('campaign.update');
   const dist = (campaign.distribution_config as any) ?? {};
   const userName = (id: number) => nameOf(ref.users, id) ?? `User #${id}`;
+  // #24 — per-agent pause/resume, applied against campaign_agent_pause.
+  const [paused, setPaused] = useState<Set<number>>(() => new Set(((campaign.paused_agent_user_ids ?? []) as number[]).map(Number)));
+  const [pauseBusy, setPauseBusy] = useState<number | null>(null);
+  const togglePause = async (uid: number) => {
+    const next = !paused.has(uid);
+    setPauseBusy(uid);
+    try {
+      await api.patch(`/campaigns/${campaign.id}/agents/${uid}/pause`, { paused: next });
+      setPaused((prev) => { const n = new Set(prev); if (next) n.add(uid); else n.delete(uid); return n; });
+      toast(next ? 'Agent paused — new leads will skip them' : 'Agent resumed');
+      onChanged?.();
+    } catch (e: any) { toast(e.message, true); } finally { setPauseBusy(null); }
+  };
+  const managerIds: number[] = Array.isArray(campaign.manager_user_ids) ? (campaign.manager_user_ids as number[]).map(Number) : [];
+  const agentIds: number[] = Array.isArray(dist.agent_user_ids) ? (dist.agent_user_ids as number[]).map(Number) : [];
+  const agentsNode = agentIds.length
+    ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {agentIds.map((id) => (
+          <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="mapchip" style={paused.has(id) ? { opacity: 0.55, textDecoration: 'line-through' } : undefined}>{userName(id)}</span>
+            {paused.has(id) && <span className="bdg b-amber" style={{ fontSize: 10 }}>Paused</span>}
+            {canEdit && <button className="btn" style={{ padding: '2px 10px', fontSize: 11 }} disabled={pauseBusy === id} onClick={() => togglePause(id)}>{paused.has(id) ? 'Resume' : 'Pause'}</button>}
+          </div>
+        ))}
+      </div>
+    : (dist.mode === 'on_demand' ? 'Anyone in scope (self-assign)' : 'None selected');
   const agentChips = (ids: unknown) => (Array.isArray(ids) && ids.length
     ? <span className="mapchips">{ids.map((id: number) => <span className="mapchip" key={id}>{userName(Number(id))}</span>)}</span>
     : null);
@@ -1376,8 +1412,7 @@ function CampaignView({ campaign, leadCount, onClose }: { campaign: any; leadCou
         <KV rows={[
           ['Mode', <>{renderCell({ b: [DIST_LABEL[dist.mode] ?? dist.mode ?? '\u2014', 'b-indigo'] })}<div className="sub" style={{ marginTop: 4, fontSize: 11.5 }}>{DIST_DESC[dist.mode] ?? ''}</div></>],
           ['Batch size', String(dist.batch_size ?? '\u2014')],
-          ['Agents', agentChips(dist.agent_user_ids)
-            ?? (dist.mode === 'on_demand' ? 'Anyone in scope (self-assign)' : 'None selected')],
+          ['Agents', agentsNode],
           ['Round robin', dist.round_robin_scope ?? '\u2014'],
           ['Conditions', Array.isArray(dist.conditions) && dist.conditions.length
             ? <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>{dist.conditions.map((c: any, i: number) => (
@@ -1386,6 +1421,14 @@ function CampaignView({ campaign, leadCount, onClose }: { campaign: any; leadCou
                 {' \u2192 '}{agentChips(c.assign_to_user_ids) ?? '\u2014'}
               </div>))}</div>
             : 'None'],
+        ]} />
+      </Section>
+      <Section title="Campaign managers">
+        <KV rows={[
+          ['Managers', managerIds.length
+            ? <span className="mapchips">{managerIds.map((id) => <span className="mapchip" key={id}>{userName(id)}</span>)}</span>
+            : 'None'],
+          ['Note', <span className="sub" style={{ fontSize: 11.5 }}>Managers get visibility only; they are NOT in the distribution pool, so they receive no auto-assigned leads.</span>],
         ]} />
       </Section>
       <Section title="Duplicacy rules (NeoDove)">
@@ -1466,7 +1509,7 @@ function Campaigns() {
           ];
         })} empty="No campaigns yet \u2014 create one to start pulling leads" />
       {del.deleteModal}
-      {view && <CampaignView campaign={view} leadCount={counts[Number(view.id)] ?? 0} onClose={() => setView(null)} />}
+      {view && <CampaignView campaign={view} leadCount={counts[Number(view.id)] ?? 0} onClose={() => setView(null)} onChanged={() => list.reload()} />}
       {edit && <CampaignModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
     </>
   );

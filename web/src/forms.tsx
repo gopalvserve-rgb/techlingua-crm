@@ -26,6 +26,9 @@ export interface FormField {
    *  pinned to the top of the user list and selected by default. Scoped per field,
    *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
   self?: boolean;
+  /** UAT-R2 #19 — 'today' sets a date/datetime input's `min` to the start of today
+   *  (no past dates). Only 'today' is supported today. */
+  min?: 'today';
 }
 export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src'], self?: 0 | 1 | boolean, def?: string): FormField =>
   ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src, self: !!self, def });
@@ -70,7 +73,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Branch', 'select', 1, 0, 'auto if desk is Branch-locked', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
     F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
-    F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped'),
+    { ...F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped \u00b7 today or later'), min: 'today' as const },
     { ...F('Purpose of Visit', 'select', 1, 0, 'master'), mopts: 'visitPurposes' }, F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
     // DEF-S34-02 — these three RENDERED but were never SENT and had no columns (migration 027).
     F('Course Fee', 'number', 0, 0, 'auto-filled from the Course master \u00b7 editable'),
@@ -89,6 +92,8 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
     F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'), F('Incentive / Reward Applicable', 'text', 0, 0, 'auto-computed'),
+    // UAT-R2 #20 — Assigned Counsellor: like Walk-in, owns the referred lead (else campaign distribution decides).
+    F('Assigned Counsellor', 'select', 0, 0, 'Users \u00b7 owns the referred lead', 'users'),
     F('Referral Status', 'select', 1, ['Pending', 'Converted', 'Rewarded', 'Rejected'])] },
   // UAT-R2 #4 — Source Category, Cost per Lead removed (backend keeps its defaults). Campaign
   // stays: it is the required parent that supplies the source's Branch › Vertical › Pipeline path.
@@ -287,6 +292,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       branch_id: need(ids['Branch'], 'Pick a Branch'),
       vertical_id: need(ids['Vertical'], 'Pick a Vertical'),
       campaign_id: need(ids['Campaign'], 'Pick a Campaign (the referred person becomes a lead)'),
+      owner_id: ids['Assigned Counsellor'],
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
       course_id: ids['Course Interested'],
       incentive: vals['Incentive / Reward Applicable'] || undefined,
@@ -842,7 +848,11 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     }
     if (t === 'leadlookup') return <LeadLookup value={v} onPick={(id, label) => setField(f.label, label, id)} />;
     if (t === 'date') return <input className="ainp" type="date" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
-    if (t === 'datetime') return <input className="ainp" type="datetime-local" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    if (t === 'datetime') {
+      // #19 — min='today' blocks a past Date of Visit in the picker (server also validates).
+      const min = f.min === 'today' ? `${new Date().toLocaleDateString('en-CA')}T00:00` : undefined;
+      return <input className="ainp" type="datetime-local" min={min} value={v} onChange={(e) => setField(f.label, e.target.value)} />;
+    }
     if (t === 'number') return <input className="ainp" type="number" placeholder="0" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
     if (t === 'password') return <input className="ainp" type="password" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
     if (t === 'tel') {
@@ -1040,6 +1050,11 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
   const [batchSize, setBatchSize] = useState<string>(
     String((initial?.distribution_config as any)?.batch_size ?? 10));
   const [priority, setPriority] = useState(initial?.priority ?? 'med');
+  // #23 — campaign managers (multi-user). SEPARATE from the agent pool below: a
+  // manager is a management/visibility role and is NEVER auto-assigned leads.
+  const [managers, setManagers] = useState<number[]>(() =>
+    Array.isArray((initial as any)?.manager_user_ids)
+      ? ((initial as any).manager_user_ids as number[]).map(Number) : []);
   const [dupScope, setDupScope] = useState<string>((initial?.duplicacy_config as any)?.check_scope ?? 'this_campaign');
   const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
   const [busy, setBusy] = useState(false);
@@ -1107,7 +1122,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           name: vals['name'].trim(),
           utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
           cost: vals['cost'] ? Number(vals['cost']) : 0,
-          priority, distribution_config, duplicacy_config, ...formFields,
+          priority, distribution_config, duplicacy_config, manager_user_ids: managers, ...formFields,
         });
         toast('Campaign updated');
       } else {
@@ -1116,7 +1131,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           name: vals['name'].trim(),
           utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
           cost: vals['cost'] ? Number(vals['cost']) : 0,
-          priority, distribution_config, duplicacy_config, ...formFields,
+          priority, distribution_config, duplicacy_config, manager_user_ids: managers, ...formFields,
         });
         toast('Campaign created');
       }
@@ -1221,6 +1236,13 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
               </button>
             </div>
           )}
+          <div className="sechead">Campaign Managers</div>
+          <div className="fld">
+            <label>Who will be managing this campaign?
+              <span className="fhint">management &amp; visibility only \u2014 managers are NOT auto-assigned leads</span></label>
+            <UserPicker value={managers} onChange={setManagers} branchId={branchId}
+              placeholder="Search users to manage this campaign…" />
+          </div>
           <div className="sechead">Additional Settings</div>
           <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', padding: 0 }}>
             <div className="fld"><label>Priority</label>

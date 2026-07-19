@@ -122,7 +122,7 @@ export class ImportService {
           continue;
         }
         seenKeys.add(key);
-        const existing = await this.ingestion.findDuplicate(lead.phone, target);
+        const existing = await this.ingestion.findDuplicate([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[], target);
         if (existing || seenPhones.has(lead.phone)) {
           dupes++;
           if (out.length < PREVIEW_ROWS) {

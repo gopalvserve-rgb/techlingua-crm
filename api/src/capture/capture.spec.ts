@@ -211,13 +211,29 @@ describe('referral — the referred person becomes a lead, through the same path
 /*  user filled in is silently discarded again.                                */
 /* ========================================================================== */
 
+// #19 — visited_at may not be in the past; use a stable "today (+1h)" so these
+// data-shape tests never depend on the wall clock.
+const FUTURE_VISIT = new Date(Date.now() + 3600e3).toISOString().slice(0, 16);
 const FULL_WALKIN = {
   ...WALKIN,
   alt_phone: '9810000012', whatsapp_phone: '9810000013', email: 'priya@x.com',
-  visited_at: '2026-07-14T10:30', course_id: 21,
+  visited_at: FUTURE_VISIT, course_id: 21,
   course_fee: '45000', heard_about_source_id: 81, convert_to_lead: true,
   remarks: 'Wants weekend batch',
 };
+
+describe('UAT-R2 #19 — a walk-in Date of Visit may not be in the past', () => {
+  it('createWalkIn REJECTS a past visited_at', async () => {
+    const { svc } = build();
+    await expect(svc.createWalkIn({ ...FULL_WALKIN, visited_at: '2020-01-01T10:00' } as any, 1, scope()))
+      .rejects.toThrow(/past/i);
+  });
+  it('createWalkIn ACCEPTS a today/future visited_at', async () => {
+    const { svc, calls } = build();
+    await svc.createWalkIn({ ...FULL_WALKIN, visited_at: FUTURE_VISIT } as any, 1, scope());
+    expect(calls.some((c) => /INSERT INTO walk_in/.test(c.sql))).toBe(true);
+  });
+});
 
 describe('DEF-S34-02 — every field the walk-in form renders is STORED', () => {
   const insertOf = (calls: Array<{ sql: string; params: unknown[] }>) =>
@@ -271,7 +287,7 @@ describe('DEF-S34-03 — the walk-in EDIT path', () => {
     await svc.updateWalkIn(55, {
       visitor_name: 'Priya S', phone: '9810000099', alt_phone: '9810000098',
       whatsapp_phone: '9810000097', email: 'new@x.com', purpose: 'Fee query',
-      course_id: 22, course_fee: '52000', remarks: 'corrected', visited_at: '2026-07-14T11:00',
+      course_id: 22, course_fee: '52000', remarks: 'corrected', visited_at: FUTURE_VISIT,
     } as any, 1, scope());
     const upd = calls.find((c) => /UPDATE walk_in SET/.test(c.sql))!;
     for (const col of ['visitor_name', 'phone', 'alt_phone', 'whatsapp_phone', 'email',
