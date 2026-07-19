@@ -64,11 +64,13 @@ export function Kpis({ items, cols = 4 }: { items: KpiItem[]; cols?: number }) {
   );
 }
 
-export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass }: {
+export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
   /** optional per-row tint class (e.g. error-log severity highlighting) */
   rowClass?: (rowIndex: number) => string | undefined;
+  /** UAT-R2 #11 — SaaS-style scrollable body with a sticky header (used by the Leads list). */
+  sticky?: boolean;
 }) {
   return (
     <div className="card">
@@ -78,7 +80,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
           {more ? <span className="more">{more}</span> : null}
         </div>
       )}
-      <div className="scroll-x">
+      <div className={sticky ? 'tbl-scroll' : 'scroll-x'}>
         <table className="tbl">
           <thead><tr>{cols.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
           <tbody>

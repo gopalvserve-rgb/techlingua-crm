@@ -1,7 +1,14 @@
 /**
  * International phone input (client update #2) — country-code selector + national
  * number, composing one E.164-ish value "+<dial><national>". Default India +91.
- * Used by lead add/edit, quick contact, the lead sheet and user forms.
+ * Used by lead add/edit, quick contact, the lead sheet, login and user forms.
+ *
+ * UAT-R2 #1 — the country-code selector now sits INSIDE the same bordered textbox as
+ * the number (a segmented left-side selector within one input shell), like modern intl
+ * phone inputs — not a separate box beside it. The visual border/background lives on the
+ * `.phone-shell` wrapper; the <select> and <input> are borderless and transparent. The
+ * client-update-6 width budget is preserved: the selector is fixed-width (CC_WIDTH) and
+ * the number input is the flexible element (flex:1, min-width:0) so it can never overflow.
  */
 import { useMemo } from 'react';
 
@@ -50,19 +57,13 @@ export const joinPhone = (dial: string, national: string) =>
  * client update #6 — width of the country-code selector.
  *
  * It used to be a flat 108px, which is ~20px more than the control can ever need.
- * That is invisible on a wide field but ruinous on a narrow one: the lead sheet lays
- * Phone and WhatsApp out in a 2-column `.kv` grid inside a 486px sheet, so the field
- * is only 219px — the 108px select ate 49% of it and left the number input 105px
- * (81px of usable text width). A 10-digit Indian number renders at ~77px, so it sat
- * flush against both edges, and any 11-12 digit international number overflowed and
- * scrolled. That is the bug the client reported.
- *
- * The budget, measured in Chrome/Windows (the client's own browser) at the app's 13px
- * Inter: the widest of the 18 options (a flag + a 3-digit dial, e.g. Oman +968) is
- * 53.2px; + padding (9 + 4) + the native dropdown arrow (~22px) = 88.2px. 90px leaves
- * ~2px of headroom so no dial code can truncate, and hands the ~18px the selector was
- * wasting back to the number input — which is the flex:1 one, so it absorbs the freed
- * space automatically in every container the field is used in.
+ * That is invisible on a wide field but ruinous on a narrow one. The budget, measured
+ * in Chrome/Windows (the client's own browser) at the app's 13px Inter: the widest of
+ * the 18 options (a flag + a 3-digit dial, e.g. Oman +968) is 53.2px; + padding + the
+ * native dropdown arrow (~22px) ≈ 88px. 90px leaves ~2px of headroom so no dial code can
+ * truncate. Now that the selector lives INSIDE the shell (UAT-R2 #1) it still owns a
+ * FIXED slice on the left; the number input is the flex:1 element, so it absorbs all the
+ * remaining width in every container the field is used in and never overflows.
  *
  * Keep in sync with phonefield.test.tsx, which pins this layout intent.
  */
@@ -73,14 +74,17 @@ export function PhoneInput({ value, onChange, placeholder, disabled }: {
 }) {
   const { dial, national } = useMemo(() => splitPhone(value), [value]);
   return (
-    <div style={{ display: 'flex', gap: 6 }}>
-      <select className="ainp" style={{ width: CC_WIDTH, flex: '0 0 auto', paddingLeft: 9, paddingRight: 4 }}
+    // One bordered shell holds both controls — the selector is segmented on the left,
+    // the number fills the rest. The wrapper carries the border (.phone-shell); the
+    // inner controls are borderless so it reads as a single input.
+    <div className={`phone-shell${disabled ? ' disabled' : ''}`}>
+      <select className="phone-cc ainp" style={{ width: CC_WIDTH, flex: '0 0 auto' }}
         value={dial} disabled={disabled}
         aria-label="Country code"
         onChange={(e) => onChange(national ? joinPhone(e.target.value, national) : `+${e.target.value}`)}>
         {COUNTRIES.map((c) => <option key={c.iso} value={c.dial}>{c.flag} +{c.dial}</option>)}
       </select>
-      <input className="ainp" type="tel" style={{ flex: 1, minWidth: 0 }} disabled={disabled}
+      <input className="phone-num ainp" type="tel" style={{ flex: 1, minWidth: 0 }} disabled={disabled}
         placeholder={placeholder ?? 'Mobile number'} value={national}
         onChange={(e) => {
           const nat = e.target.value.replace(/[^\d\s-]/g, '');

@@ -187,6 +187,10 @@ a{color:inherit;text-decoration:none}
 .lrow.empty{color:var(--text-dim);font-size:12.5px;justify-content:center;padding:24px 18px}
 .chk{width:18px;height:18px;border-radius:6px;border:1.5px solid var(--border-strong);flex:none;display:grid;place-items:center;color:transparent;cursor:pointer}
 .chk.done{background:var(--success);border-color:var(--success);color:#fff}.chk svg{width:12px;height:12px}
+/* UAT-R2 #13/#14 — compact per-row action button (Edit / open) inside a .lrow list. */
+.lrow-act{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);flex:none;transition:.13s;cursor:pointer}
+.lrow-act:hover{color:var(--primary);border-color:var(--primary)}
+.lrow-act svg{width:14px;height:14px}
 
 /* charts */
 .bars{display:flex;align-items:flex-end;gap:5px;height:140px;padding-top:10px}
@@ -395,6 +399,18 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .setcond{font-size:11.5px;font-weight:600;color:var(--primary);background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 30%,transparent);border-radius:20px;padding:7px 13px;margin-top:10px;display:inline-flex;gap:6px;align-items:center}
 .inpwrap{position:relative}
 .inpwrap .ainp{padding-right:34px}
+/* UAT-R2 #1 — unified international phone control. The country-code selector sits INSIDE
+   the same bordered textbox as the number: one shell carries the border/background, the
+   inner <select> and <input> are borderless/transparent so it reads as a single input.
+   The selector owns a fixed slice (CC_WIDTH); the number is flex:1/min-width:0 so it can
+   never overflow (client-update-6 budget preserved). */
+.phone-shell{display:flex;align-items:stretch;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;overflow:hidden;transition:.16s;min-width:0}
+.phone-shell:focus-within{border-color:var(--primary)}
+.phone-shell.disabled{opacity:.55;pointer-events:none}
+.phone-shell .ainp{border:none;background:transparent;border-radius:0;outline:none;box-shadow:none}
+.phone-shell .ainp:focus{border:none;box-shadow:none}
+.phone-shell .phone-cc{padding:9px 4px 9px 10px;border-right:1px solid var(--border);cursor:pointer;appearance:none;-webkit-appearance:none;color:var(--text);background-image:none}
+.phone-shell .phone-num{padding:9px 11px}
 .verify{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:var(--surface-3);color:var(--text-muted);border:1px solid var(--border);cursor:pointer}
 .verify:hover{color:var(--text)}
 .verify.wa{color:var(--success);background:var(--success-soft);border-color:transparent}
@@ -579,6 +595,30 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .chip{font-size:11.5px;font-weight:500;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;transition:.13s;font-family:inherit}
 .chip:hover{border-color:var(--primary);color:var(--text)}
 .chip.on{background:var(--primary);border-color:var(--primary);color:var(--primary-fg);font-weight:600}
+
+/* ============================ UAT-R2 #11 / #25 — SaaS-aligned polish ============================ *
+ * The smartcrm-saas Leads/Dashboard read as: a clean toolbar, quick band chips, a dense
+ * scrollable table with a sticky header, and lifted KPI cards. Reproduced here on THIS app's
+ * tokens (surface/border/primary/hot/warm/cold) — not by pasting the SaaS's slate/indigo CSS. */
+.kpi{transition:border-color .16s,transform .16s,box-shadow .16s}
+.kpi:hover{border-color:var(--border-strong);transform:translateY(-1px)}
+.card-head h3 svg{opacity:.9}
+/* Filter-bar treatment: the Leads filters read as one toolbar surface (SaaS filter bar). */
+.toolbar-surface{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px;margin-bottom:14px;box-shadow:var(--shadow)}
+.toolbar-surface .filters{margin-bottom:0}
+/* Quick band chips (SaaS qchips) — All / Hot / Warm / Cold, driving the temperature filter. */
+.qband{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.qband .qb{padding:5px 13px;border-radius:16px;font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);cursor:pointer;transition:.13s;display:inline-flex;align-items:center;gap:6px;font-family:inherit}
+.qband .qb:hover{border-color:var(--primary);color:var(--text)}
+.qband .qb.on{background:var(--primary-soft);border-color:var(--primary);color:var(--primary)}
+.qband .qb .d{width:7px;height:7px;border-radius:50%}
+.qband .qb.on.hot{background:color-mix(in srgb,var(--hot) 14%,transparent);border-color:var(--hot);color:var(--hot)}
+.qband .qb.on.warm{background:var(--amber-soft);border-color:var(--warm);color:var(--warm)}
+.qband .qb.on.cold{background:color-mix(in srgb,var(--cold) 14%,transparent);border-color:var(--cold);color:var(--cold)}
+/* Dense scrollable table body with a sticky header (SaaS Leads list). */
+.tbl-scroll{max-height:62vh;overflow:auto;border-radius:0 0 var(--r-lg) var(--r-lg)}
+.tbl-scroll .tbl thead th{position:sticky;top:0;z-index:2;background:var(--surface)}
+.tbl-scroll .tbl thead th::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--border)}
 
 /* ---- workspace: the channel list + the message thread. Reuses the wa-* shell the
    prototype already defines for WhatsApp Live Chat — same two-pane layout, same

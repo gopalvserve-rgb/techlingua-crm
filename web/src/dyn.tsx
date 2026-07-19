@@ -200,7 +200,7 @@ const VIEW_LABEL: Record<Dash['view'], string> = {
 };
 
 function DashOverview() {
-  const { openLead, refreshTick } = useScreen();
+  const { openLead, refreshTick, go, bump } = useScreen();
   const d = useFetch<Dash>('/dashboard', [refreshTick]);
   const today = useFetch<any[]>('/follow-ups?due=today&limit=5', [refreshTick]);
   const mine = useFetch<any[]>('/follow-ups?mine=1&status=pending&limit=4', [refreshTick]);
@@ -250,16 +250,13 @@ function DashOverview() {
       </div>
 
       <div className="row2" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
-        <ListCard title="Today's Follow-ups" icon="clock" more={String(fu?.due_today ?? 0)}
-          empty="No follow-ups due today"
-          rows={(today.data ?? []).map((f) => ({
-            ic: f.type_name === 'WhatsApp' ? 'wa' : f.type_name === 'Visit' ? 'users' : f.type_name === 'Email' ? 'mail' : 'calls',
-            tone: f.temperature === 'hot' ? 'b-hot' : f.temperature === 'warm' ? 'b-amber' : 'b-cold',
-            t1: <span style={{ cursor: 'pointer' }} onClick={() => openLead(f.lead_id)}>{f.type_name || 'Follow-up'} {f.lead_name}</span>,
-            t2: `${f.course_name || '—'} · ${f.temperature ? f.temperature[0].toUpperCase() + f.temperature.slice(1) : ''}`,
-            rt: new Date(f.scheduled_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-          }))} />
-        <MyTaskCard rows={mine.data ?? []} more={`${fu?.my_open ?? 0} open`} />
+        {/* #14 — a REAL, actionable Today's Follow-ups widget: open the lead, mark done
+            (with the #13 confirm), overdue highlighted. Click the header to open the list. */}
+        <TodayFollowupCard rows={today.data ?? []} count={fu?.due_today ?? 0} onChanged={bump}
+          onOpenList={() => go('dash', 'todayfollowups')} />
+        {/* #13(c) — the My Tasks summary card opens the full My Tasks list on click. */}
+        <MyTaskCard rows={mine.data ?? []} more={`${fu?.my_open ?? 0} open`}
+          onOpenList={() => go('dash', 'mytasks')} />
         <div className="card" style={{ background: 'linear-gradient(150deg,var(--primary-soft),var(--accent-soft))' }}>
           <div className="card-head"><h3><Ic k="intel" />AI Insights</h3><span className="bdg b-indigo">Gemini</span></div>
           <div className="empty-note">AI insights switch on once the Gemini key is configured (Phase 2).</div>
@@ -311,21 +308,79 @@ function DashOverview() {
   );
 }
 
-function MyTaskCard({ rows, more, title = 'My Tasks', empty }: { rows: any[]; more?: string; title?: string; empty?: string }) {
+/* ---- UAT-R2 #13 — a task/follow-up Edit prefill. Reuses the Add Task form; the related
+   lead is locked (a task belongs to its lead, §4i) and the PATCH hits /follow-ups/:id. ---- */
+const dtLocal = (isoStr?: string | null): string => {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const capFirst = (x?: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
+
+export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
+  title: `Edit Task \u2014 ${f.lead_name}`,
+  initialVals: {
+    'Title': f.notes ?? '',
+    'Task Type': f.type_name ?? '',
+    'Related Lead': f.lead_name ?? '',
+    'Assigned To': f.owner_name ?? '',
+    'Report To': f.report_to_name ?? '',
+    'Due Date': dtLocal(f.scheduled_at),
+    'Priority': capFirst(f.priority) ?? 'Medium',
+    'Description': '',
+  },
+  initialIds: {
+    'Task Type': f.type_id == null ? undefined : Number(f.type_id),
+    'Related Lead': f.lead_id == null ? undefined : Number(f.lead_id),
+    'Assigned To': f.owner_id == null ? undefined : Number(f.owner_id),
+    'Report To': f.report_to_id == null ? undefined : Number(f.report_to_id),
+  },
+  lock: ['Related Lead'],
+  submit: async (vals, ids) => {
+    await api.patch(`/follow-ups/${f.id}`, {
+      type_id: ids['Task Type'] ?? null,
+      owner_id: ids['Assigned To'] ?? undefined,
+      report_to_id: ids['Report To'] ?? null,
+      scheduled_at: need(vals['Due Date'], 'Due date is required'),
+      priority: (vals['Priority'] || 'Medium').toLowerCase(),
+      notes: [vals['Title'], vals['Description']].filter(Boolean).join(' \u2014 ') || undefined,
+    });
+    after();
+    return 'Task updated';
+  },
+});
+
+function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { rows: any[]; more?: string; title?: string; empty?: string; onOpenList?: () => void }) {
   const { bump, openLead } = useScreen();
   const { can } = useAuth();
   const canEdit = can('followup.update');
-  const complete = async (id: number) => {
-    try { await api.patch(`/follow-ups/${id}`, { complete: true }); toast('Task marked done'); bump(); }
+  const [edit, setEdit] = useState<any | null>(null);
+  // #13(b) — a confirmation popup before marking a task done (no accidental one-click).
+  const [confirmDone, setConfirmDone] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const complete = async () => {
+    if (!confirmDone) return;
+    setBusy(true);
+    try { await api.patch(`/follow-ups/${confirmDone.id}`, { complete: true }); toast('Task marked done'); setConfirmDone(null); bump(); }
     catch (e: any) { toast(e.message, true); }
+    finally { setBusy(false); }
   };
   return (
     <div className="card">
-      <div className="card-head"><h3><Ic k="check" />{title}</h3><span className="more">{more || ''}</span></div>
+      <div className="card-head">
+        <h3><Ic k="check" />{title}</h3>
+        {/* #13(c) — the summary card opens the full My Tasks list when wired (dashboard). */}
+        {onOpenList
+          ? <span className="more" role="button" title="Open My Tasks" style={{ cursor: 'pointer', color: 'var(--primary)' }}
+              onClick={onOpenList}>{`${more || 'View all'} \u203a`}</span>
+          : <span className="more">{more || ''}</span>}
+      </div>
       {rows.length === 0 ? <div className="lrow empty">{empty || 'No open tasks — follow-ups you own appear here'}</div> :
         rows.map((f) => (
           <div className="lrow" key={f.id}>
-            <div className="chk" onClick={() => complete(f.id)} title="Mark done" />
+            <div className="chk" onClick={() => setConfirmDone(f)} title="Mark done" />
             <div className="gr" style={{ cursor: 'pointer' }} onClick={() => openLead(f.lead_id)}>
               <div className="t1">{f.type_name || 'Follow-up'} — {f.lead_name}</div>
               <div className="t2">
@@ -334,9 +389,89 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty }: { rows: any[]; mo
               </div>
             </div>
             <PrioSelect id={Number(f.id)} value={f.priority} onChanged={bump} disabled={!canEdit} />
+            {/* #13(a) — Edit action on each task row */}
+            {canEdit ? (
+              <button className="lrow-act" title="Edit task" aria-label="Edit task"
+                onClick={(e) => { e.stopPropagation(); setEdit(f); }}><Ic k="pencil" /></button>
+            ) : null}
             <span className="rt">{fmtDT(f.scheduled_at)}</span>
           </div>
         ))}
+      {edit && (
+        <AddModal formKey="dash.mytasks" onClose={() => setEdit(null)}
+          onSaved={() => { setEdit(null); bump(); }} edit={taskEditSpec(edit, () => {})} />
+      )}
+      {confirmDone && (
+        <ConfirmModal title="Mark task as done?"
+          body={`\u201c${confirmDone.type_name || 'Follow-up'} \u2014 ${confirmDone.lead_name}\u201d will be marked done.`}
+          confirmLabel="Mark done" busy={busy}
+          onConfirm={complete} onClose={() => setConfirmDone(null)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * UAT-R2 #14 — Today's Follow-ups as a REAL, actionable widget (no fake data).
+ * Each row: opens the lead, marks done (with the #13 confirm), and OVERDUE is highlighted.
+ * Shared by the dashboard card and the standalone Today's Follow-ups screen — same rows,
+ * same scope (the API already scope-filters `/follow-ups?due=today`).
+ */
+function FollowupRows({ rows, onChanged, empty }: { rows: any[]; onChanged: () => void; empty?: string }) {
+  const { openLead } = useScreen();
+  const { can } = useAuth();
+  const canEdit = can('followup.update');
+  const [confirmDone, setConfirmDone] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const complete = async () => {
+    if (!confirmDone) return;
+    setBusy(true);
+    try { await api.patch(`/follow-ups/${confirmDone.id}`, { complete: true }); toast('Follow-up marked done'); setConfirmDone(null); onChanged(); }
+    catch (e: any) { toast(e.message, true); }
+    finally { setBusy(false); }
+  };
+  if (rows.length === 0) return <div className="lrow empty">{empty || 'No follow-ups due today'}</div>;
+  return (
+    <>
+      {rows.map((f) => {
+        const overdue = f.status === 'pending' && new Date(f.scheduled_at) < new Date();
+        return (
+          <div className={`lrow${overdue ? ' row-err' : ''}`} key={f.id}>
+            <div className="chk" onClick={() => canEdit && setConfirmDone(f)} title={canEdit ? 'Mark done' : 'Read-only'} />
+            <div className="gr" style={{ cursor: 'pointer' }} onClick={() => openLead(f.lead_id)}>
+              <div className="t1">{f.type_name || 'Follow-up'} — {f.lead_name}</div>
+              <div className="t2">
+                {f.course_name || '—'}
+                {f.temperature ? ` · ${capFirst(f.temperature)}` : ''}
+                {overdue ? <span style={{ color: 'var(--danger)', fontWeight: 600 }}> · overdue</span> : ''}
+              </div>
+            </div>
+            <TempBadge temperature={f.temperature} score={f.score} />
+            <span className="rt" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(f.scheduled_at)}</span>
+          </div>
+        );
+      })}
+      {confirmDone && (
+        <ConfirmModal title="Mark follow-up as done?"
+          body={`\u201c${confirmDone.type_name || 'Follow-up'} \u2014 ${confirmDone.lead_name}\u201d will be marked done.`}
+          confirmLabel="Mark done" busy={busy}
+          onConfirm={complete} onClose={() => setConfirmDone(null)} />
+      )}
+    </>
+  );
+}
+
+function TodayFollowupCard({ rows, count, onChanged, onOpenList }: { rows: any[]; count: number; onChanged: () => void; onOpenList?: () => void }) {
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3><Ic k="clock" />Today's Follow-ups</h3>
+        {onOpenList
+          ? <span className="more" role="button" title="Open Today's Follow-ups" style={{ cursor: 'pointer', color: 'var(--primary)' }}
+              onClick={onOpenList}>{`${count} due \u203a`}</span>
+          : <span className="more">{count} due</span>}
+      </div>
+      <FollowupRows rows={rows} onChanged={onChanged} empty="No follow-ups due today" />
     </div>
   );
 }
@@ -375,10 +510,9 @@ function MyTasks() {
 }
 
 function TodayFollowups() {
-  const { openLead, refreshTick } = useScreen();
+  const { refreshTick, bump } = useScreen();
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
   const list = useFetch<any[]>('/follow-ups?due=today&limit=100', [refreshTick]);
-  const rows = (list.data ?? []).map((f) => fuRow(f, openLead));
   return (
     <>
       <Kpis items={[
@@ -387,10 +521,14 @@ function TodayFollowups() {
         { lab: 'Done today', val: String(sum.data?.done_today ?? '0'), ic: 'check' },
         { lab: 'No-shows', val: '0', ic: 'bolt' },
       ]} />
-      <TableCard title={`Today — ${new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}`}
-        cols={['Lead', 'Course', 'Type', 'Owner', 'Due', 'Score']}
-        rows={rows.map((r) => r.row)} empty="No follow-ups due today"
-        onRowClick={(i) => openLead(rows[i].leadId)} />
+      {/* #14 — actionable: open the lead, mark done (confirm), overdue highlighted red. */}
+      <div className="card">
+        <div className="card-head">
+          <h3><Ic k="clock" />{`Today \u2014 ${new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}`}</h3>
+          <span className="more">{sum.data?.due_today ?? 0} due · {sum.data?.overdue ?? 0} overdue</span>
+        </div>
+        <FollowupRows rows={list.data ?? []} onChanged={bump} empty="No follow-ups due today" />
+      </div>
     </>
   );
 }
@@ -679,8 +817,21 @@ function LeadsAll() {
     </div>
   );
 
+  const BANDS: Array<[string, string | undefined]> = [['All', undefined], ['Hot', 'hot'], ['Warm', 'warm'], ['Cold', 'cold']];
+  const bandDot: Record<string, string> = { hot: 'var(--hot)', warm: 'var(--warm)', cold: 'var(--cold)' };
   return (
     <>
+      {/* UAT-R2 #11 — SaaS-style quick band chips (drive the same temperature filter). */}
+      <div className="qband">
+        {BANDS.map(([lab, val]) => (
+          <button key={lab} type="button"
+            className={`qb${(f.temperature ?? undefined) === val ? ` on ${val ?? ''}` : ''}`}
+            onClick={() => setF((x) => ({ ...x, temperature: val }))}>
+            {val ? <span className="d" style={{ background: bandDot[val] }} /> : null}{lab}
+          </button>
+        ))}
+      </div>
+      <div className="toolbar-surface">
       <div className="filters">
         {/* UAT-R2 #14/#26 — filters follow Branch › Vertical › Pipeline › Campaign › Source;
             each dropdown is filtered by its parent and every descendant filter resets when a
@@ -728,7 +879,8 @@ function LeadsAll() {
           <Ic k="clock" />SLA breached
         </button>
       </div>
-      <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']}
+      </div>
+      <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']} sticky
         rows={(data.data?.rows ?? []).map((l) => [...leadRow(l), rowActions({
           onView: () => openLead(Number(l.id)),
           onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,

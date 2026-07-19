@@ -36,6 +36,22 @@ export function assertPriority(value: unknown): 'low' | 'medium' | 'high' {
   return value as 'low' | 'medium' | 'high';
 }
 
+/**
+ * UAT-R2 #12 — a task / follow-up due date may not be back-dated (today or later only).
+ * A `datetime-local` value carries no timezone (wall-clock in the process zone), so the
+ * "today" comparison uses LOCAL calendar days, exactly like the walk-in Date-of-Visit guard.
+ * Empty/undefined passes (nothing to check); an invalid date is a 400.
+ */
+export function assertNotPastSchedule(scheduled_at: string | null | undefined): void {
+  if (scheduled_at == null || String(scheduled_at).trim() === '') return;
+  const d = new Date(scheduled_at);
+  if (isNaN(d.getTime())) throw new BadRequestException('Due date is not a valid date/time');
+  const day = (x: Date) => Date.UTC(x.getFullYear(), x.getMonth(), x.getDate());
+  if (day(d) < day(new Date())) {
+    throw new BadRequestException('Due date cannot be in the past');
+  }
+}
+
 const FU_SELECT = `
   SELECT f.id, f.lead_id, f.owner_id, f.type_id, f.disposition_id, f.scheduled_at, f.completed_at,
          f.status, f.priority, f.remind_at, f.notes, f.created_at, f.created_by, f.report_to_id,
@@ -130,6 +146,7 @@ export class FollowUpsService {
 
   async create(dto: CreateFollowUpDto, actorId: number, scope: ResolvedScope) {
     if (!dto?.lead_id || !dto?.scheduled_at) throw new BadRequestException('lead_id and scheduled_at are required');
+    assertNotPastSchedule(dto.scheduled_at);   // UAT-R2 #12 — no back-dated due dates
     // DEF-QA4-03: the body lead_id (and any explicit owner) must be inside the
     // caller's scope — a scoped agent cannot attach follow-ups to foreign leads.
     // Out-of-scope -> 404, consistent with the by-ID policy (no existence oracle).
@@ -220,7 +237,16 @@ export class FollowUpsService {
       if (!['pending', 'done', 'overdue'].includes(String(dto.status))) throw new BadRequestException('invalid status');
       set('status', dto.status);
     }
-    if (dto.scheduled_at !== undefined) set('scheduled_at', dto.scheduled_at);
+    if (dto.scheduled_at !== undefined) {
+      // UAT-R2 #12 — moving a due date into the past is refused, but only when the due
+      // DAY actually changes (re-saving an overdue task, or nudging the time within the
+      // same day, is never blocked). A day-key compare — both sides parsed the same way
+      // on the server — avoids the wall-clock/timezone fragility of an instant compare.
+      const dayKey = (x: unknown) => { const d = new Date(x as string);
+        return isNaN(d.getTime()) ? '' : `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`; };
+      if (dayKey(dto.scheduled_at) !== dayKey(before.scheduled_at)) assertNotPastSchedule(dto.scheduled_at);
+      set('scheduled_at', dto.scheduled_at);
+    }
     if (dto.remind_at !== undefined) set('remind_at', dto.remind_at);
     if (dto.type_id !== undefined) set('type_id', dto.type_id);
     if (dto.disposition_id !== undefined) set('disposition_id', dto.disposition_id);

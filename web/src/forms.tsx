@@ -186,13 +186,13 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   'leads.followups': { title: 'Add Follow-up', fields: [
     F('Lead', 'leadlookup', 1, 0, 'Search lead'), F('Type', 'select', 1, 0, 'master', 'followupTypes'), F('Disposition', 'select', 0, 0, 'master', 'dispositions'),
     F('Priority', 'select', 0, ['Low', 'Medium', 'High'], 'default: Medium'),
-    F('Next Follow-up Date', 'datetime', 1), F('Remarks', 'textarea')] },
+    { ...F('Next Follow-up Date', 'datetime', 1), min: 'today' as const }, F('Remarks', 'textarea')] },
   // client update #5 — Assigned To / Report To show the logged-in user as "Myself" (top of list, default).
   'dash.mytasks': { title: 'Add Task', fields: [
     F('Title', 'text', 1), F('Task Type', 'select', 0, 0, 'master', 'followupTypes'), F('Related Lead', 'leadlookup', 1, 0, 'Search lead'),
     F('Assigned To', 'select', 0, 0, 'Users', 'users', 1),
     F('Report To', 'select', 0, 0, 'Users · the assignee reports progress to them', 'users', 1),
-    F('Due Date', 'datetime', 1), F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea')] },
+    { ...F('Due Date', 'datetime', 1), min: 'today' as const }, F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea')] },
 };
 SPEC_FORMS['dash.quickcontact'] = { ...SPEC_FORMS['leads.all'], title: 'Quick Add Lead' };
 SPEC_FORMS['leads.branch'] = { ...SPEC_FORMS['admin.branches'] };
