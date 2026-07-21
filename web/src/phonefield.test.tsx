@@ -10,9 +10,10 @@
  * makes the country code the flexible element instead of the number, fails here instead of
  * in the client's UAT.
  */
+import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
-import { PhoneInput, CC_WIDTH, COUNTRIES } from './phonefield';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { PhoneInput, CC_WIDTH, COUNTRIES, splitPhone } from './phonefield';
 
 const renderField = () => {
   cleanup();
@@ -74,5 +75,107 @@ describe('PhoneInput layout — one unified box, number owns the space', () => {
     const { select, input } = renderField();
     expect(select.className).toContain('ainp');
     expect(input.className).toContain('ainp');
+  });
+});
+
+
+/**
+ * UAT-R2 #1 — THE DEFECT THE LAYOUT TESTS ABOVE MISSED (client re-reported it with a
+ * screenshot: "IN +91 | 971", "IN +91 | 44", "IN +91 | 966").
+ *
+ * Everything above asserts how the control LOOKS. Nothing above ever CHANGES a country,
+ * which is the whole interaction the client was reporting — so a control that put the dial
+ * digits into the number box and snapped the selector back to +91 shipped with 381 green
+ * tests. These tests exercise the interaction instead of the markup.
+ */
+function Harness({ initial = '', onEmit }: { initial?: string; onEmit?: (v: string) => void }) {
+  const [v, setV] = useState(initial);
+  return <PhoneInput value={v} onChange={(nv) => { onEmit?.(nv); setV(nv); }} />;
+}
+
+const mount = (initial = '') => {
+  cleanup();
+  const emitted: string[] = [];
+  render(<Harness initial={initial} onEmit={(v) => emitted.push(v)} />);
+  const select = screen.getByLabelText('Country code') as HTMLSelectElement;
+  const input = document.querySelector('input[type="tel"]') as HTMLInputElement;
+  return { select, input, emitted, last: () => emitted[emitted.length - 1] };
+};
+
+describe('PhoneInput interaction — choosing a country must never type into the number box', () => {
+  it('picking UAE on an EMPTY field leaves the number box empty and the selector on UAE', () => {
+    const { select, input, emitted } = mount('');
+    fireEvent.change(select, { target: { value: '971' } });
+    expect(select.value).toBe('971');           // selector must NOT snap back to +91
+    expect(input.value).toBe('');               // and "971" must NOT land in the number box
+    // a country code on its own is not a phone number — nothing to store yet
+    expect(emitted[emitted.length - 1]).toBe('');
+  });
+
+  it('EVERY one of the 18 countries: empty box stays empty, selector holds the choice', () => {
+    for (const c of COUNTRIES) {
+      const { select, input, last } = mount('');
+      fireEvent.change(select, { target: { value: c.dial } });
+      expect(`${c.iso}:${select.value}`).toBe(`${c.iso}:${c.dial}`);
+      expect(`${c.iso}:${input.value}`).toBe(`${c.iso}:`);
+      expect(`${c.iso}:${last() ?? ''}`).toBe(`${c.iso}:`);
+    }
+  });
+
+  it('country first, then the number → emits +<dial><national>', () => {
+    const { select, input, last } = mount('');
+    fireEvent.change(select, { target: { value: '971' } });
+    fireEvent.change(input, { target: { value: '501234567' } });
+    expect(last()).toBe('+971501234567');
+    expect(select.value).toBe('971');
+    expect(input.value).toBe('501234567');
+  });
+
+  it('number first, then a country change → the typed number survives, only the dial swaps', () => {
+    const { select, input, last } = mount('');
+    fireEvent.change(input, { target: { value: '9876543210' } });
+    expect(last()).toBe('+919876543210');
+    fireEvent.change(select, { target: { value: '44' } });
+    expect(last()).toBe('+449876543210');
+    expect(select.value).toBe('44');
+    expect(input.value).toBe('9876543210');
+  });
+
+  it('clearing the number keeps the chosen country (it does not snap back to +91)', () => {
+    const { select, input, last } = mount('');
+    fireEvent.change(select, { target: { value: '966' } });
+    fireEvent.change(input, { target: { value: '512345678' } });
+    fireEvent.change(input, { target: { value: '' } });
+    expect(last()).toBe('');
+    expect(select.value).toBe('966');
+    expect(input.value).toBe('');
+  });
+
+  it('edit prefill of a stored international number shows the right country and national part', () => {
+    const { select, input } = mount('+971501234567');
+    expect(select.value).toBe('971');
+    expect(input.value).toBe('501234567');
+  });
+
+  it('edit prefill of a stored Indian number still shows +91', () => {
+    const { select, input } = mount('+919876543210');
+    expect(select.value).toBe('91');
+    expect(input.value).toBe('9876543210');
+  });
+});
+
+describe('splitPhone is robust to a bare dial code (so no other caller can hit the trap)', () => {
+  it('a bare "+971" resolves to UAE with an EMPTY national part, not +91 / "971"', () => {
+    expect(splitPhone('+971')).toEqual({ dial: '971', national: '' });
+    expect(splitPhone('+44')).toEqual({ dial: '44', national: '' });
+    expect(splitPhone('+966')).toEqual({ dial: '966', national: '' });
+    expect(splitPhone('+91')).toEqual({ dial: '91', national: '' });
+  });
+
+  it('real numbers still split as before', () => {
+    expect(splitPhone('+971501234567')).toEqual({ dial: '971', national: '501234567' });
+    expect(splitPhone('+919876543210')).toEqual({ dial: '91', national: '9876543210' });
+    expect(splitPhone('9876543210')).toEqual({ dial: '91', national: '9876543210' });
+    expect(splitPhone('')).toEqual({ dial: '91', national: '' });
   });
 });

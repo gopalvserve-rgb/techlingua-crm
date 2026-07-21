@@ -9,8 +9,18 @@
  * `.phone-shell` wrapper; the <select> and <input> are borderless and transparent. The
  * client-update-6 width budget is preserved: the selector is fixed-width (CC_WIDTH) and
  * the number input is the flexible element (flex:1, min-width:0) so it can never overflow.
+ *
+ * UAT-R2 #1 DEFECT FIX (client re-report, with screenshot) — THE SELECTED COUNTRY IS
+ * COMPONENT STATE, not something derived from the text value. It used to be derived:
+ * choosing a country while the number box was empty emitted the bare string "+971", which
+ * `splitPhone` could not resolve (its match rule required digits BEYOND the dial code), so
+ * it fell back to +91 and returned "971" as the NATIONAL number — the selector snapped back
+ * to +91 and the dial digits appeared in the number box. A country choice cannot survive a
+ * round-trip through a value that has no room to carry it, so the dial now lives in state
+ * and is re-synced only when a value carrying a real number arrives from outside (edit
+ * prefill). A country code on its own is NOT a phone number: the field emits ''.
  */
-import { useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface Country { iso: string; name: string; dial: string; flag: string }
 
@@ -43,6 +53,13 @@ export function splitPhone(value: string | null | undefined): { dial: string; na
   if (v.startsWith('+') || digits.length > 10) {
     // longest dial-code match wins (dial codes here are prefix-free enough)
     const sorted = [...COUNTRIES].sort((a, b) => b.dial.length - a.dial.length);
+    // A BARE dial code ("+971") resolves to that country with an EMPTY national part.
+    // Without this it matched nothing (the rule below needs digits BEYOND the dial code)
+    // and fell through to +91 / national "971" — the UAT-R2 #1 defect. Belt and braces:
+    // the real fix is that PhoneInput holds the dial in state, but no other caller of
+    // splitPhone should be able to walk into the same trap.
+    const exact = sorted.find((c) => digits === c.dial);
+    if (exact) return { dial: exact.dial, national: '' };
     const hit = sorted.find((c) => digits.startsWith(c.dial) && digits.length > c.dial.length);
     if (hit) return { dial: hit.dial, national: digits.slice(hit.dial.length) };
     if (v.startsWith('+')) return { dial: '91', national: digits };
@@ -72,7 +89,21 @@ export const CC_WIDTH = 90;
 export function PhoneInput({ value, onChange, placeholder, disabled }: {
   value: string; onChange: (v: string) => void; placeholder?: string; disabled?: boolean;
 }) {
-  const { dial, national } = useMemo(() => splitPhone(value), [value]);
+  const parsed = splitPhone(value);
+  // The chosen country is STATE. The national number stays derived from `value` (it is the
+  // only thing the value can carry losslessly), but the dial cannot be — an empty number
+  // has nowhere to keep it. See the header note.
+  const [dial, setDial] = useState(parsed.dial);
+  const seen = useRef(value);
+  useEffect(() => {
+    if (value === seen.current) return;
+    seen.current = value;
+    // Only a value that actually CARRIES a number can tell us its country (edit prefill,
+    // or a parent resetting the form). An emptied field keeps the country the user picked.
+    const p = splitPhone(value);
+    if (p.national) setDial(p.dial);
+  }, [value]);
+  const national = parsed.national;
   return (
     // One bordered shell holds both controls — the selector is segmented on the left,
     // the number fills the rest. The wrapper carries the border (.phone-shell); the
@@ -81,14 +112,23 @@ export function PhoneInput({ value, onChange, placeholder, disabled }: {
       <select className="phone-cc ainp" style={{ width: CC_WIDTH, flex: '0 0 auto' }}
         value={dial} disabled={disabled}
         aria-label="Country code"
-        onChange={(e) => onChange(national ? joinPhone(e.target.value, national) : `+${e.target.value}`)}>
+        onChange={(e) => {
+          const next = e.target.value;
+          setDial(next);
+          seen.current = joinPhone(next, national);
+          // Re-join whatever is typed; with an EMPTY number this emits '' — a country code
+          // on its own is not a phone number and must never be stored (or typed into the box).
+          onChange(joinPhone(next, national));
+        }}>
         {COUNTRIES.map((c) => <option key={c.iso} value={c.dial}>{c.flag} +{c.dial}</option>)}
       </select>
       <input className="phone-num ainp" type="tel" style={{ flex: 1, minWidth: 0 }} disabled={disabled}
         placeholder={placeholder ?? 'Mobile number'} value={national}
         onChange={(e) => {
           const nat = e.target.value.replace(/[^\d\s-]/g, '');
-          onChange(nat.trim() ? joinPhone(dial, nat) : '');
+          const next = nat.trim() ? joinPhone(dial, nat) : '';
+          seen.current = next;   // our own emission must not re-sync (and reset) the dial
+          onChange(next);
         }} />
     </div>
   );
