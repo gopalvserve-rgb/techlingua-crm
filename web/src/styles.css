@@ -133,6 +133,12 @@ a{color:inherit;text-decoration:none}
 .kpi .val{font-family:var(--font-display);font-size:23px;font-weight:700;letter-spacing:-.02em;margin-top:2px;line-height:1.05;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;width:fit-content}
 .kpi .delta{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:700;margin-top:7px;padding:2px 7px;border-radius:6px}
 .kpi .delta svg{width:11px;height:11px}
+/* #13(c) — a navigable summary tile: clear affordance (pointer, hover lift, focus ring). */
+.kpi-nav{cursor:pointer;transition:transform .12s ease,box-shadow .12s ease,border-color .12s ease}
+.kpi-nav:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--border-strong)}
+.kpi-nav:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.kpi-nav::after{content:'\203a';position:absolute;top:12px;right:13px;color:var(--text-muted);font-size:16px;line-height:1;opacity:.55}
+.kpi-nav:hover::after{color:var(--primary);opacity:1}
 .delta.up{color:var(--success);background:var(--success-soft)}.delta.down{color:var(--danger);background:var(--danger-soft)}.delta.flat{color:var(--text-muted);background:var(--surface-3)}
 .ic.indigo{background:var(--primary-soft);color:var(--primary)}.ic.cyan{background:var(--accent-soft);color:var(--accent)}.ic.amber{background:var(--amber-soft);color:var(--amber)}.ic.green{background:var(--success-soft);color:var(--success)}.ic.rose{background:var(--danger-soft);color:var(--danger)}
 

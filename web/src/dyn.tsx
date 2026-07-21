@@ -216,16 +216,23 @@ function DashOverview() {
   const kpiItems = personal ? [
     { lab: 'My leads', val: String(k?.total ?? 0), ic: 'leads' },
     { lab: 'My conversions', val: String(k?.won ?? 0), ic: 'check' },
+    // #13(c) — the task SUMMARY tiles open the My Tasks list (this is the "Task Summary"
+    // the client clicks). Card-header "View all ›" keeps working too.
     { lab: 'My open tasks', val: String(fu?.my_open ?? 0), ic: 'clock',
-      delta: fu?.my_overdue ? `${fu.my_overdue} overdue` : undefined, tone: fu?.my_overdue ? 'down' as const : 'flat' as const },
-    { lab: 'Due today', val: String(fu?.my_due_today ?? 0), ic: 'cal' },
+      delta: fu?.my_overdue ? `${fu.my_overdue} overdue` : undefined, tone: fu?.my_overdue ? 'down' as const : 'flat' as const,
+      onClick: () => go('dash', 'mytasks'), navLabel: `My open tasks: ${fu?.my_open ?? 0}. Open My Tasks list` },
+    { lab: 'Due today', val: String(fu?.my_due_today ?? 0), ic: 'cal',
+      onClick: () => go('dash', 'mytasks'), navLabel: `Tasks due today: ${fu?.my_due_today ?? 0}. Open My Tasks list` },
     { lab: 'Hot leads', val: String(k?.hot ?? 0), ic: 'bolt' },
     { lab: 'New today', val: String(k?.today ?? 0), ic: 'users' },
   ] : [
     { lab: "Today's leads", val: String(k?.today ?? 0), ic: 'leads' },
     { lab: 'Conversions', val: String(k?.won ?? 0), ic: 'check' },
     { lab: 'Pending follow-ups', val: String(fu?.pending ?? 0), ic: 'clock',
-      delta: fu?.overdue ? `${fu.overdue} overdue` : undefined, tone: fu?.overdue ? 'down' as const : 'flat' as const },
+      delta: fu?.overdue ? `${fu.overdue} overdue` : undefined, tone: fu?.overdue ? 'down' as const : 'flat' as const,
+      // #13(c) — the manager's task-summary tile opens the My Tasks list (the follow-up module,
+      // §4i). My Tasks is the actionable task/follow-up list; Today's Follow-ups is due=today only.
+      onClick: () => go('dash', 'mytasks'), navLabel: `Pending follow-ups: ${fu?.pending ?? 0}. Open My Tasks list` },
     { lab: 'SLA breaches', val: String(data?.sla?.open_breaches ?? 0), ic: 'bolt',
       tone: (data?.sla?.open_breaches ?? 0) > 0 ? 'down' as const : 'flat' as const },
     { lab: 'Walk-ins today', val: String(data?.walkins?.today ?? 0), ic: 'users' },

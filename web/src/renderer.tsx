@@ -1,5 +1,5 @@
 /** Generic spec-driven block renderer — mirrors the prototype's renderBlock(). */
-import { Fragment, ReactNode } from 'react';
+import { Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Block, KpiItem } from './specs';
 import { Ic, checkS } from './icons';
 
@@ -46,8 +46,20 @@ export function Kpis({ items, cols = 4 }: { items: KpiItem[]; cols?: number }) {
     (({ rupee: 'amber', check: 'green', clock: 'rose', leads: 'indigo', users: 'cyan', students: 'indigo' } as Record<string, string>)[ic ?? ''] || 'indigo');
   return (
     <div className="kpi-strip" style={{ gridTemplateColumns: `repeat(${cols},1fr)` }}>
-      {items.map((k, i) => (
-        <div className="card kpi" key={i}>
+      {items.map((k, i) => {
+        // #13(c) — a tile with an onClick becomes a real, accessible button: pointer cursor,
+        // hover lift, role="button", keyboard-activatable (Enter/Space) and an accessible label.
+        const nav = k.onClick;
+        return (
+        <div className={`card kpi${nav ? ' kpi-nav' : ''}`} key={i}
+          {...(nav ? {
+            role: 'button' as const, tabIndex: 0,
+            'aria-label': k.navLabel || `${k.lab}: ${k.val}. Open list`,
+            onClick: nav,
+            onKeyDown: (e: ReactKeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nav(); }
+            },
+          } : {})}>
           <div className={`ic ${icTone(k.ic)}`}><Ic k={k.ic || 'bolt'} /></div>
           <div className="lab">{k.lab}</div>
           <div className="val">{k.val}</div>
@@ -59,7 +71,8 @@ export function Kpis({ items, cols = 4 }: { items: KpiItem[]; cols?: number }) {
             </div>
           ) : null}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

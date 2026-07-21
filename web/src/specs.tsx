@@ -6,7 +6,10 @@
  * states plus the prototype's own capability/config descriptions.
  */
 
-export interface KpiItem { lab: string; val: string; delta?: string; tone?: 'up' | 'down' | 'flat'; ic?: string }
+export interface KpiItem { lab: string; val: string; delta?: string; tone?: 'up' | 'down' | 'flat'; ic?: string;
+  /** #13(c) — make a summary tile navigable. When present the tile gets a button role,
+   * keyboard activation (Enter/Space), a pointer cursor and `navLabel` as its accessible name. */
+  onClick?: () => void; navLabel?: string }
 export interface CapItem { t: string; d?: string; p2?: boolean }
 export interface CfgRow { ic?: string; k: string; s?: string; v?: string; toggle?: boolean }
 export interface ListRow { ic?: string; tone?: string; t1: string; t2?: string; rt?: string }

@@ -225,3 +225,85 @@ describe('the lead LIST — band filterable + sortable, breach visible', () => {
     await waitFor(() => expect(paths.some((p) => p.includes('sla_breached=1'))).toBe(true));
   });
 });
+
+/**
+ * #13(c) — the Task SUMMARY tiles must open the My Tasks list.
+ *
+ * Batch E wired only the My Tasks CARD-HEADER "View all ›" link. But the client clicks the
+ * KPI summary TILE (the number) — "My open tasks" / "Due today" (counsellor) or
+ * "Pending follow-ups" (manager) — and nothing happened because the `Kpis` tiles had no
+ * onClick/role. These tests assert the tiles are a real, keyboard-activatable button that
+ * navigates via go('dash','mytasks'). They were PROVEN to fail against the pre-fix code
+ * (tiles had no button role and clicking called go 0 times).
+ */
+describe('#13(c) — the task-summary KPI tiles open the My Tasks list', () => {
+  const clickList = { '/dashboard': COUNSELLOR, '/follow-ups': [], '/leads': { total: 0, rows: [] } };
+
+  it('COUNSELLOR: "My open tasks" tile is a button that navigates to dash/mytasks', async () => {
+    ROUTES = clickList;
+    draw('dashOverview');
+    await screen.findByText('My work');
+    const tile = screen.getByRole('button', { name: /My open tasks: 4\. Open My Tasks list/ });
+    expect(tile).toBeTruthy();
+    CTX.go.mockClear();
+    fireEvent.click(tile);
+    expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+  });
+
+  it('COUNSELLOR: "Due today" tile navigates to dash/mytasks', async () => {
+    ROUTES = clickList;
+    draw('dashOverview');
+    await screen.findByText('My work');
+    const tile = screen.getByRole('button', { name: /Tasks due today: 2\. Open My Tasks list/ });
+    CTX.go.mockClear();
+    fireEvent.click(tile);
+    expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+  });
+
+  it('the tile is KEYBOARD-activatable (Enter and Space) with a button role and tabindex', async () => {
+    ROUTES = clickList;
+    draw('dashOverview');
+    await screen.findByText('My work');
+    const tile = screen.getByRole('button', { name: /My open tasks: 4\. Open My Tasks list/ });
+    expect(tile.getAttribute('tabindex')).toBe('0');
+    CTX.go.mockClear();
+    fireEvent.keyDown(tile, { key: 'Enter' });
+    expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+    CTX.go.mockClear();
+    fireEvent.keyDown(tile, { key: ' ' });
+    expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+  });
+
+  it('MANAGER: "Pending follow-ups" tile navigates to dash/mytasks', async () => {
+    ROUTES = { '/dashboard': BRANCH_MGR, '/follow-ups': [], '/leads': { total: 0, rows: [] } };
+    draw('dashOverview');
+    await screen.findByText('My branch');
+    const tile = screen.getByRole('button', { name: /Pending follow-ups: 5\. Open My Tasks list/ });
+    CTX.go.mockClear();
+    fireEvent.click(tile);
+    expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+  });
+
+  it('non-task tiles stay PLAIN — "My leads" is not a button (no dead affordance)', async () => {
+    ROUTES = clickList;
+    draw('dashOverview');
+    await screen.findByText('My work');
+    // "My leads" has no navigation, so it must not carry a button role.
+    expect(screen.queryByRole('button', { name: /My leads/ })).toBeNull();
+    expect(screen.getByText('My leads')).toBeTruthy();     // still shown as a stat
+  });
+
+  it('the My Tasks screen summary tiles are NOT clickable-looking-but-dead', async () => {
+    // On dash.mytasks the KPI tiles summarise the very list below them, so they are pure
+    // display — they must carry NO button role (nothing that looks clickable yet does nothing).
+    ROUTES = {
+      '/follow-ups/summary': { my_open: 4, my_due_today: 2, my_overdue: 1, my_done_week: 3,
+        reported_open: 0, reported_due_today: 0, reported_overdue: 0, reported_done_week: 0 },
+      '/follow-ups': [],
+    };
+    draw('myTasks');
+    expect(await screen.findByText('Open tasks')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Open tasks/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Overdue/ })).toBeNull();
+  });
+});
