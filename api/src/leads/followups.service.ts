@@ -7,6 +7,7 @@ import { FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
 import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { SettingsService } from '../common/settings.service';
+import { assertActiveUser } from './active-user.util';
 
 export interface FollowUpFilters {
   lead_id?: number; owner_id?: number; status?: string;
@@ -294,12 +295,9 @@ export class FollowUpsService {
    * a disabled user be assigned. Guard on `status` (soft-delete check stays).
    */
   private async assertActiveUser(id: number, field: 'owner_id' | 'report_to_id'): Promise<void> {
-    const n = Number(id);
-    if (!Number.isInteger(n) || n <= 0) throw new BadRequestException(`invalid ${field}`);
-    const u = await this.db.one<{ id: string }>(
-      `SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [n],
-    );
-    if (!u) throw new BadRequestException(`${field} must be an active user`);
+    // Delegates to the shared guard (leads/active-user.util) so the "active user" rule
+    // lives in exactly one place — reused by lead reassign and follow-up owner/report_to.
+    await assertActiveUser(this.db, id, field);
   }
 
   /**

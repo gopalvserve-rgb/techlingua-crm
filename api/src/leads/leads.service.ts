@@ -7,6 +7,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { looksLikePhoneQuery, normalizePhone, phoneQueryFragments } from '../common/phone.util';
+import { assertActiveUser } from './active-user.util';
 import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 
@@ -337,8 +338,9 @@ export class LeadsService {
     if (dto.owner_id !== undefined && Number(dto.owner_id ?? 0) !== Number(before.owner_id ?? 0)) {
       const ownerId = dto.owner_id == null ? null : Number(dto.owner_id);
       if (ownerId != null) {
-        const u = await this.db.one(`SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [ownerId]);
-        if (!u) throw new BadRequestException('unknown owner');
+        // DEF-R3-01: the reassign/owner target must be an ACTIVE user (status='active',
+        // not soft-deleted). Shared guard names the field in the 400.
+        await assertActiveUser(this.db, ownerId, 'owner_id');
       }
       set('owner_id', ownerId);
       activities.push({ type: 'assign', from: { owner_id: before.owner_id }, to: { owner_id: ownerId } });
