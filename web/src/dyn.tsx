@@ -839,6 +839,24 @@ function LeadsAll() {
   const data = useFetch<{ total: number; rows: any[] }>(`/leads?${params.toString()}`, [refreshTick, params.toString()]);
   const del = useDelete('Lead', '/leads', () => bump());
 
+  // UAT-R3b #11 — three switchable Leads views (Classic / Modern / Inbox), ported from the
+  // SaaS tenant (public/tenant/leadsV2.js segment toggle). The choice is remembered per user
+  // like the theme is (localStorage 'tl_leads_view'); guarded for jsdom. ALL three views share
+  // the SAME data fetch, filters, RBAC scope and row actions below — only the results region
+  // changes, so nothing about filtering/scoping/pagination/actions can regress between views.
+  const [view, setView] = useState<'classic' | 'modern' | 'inbox'>(() => {
+    try {
+      const v = localStorage.getItem('tl_leads_view');
+      if (v === 'modern' || v === 'inbox' || v === 'classic') return v;
+    } catch { /* jsdom: no localStorage */ }
+    return 'classic';
+  });
+  const pickView = (v: 'classic' | 'modern' | 'inbox') => {
+    setView(v);
+    try { localStorage.setItem('tl_leads_view', v); } catch { /* jsdom */ }
+  };
+  const rows = data.data?.rows ?? [];
+
   const chip = (label: string, icon: string, value: number | undefined, list: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
     <div className="fchip" key={label}>
       <Ic k={icon} />{label}
@@ -862,6 +880,15 @@ function LeadsAll() {
             {val ? <span className="d" style={{ background: bandDot[val] }} /> : null}{lab}
           </button>
         ))}
+        {/* UAT-R3b #11 — segmented view switcher (Classic / Modern / Inbox), SaaS-tenant parity. */}
+        <div className="lv-seg" role="tablist" aria-label="Leads view" style={{ marginLeft: 'auto' }}>
+          {([['classic', 'Classic', 'list'], ['modern', 'Modern', 'grid'], ['inbox', 'Inbox', 'mail']] as const).map(([k, lab, ic]) => (
+            <button key={k} type="button" role="tab" aria-selected={view === k}
+              className={`lv-seg-b${view === k ? ' on' : ''}`} onClick={() => pickView(k)}>
+              <Ic k={ic} />{lab}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="toolbar-surface">
       <div className="filters">
@@ -912,15 +939,191 @@ function LeadsAll() {
         </button>
       </div>
       </div>
-      <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']} sticky
-        rows={(data.data?.rows ?? []).map((l) => [...leadRow(l), rowActions({
-          onView: () => openLead(Number(l.id)),
-          onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,
-          onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
-        })])}
-        empty="No leads in scope yet — add a lead or connect a source"
-        onRowClick={(i) => openLead(Number(data.data!.rows[i].id))} />
+      {/* Classic view — the traditional dense data table (default), untouched from Batch E. */}
+      {view === 'classic' && (
+        <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']} sticky
+          rows={rows.map((l) => [...leadRow(l), rowActions({
+            onView: () => openLead(Number(l.id)),
+            onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,
+            onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
+          })])}
+          empty="No leads in scope yet — add a lead or connect a source"
+          onRowClick={(i) => openLead(Number(rows[i].id))} />
+      )}
+      {/* Modern view — the SaaS "A3" rich-row/card layout on this app's tokens. */}
+      {view === 'modern' && (
+        <ModernLeads rows={rows} total={data.data?.total ?? 0} openLead={openLead}
+          canEditLead={canEditLead} canDeleteLead={canDeleteLead} del={del} />
+      )}
+      {/* Inbox view — the SaaS "C3" split list + reading pane. */}
+      {view === 'inbox' && (
+        <InboxLeads rows={rows} openLead={openLead}
+          canEditLead={canEditLead} canDeleteLead={canDeleteLead} del={del} />
+      )}
       {del.deleteModal}
+    </>
+  );
+}
+
+/* ==========================================================================
+ * UAT-R3b #11 — Modern + Inbox Leads views (SaaS tenant parity, app tokens).
+ * Both consume the SAME rows the Classic table does (one /leads fetch, one set
+ * of filters + RBAC scope) and expose the SAME row actions (open / edit / delete;
+ * reassign lives inside the lead sheet that "open" launches). The Inbox reading
+ * pane reuses the lead-detail endpoint (/leads/:id) and the lead sheet's activity
+ * feed — no parallel data path.
+ * ======================================================================== */
+type LeadsViewProps = {
+  rows: any[];
+  openLead: (id: number) => void;
+  canEditLead: boolean;
+  canDeleteLead: boolean;
+  del: { openDelete: (id: number, name: string) => void };
+};
+
+const stageBadgeClass = (t?: string) => (t === 'won' ? 'b-green' : t === 'lost' ? 'b-rose' : 'b-cyan');
+
+function ModernLeads({ rows, total, openLead, canEditLead, canDeleteLead, del }: LeadsViewProps & { total: number }) {
+  return (
+    <div className="card lv-modern" data-testid="leads-modern">
+      <div className="card-head"><h3><Ic k="grid" />Leads</h3><span className="more">{total} in scope</span></div>
+      <div className="lv-cards">
+        {rows.length === 0 && <div className="empty-note" style={{ padding: 24 }}>No leads in scope yet — add a lead or connect a source</div>}
+        {rows.map((l) => {
+          const overdue = l.next_follow_up_at && new Date(l.next_follow_up_at) < new Date();
+          const bucket = l.temperature === 'hot' ? 'hot' : l.temperature === 'warm' ? 'warm' : l.temperature === 'cold' ? 'cold' : '';
+          return (
+            <div key={l.id} className={`lv-card${bucket ? ` b-${bucket}` : ''}`} onClick={() => openLead(Number(l.id))}>
+              <Avatar name={l.full_name} size="lg" />
+              <div className="main">
+                <div className="r1">
+                  <span className="nm">{l.full_name}</span>
+                  <TempBadge temperature={l.temperature} score={l.score} />
+                  {l.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA</span> : null}
+                  {l.is_flagged && !l.sla_breached ? <span className="bdg b-amber" title={l.flag_reason || 'Flagged'}>!</span> : null}
+                  <span className={`bdg ${stageBadgeClass(l.stage_type)}`} style={{ marginLeft: 'auto' }}>{l.stage_name || '—'}</span>
+                </div>
+                <div className="r2 mono sub">{l.phone}{l.email ? ` · ${l.email}` : ''}</div>
+                <div className="r3">
+                  <span className="kv"><Ic k="leads" />{l.course_name || '—'}</span>
+                  <span className="kv"><Ic k="grid" />{dn(l.vertical_name, l.vertical_deleted)} · {dn(l.pipeline_name, l.pipeline_deleted)}</span>
+                  <span className="kv"><span className="bdg b-indigo">{dn(l.source_name, l.source_deleted) || '—'}</span></span>
+                  <span className="kv"><Ic k="users" />{l.owner_name || 'Unassigned'}</span>
+                  <span className="kv" style={overdue ? { color: 'var(--danger)' } : undefined}><Ic k="clock" />{fmtDT(l.next_follow_up_at)}</span>
+                </div>
+              </div>
+              <div className="lv-card-act" onClick={(e) => e.stopPropagation()}>
+                <button className="ract" title="View" onClick={() => openLead(Number(l.id))}><Ic k="eye" w={2.1} /></button>
+                {canEditLead && <button className="ract" title="Edit" onClick={() => openLead(Number(l.id))}><Ic k="pencil" w={2.1} /></button>}
+                {canDeleteLead && <button className="ract" title="Delete" style={{ color: 'var(--danger)' }} onClick={() => del.openDelete(Number(l.id), l.full_name)}><Ic k="trash" w={2.1} /></button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function InboxLeads({ rows, openLead, canEditLead, canDeleteLead, del }: LeadsViewProps) {
+  const [sel, setSel] = useState<number | null>(null);
+  // Keep the selection valid as the (filtered) rows change; the right pane reuses /leads/:id.
+  useEffect(() => {
+    if (sel != null && !rows.some((r) => Number(r.id) === sel)) setSel(null);
+  }, [rows, sel]);
+  const detail = useFetch<any>(sel != null ? `/leads/${sel}` : null, [sel]);
+  return (
+    <div className="card lv-inbox" data-testid="leads-inbox">
+      <div className="lv-inbox-list">
+        <div className="lv-inbox-head"><Ic k="leads" />Leads<span className="c">{rows.length}</span></div>
+        <div className="lv-inbox-rows">
+          {rows.length === 0 && <div className="empty-note" style={{ padding: 20 }}>No leads in scope yet</div>}
+          {rows.map((l) => {
+            const overdue = l.next_follow_up_at && new Date(l.next_follow_up_at) < new Date();
+            return (
+              <button key={l.id} type="button"
+                className={`lv-inbox-row${sel === Number(l.id) ? ' on' : ''}`}
+                aria-label={`Open ${l.full_name} in the reading pane`}
+                onClick={() => setSel(Number(l.id))}>
+                <div className="top">
+                  <Avatar name={l.full_name} />
+                  <span className="nm">{l.full_name}</span>
+                  <span className="when mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span>
+                </div>
+                <div className="meta">
+                  <span className={`bdg ${stageBadgeClass(l.stage_type)}`}>{l.stage_name || 'New'}</span>
+                  <span className="sub">{l.owner_name || 'Unassigned'}{l.source_name ? ` · ${l.source_name}` : ''}</span>
+                </div>
+                <div className="prev">
+                  <TempBadge temperature={l.temperature} score={l.score} />
+                  {l.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA</span> : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="lv-inbox-detail">
+        {sel == null ? (
+          <div className="lv-inbox-empty"><Ic k="leads" /><div>Select a lead to see its details</div></div>
+        ) : detail.loading || !detail.data ? (
+          <div className="empty-note" style={{ marginTop: '28vh' }}>Loading lead…</div>
+        ) : (
+          <InboxDetail lead={detail.data} openLead={openLead}
+            canEditLead={canEditLead} canDeleteLead={canDeleteLead} del={del} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InboxDetail({ lead, openLead, canEditLead, canDeleteLead, del }: { lead: any } & Omit<LeadsViewProps, 'rows'>) {
+  const acts = (lead.activities as any[]) || [];
+  return (
+    <>
+      <div className="lv-inbox-dhead">
+        <Avatar name={lead.full_name} size="lg" />
+        <div className="grow">
+          <div className="nm">{lead.full_name}</div>
+          <div className="sub mono">{lead.phone}{lead.email ? ` · ${lead.email}` : ''}{lead.source_name ? ` · ${lead.source_name}` : ''}</div>
+          <div className="chips">
+            <TempBadge temperature={lead.temperature} score={lead.score} />
+            <span className="bdg b-indigo">{dn(lead.vertical_name, lead.vertical_deleted)} · {dn(lead.pipeline_name, lead.pipeline_deleted)}</span>
+            {lead.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA breached</span> : null}
+          </div>
+        </div>
+        <div className="acts">
+          <button className="btn primary" onClick={() => openLead(Number(lead.id))}><Ic k="eye" />Open full</button>
+          {canEditLead && <button className="btn" onClick={() => openLead(Number(lead.id))}><Ic k="pencil" />Edit</button>}
+          {canDeleteLead && <button className="btn" style={{ color: 'var(--danger)' }} onClick={() => del.openDelete(Number(lead.id), lead.full_name)}><Ic k="trash" />Delete</button>}
+        </div>
+      </div>
+      <div className="lv-inbox-dbody">
+        <div className="sheet-sec">
+          <h5>Details</h5>
+          <KV rows={[
+            ['Course', lead.course_name || '—'],
+            ['Owner', lead.owner_name || 'Unassigned'],
+            ['Stage', lead.stage_name || '—'],
+            ['Next follow-up', fmtDT(lead.next_follow_up_at)],
+          ]} />
+        </div>
+        <div className="sheet-sec">
+          <h5>Recent activity</h5>
+          <div className="lv-timeline">
+            {acts.length === 0 && <div className="empty-note">No activity yet</div>}
+            {acts.slice(0, 12).map((a) => (
+              <div className="lv-tl" key={a.id}>
+                <span className="dot" />
+                <div className="body">
+                  <div className="t1">{a.note || a.type}</div>
+                  <div className="t2 sub">{a.actor_name ? `${a.actor_name} · ` : ''}{fmtFull(a.occurred_at)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </>
   );
 }

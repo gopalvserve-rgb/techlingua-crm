@@ -664,3 +664,69 @@ select.ainp option{background:var(--surface);color:var(--text)}
   border:1px dashed color-mix(in srgb,var(--primary) 45%,var(--border));background:var(--primary-soft);color:var(--primary);
   font-weight:600;font-size:12.5px;cursor:pointer}
 .sc-addrow:hover{border-style:solid}
+
+/* ==========================================================================
+ * UAT-R3b #11 — Leads list: three switchable views (Classic / Modern / Inbox).
+ * Ported from the SaaS tenant (public/tenant/leadsV2.js) and re-skinned onto
+ * this app's tokens — segmented toggle, rich Modern rows, split Inbox pane.
+ * ======================================================================== */
+/* Segmented view switcher, sits at the right of the quick-band row. */
+.lv-seg{display:inline-flex;gap:2px;padding:3px;border-radius:11px;border:1px solid var(--border);background:var(--surface-2)}
+.lv-seg-b{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;color:var(--text-muted);background:transparent;cursor:pointer;transition:.13s;font-family:inherit}
+.lv-seg-b svg{width:14px;height:14px}
+.lv-seg-b:hover{color:var(--text)}
+.lv-seg-b.on{background:var(--surface);color:var(--primary);box-shadow:var(--shadow)}
+
+/* ---- Modern view: rich rows, temperature edge-stripe, quick actions ---- */
+.lv-modern .lv-cards{display:flex;flex-direction:column;padding:6px}
+.lv-card{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:var(--r-md);border:1px solid transparent;border-bottom:1px solid var(--border);cursor:pointer;transition:.12s;position:relative}
+.lv-card:last-child{border-bottom:1px solid transparent}
+.lv-card:hover{background:var(--surface-2);border-color:var(--border)}
+.lv-card.b-hot{box-shadow:inset 3px 0 0 var(--hot)}
+.lv-card.b-warm{box-shadow:inset 3px 0 0 var(--warm)}
+.lv-card.b-cold{box-shadow:inset 3px 0 0 var(--cold)}
+.lv-card .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.lv-card .r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lv-card .r1 .nm{font-weight:650;font-size:13.5px;color:var(--text)}
+.lv-card .r2{font-size:11.5px}
+.lv-card .r3{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:2px}
+.lv-card .r3 .kv{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-muted)}
+.lv-card .r3 .kv svg{width:13px;height:13px;opacity:.8}
+.lv-card-act{display:flex;gap:4px;flex:none;opacity:.35;transition:.12s}
+.lv-card:hover .lv-card-act{opacity:1}
+
+/* ---- Inbox view: split list + reading pane (SaaS C3) ---- */
+.lv-inbox{display:grid;grid-template-columns:360px 1fr;min-height:0;height:calc(100vh - 300px);overflow:hidden;padding:0}
+.lv-inbox-list{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.lv-inbox-head{display:flex;align-items:center;gap:8px;padding:12px 15px;border-bottom:1px solid var(--border);font-weight:650;font-size:13px;color:var(--text)}
+.lv-inbox-head svg{width:15px;height:15px;color:var(--text-muted)}
+.lv-inbox-head .c{margin-left:auto;background:var(--primary-soft);color:var(--primary);font-size:11px;padding:2px 9px;border-radius:10px;font-weight:700}
+.lv-inbox-rows{flex:1;overflow-y:auto;min-height:0}
+.lv-inbox-row{display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;padding:11px 15px;border-bottom:1px solid var(--border);cursor:pointer;transition:.12s;background:transparent;font-family:inherit}
+.lv-inbox-row:hover{background:var(--surface-2)}
+.lv-inbox-row.on{background:var(--primary-soft);box-shadow:inset 3px 0 0 var(--primary)}
+.lv-inbox-row .top{display:flex;align-items:center;gap:9px}
+.lv-inbox-row .top .nm{font-weight:600;font-size:12.5px;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lv-inbox-row .top .when{font-size:10.5px;flex:none}
+.lv-inbox-row .meta{display:flex;align-items:center;gap:8px;font-size:11px;padding-left:41px}
+.lv-inbox-row .meta .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lv-inbox-row .prev{display:flex;align-items:center;gap:6px;padding-left:41px}
+.lv-inbox-detail{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.lv-inbox-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-dim)}
+.lv-inbox-empty svg{width:34px;height:34px;opacity:.5}
+.lv-inbox-dhead{display:flex;align-items:flex-start;gap:14px;padding:16px 20px;border-bottom:1px solid var(--border)}
+.lv-inbox-dhead .grow{flex:1;min-width:0}
+.lv-inbox-dhead .nm{font-size:17px;font-weight:700;color:var(--text)}
+.lv-inbox-dhead .sub{font-size:12px;margin-top:2px}
+.lv-inbox-dhead .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.lv-inbox-dhead .acts{display:flex;gap:7px;flex:none;flex-wrap:wrap;justify-content:flex-end}
+.lv-inbox-dbody{flex:1;overflow-y:auto;min-height:0;padding:16px 20px}
+.lv-timeline{display:flex;flex-direction:column;gap:0}
+.lv-tl{display:flex;gap:11px;padding:8px 0;position:relative}
+.lv-tl .dot{width:9px;height:9px;border-radius:50%;background:var(--primary);flex:none;margin-top:4px;box-shadow:0 0 0 3px var(--primary-soft)}
+.lv-tl .body .t1{font-size:12.5px;color:var(--text);font-weight:500}
+.lv-tl .body .t2{font-size:11px;margin-top:1px}
+@media (max-width:1280px){
+  .lv-inbox{grid-template-columns:300px 1fr}
+  .lv-card .r3{gap:10px}
+}
