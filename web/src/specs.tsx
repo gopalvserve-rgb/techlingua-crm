@@ -48,7 +48,7 @@ export const kpi = (lab: string, val: string, ic?: string, delta?: string, tone?
   ({ lab, val, ic, delta, tone });
 export const cap = (t: string, d?: string, p2?: boolean): CapItem => ({ t, d, p2 });
 
-const NOTE_S2 = 'Backend for this module arrives in Sprint 3 — the screen design is final; data will appear here automatically.';
+const NOTE_S2 = 'Backend for this module lands in Phase 2 — the screen design is final; data will appear here automatically.';
 const NOTE_P2 = undefined; // P2 screens use the prototype p2notice block instead
 
 const emptyTable = (title: string, cols: string[], empty?: string): Block =>
@@ -311,7 +311,7 @@ export const APP: ModuleItem[] = [
     { id: 'dashboard', label: 'Finance Dashboard', spec: {
       sub: 'GST invoicing · Razorpay · branch & vertical-wise revenue · INR',
       actions: [['export', 'Tally export', 'ghost'], ['plus', 'New invoice', 'primary']],
-      sprintNote: 'Finance lands in Phase 1 as lite fee collection (Sprint 4); full accounts in Phase 3.',
+      sprintNote: 'Lite fee collection is live in Phase 1; full accounts (GST invoicing, Razorpay capture, Tally export) land in Phase 3.',
       blocks: [
         { type: 'kpis', cols: 5, items: [
           kpi('Total Collected (MTD)', '—', 'rupee'), kpi('Today', '—', 'rupee'),
@@ -385,7 +385,7 @@ export const APP: ModuleItem[] = [
     { id: 'overview', label: 'Calls', spec: gen('Calls', 'Calls') },
     { id: 'dialer', label: 'Dialer', spec: {
       sub: 'NeoDove integration. Manual, preview & predictive dialer. Call from any lead/student record.',
-      sprintNote: 'Telephony rides on NeoDove — integration switches on in Sprint 3.',
+      sprintNote: 'Telephony / calls are out of scope — this screen is a design reference only; no dialler ships.',
       blocks: [
         { type: 'kpis', items: [kpi('Calls today', '0', 'calls'), kpi('Connected', '—', 'check'), kpi('Avg duration', '—', 'clock'), kpi('In queue', '0', 'list')] },
         { type: 'caps', title: 'Dialer modes', items: [
@@ -407,14 +407,14 @@ export const APP: ModuleItem[] = [
     { id: 'outgoing', label: 'Outgoing Calls', spec: gen('Calls', 'Outgoing Calls') },
     { id: 'missed', label: 'Missed Calls', spec: {
       sub: 'Auto-create a lead from a missed call to power missed-call campaigns.',
-      sprintNote: 'Missed-call auto-leads switch on with the NeoDove integration (Sprint 3).',
+      sprintNote: 'Telephony is out of scope, so missed-call auto-leads are not built — this screen is a design reference only.',
       blocks: [emptyTable('Missed-call leads', ['Number', 'Time', 'Auto-lead', 'Campaign', 'Assigned'], 'No missed-call leads yet')] } },
     { id: 'transfer', label: 'Call Transfer', spec: gen('Calls', 'Call Transfer') },
     { id: 'conference', label: 'Conference Calling', spec: gen('Calls', 'Conference Calling') },
     { id: 'routing', label: 'Call Routing', spec: gen('Calls', 'Call Routing') },
     { id: 'logs', label: 'Call Logs', spec: {
       sub: 'Every call auto-logged against the lead with a disposition prompt after each call.',
-      sprintNote: 'Call logging rides on the telephony integration (Sprint 3).',
+      sprintNote: 'Telephony is out of scope, so automatic call logging is not built — this screen is a design reference only.',
       blocks: [emptyTable('Call logs', ['Lead', 'Direction', 'Duration', 'Disposition', 'Owner', 'Recording'], 'No calls logged yet')] } },
     { id: 'recordings', label: 'Recordings', spec: {
       sub: 'Recordings via third-party software. Access control & retention. Caller consent captured.',
@@ -514,11 +514,11 @@ export const APP: ModuleItem[] = [
   { id: 'hr', label: 'HR & Workforce', icon: 'hr', subs: [
     { id: 'directory', label: 'Employee Directory', spec: {
       sub: 'Emp ID, designation, department, branch, joining date, reporting manager, status & documents.',
-      actions: [['plus', 'Add employee', 'primary']], sprintNote: 'Basic HR lands in Phase 2 (Sprint 5).',
+      actions: [['plus', 'Add employee', 'primary']], sprintNote: 'Basic HR lands in Phase 2.',
       blocks: [emptyTable('Employees', ['Employee', 'Emp ID', 'Designation', 'Branch', 'Manager', 'Status'], 'Employee records land with the HR module')] } },
     { id: 'attendance', label: 'Attendance', spec: {
       sub: 'Web check-in, biometric or geo-attendance with shifts.',
-      sprintNote: 'Basic HR lands in Phase 2 (Sprint 5).',
+      sprintNote: 'Basic HR lands in Phase 2.',
       blocks: [
         { type: 'kpis', items: [kpi('Present today', '0', 'check'), kpi('On leave', '0', 'cal'), kpi('Late', '0', 'clock'), kpi('Avg in-time', '—', 'clock')] },
         { type: 'caps', title: 'Attendance modes', items: [
@@ -527,11 +527,11 @@ export const APP: ModuleItem[] = [
       ] } },
     { id: 'leaves', label: 'Leaves', spec: {
       sub: 'Leave types, balances, apply-approve workflow & holiday calendar.',
-      sprintNote: 'Basic HR lands in Phase 2 (Sprint 5).',
+      sprintNote: 'Basic HR lands in Phase 2.',
       blocks: [emptyTable('Leave requests', ['Employee', 'Type', 'Days', 'From', 'Approver', 'Status'], 'No leave requests yet')] } },
     { id: 'payroll', label: 'Salary', spec: {
       sub: 'Components, payslips, statutory PF / ESI / TDS.',
-      sprintNote: 'Basic HR lands in Phase 2 (Sprint 5).',
+      sprintNote: 'Basic HR lands in Phase 2.',
       blocks: [
         { type: 'kpis', items: [kpi('Monthly payroll', '—', 'rupee'), kpi('Payslips', '0', 'doc'), kpi('PF/ESI/TDS', '—', 'shield')] },
         { type: 'caps', title: 'Payroll', items: [
@@ -540,7 +540,7 @@ export const APP: ModuleItem[] = [
       ] } },
     { id: 'incentives', label: 'Incentives', spec: {
       sub: 'Incentive rules on admissions / revenue / targets, calculation, approval & payout tracking.',
-      sprintNote: 'Basic HR lands in Phase 2 (Sprint 5).',
+      sprintNote: 'Basic HR lands in Phase 2.',
       blocks: [emptyTable('Incentive payouts', ['Counsellor', 'Basis', 'Achieved', 'Incentive', 'Status'], 'No incentive payouts yet')] } },
     { id: 'bank', label: 'Bank', spec: gen('HR & Workforce', 'Bank') },
     { id: 'performance', label: 'Performance', spec: {
@@ -550,7 +550,7 @@ export const APP: ModuleItem[] = [
         cap('Ratings', 'Manager + self'), cap('Linked to incentives', 'Score → payout')] }] } },
     { id: 'hiring', label: 'Hiring', spec: {
       sub: 'Job posts, candidate pipeline, interviews & offers.',
-      sprintNote: 'Basic HR lands in Phase 2 (Sprint 5).',
+      sprintNote: 'Basic HR lands in Phase 2.',
       blocks: [emptyTable('Hiring pipeline', ['Role', 'Applicants', 'Interview', 'Offer', 'Status'], 'No open positions yet')] } },
   ] },
 
@@ -596,18 +596,18 @@ export const APP: ModuleItem[] = [
     { id: 'integrations', label: 'Integrations', spec: {
       sub: 'Telephony, WhatsApp/SMS, email, payment gateway, accounting, website, ad platforms, biometric.',
       blocks: [{ type: 'table', title: 'Integrations', cols: ['System', 'Type', 'Status'], rows: [
-        ['Meta WhatsApp Cloud API', 'Messaging', { b: ['Planned · Sprint 3', 'b-amber'] }],
-        ['Razorpay', 'Payment', { b: ['Planned · Sprint 4', 'b-amber'] }],
-        ['NeoDove', 'Telephony', { b: ['Planned · Sprint 3', 'b-amber'] }],
+        ['Meta WhatsApp Cloud API', 'Messaging', { b: ['Built · connect in Settings › Channels', 'b-green'] }],
+        ['Razorpay', 'Payment', { b: ['Config ready · live payments Phase 3', 'b-amber'] }],
+        ['NeoDove', 'Telephony', { b: ['Out of scope', 'b-gray'] }],
         ['Meta Lead Ads (webhook)', 'Ad platform', { b: ['Live · Lead Capture', 'b-green'] }],
         ['Google Ads lead forms (webhook)', 'Ad platform', { b: ['Live · Lead Capture', 'b-green'] }],
         ['Website form endpoint', 'Website', { b: ['Live · Lead Capture', 'b-green'] }],
         ['Google Sheet pull', 'Lead source', { b: ['Live · needs Google credentials', 'b-amber'] }],
         ['IndiaMART / JustDial', 'Lead source', { b: ['Not requested', 'b-gray'] }],
-        ['SMS (DLT)', 'Messaging', { b: ['Setup', 'b-amber'] }],
-        ['Tally / Zoho Books', 'Accounting', { b: ['Setup', 'b-amber'] }],
-        ['Biometric device', 'Attendance', { b: ['Setup', 'b-amber'] }],
-        ['Gemini / Deepseek', 'AI', { b: ['Planned · Sprint 3', 'b-amber'] }]] }] } },
+        ['SMS (DLT)', 'Messaging', { b: ['Built · needs gateway credentials', 'b-amber'] }],
+        ['Tally / Zoho Books', 'Accounting', { b: ['Phase 3', 'b-gray'] }],
+        ['Biometric device', 'Attendance', { b: ['Phase 2', 'b-gray'] }],
+        ['Gemini / Deepseek', 'AI', { b: ['Phase 2 (AI)', 'b-amber'] }]] }] } },
     { id: 'api', label: 'API Access', spec: { dyn: 'apiModule',
       sub: 'Developer API — generate keys (shown once, stored hashed), enable/disable & revoke, read the endpoint docs, and see every inbound API request in the log. Keys authenticate the public create-lead / list-leads endpoints.' } },
     { id: 'compliance', label: 'Compliance', spec: {
