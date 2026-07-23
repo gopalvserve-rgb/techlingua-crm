@@ -7,13 +7,12 @@ import { Ic } from './icons';
 import { APP, findScreen } from './specs';
 import { Blocks } from './renderer';
 import { DYN, ScreenCtx } from './dyn';
-import { AddModal, CampaignModal, MULTI_ADD, SPEC_FORMS, entFromLabel } from './forms';
+import { AddModal, CampaignModal, SPEC_FORMS, headerActions, resolveAdd, addLike } from './forms';
 import { LeadSheet } from './leadsheet';
 import { RoleModal } from './rolemodal';
 import { toast, useRef_, Toaster } from './refdata';
 import { NotificationBell } from './notifications';
 
-const addLike = (l: string) => /^(add|new|record|create|quick add)/i.test(l);
 
 function Logo() {
   return (
@@ -148,32 +147,24 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
     if (formKey === 'leads.campaigns') { setCampaignOpen(true); return; }
     if (formKey === 'admin.roles') { setRoleOpen(true); return; }
     if (SPEC_FORMS[formKey]) setAddKey(formKey);
-    else toast('This form goes live with its module backend in a later sprint');
+    // Every caller passes a wired formKey (dyn components + resolveAdd); no placeholder dead-end.
   };
 
-  // action buttons: MULTI_ADD overrides, auto-injected "Add X" (ported from prototype)
-  const hasForm = (spec.blocks || []).some((b) => b.type === 'table' || b.type === 'form') || !!SPEC_FORMS[key] || !!spec.dyn;
-  let acts: Array<[string, string, string?]> = (spec.actions || []).slice();
-  const multi = MULTI_ADD[key];
-  if (multi) {
-    acts = acts.filter((a) => !addLike(a[1]));
-    [...multi].reverse().forEach(([label]) => acts.unshift(['plus', label, 'primary']));
-  } else if (!acts.some((a) => addLike(a[1])) && hasForm && spec.tag !== 'p2' && key !== 'map.all' && key !== 'admin.masters' && key !== 'leads.import' && key !== 'leads.calling' && key !== 'leads.capture') {
-    acts.unshift(['plus', `Add ${entFromLabel(screen.sub.label)}`, 'primary']);
-  }
+  // Header buttons come from the single source of truth in forms.tsx: explicit
+  // spec actions + MULTI_ADD + the ADD_INJECT allowlist. Read-only dashboards,
+  // analytics and summary screens no longer get a phantom "Add" that dead-ends.
+  const acts = headerActions(screen.mod.id, screen.sub.id);
 
   const onAction = (label: string) => {
     if (addLike(label)) {
-      if (key === 'leads.campaigns') return setCampaignOpen(true);
-      if (key === 'admin.roles') return setRoleOpen(true);
-      const override = multi?.find(([l]) => l === label)?.[1];
-      const formKey = override
-        || (SPEC_FORMS[key] ? key : label.toLowerCase().includes('lead') ? 'leads.all' : label.toLowerCase().includes('task') ? 'dash.mytasks' : key);
-      return openAdd(formKey);
+      const t = resolveAdd(key, label);
+      if (t.kind === 'campaign') return setCampaignOpen(true);
+      if (t.kind === 'roles') return setRoleOpen(true);
+      if (t.kind === 'form') return openAdd(t.formKey);
+      return;
     }
-    if (/filter/i.test(label)) return toast('Use the filter chips on the table below');
-    if (/export/i.test(label)) return toast('Exports land with the reporting engine (Sprint 3)');
-    toast(`${label}: range controls land with the reporting engine`);
+    if (/filter/i.test(label)) return toast('Filter with the chips shown above the table.');
+    if (/export/i.test(label)) return toast('Export any report from Analytics & Reports (Excel · PDF · CSV).');
   };
 
   const Dyn = spec.dyn ? DYN[spec.dyn] : null;

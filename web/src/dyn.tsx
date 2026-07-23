@@ -752,7 +752,7 @@ function QuickContact() {
             <div className="fld"><label>Contact Number</label>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <div style={{ flex: 1, minWidth: 0 }}><PhoneInput value={phone} onChange={setPhone} placeholder="Contact Number" /></div>
-                <button className="verify" style={{ position: 'static', flex: '0 0 auto' }} title="Verify" onClick={() => toast('Number verification lands with the messaging integration (Sprint 3)')}><Ic k="check" w={2.6} /></button>
+                <button className="verify" style={{ position: 'static', flex: '0 0 auto' }} title="Verify" onClick={() => toast('Numbers are format-checked automatically as you type (country code + length).')}><Ic k="check" w={2.6} /></button>
               </div></div>
             <div className="fld"><label>Alternate Mobile Number</label>
               <PhoneInput value={altPhone} onChange={setAltPhone} placeholder="Alternate Mobile Number" /></div>
@@ -2461,14 +2461,14 @@ function WaChat() {
       <div className="wa-thread">
         <div className="wa-msgs">
           <div className="empty-note" style={{ margin: 'auto' }}>
-            WhatsApp Live Chat connects through the Meta Cloud API integration (Sprint 3).<br />
-            Bot auto-replies, qualification flows and hand-over land with it.
+            WhatsApp Live Chat (two-way inbox) is planned for Phase 2.<br />
+            Outbound WhatsApp — templates, bulk sends and automation — is live now under Engagement & Workflow.
           </div>
         </div>
         <div className="wa-comp">
           <button className="tplbtn"><Ic k="doc" /></button>
           <input placeholder="Type a message…" disabled />
-          <button className="send" onClick={() => toast('Messaging connects in Sprint 3')}><Ic k="send" /></button>
+          <button className="send" onClick={() => toast('The two-way WhatsApp inbox is planned for Phase 2. Outbound WhatsApp is live under Engagement & Workflow.')}><Ic k="send" /></button>
         </div>
       </div>
     </div>

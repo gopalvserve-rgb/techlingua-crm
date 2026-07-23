@@ -1,7 +1,7 @@
 /**
  * Add-record forms — field specs ported verbatim from the prototype's SPEC_FORMS,
  * with live master/hierarchy dropdowns and wired saves where APIs exist.
- * Unwired forms render exactly but tell the user which sprint makes them live.
+ * Unwired forms render exactly but tell the user which project phase makes them live.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
@@ -11,6 +11,7 @@ import { UserPicker } from './userpicker';
 import { AddMasterModal } from './mastermodal';
 import { PhoneInput } from './phonefield';
 import { toast, useRef_, Named, RefData, selectableUsers } from './refdata';
+import { findScreen } from './specs';
 
 export interface FormField {
   label: string; type?: string; req?: boolean; opts?: string[] | null; hint?: string;
@@ -447,6 +448,68 @@ SAVERS['leads.vertical'] = SAVERS['admin.verticals'];
 SAVERS['admin.verticalmgmt'] = SAVERS['admin.verticals'];
 SAVERS['admin.pipelines'] = SAVERS['leads.pipelinemaster'];
 
+/* ---------------------- header action resolution ----------------------
+ * SINGLE SOURCE OF TRUTH for the buttons a screen's header shows and what
+ * each Add/New button opens. The shell renders `headerActions(mod,sub)` and
+ * routes clicks through `resolveAdd(key,label)`; the button-audit test walks
+ * the same two functions, so "every add-capable screen opens a real form" is
+ * proven, not asserted by hand.
+ *
+ * The old shell auto-injected an "Add X" onto ANY screen with a table/form
+ * block or a `dyn` view, which silently put a dead Add on read-only
+ * dashboards (Today's Follow-ups, Quick Stats, Fee Collection, every report)
+ * that dead-ended on a placeholder toast. Auto-inject is now an explicit
+ * ALLOWLIST: only these list screens (whose dyn has no add of its own and
+ * whose form is wired) get a header Add. Everything else must declare its Add
+ * as a real `actions` entry or render its own in-component button. */
+export const ADD_INJECT: Record<string, string> = {
+  'leads.vertical': 'leads.vertical',
+  'leads.pipelinemaster': 'leads.pipelinemaster',
+  'leads.sources': 'leads.sources',
+  'admin.branches': 'admin.branches',
+  'admin.verticalmgmt': 'admin.verticalmgmt',
+  'admin.pipelines': 'admin.pipelines',
+  'work.tasks': 'dash.mytasks',
+};
+
+export const addLike = (l: string) => /^(add|new|record|create|quick add)/i.test(l);
+
+export type AddTarget =
+  | { kind: 'campaign' } | { kind: 'roles' } | { kind: 'form'; formKey: string } | { kind: 'none' };
+
+/** What an Add/New button opens. Never resolves to a placeholder for a wired screen. */
+export function resolveAdd(key: string, label: string): AddTarget {
+  if (key === 'leads.campaigns') return { kind: 'campaign' };
+  if (key === 'admin.roles') return { kind: 'roles' };
+  const multiKey = MULTI_ADD[key]?.find(([l]) => l === label)?.[1];
+  const formKey = multiKey
+    || ADD_INJECT[key]
+    || (SPEC_FORMS[key] ? key : /lead/i.test(label) ? 'leads.all' : /task/i.test(label) ? 'dash.mytasks' : key);
+  return SPEC_FORMS[formKey] ? { kind: 'form', formKey } : { kind: 'none' };
+}
+
+/** True when a wired SAVER (or the campaign/roles modal) backs a form key. */
+export function isWiredForm(formKey: string): boolean {
+  return formKey === 'leads.campaigns' || formKey === 'admin.roles' || !!SAVERS[formKey];
+}
+
+/** The header buttons a screen shows, exactly what the shell renders. */
+export function headerActions(modId: string, subId: string): Array<[string, string, string?]> {
+  const screen = findScreen(modId, subId);
+  if (!screen) return [];
+  const spec = screen.sub.spec;
+  const key = `${modId}.${subId}`;
+  let acts: Array<[string, string, string?]> = (spec.actions || []).slice();
+  const multi = MULTI_ADD[key];
+  if (multi) {
+    acts = acts.filter((a) => !addLike(a[1]));
+    [...multi].reverse().forEach(([label]) => acts.unshift(['plus', label, 'primary']));
+  } else if (!acts.some((a) => addLike(a[1])) && ADD_INJECT[key] && spec.tag !== 'p2') {
+    acts.unshift(['plus', `Add ${entFromLabel(screen.sub.label)}`, 'primary']);
+  }
+  return acts;
+}
+
 /* ------------------------------ inputs ------------------------------ */
 
 export function LeadLookup({ value, onPick, inputId }: {
@@ -780,7 +843,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
 
   const save = async () => {
     if (!wired) {
-      toast("This module's backend lands in a later sprint — the form is final but nothing was saved yet.");
+      toast("This form's design is final; its data entry activates with the module backend in a later project phase — nothing was saved.");
       onClose();
       return;
     }
@@ -901,7 +964,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
             <PhoneInput value={v} onChange={(nv) => setField(f.label, nv)} placeholder={f.label} />
           </div>
           <button className={`verify ${isWa ? 'wa' : ''}`} title="Verify" style={{ position: 'static', flex: '0 0 auto', alignSelf: 'center' }}
-            onClick={(e) => { e.preventDefault(); toast(`${isWa ? 'WhatsApp' : 'Number'} verification lands with the messaging integration (Sprint 3)`); }}>
+            onClick={(e) => { e.preventDefault(); toast(`${isWa ? 'WhatsApp' : 'Number'} numbers are format-checked automatically (country code + length).`); }}>
             <Ic k={isWa ? 'wa' : 'check'} w={isWa ? 2 : 2.6} />
           </button>
         </div>
@@ -973,7 +1036,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
         <div className="abody">
           {!wired && (
             <div className="notice"><Ic k="bolt" />
-              <div><b>Design-final form.</b> This module's backend lands in a later sprint — fields are final but saving is not yet live.</div>
+              <div><b>Design-final form.</b> This module's data entry activates with its backend in a later project phase — the fields are final; nothing is saved yet.</div>
             </div>
           )}
           <div className="form-grid">

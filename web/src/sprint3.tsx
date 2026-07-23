@@ -505,7 +505,7 @@ export function Sla() {
           String(t.moves),
           { mono: dur(t.avg_seconds) } as Cell,
         ])}
-        empty="TAT fills as leads move between stages — it feeds the TAT reports in Sprint 6" />
+        empty="TAT fills as leads move between stages — it feeds the TAT reports under Analytics & Reports" />
 
       <TableCard
         title="SLA policies"

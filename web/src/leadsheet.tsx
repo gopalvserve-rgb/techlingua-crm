@@ -303,8 +303,8 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                 </div>
               </>
             )}
-            {tab === 'calls' && <div className="empty-note">Call logs ride on the NeoDove telephony integration (Sprint 3).</div>}
-            {tab === 'whatsapp' && <div className="empty-note">WhatsApp threads switch on with the Meta Cloud API integration (Sprint 3).</div>}
+            {tab === 'calls' && <div className="empty-note">Telephony is out of scope for this CRM — calls are made from your own phone, so call logs are not recorded here.</div>}
+            {tab === 'whatsapp' && <div className="empty-note">WhatsApp message history appears here once WhatsApp is connected in Settings › Channels.</div>}
           </div>
         </div>
         <div className="sheet-foot">

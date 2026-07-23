@@ -84,18 +84,16 @@ export const APP: ModuleItem[] = [
   { id: 'dash', label: 'Dashboard', icon: 'dash', subs: [
     { id: 'overview', label: 'Overview', spec: { dyn: 'dashOverview',
       sub: 'Role-based view across your Branch › Vertical › Pipeline scope.',
-      actions: [['cal', 'This month', 'ghost'], ['plus', 'Quick add lead', 'primary']] } },
+      actions: [['plus', 'Quick add lead', 'primary']] } },
     { id: 'quickcontact', label: 'Quick Contact', spec: { dyn: 'quickContact',
       sub: 'Search an existing lead by Branch / Vertical / Pipeline / Campaign, or add a new one in seconds — then call / WhatsApp / email straight from here.' } },
     { id: 'mytasks', label: 'My Tasks', spec: { dyn: 'myTasks',
       sub: 'Your open tasks — auto-created from follow-ups & stage changes, plus manually added.',
       actions: [['plus', 'Add task', 'primary']] } },
     { id: 'todayfollowups', label: "Today's Follow-ups", spec: { dyn: 'todayFollowups',
-      sub: 'Every lead with a follow-up due today (and overdue), sorted hot-first. Overdue highlighted in red.',
-      actions: [['filter', 'Filters', 'ghost']] } },
+      sub: 'Every lead with a follow-up due today (and overdue), sorted hot-first. Overdue highlighted in red.' } },
     { id: 'quickstats', label: 'Quick Stats', spec: { dyn: 'quickStats',
-      sub: 'Key numbers at a glance for any range — today, week, month, or a custom date range.',
-      actions: [['cal', 'This month', 'ghost']] } },
+      sub: 'Key numbers at a glance for any range — today, week, month, or a custom date range.' } },
     { id: 'calendar', label: 'Calendar', spec: { dyn: 'calendar',
       sub: 'Follow-ups, demos and meetings on one calendar. Google/Outlook sync is built and waiting on credentials.' } },
     { id: 'walkins', label: 'Walk-ins', spec: { dyn: 'walkIns',
@@ -310,7 +308,6 @@ export const APP: ModuleItem[] = [
   { id: 'finance', label: 'Finance & Collections', icon: 'finance', subs: [
     { id: 'dashboard', label: 'Finance Dashboard', spec: {
       sub: 'GST invoicing · Razorpay · branch & vertical-wise revenue · INR',
-      actions: [['export', 'Tally export', 'ghost'], ['plus', 'New invoice', 'primary']],
       sprintNote: 'Lite fee collection is live in Phase 1; full accounts (GST invoicing, Razorpay capture, Tally export) land in Phase 3.',
       blocks: [
         { type: 'kpis', cols: 5, items: [
@@ -368,7 +365,6 @@ export const APP: ModuleItem[] = [
       blocks: [emptyTable('Refund requests', ['Student', 'Amount', 'Type', 'Mode', 'Approver', 'Status'], 'No refund requests yet')] } },
     { id: 'reports', label: 'Collection Reports', spec: {
       sub: 'Daily, monthly, branch / vertical / course / counsellor / mode-wise. Tally export.',
-      actions: [['export', 'Tally export', 'ghost']],
       blocks: [
         { type: 'table', title: 'Report shortcuts', cols: ['Report', 'Range', 'Format'], rows: [
           ['Daily collection', 'Today', { b: ['Excel / PDF', 'b-green'] }],
@@ -618,8 +614,7 @@ export const APP: ModuleItem[] = [
         { ic: 'calls', k: 'Recording consent', s: 'IVR pre-roll', v: 'On', toggle: true },
         { ic: 'clock', k: 'Data retention', s: 'Auto-purge policy', v: 'Configurable', toggle: true }] }] } },
     { id: 'audit', label: 'Audit Logs', spec: { dyn: 'audit',
-      sub: 'Every user action across CRM & ERP — work done, edits, updates, messages, emails & calls. Filter by type, user, module & date.',
-      actions: [['export', 'Export', 'ghost']] } },
+      sub: 'Every user action across CRM & ERP — work done, edits, updates, messages, emails & calls. Filter by type, user, module & date.' } },
     // Sanctioned addition (client-approved, not in the prototype nav) — see design spec §Sanctioned additions.
     { id: 'errorlogs', label: 'Error Logs', spec: { dyn: 'errorLogs',
       sub: 'Every captured error & issue across API and web — grouped by root cause, bugs highlighted by severity, with stack traces and a resolve workflow.' } },
