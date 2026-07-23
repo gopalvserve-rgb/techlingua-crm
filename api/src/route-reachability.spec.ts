@@ -228,6 +228,12 @@ const NOT_UI_DRIVEN: Record<string, string> = {
     'WHATSAPP delivery/read receipts and inbound STOP, signature-verified. The caller is Meta.',
   'GET /webhooks/health':
     'A machine health probe for the capture endpoints — deliberately answerable without a session.',
+  'POST /public-api/leads':
+    'THE PUBLIC KEY-AUTHED CREATE-LEAD API. The caller is another internal system holding an API key (Authorization: Bearer / X-API-Key), not this SPA — it is @Public and guarded by ApiKeyGuard. Documented in Administration > API.',
+  'GET /public-api/leads':
+    'THE PUBLIC KEY-AUTHED LIST-LEADS API. Called by an API-key integration, not the browser SPA; @Public + ApiKeyGuard. Documented in Administration > API.',
+  'GET /public-api/health':
+    'THE PUBLIC KEY-AUTHED HEALTH/whoami probe — an integrator curls it to confirm the key works before wiring up. @Public + ApiKeyGuard, no session.',
   'GET /error-logs/_test/boom':
     'A QA-ONLY synthetic 500 that proves error capture works end-to-end. Inert in production: without ERRORLOG_TEST=1 it is indistinguishable from a missing route. The caller is a tester with curl, by design.',
 };

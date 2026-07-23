@@ -608,12 +608,8 @@ export const APP: ModuleItem[] = [
         ['Tally / Zoho Books', 'Accounting', { b: ['Setup', 'b-amber'] }],
         ['Biometric device', 'Attendance', { b: ['Setup', 'b-amber'] }],
         ['Gemini / Deepseek', 'AI', { b: ['Planned · Sprint 3', 'b-amber'] }]] }] } },
-    { id: 'api', label: 'API Access', spec: {
-      sub: 'Open API / webhooks for other internal systems to read or push data.',
-      blocks: [{ type: 'cfg', title: 'API access', rows: [
-        { ic: 'link', k: 'REST API', s: 'Read & push leads/students/finance', v: 'Enabled', toggle: true },
-        { ic: 'bolt', k: 'Webhooks', s: 'Outbound on events', v: 'Sprint 3', toggle: true },
-        { ic: 'shield', k: 'API keys', s: 'Per-integration keys', v: '—', toggle: true }] }] } },
+    { id: 'api', label: 'API Access', spec: { dyn: 'apiModule',
+      sub: 'Developer API — generate keys (shown once, stored hashed), enable/disable & revoke, read the endpoint docs, and see every inbound API request in the log. Keys authenticate the public create-lead / list-leads endpoints.' } },
     { id: 'compliance', label: 'Compliance', spec: {
       sub: 'DPDP / consent capture, DLT records, audit requirements & data-retention policy.',
       blocks: [{ type: 'cfg', title: 'Compliance', rows: [

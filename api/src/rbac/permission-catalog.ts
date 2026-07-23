@@ -39,6 +39,11 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // somebody else's list, or a FILE IN THEIR INBOX on a timer, is a manager's decision.
   { module: 'report', label: 'Reports', actions: ['read', 'create', 'update', 'delete', 'share', 'schedule', 'export'] },
   { module: 'settings', label: 'Settings', actions: ['read', 'update'] },
+  // Developer / API access (migration 034). Admin-only, exactly like Settings —
+  // an API key authenticates as an org-level caller, so minting and reading them
+  // is Super/Org Admin only. 'read' = keys (masked) + docs + request log; 'manage'
+  // = generate / enable / disable / revoke.
+  { module: 'api', label: 'API Access', actions: ['read', 'manage'] },
   // Sprint 3 (migration 025) — working the lead
   { module: 'score', label: 'Lead Scoring', actions: ['read', 'manage'] },
   { module: 'sla', label: 'SLA & TAT', actions: ['read', 'manage'] },

@@ -22,6 +22,7 @@ import { APP } from './specs';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
+import ApiModule from './apimodule';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
@@ -2983,6 +2984,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   roles: Roles,
   audit: Audit,
   errorLogs: ErrorLogs,
+  apiModule: ApiModule,
   deletedItems: DeletedItems,
   // Sprint 6 — Analytics & Reports (the old browser-side ActivityReports and
   // FunnelAnalytics are replaced by the real, server-scoped ones in sprint6.tsx)
