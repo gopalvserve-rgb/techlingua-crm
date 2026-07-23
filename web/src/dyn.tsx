@@ -1576,7 +1576,7 @@ const PRIORITY_LABEL: Record<string, string> = { low: 'Low', med: 'Medium', high
 
 const OP_LABEL: Record<string, string> = { equals: '=', not_equals: '≠', contains: 'contains', in: 'in' };
 
-function CampaignView({ campaign, leadCount, onClose, onChanged }: { campaign: any; leadCount: number; onClose: () => void; onChanged?: () => void }) {
+export function CampaignView({ campaign, leadCount, onClose, onChanged }: { campaign: any; leadCount: number; onClose: () => void; onChanged?: () => void }) {
   const ref = useRef_();
   const { can } = useAuth();
   const canEdit = can('campaign.update');
@@ -1585,6 +1585,8 @@ function CampaignView({ campaign, leadCount, onClose, onChanged }: { campaign: a
   // #24 — per-agent pause/resume, applied against campaign_agent_pause.
   const [paused, setPaused] = useState<Set<number>>(() => new Set(((campaign.paused_agent_user_ids ?? []) as number[]).map(Number)));
   const [pauseBusy, setPauseBusy] = useState<number | null>(null);
+  // UAT-R3b #24 — the dedicated Agents / Managed toggle lives in its own section below.
+  const [amTab, setAmTab] = useState<'agents' | 'managed'>('agents');
   const togglePause = async (uid: number) => {
     const next = !paused.has(uid);
     setPauseBusy(uid);
@@ -1597,13 +1599,13 @@ function CampaignView({ campaign, leadCount, onClose, onChanged }: { campaign: a
   };
   const managerIds: number[] = Array.isArray(campaign.manager_user_ids) ? (campaign.manager_user_ids as number[]).map(Number) : [];
   const agentIds: number[] = Array.isArray(dist.agent_user_ids) ? (dist.agent_user_ids as number[]).map(Number) : [];
+  const activeCount = agentIds.filter((id) => !paused.has(id)).length;
   const agentsNode = agentIds.length
     ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {agentIds.map((id) => (
           <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="mapchip" style={paused.has(id) ? { opacity: 0.55, textDecoration: 'line-through' } : undefined}>{userName(id)}</span>
             {paused.has(id) && <span className="bdg b-amber" style={{ fontSize: 10 }}>Paused</span>}
-            {canEdit && <button className="btn" style={{ padding: '2px 10px', fontSize: 11 }} disabled={pauseBusy === id} onClick={() => togglePause(id)}>{paused.has(id) ? 'Resume' : 'Pause'}</button>}
           </div>
         ))}
       </div>
@@ -1651,13 +1653,49 @@ function CampaignView({ campaign, leadCount, onClose, onChanged }: { campaign: a
             : 'None'],
         ]} />
       </Section>
-      <Section title="Campaign managers">
-        <KV rows={[
-          ['Managers', managerIds.length
-            ? <span className="mapchips">{managerIds.map((id) => <span className="mapchip" key={id}>{userName(id)}</span>)}</span>
-            : 'None'],
-          ['Note', <span className="sub" style={{ fontSize: 11.5 }}>Managers get visibility only; they are NOT in the distribution pool, so they receive no auto-assigned leads.</span>],
-        ]} />
+      {/* UAT-R3b #24 — a dedicated Agents / Managed toggle: pause/resume individual agents
+          (lead assignment continues on the active ones) and see the visibility-only managers. */}
+      <Section title="Agents / Managed">
+        <div className="seg" style={{ marginBottom: 12 }}>
+          <button className={amTab === 'agents' ? 'on' : ''} onClick={() => setAmTab('agents')}>Agents ({agentIds.length})</button>
+          <button className={amTab === 'managed' ? 'on' : ''} onClick={() => setAmTab('managed')}>Managed ({managerIds.length})</button>
+        </div>
+        {amTab === 'agents' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="sub" style={{ fontSize: 11.5 }}>
+              {dist.mode === 'on_demand'
+                ? 'On Demand — agents self-assign via Start Calling; a paused agent is not handed leads and resumes when un-paused.'
+                : `Lead assignment rotates across the ${activeCount} active agent${activeCount === 1 ? '' : 's'}; a paused agent is skipped by the distribution engine and resumes the instant you un-pause them.`}
+            </div>
+            {agentIds.length === 0
+              ? <div className="lrow empty">No agents in this campaign's distribution pool.</div>
+              : agentIds.map((id) => (
+                <div key={id} className="am-agent" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="mapchip" style={paused.has(id) ? { opacity: 0.55, textDecoration: 'line-through' } : undefined}>{userName(id)}</span>
+                  <span className={`bdg ${paused.has(id) ? 'b-amber' : 'b-green'}`} style={{ fontSize: 10 }}>{paused.has(id) ? 'Paused' : 'Active'}</span>
+                  <span style={{ flex: 1 }} />
+                  {canEdit && <button className="btn" style={{ padding: '3px 12px', fontSize: 11.5 }} disabled={pauseBusy === id} onClick={() => togglePause(id)}>{paused.has(id) ? 'Resume' : 'Pause'}</button>}
+                </div>
+              ))}
+          </div>
+        )}
+        {amTab === 'managed' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="sub" style={{ fontSize: 11.5 }}>
+              Managers are a <b>visibility-only</b> role: they monitor this campaign but are NOT in
+              the auto-assignment pool, so they receive no round-robin leads — there is nothing to
+              pause here. Pause / Resume affects agents only (the Agents tab).
+            </div>
+            {managerIds.length === 0
+              ? <div className="lrow empty">No managers assigned to this campaign.</div>
+              : managerIds.map((id) => (
+                <div key={id} className="am-manager" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="mapchip">{userName(id)}</span>
+                  <span className="bdg b-indigo" style={{ fontSize: 10 }}>Manager · visibility</span>
+                </div>
+              ))}
+          </div>
+        )}
       </Section>
       <Section title="Duplicacy rules (NeoDove)">
         <KV rows={[

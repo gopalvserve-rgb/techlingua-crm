@@ -706,6 +706,11 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   const cascadeParent = (label: string) =>
     spec.fields.some((x) => x.label === label && !!x.src && (x.type === 'select' || x.type === 'multiselect'));
 
+  /** UAT-R3b #16 — a Course field is GATED only on forms that carry BOTH a real Branch AND a
+   *  real Vertical <select> (Add Lead, Quick Add, Walk-in, Referral). Forms whose Branch/Vertical
+   *  are 'auto' (Admission, Quotation, Enrolment) are never gated. */
+  const courseGated = () => cascadeParent('Branch') && cascadeParent('Vertical');
+
   const srcOptions = (f: FormField): Named[] => {
     let list: Named[] = (ref as any)[f.src!] ?? [];
     // DEF-1: never offer a deactivated user — but keep the one already selected (edit/prefill).
@@ -728,8 +733,18 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     // stays full, as before).
     if (f.src === 'courses') {
       const bid = ids['Branch']; const vid = ids['Vertical'];
-      if (bid != null) list = list.filter((o) => Number((o as any).meta?.branch_id) === Number(bid));
-      if (vid != null) list = list.filter((o) => Number((o as any).meta?.vertical_id) === Number(vid));
+      // UAT-R3b #16 — GATE the Course dropdown on Branch + Vertical. On a gated form the Course
+      // list is EMPTY until BOTH are chosen (the renderer then shows "choose Branch and Vertical
+      // first"); once both are set, only that Branch+Vertical's courses show. Ungated forms keep
+      // the old harmless filter-when-set behaviour.
+      if (courseGated()) {
+        if (bid == null || vid == null) return [];
+        list = list.filter((o) => Number((o as any).meta?.branch_id) === Number(bid)
+                                && Number((o as any).meta?.vertical_id) === Number(vid));
+      } else {
+        if (bid != null) list = list.filter((o) => Number((o as any).meta?.branch_id) === Number(bid));
+        if (vid != null) list = list.filter((o) => Number((o as any).meta?.vertical_id) === Number(vid));
+      }
     }
     const fresh = (extras[f.label] ?? []).filter((e) => !list.some((o) => Number(o.id) === Number(e.id)));
     let out = [...list, ...fresh];
@@ -753,6 +768,12 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       }
     };
     walk(label);
+    // UAT-R3b #16 — Course is gated on Branch + Vertical but is NOT part of the CASCADE chain,
+    // so reset any Course select when either changes (a stale course from another Branch/Vertical
+    // must never survive to submit).
+    if (label === 'Branch' || label === 'Vertical') {
+      for (const cf of spec.fields) if (cf.src === 'courses' && !clear.includes(cf.label)) clear.push(cf.label);
+    }
     setVals((x) => { const n = { ...x, [label]: value }; for (const k of clear) delete n[k]; return n; });
     setIds((x) => { const n = { ...x, [label]: id }; for (const k of clear) delete n[k]; return n; });
   };
@@ -804,7 +825,12 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       // Branch › Vertical (and the rest of the chain): the child is disabled with a "pick
       // the parent first" hint until its parent select carries a value.
       const parentCfg = CASCADE.find((cc) => cc.src === f.src && cc.strict && cascadeParent(cc.parent));
-      const blocked = !!parentCfg && ids[parentCfg.parent] == null;
+      // UAT-R3b #16 — Course gating: empty + a message until BOTH Branch and Vertical are chosen,
+      // then "No courses for this Branch & Vertical" if none match.
+      const courseGate = f.src === 'courses' && courseGated();
+      const coursePick = courseGate && (ids['Branch'] == null || ids['Vertical'] == null);
+      const courseNone = courseGate && !coursePick && list.length === 0;
+      const blocked = (!!parentCfg && ids[parentCfg.parent] == null) || coursePick;
       // client update #3 — course fee auto-fetch from the Course master (meta.fee)
       const courseFee = f.src === 'courses' && ids[f.label]
         ? (list.find((o) => Number(o.id) === Number(ids[f.label])) as any)?.meta?.fee
@@ -824,9 +850,14 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
                 }
               }
             }}>
-            <option value="">{blocked ? `Select ${parentCfg!.parent} first…` : 'Select…'}</option>
+            <option value="">{coursePick ? 'Please choose Branch and Vertical first'
+              : courseNone ? 'No courses for this Branch & Vertical'
+              : (blocked && parentCfg) ? `Select ${parentCfg.parent} first…`
+              : 'Select…'}</option>
             {list.map((o) => <option key={o.id} value={o.id}>{o.name}{o.branch_name ? ` · ${o.branch_name}` : ''}</option>)}
           </select>
+          {coursePick && <div className="fhint" style={{ marginTop: 4, display: 'block' }}>Please choose Branch and Vertical first</div>}
+          {courseNone && <div className="fhint" style={{ marginTop: 4, display: 'block', color: 'var(--danger)' }}>No courses for this Branch &amp; Vertical</div>}
           {courseFee != null && courseFee !== '' && (
             <div className="fhint" style={{ marginTop: 4, display: 'block', color: 'var(--success)' }}>
               Course fee: ₹{courseFee} (auto-fetched from Course master)
