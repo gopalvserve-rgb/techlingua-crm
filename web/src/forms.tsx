@@ -97,9 +97,15 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Referral Status', 'select', 1, ['Pending', 'Converted', 'Rewarded', 'Rejected'])] },
   // UAT-R2 #4 — Source Category, Cost per Lead removed (backend keeps its defaults). Campaign
   // stays: it is the required parent that supplies the source's Branch › Vertical › Pipeline path.
+  // UAT-R3 #21 — the Add Source form walks the FULL strict cascade Branch \u2192 Vertical \u2192
+  // Pipeline \u2192 Campaign (each empty until its parent is chosen), then the source fields.
+  // Only campaign_id is sent; the source's Branch/Vertical/Pipeline path is derived from the
+  // Campaign server-side (HierarchyService.createSource), so the hierarchy fields are cascade
+  // filters only (EXEMPT in qa10matrix), exactly as on the Add Lead form.
   'leads.sources': { title: 'Add Lead Source', fields: [
-    F('Source Name', 'text', 1), F('Campaign', 'select', 1, 0, 'parent link', 'campaigns'),
-    F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
+    F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
+    F('Source Name', 'text', 1), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'leads.pipelinemaster': { title: 'Add Pipeline', fields: [
     F('Pipeline Name', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline Code', 'text', 1, 0, 'e.g. ADM'), F('Pipeline Stages', 'table', 0, 0, 'Default stage set added — edit after create'), F('Pipeline Owner', 'select', 0, 0, 'Users', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
@@ -136,7 +142,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // it, so the two dropdowns did nothing — the bug the client reported.
   'students.courses': { title: 'Add Course', fields: [
     F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
-    F('Duration', 'number', 0, 0, 'weeks / months'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
     F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
     F('Start Date', 'date', 1), F('End Date', 'date', 1), F('Class Timing', 'text', 1), F('Capacity (Max Seats)', 'number', 1), F('Trainer / Faculty Assigned', 'select', 0, 0, 'Employee master', 'users'),
@@ -1059,8 +1065,10 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
   const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
   const [busy, setBusy] = useState(false);
 
-  const verticals = ref.verticals.filter((v) => !branchId || Number(v.branch_id) === branchId);
-  const pipelines = ref.pipelines.filter((p) => !verticalId || Number(p.vertical_id) === verticalId);
+  // UAT-R3 #20 — STRICT cascade: a child is EMPTY until its parent is chosen, so the user
+  // is walked Branch \u2192 Vertical \u2192 Pipeline in order and only valid children appear.
+  const verticals = branchId ? ref.verticals.filter((v) => Number(v.branch_id) === branchId) : [];
+  const pipelines = verticalId ? ref.pipelines.filter((p) => Number(p.vertical_id) === verticalId) : [];
 
   const save = async () => {
     if (!vals['name']?.trim()) return toast('Campaign Name is required', true);
@@ -1163,13 +1171,13 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
               </select>}</div>
             <div className="fld"><label>Vertical <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Branch'}</span></label>
               {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.vertical_name ?? ref.verticals.find((v) => Number(v.id) === verticalId)?.name ?? '—'}</div>
-                : <select className="ainp" value={verticalId ?? ''} onChange={(e) => { setVerticalId(e.target.value ? Number(e.target.value) : undefined); setPipelineId(undefined); }}>
-                <option value="">Select…</option>{verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                : <select className="ainp" disabled={!branchId} value={verticalId ?? ''} onChange={(e) => { setVerticalId(e.target.value ? Number(e.target.value) : undefined); setPipelineId(undefined); }}>
+                <option value="">{branchId ? 'Select…' : 'Select Branch first…'}</option>{verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>}</div>
             <div className="fld"><label>Pipeline <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Vertical'}</span></label>
               {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.pipeline_name ?? ref.pipelines.find((p) => Number(p.id) === pipelineId)?.name ?? '—'}</div>
-                : <select className="ainp" value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
-                <option value="">Select…</option>{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                : <select className="ainp" disabled={!verticalId} value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
+                <option value="">{verticalId ? 'Select…' : 'Select Vertical first…'}</option>{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>}</div>
             <div className="fld"><label>Campaign Type <span className="star">*</span></label>{sel(['Digital', 'Print', 'Event', 'Referral Drive', 'Tele-calling'], vals['type'] ?? '', (x) => setVals((s) => ({ ...s, type: x })))}</div>
             <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? '', (x) => setVals((s) => ({ ...s, channel: x })))}</div>

@@ -57,6 +57,16 @@ export class LeadsController {
     return this.leads.update(id, dto, u.id, s);
   }
 
+  // UAT-R3 #23 — reassign a lead's owner. Gated on `lead.assign` (a manager giving a lead
+  // to someone), distinct from `lead.update`. Writes the 'assign' activity + audit entry.
+  @Post(':id/reassign') @RequirePermission('lead.assign') @ScopedEntity('lead')
+  reassign(
+    @Param('id', ParseIntPipe) id: number, @Body() dto: { owner_id?: number },
+    @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
+  ) {
+    return this.leads.reassign(id, Number(dto?.owner_id), u.id, s);
+  }
+
   @Post(':id/notes') @RequirePermission('lead.update') @ScopedEntity('lead')
   addNote(@Param('id', ParseIntPipe) id: number, @Body() body: { note: string }, @CurrentUser() u: U) {
     return this.leads.addNote(id, body?.note, u.id);

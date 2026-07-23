@@ -429,6 +429,14 @@ const EXEMPT: Record<string, Allow> = {
   'admin.users': {
     // nothing exempt — every field on Add User reaches the API
   },
+  // UAT-R3 #21 — the Add Source form now walks Branch \u2192 Vertical \u2192 Pipeline \u2192 Campaign.
+  // Only Campaign reaches the payload (source.campaign_id); the source's whole path is
+  // DERIVED from the Campaign server-side, so Branch/Vertical/Pipeline are cascade filters.
+  'leads.sources': {
+    Branch: 'cascade filter only — a source\'s path is DERIVED from its Campaign, server-side',
+    Vertical: 'cascade filter only — derived from the Campaign (see Branch)',
+    Pipeline: 'cascade filter only — derived from the Campaign (see Branch)',
+  },
 };
 EXEMPT['dash.quickcontact'] = EXEMPT['leads.all'];
 EXEMPT['leads.pipeline'] = EXEMPT['leads.all'];

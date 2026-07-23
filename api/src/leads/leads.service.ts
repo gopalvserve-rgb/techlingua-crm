@@ -281,6 +281,22 @@ export class LeadsService {
 
   // ---- update (stage/status/owner/priority/temperature/fields) -------------
 
+  /**
+   * UAT-R3 #23 — reassign a lead's OWNER to another user. Delegates to update() so the
+   * owner-change path is exactly the tested one: the target must be ACTIVE and inside the
+   * caller's scope (assertRefInScope), an 'assign' lead_activity is written to the timeline,
+   * the first-response SLA clock is touched, and audit_log is written by the global
+   * interceptor. The controller gates this on `lead.assign` (not `lead.update`), so only a
+   * user who may reassign can. Per the NeoDove open-lead rule, reassigning an open lead
+   * moves ownership immediately.
+   */
+  async reassign(id: number, ownerId: number, actorId: number, scope: ResolvedScope) {
+    if (!Number.isInteger(Number(ownerId)) || Number(ownerId) <= 0) {
+      throw new BadRequestException('owner_id (the user to reassign the lead to) is required');
+    }
+    return this.update(id, { owner_id: Number(ownerId) }, actorId, scope);
+  }
+
   async update(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
     const before = await this.db.one<Record<string, any>>(`SELECT * FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!before) throw new NotFoundException('lead not found');

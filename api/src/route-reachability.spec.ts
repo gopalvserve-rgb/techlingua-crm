@@ -275,8 +275,8 @@ const UNREACHABLE_BACKLOG: Record<string, string> = {
     'Re-subscribing an opted-out customer is impossible from the UI. NOTE: an earlier, looser matcher passed this route on the strength of an unrelated `/messages/${id}/retry` call — the guard has since been tightened so a route param only matches an interpolation.',
   'POST /messages/send':
     'The single-message send endpoint. The blast composer uses /messages/bulk instead. Verify whether anything should reach this, or delete it.',
-  'GET /leads/:id/activities':
-    'A DUPLICATE: GET /leads/:id already embeds `activities` (leads.service.ts builds it in get()), and the lead sheet reads lead.activities. Nothing calls the standalone route. Deleting it is the likely answer — deferred only because it is not a defect, and Phase-1 sign-off week is not when you remove endpoints from a live API.',
+  // UAT-R3 #23 — GET /leads/:id/activities is now WIRED: the Reassign-lead modal reads the
+  // lead's assignment history from it. Removed from the quarantine (census may shrink; 23 -> 22).
   'GET /leads/handout/:id':
     'The Start Calling batch detail. The UI uses /leads/handout, /leads/handout/campaigns and /leads/handout/current. ALSO A ROUTING HAZARD: `:id` is declared alongside the literal siblings and could shadow them depending on declaration order — worth checking regardless of the UI.',
   'GET /sla/lead/:id':
@@ -306,7 +306,7 @@ const UNREACHABLE_BACKLOG: Record<string, string> = {
 
 /** The census as it stood when this guard was written (commit under Phase-1 sign-off).
  *  It may SHRINK — every entry closed is a win. It may not GROW. */
-const BACKLOG_CENSUS = 23;
+const BACKLOG_CENSUS = 22;
 
 
 describe('every API route is reachable from the UI (the DEF-S16-01 guard)', () => {

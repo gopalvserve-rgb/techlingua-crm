@@ -71,6 +71,31 @@ const LEAD_COLS = ['Lead', 'Course', 'Vertical · Pipeline', 'Source', 'Score', 
 const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
 const PRIO_LABEL: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low' };
 
+// UAT-R3 #19 — shared filter controls for the hierarchy list screens (Branch/Vertical/
+// Pipeline/Campaign). Cascading dropdowns + a free-text search chip, styled like the Leads
+// filter bar. Each list builds a query string from these and the API honours the params.
+function HChip({ label, icon, value, list, onChange, disabled }:
+  { label: string; icon: string; value?: number; list: Array<{ id: number; name: string }>;
+    onChange: (v?: number) => void; disabled?: boolean }) {
+  return (
+    <div className="fchip">
+      <Ic k={icon} />{label}
+      <select aria-label={`Filter by ${label}`} value={value ?? ''} disabled={disabled}
+        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : undefined)}>
+        <option value="">All</option>
+        {list.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+    </div>
+  );
+}
+function SearchChip({ q, setQ, ph }: { q: string; setQ: (v: string) => void; ph?: string }) {
+  return (
+    <div className="fchip"><Ic k="search" />
+      <input aria-label="Search" style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}
+        placeholder={ph ?? 'Search\u2026'} value={q} onChange={(e) => setQ(e.target.value)} /></div>
+  );
+}
+
 function PrioBadge({ value }: { value?: string }) {
   const p = value || 'medium';
   return <span className={`bdg ${PRIO_CLASS[p] ?? 'b-gray'}`}>{PRIO_LABEL[p] ?? p}</span>;
@@ -1114,7 +1139,12 @@ function Branches() {
   const { can } = useAuth();
   const ref = useRef_();
   const [inc, setInc] = useState(false);
-  const list = useFetch<any[]>(`/branches${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  // UAT-R3 #19 — Branch list filters: search on name/code (+ status via inc).
+  const [q, setQ] = useState('');
+  const bparams = new URLSearchParams();
+  if (inc) bparams.set('include_inactive', '1');
+  if (q.trim()) bparams.set('q', q.trim());
+  const list = useFetch<any[]>(`/branches${bparams.toString() ? `?${bparams}` : ''}`, [refreshTick, bparams.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -1139,7 +1169,10 @@ function Branches() {
   return (
     <>
       <Blocks blocks={[{ type: 'tree', title: 'Hierarchy', nodes }]} />
-      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <div className="filters">
+        <SearchChip q={q} setQ={setQ} ph="Search branch name / code\u2026" />
+        <IncInactiveChip on={inc} set={setInc} />
+      </div>
       <TableCard title="Branches" cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((b) => [
@@ -1228,7 +1261,14 @@ function Verticals() {
   const { can } = useAuth();
   const ref = useRef_();
   const [inc, setInc] = useState(false);
-  const list = useFetch<any[]>(`/verticals${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  // UAT-R3 #19 — Vertical list filters: by Branch (+ search, status).
+  const [q, setQ] = useState('');
+  const [fBranch, setFBranch] = useState<number | undefined>(undefined);
+  const vparams = new URLSearchParams();
+  if (inc) vparams.set('include_inactive', '1');
+  if (fBranch) vparams.set('branch_id', String(fBranch));
+  if (q.trim()) vparams.set('q', q.trim());
+  const list = useFetch<any[]>(`/verticals${vparams.toString() ? `?${vparams}` : ''}`, [refreshTick, vparams.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -1237,7 +1277,11 @@ function Verticals() {
   const after = () => { list.reload(); ref.reload(); bump(); };
   return (
     <>
-      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <div className="filters">
+        <HChip label="Branch" icon="branch" value={fBranch} list={ref.branches} onChange={setFBranch} />
+        <SearchChip q={q} setQ={setQ} ph="Search vertical name / code\u2026" />
+        <IncInactiveChip on={inc} set={setInc} />
+      </div>
       <TableCard title="Verticals" cols={['Vertical', 'Branch', 'Head', 'SMTP Domain', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((v) => [
@@ -1405,7 +1449,16 @@ function Pipelines() {
   const { can } = useAuth();
   const ref = useRef_();
   const [inc, setInc] = useState(false);
-  const list = useFetch<any[]>(`/pipelines${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); child resets on parent change.
+  const [q, setQ] = useState('');
+  const [fBranch, setFBranch] = useState<number | undefined>(undefined);
+  const [fVertical, setFVertical] = useState<number | undefined>(undefined);
+  const pparams = new URLSearchParams();
+  if (inc) pparams.set('include_inactive', '1');
+  if (fBranch) pparams.set('branch_id', String(fBranch));
+  if (fVertical) pparams.set('vertical_id', String(fVertical));
+  if (q.trim()) pparams.set('q', q.trim());
+  const list = useFetch<any[]>(`/pipelines${pparams.toString() ? `?${pparams}` : ''}`, [refreshTick, pparams.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -1429,7 +1482,14 @@ function Pipelines() {
   }
   return (
     <>
-      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <div className="filters">
+        <HChip label="Branch" icon="branch" value={fBranch} list={ref.branches}
+          onChange={(v) => { setFBranch(v); setFVertical(undefined); }} />
+        <HChip label="Vertical" icon="grid" value={fVertical} disabled={!fBranch}
+          list={ref.verticals.filter((v) => !fBranch || Number(v.branch_id) === fBranch)} onChange={setFVertical} />
+        <SearchChip q={q} setQ={setQ} ph="Search pipeline name / code\u2026" />
+        <IncInactiveChip on={inc} set={setInc} />
+      </div>
       {/* UAT-R2 #7 — the list reads in hierarchy order Branch \u203a Vertical \u203a Pipeline
           (columns and row order); the api sorts by branch, vertical, then pipeline name. */}
       <TableCard title="Pipelines" cols={['Branch', 'Vertical', 'Pipeline', 'Stages', 'Status', 'Actions']}
@@ -1462,6 +1522,7 @@ function Pipelines() {
             title: `Edit Pipeline \u2014 ${edit.name}`,
             initialVals: {
               'Pipeline Name': edit.name ?? '', 'Pipeline Code': edit.code ?? '',
+              // UAT-R3 #22 — Branch/Vertical are SELECTS now (prefilled via initialIds), not locked text.
               'Branch': edit.branch_name ?? '', 'Vertical': edit.vertical_name ?? '',
               'Pipeline Owner': edit.owner_name ?? '',
               // UAT-R2 #9 — the live stages prefill the editor (add / edit / reorder / delete persist on save).
@@ -1471,13 +1532,21 @@ function Pipelines() {
               }))),
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            initialIds: { 'Pipeline Owner': edit.owner_user_id ? Number(edit.owner_user_id) : undefined },
-            // only the immutable parent links stay locked (DEF-2); stages are editable here now.
-            lock: ['Branch', 'Vertical'],
+            initialIds: {
+              'Pipeline Owner': edit.owner_user_id ? Number(edit.owner_user_id) : undefined,
+              // UAT-R3 #22 — prefill Branch + Vertical as ids so the Edit form reopens cascading
+              // and both are EDITABLE (changing Branch resets Vertical; changing Vertical
+              // re-parents the pipeline and re-denormalises its campaigns/sources/leads).
+              'Branch': edit.branch_id ? Number(edit.branch_id) : undefined,
+              'Vertical': edit.vertical_id ? Number(edit.vertical_id) : undefined,
+            },
             submit: async (vals, ids) => {
               await api.patch(`/pipelines/${edit.id}`, {
                 name: need(vals['Pipeline Name'], 'Pipeline name is required'),
                 code: need(vals['Pipeline Code'], 'Pipeline code is required'),
+                // #22 — vertical_id drives the re-parent; branch is derived from it server-side.
+                vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
+                branch_id: ids['Branch'],
                 owner_user_id: ids['Pipeline Owner'] ?? null,
                 is_active: vals['Status'] !== 'Inactive',
               });
@@ -1615,7 +1684,19 @@ function Campaigns() {
   const ref = useRef_();
   const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
   const [inc, setInc] = useState(false);
-  const list = useFetch<any[]>(`/campaigns${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  // UAT-R3 #19 — Campaign list filters follow Branch \u2192 Vertical \u2192 Pipeline (+ search, status);
+  // each child resets when its parent changes and the API honours the params.
+  const [q, setQ] = useState('');
+  const [fBranch, setFBranch] = useState<number | undefined>(undefined);
+  const [fVertical, setFVertical] = useState<number | undefined>(undefined);
+  const [fPipeline, setFPipeline] = useState<number | undefined>(undefined);
+  const cparams = new URLSearchParams();
+  if (inc) cparams.set('include_inactive', '1');
+  if (fBranch) cparams.set('branch_id', String(fBranch));
+  if (fVertical) cparams.set('vertical_id', String(fVertical));
+  if (fPipeline) cparams.set('pipeline_id', String(fPipeline));
+  if (q.trim()) cparams.set('q', q.trim());
+  const list = useFetch<any[]>(`/campaigns${cparams.toString() ? `?${cparams}` : ''}`, [refreshTick, cparams.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -1640,7 +1721,17 @@ function Campaigns() {
         { lab: 'Avg CPL', val: '\u2014', ic: 'rupee' },
         { lab: 'Best conv%', val: '\u2014', ic: 'target' },
       ]} />
-      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <div className="filters">
+        <HChip label="Branch" icon="branch" value={fBranch} list={ref.branches}
+          onChange={(v) => { setFBranch(v); setFVertical(undefined); setFPipeline(undefined); }} />
+        <HChip label="Vertical" icon="grid" value={fVertical} disabled={!fBranch}
+          list={ref.verticals.filter((v) => !fBranch || Number(v.branch_id) === fBranch)}
+          onChange={(v) => { setFVertical(v); setFPipeline(undefined); }} />
+        <HChip label="Pipeline" icon="list" value={fPipeline} disabled={!fVertical}
+          list={ref.pipelines.filter((p) => !fVertical || Number(p.vertical_id) === fVertical)} onChange={setFPipeline} />
+        <SearchChip q={q} setQ={setQ} ph="Search campaign name\u2026" />
+        <IncInactiveChip on={inc} set={setInc} />
+      </div>
       <TableCard title="Campaigns" cols={['Campaign', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => {

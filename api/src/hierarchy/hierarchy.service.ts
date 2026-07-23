@@ -101,17 +101,17 @@ export class HierarchyService {
     return includeInactive ? '' : ` AND ${alias}.is_active`;
   }
 
-  listBranches(scope: ResolvedScope, includeInactive = false) {
+  // UAT-R3 #19 — Branch list filters: free-text search on name/code (status via include_inactive).
+  listBranches(scope: ResolvedScope, includeInactive = false, q?: string) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, { branch: 'b.id' }, params);
-    return this.db.query(
-      `SELECT b.*, s.name AS state_name, c.name AS city_name, hu.name AS head_name,
+    let sql = `SELECT b.*, s.name AS state_name, c.name AS city_name, hu.name AS head_name,
               (SELECT COUNT(*)::int FROM vertical v WHERE v.branch_id = b.id AND v.is_active AND v.deleted_at IS NULL) AS vertical_count
          FROM branch b LEFT JOIN state s ON s.id = b.state_id LEFT JOIN city c ON c.id = b.city_id
               LEFT JOIN "user" hu ON hu.id = b.head_user_id
-        WHERE ${where} AND b.deleted_at IS NULL${HierarchyService.activeFilter('b', includeInactive)} ORDER BY b.name`,
-      params,
-    );
+        WHERE ${where} AND b.deleted_at IS NULL${HierarchyService.activeFilter('b', includeInactive)}`;
+    if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND (b.name ILIKE $${params.length} OR b.code ILIKE $${params.length})`; }
+    return this.db.query(sql + ` ORDER BY b.name`, params);
   }
 
   async createBranch(dto: BranchDto, actorId: number) {
@@ -140,7 +140,8 @@ export class HierarchyService {
 
   // ---- verticals ----------------------------------------------------------
 
-  listVerticals(scope: ResolvedScope, branchId?: number, includeInactive = false) {
+  // UAT-R3 #19 — Vertical list filters: by Branch (existing) + free-text search on name/code.
+  listVerticals(scope: ResolvedScope, branchId?: number, includeInactive = false, q?: string) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, params);
     let sql = `SELECT v.*, b.name AS branch_name, hu.name AS head_name,
@@ -149,6 +150,7 @@ export class HierarchyService {
                       LEFT JOIN "user" hu ON hu.id = v.head_user_id
                 WHERE ${where} AND v.deleted_at IS NULL${HierarchyService.activeFilter('v', includeInactive)}`;
     if (branchId) { params.push(branchId); sql += ` AND v.branch_id = $${params.length}`; }
+    if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND (v.name ILIKE $${params.length} OR v.code ILIKE $${params.length})`; }
     return this.db.query(sql + ` ORDER BY v.name`, params);
   }
 
@@ -177,7 +179,8 @@ export class HierarchyService {
 
   // ---- pipelines + stages -------------------------------------------------
 
-  listPipelines(scope: ResolvedScope, verticalId?: number, includeInactive = false) {
+  // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); vertical filter existed.
+  listPipelines(scope: ResolvedScope, verticalId?: number, includeInactive = false, branchId?: number, q?: string) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 'p.branch_id', vertical: 'p.vertical_id', pipeline: 'p.id',
@@ -186,7 +189,9 @@ export class HierarchyService {
                  FROM pipeline p JOIN vertical v ON v.id = p.vertical_id JOIN branch b ON b.id = p.branch_id
                       LEFT JOIN "user" ou ON ou.id = p.owner_user_id
                 WHERE ${where} AND p.deleted_at IS NULL${HierarchyService.activeFilter('p', includeInactive)}`;
+    if (branchId) { params.push(branchId); sql += ` AND p.branch_id = $${params.length}`; }
     if (verticalId) { params.push(verticalId); sql += ` AND p.vertical_id = $${params.length}`; }
+    if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND (p.name ILIKE $${params.length} OR p.code ILIKE $${params.length})`; }
     // UAT-R2 #7 — list in hierarchy order Branch \u203a Vertical \u203a Pipeline.
     return this.db.query(sql + ` ORDER BY b.name, v.name, p.name`, params);
   }
@@ -248,8 +253,54 @@ export class HierarchyService {
     });
   }
 
-  updatePipeline(id: number, dto: Record<string, unknown>) {
-    return this.genericUpdate('pipeline', id, dto, ['name', 'code', 'owner_user_id', 'is_active']);
+  /**
+   * UAT-R3 #22 — Branch and Vertical are EDITABLE on a pipeline. Re-parenting moves the
+   * pipeline to a new Vertical; the Branch is DERIVED from that Vertical server-side (a
+   * vertical belongs to exactly one branch), exactly as on create — so the denormalised
+   * path can never go inconsistent. Because campaigns, sources and leads all carry the
+   * pipeline's branch_id/vertical_id DENORMALISED, a re-parent re-denormalises every
+   * descendant in the SAME transaction (chosen over blocking when descendants exist: the
+   * client explicitly asked for editable Branch/Vertical, and a half-moved tree is the
+   * worse outcome). pipeline_id itself never changes, so campaign/source/lead links hold.
+   */
+  async updatePipeline(id: number, dto: Record<string, unknown>, actorId?: number, scope?: ResolvedScope) {
+    const reparent = dto.vertical_id !== undefined && dto.vertical_id !== null && String(dto.vertical_id) !== '';
+    if (!reparent) {
+      return this.genericUpdate('pipeline', id, dto, ['name', 'code', 'owner_user_id', 'is_active']);
+    }
+    const newVerticalId = Number(dto.vertical_id);
+    const v = await this.db.one<{ org_id: string; branch_id: string }>(
+      `SELECT org_id, branch_id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [newVerticalId]);
+    if (!v) throw new NotFoundException('vertical not found');
+    // the path is derived from the vertical; a mismatched branch_id in the body is rejected.
+    if (dto.branch_id !== undefined && dto.branch_id !== null && String(dto.branch_id) !== ''
+        && Number(dto.branch_id) !== Number(v.branch_id)) {
+      throw new BadRequestException('vertical does not belong to the given branch');
+    }
+    const newBranchId = Number(v.branch_id);
+    // RBAC: the caller cannot move a pipeline into a Vertical/Branch outside their scope.
+    if (scope && actorId != null) {
+      await this.enforcer.assertRefInScope(scope, 'vertical', newVerticalId, actorId);
+    }
+    return this.db.tx(async (c) => {
+      const cur = await c.query<{ id: string }>(
+        `SELECT id FROM pipeline WHERE id = $1 AND deleted_at IS NULL`, [id]);
+      if (!cur.rows.length) throw new NotFoundException('pipeline not found');
+      const sets: string[] = ['branch_id = $1', 'vertical_id = $2'];
+      const params: unknown[] = [newBranchId, newVerticalId];
+      for (const col of ['name', 'code', 'owner_user_id', 'is_active'] as const) {
+        if (dto[col] !== undefined) { params.push(dto[col]); sets.push(`${col} = $${params.length}`); }
+      }
+      params.push(id);
+      const upd = await c.query(
+        `UPDATE pipeline SET ${sets.join(', ')}, updated_at = now()
+          WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params);
+      // re-denormalise the path on every descendant that carries branch_id/vertical_id.
+      await c.query(`UPDATE campaign SET branch_id = $1, vertical_id = $2, updated_at = now() WHERE pipeline_id = $3 AND deleted_at IS NULL`, [newBranchId, newVerticalId, id]);
+      await c.query(`UPDATE source   SET branch_id = $1, vertical_id = $2, updated_at = now() WHERE pipeline_id = $3 AND deleted_at IS NULL`, [newBranchId, newVerticalId, id]);
+      await c.query(`UPDATE lead     SET branch_id = $1, vertical_id = $2, updated_at = now() WHERE pipeline_id = $3 AND deleted_at IS NULL`, [newBranchId, newVerticalId, id]);
+      return upd.rows[0];
+    });
   }
 
   listStages(pipelineId: number) {
@@ -409,7 +460,8 @@ export class HierarchyService {
 
   // ---- campaigns ----------------------------------------------------------
 
-  listCampaigns(scope: ResolvedScope, pipelineId?: number, includeInactive = false) {
+  // UAT-R3 #19 — Campaign list filters follow Branch \u2192 Vertical \u2192 Pipeline (+ search, status).
+  listCampaigns(scope: ResolvedScope, pipelineId?: number, includeInactive = false, branchId?: number, verticalId?: number, q?: string) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 'c.branch_id', vertical: 'c.vertical_id', pipeline: 'c.pipeline_id', campaign: 'c.id',
@@ -423,7 +475,10 @@ export class HierarchyService {
                  FROM campaign c JOIN pipeline p ON p.id = c.pipeline_id
                  JOIN vertical v ON v.id = c.vertical_id JOIN branch b ON b.id = c.branch_id
                 WHERE ${where} AND c.deleted_at IS NULL${HierarchyService.activeFilter('c', includeInactive)}`;
+    if (branchId) { params.push(branchId); sql += ` AND c.branch_id = $${params.length}`; }
+    if (verticalId) { params.push(verticalId); sql += ` AND c.vertical_id = $${params.length}`; }
     if (pipelineId) { params.push(pipelineId); sql += ` AND c.pipeline_id = $${params.length}`; }
+    if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND c.name ILIKE $${params.length}`; }
     return this.db.query(sql + ` ORDER BY c.name`, params);
   }
 

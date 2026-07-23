@@ -50,6 +50,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const [busy, setBusy] = useState(false);
   const [masterAdd, setMasterAdd] = useState<{ type: string; k: string } | null>(null);
   const [courseAdd, setCourseAdd] = useState(false);
+  const [reassign, setReassign] = useState(false); // UAT-R3 #23 reassign-owner modal
   const [extra, setExtra] = useState<Record<string, Named[]>>({});
 
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
@@ -144,6 +145,8 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           <a className="qa wa" href={`https://wa.me/${String(lead.whatsapp_phone || lead.phone).replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer"><Ic k="wa" />WhatsApp</a>
           <a className="qa" href={lead.email ? `mailto:${lead.email}` : undefined} onClick={(e) => { if (!lead.email) { e.preventDefault(); toast('No email on this lead', true); } }}><Ic k="mail" />Email</a>
           <button className="qa" onClick={() => setTab('notes')}><Ic k="note" />Edit</button>
+          {/* UAT-R3 #23 — reassign the lead's owner to another (active, in-scope) user. */}
+          {can('lead.assign') && <button className="qa" onClick={() => setReassign(true)}><Ic k="users" />Reassign</button>}
         </div>
         <div className="sheet-body">
           <div className="sheet-sec">
@@ -205,6 +208,12 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                 {canUpdate
                   ? <PhoneInput value={String(ed('whatsapp_phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, whatsapp_phone: v }))} />
                   : <div className="iv"><span className="mono">{lead.whatsapp_phone || '\u2014'}</span></div>}
+              </div>
+              {/* UAT-R3 #18 — Alternate Mobile Number is a stored contact field (lead.alt_phone), shown + editable here beside the primary mobile / WhatsApp. */}
+              <div className="f"><label>Alt. Mobile</label>
+                {canUpdate
+                  ? <PhoneInput value={String(ed('alt_phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, alt_phone: v }))} />
+                  : <div className="iv"><span className="mono">{lead.alt_phone || '\u2014'}</span></div>}
               </div>
               <div className="f"><label>Source</label><div className="iv">{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">
@@ -319,6 +328,79 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             ref.reload();
           }} />
       )}
+      {reassign && (
+        <ReassignModal lead={lead} users={ref.users}
+          onClose={() => setReassign(false)}
+          onDone={() => { setReassign(false); load(); onChanged?.(); }} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * UAT-R3 #23 — Reassign a lead's OWNER. Only ACTIVE, in-scope users are offered
+ * (selectableUsers filters deactivated users, keeping the current owner visible); the
+ * current owner is not re-offered. Posts to /leads/:id/reassign (gated on `lead.assign`,
+ * writes an 'assign' activity + audit). The "Assignment history" panel reads the lead's
+ * timeline via GET /leads/:id/activities — the previously-unreachable duplicate endpoint,
+ * now wired (route-reachability census 23 -> 22).
+ */
+function ReassignModal({ lead, users, onClose, onDone }:
+  { lead: any; users: Named[]; onClose: () => void; onDone: () => void }) {
+  const [ownerId, setOwnerId] = useState<number | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<Activity[] | null>(null);
+  const options = selectableUsers(users, lead.owner_id).filter((u) => Number(u.id) !== Number(lead.owner_id));
+  useEffect(() => {
+    api.get<Activity[]>(`/leads/${lead.id}/activities`)
+      .then((rows) => setHistory((rows ?? []).filter((a) => a.type === 'assign')))
+      .catch(() => setHistory([]));
+  }, [lead.id]);
+  const submit = async () => {
+    if (!ownerId) return toast('Pick a user to reassign this lead to', true);
+    setBusy(true);
+    try {
+      await api.post(`/leads/${lead.id}/reassign`, { owner_id: ownerId });
+      toast('Lead reassigned');
+      onDone();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  const nameOfUser = (id: any) => users.find((u) => Number(u.id) === Number(id))?.name;
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 460 }}>
+        <div className="ah"><h3><Ic k="users" />Reassign lead</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="fld">
+            <label>Current owner</label>
+            <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{lead.owner_name || 'Unassigned'}</div>
+          </div>
+          <div className="fld">
+            <label>Reassign to <span className="star">*</span><span className="fhint">active users in your scope</span></label>
+            <select className="ainp" aria-label="Reassign to" value={ownerId ?? ''} onChange={(e) => setOwnerId(e.target.value ? Number(e.target.value) : undefined)}>
+              <option value="">Select a user…</option>
+              {options.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          {history && history.length > 0 && (
+            <div className="fld">
+              <label>Assignment history</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}>
+                {history.slice(0, 5).map((a) => (
+                  <div key={a.id}>
+                    {fmtDT(a.occurred_at)} — {a.to_value?.owner_id ? `assigned to ${nameOfUser(a.to_value.owner_id) ?? `#${a.to_value.owner_id}`}` : 'owner cleared'}
+                    {a.actor_name ? ` (by ${a.actor_name})` : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={submit} disabled={busy || !ownerId}><Ic k="check" />Reassign</button>
+        </div>
+      </div>
     </div>
   );
 }
