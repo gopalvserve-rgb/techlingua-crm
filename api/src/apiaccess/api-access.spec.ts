@@ -234,6 +234,30 @@ describe('ApiKeyGuard — auth + rate limit + reject logging', () => {
     expect(db.logs.some((l) => l.outcome === 'rejected' && l.status_code === 401)).toBe(true);
   });
 
+  it('a rejection is a real HttpException with the right status (not a 500) — the live-smoke bug', async () => {
+    const { svc } = makeService();
+    const out = await svc.generate({ name: 'K' }, ADMIN);
+    await svc.setActive(out.id, false, ADMIN);
+    const guard = new ApiKeyGuard(svc);
+    const req: any = { headers: { authorization: `Bearer ${out.plaintext}` }, method: 'POST', url: '/api/public-api/leads', ip: '2.2.2.2' };
+    await guard.canActivate(ctxFor(req)).then(
+      () => { throw new Error('should have rejected'); },
+      (e) => { expect(typeof e.getStatus).toBe('function'); expect(e.getStatus()).toBe(401); },
+    );
+  });
+
+  it('a DISABLED key rejection is logged AGAINST that key (api_key_id set, so the per-key filter finds it)', async () => {
+    const { db, svc } = makeService();
+    const out = await svc.generate({ name: 'K' }, ADMIN);
+    await svc.setActive(out.id, false, ADMIN);
+    const guard = new ApiKeyGuard(svc);
+    const req: any = { headers: { authorization: `Bearer ${out.plaintext}` }, method: 'POST', url: '/api/public-api/leads', ip: '2.2.2.2' };
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeTruthy();
+    const row = db.logs.find((l) => l.outcome === 'rejected');
+    expect(row.api_key_id).toBe(out.id);
+    expect(row.status_code).toBe(401);
+  });
+
   it('rate limiting FIRES — the 61st call in a window is 429 and logged', async () => {
     const { db, svc } = makeService();
     const out = await svc.generate({ name: 'K' }, ADMIN);

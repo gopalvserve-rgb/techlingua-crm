@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
 import { IngestPayload } from '../ingestion/ingestion.types';
@@ -7,9 +7,17 @@ import {
   generateApiKey, hashApiKey, keyMatchesHash, maskApiKey,
 } from './api-key.util';
 
-/** A request-authentication failure. The guard turns this into a 401 + a log row. */
-export class ApiKeyRejected extends Error {
-  constructor(readonly http: number, message: string) { super(message); }
+/**
+ * A request-authentication failure. Extends HttpException so Nest returns the
+ * right status (401 / 429), and carries the matched key's id/org when we know it
+ * (a disabled/revoked key IS known) so the rejection can be logged against it.
+ */
+export class ApiKeyRejected extends HttpException {
+  constructor(
+    readonly http: number,
+    message: string,
+    readonly ctx: { keyId?: number; orgId?: number; keyPrefix?: string } = {},
+  ) { super(message, http); }
 }
 
 /** The authenticated caller a valid key resolves to (attached to the request). */
@@ -189,8 +197,9 @@ export class ApiKeyService {
     if (!row || !keyMatchesHash(rawKey, row.key_hash)) {
       throw new ApiKeyRejected(401, 'Unknown API key.');
     }
-    if (row.revoked_at) throw new ApiKeyRejected(401, 'This API key has been revoked.');
-    if (!row.is_active) throw new ApiKeyRejected(401, 'This API key is disabled.');
+    const kctx = { keyId: Number(row.id), orgId: Number(row.org_id), keyPrefix: row.key_prefix };
+    if (row.revoked_at) throw new ApiKeyRejected(401, 'This API key has been revoked.', kctx);
+    if (!row.is_active) throw new ApiKeyRejected(401, 'This API key is disabled.', kctx);
     // touch last_used_at (best-effort; never blocks the request)
     this.db.query(`UPDATE api_key SET last_used_at = now() WHERE id = $1`, [row.id]).catch(() => undefined);
     return {

@@ -35,8 +35,11 @@ export class ApiKeyGuard implements CanActivate {
     } catch (e) {
       const r = e as ApiKeyRejected;
       await this.keys.logRequest({
+        org_id: r.ctx?.orgId ?? null,
+        api_key_id: r.ctx?.keyId ?? null,
+        key_prefix: r.ctx?.keyPrefix ?? (raw ? raw.slice(0, 13) : null),
         method: req.method, endpoint, status_code: r.http ?? 401, outcome: 'rejected',
-        reason: r.message, ip, key_prefix: raw ? raw.slice(0, 13) : null,
+        reason: r.message, ip,
       });
       throw e;
     }
