@@ -33,6 +33,8 @@ export class WebhookController {
       origin: req.headers.origin as string | undefined,
       signature: (req.headers['x-hub-signature-256'] as string) || undefined,
       rawBody: (req as any).rawBody as Buffer | undefined,
+      apiKey: (req.headers['x-webhook-key'] as string) || (req.headers['x-api-key'] as string)
+        || (req.query?.key as string) || undefined,
     };
   }
 
@@ -112,7 +114,23 @@ export class WebhookController {
     }
   }
 
+  /**
+   * The generic keyed inbound webhook — every marketplace (IndiaMART, JustDial,
+   * TradeIndia, Housing, 99acres), Google Form and Custom/Webhook integration
+   * posts here. Auth = the public key in the path (+ optional X-Webhook-Key).
+   */
+  @Public() @Post('push/:key')
+  async pushReceive(@Param('key') key: string, @Body() body: unknown, @Req() req: Request, @Res() res: Response) {
+    try {
+      const out = await this.hooks.pushReceive(key, body, this.meta(req));
+      res.status(out.http).json(out.body);
+    } catch (e) {
+      const r = e as WebhookRejected;
+      res.status(r.http ?? 500).json({ ok: false, error: r.message ?? 'Rejected' });
+    }
+  }
+
   /** A liveness probe an integrator can curl before wiring anything up. */
   @Public() @Get('health') @Header('Cache-Control', 'no-store')
-  health() { return { ok: true, endpoints: ['meta/:key', 'google/:key', 'form/:key'] }; }
+  health() { return { ok: true, endpoints: ['meta/:key', 'google/:key', 'form/:key', 'push/:key'] }; }
 }

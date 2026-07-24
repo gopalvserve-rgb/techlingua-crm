@@ -39,7 +39,7 @@ export interface ProviderSpec {
   blurb: string;
   kind: 'webhook' | 'poll';
   /** the public route family: /api/webhooks/<endpoint>/<public_key> */
-  endpoint: 'meta' | 'google' | 'form' | null;
+  endpoint: 'meta' | 'google' | 'form' | 'push' | null;
   config: FieldSpec[];
   secrets: FieldSpec[];
   /** what Gopal must paste where (rendered verbatim in the Configure drawer) */
@@ -158,6 +158,134 @@ export const PROVIDERS: Record<string, ProviderSpec> = {
     ],
   },
 };
+
+/* ------------------------------------------------------------------ *
+ *  PUSH INTEGRATIONS — Indian marketplaces + a generic keyed webhook.
+ *
+ *  Client-confirmed set (NeoDove-modelled Integrations): IndiaMART · JustDial ·
+ *  TradeIndia · Housing.com · 99acres · Google Form · Custom Integration ·
+ *  Webhook. Every one of them is an ordinary server-to-server JSON/urlencoded
+ *  POST to ONE public route family — /api/webhooks/push/<public_key> — normalised
+ *  through the SAME field-map + LeadIngestionService as every other channel. A
+ *  marketplace is therefore ONE registry entry: no migration, no new endpoint,
+ *  no change to dedupe/distribution/idempotency/audit.
+ *
+ *  Auth = the unguessable, rotatable public key in the URL (exactly like the
+ *  website form). An OPTIONAL generated `webhook_key` adds defence-in-depth for
+ *  callers that can send a header/param; a caller that sends a WRONG key is
+ *  rejected, a caller that sends none is allowed (the URL is the secret) — so a
+ *  marketplace that cannot attach a custom header still works.
+ * ------------------------------------------------------------------ */
+
+const PUSH_FIELD_MAP: FieldSpec = {
+  key: 'field_map', label: 'Field mapping (JSON)', type: 'textarea',
+  placeholder: '{"MOBILE":"phone","SENDER_NAME":"full_name","SENDER_EMAIL":"email","QUERY_MESSAGE":"note"}',
+  hint: 'Map the incoming field names to CRM lead fields. Contact Name, Contact Number and Email are matched automatically for common names; add anything the source calls differently here.',
+};
+const PUSH_CAPTURE_EXTRA: FieldSpec = {
+  key: 'capture_extra', label: 'Capture other fields (page / form name) — visible to all users', type: 'bool',
+  hint: 'On: any field not mapped above (form name, page name, product enquired, city…) is appended to the lead note so nothing the source sent is lost.',
+};
+const PUSH_KEY: FieldSpec = {
+  key: 'webhook_key', label: 'Webhook key', type: 'password', generated: true,
+  hint: 'Generated for you. Optional shared secret — send it as the header X-Webhook-Key (or ?key= / a "key" field) and any payload with a WRONG key is rejected. A source that cannot send it still works: the URL itself is unguessable.',
+};
+
+function pushProvider(key: string, label: string, blurb: string, setup: string[]): ProviderSpec {
+  return {
+    key, label, blurb, kind: 'webhook', endpoint: 'push',
+    config: [PUSH_FIELD_MAP, PUSH_CAPTURE_EXTRA], secrets: [PUSH_KEY], setup,
+  };
+}
+
+Object.assign(PROVIDERS, {
+  google_form: pushProvider(
+    'google_form', 'Google Form',
+    'Each Google Form submission becomes a lead. A one-line Apps Script on the form posts the answers to your webhook URL in real time.',
+    [
+      'Open the linked Google Sheet › Extensions › Apps Script.',
+      'Add an installable "On form submit" trigger that POSTs e.namedValues as JSON to the Webhook URL above.',
+      'Map your question titles to CRM fields below (Name / Phone / Email are automatic).',
+      'Submit a test response — it appears in the Logs within seconds.',
+    ]),
+  indiamart: pushProvider(
+    'indiamart', 'IndiaMART',
+    'Buy-leads from your IndiaMART seller panel, pushed to the CRM in real time (IndiaMART Push / Lead Manager API).',
+    [
+      'IndiaMART Seller Panel › Lead Manager › Push API / CRM Integration.',
+      'Paste the Webhook URL above as the push endpoint (and the Webhook key if the panel lets you set a header/param).',
+      'IndiaMART posts SENDER_NAME / SENDER_MOBILE / SENDER_EMAIL / QUERY_MESSAGE — these are mapped automatically.',
+      'Send a test enquiry — it appears in the Logs and creates a lead in the chosen campaign.',
+    ]),
+  justdial: pushProvider(
+    'justdial', 'JustDial',
+    'JustDial JD Leads pushed to the CRM as they arrive.',
+    [
+      'JustDial JD-Leads / API panel (or ask JustDial support to enable lead push).',
+      'Give them the Webhook URL above as the delivery endpoint.',
+      'JustDial posts name / mobile / email / category — mapped automatically; map anything custom below.',
+    ]),
+  tradeindia: pushProvider(
+    'tradeindia', 'TradeIndia',
+    'TradeIndia enquiries pushed to the CRM (Lead/Inquiry API).',
+    [
+      'TradeIndia Seller panel › Inquiry / Lead API.',
+      'Set the Webhook URL above as the delivery URL; send the Webhook key as a param if supported.',
+      'Map TradeIndia\'s field names (sender_name / sender_mobile / sender_email / subject) below if they differ.',
+    ]),
+  housing: pushProvider(
+    'housing', 'Housing.com',
+    'Housing.com property enquiries pushed to the CRM.',
+    [
+      'Housing.com / broker dashboard › Lead integration / Webhook.',
+      'Paste the Webhook URL above as the lead delivery endpoint.',
+      'Map the incoming name / phone / email / project fields below.',
+    ]),
+  '99acres': pushProvider(
+    '99acres', '99acres',
+    '99acres property enquiries pushed to the CRM.',
+    [
+      '99acres advertiser dashboard › Lead / API integration.',
+      'Paste the Webhook URL above as the lead delivery endpoint.',
+      'Map the incoming name / phone / email / project fields below.',
+    ]),
+  custom: pushProvider(
+    'custom', 'Custom Integration',
+    'A generic keyed inbound endpoint for any tool that can POST a lead — your own backend, a form builder, a no-code automation (Zapier / Make / n8n).',
+    [
+      'POST a JSON (or form-urlencoded) body to the Webhook URL above.',
+      'Optionally send the Webhook key as the header X-Webhook-Key.',
+      'Use the field mapping below to match your field names to CRM lead fields.',
+    ]),
+  webhook: pushProvider(
+    'webhook', 'Webhook',
+    'A raw inbound webhook. Point anything at the URL and map its fields — the simplest way to feed leads in from a system we do not list.',
+    [
+      'Send an HTTP POST with a JSON body to the Webhook URL above.',
+      'Contact Number is required; Contact Name and Email are matched automatically.',
+      'Turn on "Capture other fields" to keep everything else on the lead note.',
+    ]),
+});
+
+/**
+ * Fields the payload carried that mapped to NO CRM target — surfaced on the lead
+ * note when "capture other fields" is on, so a page/form name is never lost.
+ */
+export function extraFields(
+  body: Record<string, unknown>, fieldMap: Record<string, string> = {}, drop: string[] = [],
+): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const dropSet = new Set(drop.map((d) => norm(d)));
+  for (const [k, rawV] of Object.entries(body ?? {})) {
+    if (rawV == null) continue;
+    if (dropSet.has(norm(k))) continue;
+    const v = Array.isArray(rawV) ? rawV.filter((x) => x != null).join(', ') : String(rawV);
+    if (!String(v).trim()) continue;
+    if (resolveTarget(k, fieldMap)) continue;   // it mapped somewhere — not "extra"
+    out.push([k, v]);
+  }
+  return out;
+}
 
 /** google_sheet needs sheet_id AND (service_account_json OR api_key) — not both. */
 export function missingRequirements(provider: string, config: Record<string, unknown>, secretKeys: string[]): string[] {

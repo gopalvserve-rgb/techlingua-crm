@@ -23,7 +23,7 @@ export interface FieldSpec {
 }
 export interface ProviderSpec {
   key: string; label: string; blurb: string; kind: 'webhook' | 'poll';
-  endpoint: 'meta' | 'google' | 'form' | null;
+  endpoint: 'meta' | 'google' | 'form' | 'push' | null;
   config: FieldSpec[]; secrets: FieldSpec[]; setup: string[];
 }
 export interface Channel {
@@ -61,7 +61,20 @@ const EVENT_BADGE: Record<string, [string, string]> = {
 };
 const PROVIDER_IC: Record<string, string> = {
   meta: 'bolt', google_ads: 'target', website: 'link', google_sheet: 'grid',
+  google_form: 'grid', indiamart: 'target', justdial: 'target', tradeindia: 'target',
+  housing: 'target', '99acres': 'target', custom: 'cfg', webhook: 'link',
 };
+
+/** NeoDove-style grouping of the Available Tools grid. */
+const TOOL_GROUPS: Array<{ title: string; keys: string[] }> = [
+  { title: 'Ad platforms', keys: ['meta', 'google_ads'] },
+  { title: 'Google', keys: ['google_sheet', 'google_form'] },
+  { title: 'Marketplaces', keys: ['indiamart', 'justdial', 'tradeindia', 'housing', '99acres'] },
+  { title: 'Website, custom & webhook', keys: ['website', 'custom', 'webhook'] },
+];
+/** PUSH = they post to us (webhook) · PULL = we fetch on a schedule (poll). */
+const typeBadge = (kind: string): [string, string] =>
+  kind === 'poll' ? ['PULL', 'b-indigo'] : ['PUSH', 'b-cyan'];
 
 const fmt = (s?: string | null) =>
   !s ? '—' : new Date(s).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -356,6 +369,29 @@ export default function Channels() {
     } catch (e) { toast((e as Error).message, true); } finally { setBusyId(null); bump(); }
   };
 
+  // ⋮ Re-Connect — rotate the public URL + generated key (re-auth / refresh).
+  const reconnect = async (c: Channel) => {
+    if (!confirm(`Re-Connect “${c.name}”?\n\nThis rotates its webhook URL and key. Update the source (Meta / marketplace / your site) with the NEW URL — the old one stops working.`)) return;
+    setBusyId(c.id);
+    try { await api.post(`/channels/${c.id}/regenerate`, {}); toast('Re-connected — URL & key rotated'); }
+    catch (e) { toast((e as Error).message, true); } finally { setBusyId(null); bump(); }
+  };
+
+  // ⋮ Delete — soft-delete the connection (event history is kept for audit).
+  const del = async (c: Channel) => {
+    if (!confirm(`Delete “${c.name}”?\n\nIt stops receiving leads immediately. Its inbound event history is kept for audit.`)) return;
+    setBusyId(c.id);
+    try { await api.del(`/channels/${c.id}`); toast('Integration deleted'); }
+    catch (e) { toast((e as Error).message, true); } finally { setBusyId(null); bump(); }
+  };
+
+  // ⋮ Edit / Edit Field Mapping — open the Configure drawer (name, target path,
+  // tool config AND the field mapping live there together).
+  const openCfg = (c: Channel) => {
+    const spec = specs.find((sp) => sp.key === c.provider);
+    if (spec) setOpen({ spec, channel: c });
+  };
+
   if (!canRead) {
     return <div className="card"><div className="empty-note">You do not have permission to view lead capture channels.</div></div>;
   }
@@ -382,24 +418,43 @@ export default function Channels() {
         </div>
       </div>
 
-      {/* ---------------------------- connect ---------------------------- */}
-      {canManage && (
-        <div className="card">
-          <div className="card-head"><h3><Ic k="plus" />Connect a channel</h3>
-            <span className="more">JustDial &amp; IndiaMART can be added later without a rebuild</span></div>
-          <div className="form-grid">
-            {specs.map((s) => (
-              <div className="fld" key={s.key}>
-                <button className="btn" style={{ justifyContent: 'flex-start', width: '100%' }}
-                  onClick={() => setOpen({ spec: s, channel: null })}>
-                  <Ic k={PROVIDER_IC[s.key] ?? 'link'} />{s.label}
-                </button>
-                <span className="fhint">{s.blurb}</span>
+      {/* ------------------------- Available Tools ----------------------- */}
+      {canManage && (() => {
+        const grouped = new Set<string>();
+        const groups = TOOL_GROUPS
+          .map((g) => ({ title: g.title, items: g.keys.map((k) => specs.find((s) => s.key === k)).filter(Boolean) as ProviderSpec[] }))
+          .filter((g) => g.items.length);
+        groups.forEach((g) => g.items.forEach((s) => grouped.add(s.key)));
+        const other = specs.filter((s) => !grouped.has(s.key));
+        if (other.length) groups.push({ title: 'Other', items: other });
+
+        const Tool = (s: ProviderSpec) => {
+          const [t, tone] = typeBadge(s.kind);
+          return (
+            <div className="fld" key={s.key}>
+              <button className="btn" style={{ justifyContent: 'flex-start', width: '100%' }}
+                onClick={() => setOpen({ spec: s, channel: null })}>
+                <Ic k={PROVIDER_IC[s.key] ?? 'link'} />{s.label}
+                <span className={`bdg ${tone}`} style={{ marginLeft: 'auto' }}>{t}</span>
+              </button>
+              <span className="fhint">{s.blurb}</span>
+            </div>
+          );
+        };
+
+        return (
+          <div className="card" data-testid="available-tools">
+            <div className="card-head"><h3><Ic k="plus" />Available Tools</h3>
+              <span className="more">Pick a tool, choose Branch › Vertical › Campaign, then map its fields</span></div>
+            {groups.map((g) => (
+              <div key={g.title} style={{ marginTop: 4 }}>
+                <div className="sub" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em', margin: '10px 2px 4px', color: 'var(--text-dim)' }}>{g.title}</div>
+                <div className="form-grid">{g.items.map(Tool)}</div>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ---------------------------- channels --------------------------- */}
       <TableCard title="Lead capture channels" icon="link"
@@ -435,13 +490,13 @@ export default function Channels() {
           fmt(c.last_event_at),
           { mono: String(c.leads_30d ?? 0) },
           { node: (
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               {c.webhook_path && (
                 <button className="btn" title="Copy the webhook URL"
                   onClick={() => copy(`${origin()}${c.webhook_path}`, 'Webhook URL')}><Ic k="doc" />URL</button>
               )}
               {canManage && c.kind === 'poll' && (
-                <button className="btn" disabled={busyId === c.id} onClick={() => pull(c)}>
+                <button className="btn" title="Sync — pull the latest now" disabled={busyId === c.id} onClick={() => pull(c)}>
                   <Ic k="refresh" />{busyId === c.id ? 'Pulling…' : 'Pull now'}
                 </button>
               )}
@@ -451,10 +506,18 @@ export default function Channels() {
                 </button>
               )}
               {canManage && (
-                <button className="btn primary" onClick={() => {
-                  const spec = specs.find((s) => s.key === c.provider);
-                  if (spec) setOpen({ spec, channel: c });
-                }}><Ic k="cfg" />Configure</button>
+                <button className="btn" title="Edit field mapping" onClick={() => openCfg(c)}><Ic k="link" />Mapping</button>
+              )}
+              {canManage && (
+                <button className="btn" title="Re-Connect — rotate the URL & key" disabled={busyId === c.id} onClick={() => reconnect(c)}>
+                  <Ic k="refresh" />Re-Connect</button>
+              )}
+              {canManage && (
+                <button className="btn primary" title="Edit" onClick={() => openCfg(c)}><Ic k="cfg" />Edit</button>
+              )}
+              {canManage && (
+                <button className="btn" title="Delete integration" disabled={busyId === c.id} onClick={() => del(c)}
+                  style={{ color: 'var(--danger)' }}><Ic k="trash" /></button>
               )}
             </div>
           ) },

@@ -201,7 +201,7 @@ describe('Lead Capture Channels screen', () => {
   it('Configure on the Meta channel shows the webhook URL and the VERIFY TOKEN to paste into Meta', async () => {
     render(<Channels />);
     await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByText('Configure')[0]);
+    fireEvent.click(screen.getAllByText('Edit')[0]);
 
     await waitFor(() => screen.getByLabelText('Webhook URL'));
     expect((screen.getByLabelText('Webhook URL') as HTMLInputElement).value)
@@ -226,7 +226,7 @@ describe('Lead Capture Channels screen', () => {
   it('saving the Configure drawer PATCHes only what changed (a blank secret is never sent as empty)', async () => {
     render(<Channels />);
     await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByText('Configure')[0]);
+    fireEvent.click(screen.getAllByText('Edit')[0]);
     await waitFor(() => screen.getByLabelText('App secret'));
 
     fireEvent.change(screen.getByLabelText('App secret'), { target: { value: 'NEW-APP-SECRET' } });
@@ -242,7 +242,7 @@ describe('Lead Capture Channels screen', () => {
   it('the website channel renders a copy-pasteable snippet pointing at its own endpoint', async () => {
     render(<Channels />);
     await waitFor(() => screen.getByText('techlingua.in contact form'));
-    fireEvent.click(screen.getAllByText('Configure')[2]);
+    fireEvent.click(screen.getAllByText('Edit')[2]);
 
     await waitFor(() => screen.getByTestId('form-snippet'));
     const code = screen.getByTestId('form-snippet').textContent ?? '';
@@ -257,7 +257,7 @@ describe('Lead Capture Channels screen', () => {
 
   it('connecting a NEW channel posts the provider + the chosen campaign & source', async () => {
     render(<Channels />);
-    await waitFor(() => screen.getByText('Connect a channel'));
+    await waitFor(() => screen.getByText('Available Tools'));
     fireEvent.click(screen.getByText('Google Ads lead form extension'));
 
     await waitFor(() => screen.getByLabelText('Branch'));

@@ -320,7 +320,7 @@ export class ChannelService {
     if (!row) throw new NotFoundException('channel not found');
     await this.enforcer.assertRefInScope(scope, 'campaign', row.campaign_id, userId);
     const p = this.present(row, true);
-    return { id: p.id, provider: p.provider, verify_token: p.verify_token, google_key: p.google_key };
+    return { id: p.id, provider: p.provider, verify_token: p.verify_token, google_key: p.google_key, webhook_key: p.webhook_key };
   }
 
   // ----------------------------------------------------------------- helpers
@@ -402,6 +402,8 @@ export class ChannelService {
        */
       verify_token: reveal && row.provider === 'meta' ? (plain.verify_token ?? '') : undefined,
       google_key: reveal && row.provider === 'google_ads' ? (plain.google_key ?? '') : undefined,
+      /** the optional shared key for a push integration (marketplace / custom / webhook) */
+      webhook_key: reveal && spec?.endpoint === 'push' ? (plain.webhook_key ?? '') : undefined,
       is_active: !!row.is_active,
       status,
       missing,

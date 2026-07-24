@@ -8,8 +8,12 @@ import { ChannelRow, ChannelService } from './channel.service';
 import { RateLimiter } from './rate-limit.util';
 import { SheetNotConfiguredError, SheetsClient, HttpFn } from './sheets.client';
 import {
-  formToPayload, googleToPayload, metaToPayload, parseFieldMap, sheetRowToPayload,
+  extraFields, formToPayload, googleToPayload, metaToPayload, parseFieldMap, sheetRowToPayload,
+  PROVIDERS,
 } from './providers';
+
+/** the public route family a provider serves (meta|google|form|push|null). */
+const PROVIDER_ENDPOINT = (provider: string): string | null => PROVIDERS[provider]?.endpoint ?? null;
 
 /** Everything the controller knows about the raw HTTP request. */
 export interface ReqMeta {
@@ -17,6 +21,8 @@ export interface ReqMeta {
   origin?: string;
   signature?: string;
   rawBody?: Buffer;
+  /** optional shared secret a push caller sent (X-Webhook-Key header / ?key= / body key) */
+  apiKey?: string;
 }
 
 /** What a controller turns into an HTTP response. */
@@ -437,6 +443,104 @@ export class WebhookService {
       reason: this.describe(out, null), lead_id: out.lead_id ?? null, duration_ms: Date.now() - t0,
     });
     return { http: 200, body: { ok: true }, event_id: eventId, outcomes: [out] };
+  }
+
+  // ================================================================= PUSH =====
+
+  /**
+   * THE GENERIC KEYED INBOUND WEBHOOK — Indian marketplaces (IndiaMART, JustDial,
+   * TradeIndia, Housing.com, 99acres), Google Form and any Custom / Webhook source.
+   *
+   * A server-to-server JSON (or form-urlencoded) POST. There is no browser, so no
+   * CORS/honeypot — the defence is: the unguessable public key in the URL, a rate
+   * limit, an OPTIONAL shared `webhook_key`, and the same durable webhook_event log
+   * + LeadIngestionService (dedupe/distribution/idempotency/audit) as every channel.
+   */
+  async pushReceive(publicKey: string, body: any, meta: ReqMeta): Promise<WebhookResult> {
+    const t0 = Date.now();
+    const ch = await this.channels.byPublicKey(publicKey);   // any push provider
+    if (!ch || PROVIDER_ENDPOINT(ch.provider) !== 'push') {
+      await this.channels.logEvent({
+        provider: ch?.provider ?? 'webhook', public_key: publicKey, ip: meta.ip, raw: body,
+        status: 'rejected', reason: 'No integration with that webhook key (deleted, wrong URL, or not a push integration)',
+      });
+      throw new WebhookRejected(404, 'Unknown webhook');
+    }
+
+    // rate limit BEFORE any work: per key, and a tenth of that per IP
+    const perMin = Number((ch.config as any)?.rate_limit_per_min) || FORM_DEFAULT_LIMIT;
+    const ipCap = Math.max(3, Math.floor(perMin / IP_DIVISOR));
+    if (!this.limiter.allow(`push:${publicKey}`, perMin) || !this.limiter.allow(`push:${publicKey}:${meta.ip ?? '?'}`, ipCap)) {
+      await this.channels.logEvent({
+        channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip,
+        raw: body, status: 'rejected',
+        reason: `Rate limit exceeded (${perMin}/min per integration, ${ipCap}/min per IP)`, duration_ms: Date.now() - t0,
+      });
+      throw new WebhookRejected(429, 'Too many submissions — please try again in a minute.');
+    }
+
+    // OPTIONAL shared key: enforce ONLY if a value was supplied by the caller.
+    const expectedKey = this.channels.secretsOf(ch).webhook_key ?? '';
+    const providedKey = String(meta.apiKey ?? (body && (body.key ?? body.secret)) ?? '').trim();
+    if (providedKey && expectedKey && !safeEqual(providedKey, expectedKey)) {
+      await this.channels.logEvent({
+        channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip,
+        raw: body, signature_ok: false, status: 'rejected',
+        reason: 'Webhook key supplied but does not match this integration\'s key', duration_ms: Date.now() - t0,
+      });
+      throw new WebhookRejected(401, 'Webhook key does not match.');
+    }
+
+    if (!ch.is_active) {
+      await this.channels.logEvent({
+        channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip,
+        raw: body, status: 'skipped', reason: 'Integration is paused — payload logged, no lead created',
+        duration_ms: Date.now() - t0,
+      });
+      return { http: 200, body: { ok: true, ingested: 0 } };
+    }
+
+    const fieldMap = parseFieldMap((ch.config as any)?.field_map);
+    // the shared-key fields are transport, never lead data
+    const clean: Record<string, unknown> = { ...(body ?? {}) };
+    delete clean.key; delete clean.secret;
+    const payload = formToPayload(clean, fieldMap);
+
+    // "capture other fields (page / form name) visible to all users" -> onto the note
+    if ((ch.config as any)?.capture_extra) {
+      const extras = extraFields(clean, fieldMap, ['key', 'secret']);
+      if (extras.length) {
+        const block = extras.map(([k, v]) => `${k}: ${v}`).join('\n');
+        payload.note = payload.note ? `${payload.note}\n${block}` : block;
+      }
+    }
+
+    let out: IngestOutcome;
+    try {
+      out = await this.ingestion.ingest(payload, {
+        channel: 'webhook' as IngestChannel,
+        campaign_id: ch.campaign_id, source_id: ch.source_id,
+        actor_id: null,
+        external_key: body?.external_id ? String(body.external_id) : (body?.lead_id ? String(body.lead_id) : null),
+        duplicate_policy: 'campaign',
+      });
+    } catch (e) {
+      const permanent = (e as any).permanent === true || (e as any).status === 400;
+      const eid = await this.channels.logEvent({
+        channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip,
+        raw: body, status: 'failed', reason: (e as Error).message, duration_ms: Date.now() - t0,
+      });
+      if (permanent) throw new WebhookRejected(400, (e as Error).message);
+      return { http: 200, body: { ok: true, error: (e as Error).message }, event_id: eid };
+    }
+
+    const eventId = await this.channels.logEvent({
+      channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip,
+      raw: body, signature_ok: true,
+      status: out.status === 'created' ? 'ingested' : out.status === 'failed' ? 'failed' : out.status,
+      reason: this.describe(out, null), lead_id: out.lead_id ?? null, duration_ms: Date.now() - t0,
+    });
+    return { http: 200, body: { ok: true, lead_id: out.lead_id ?? null }, event_id: eventId, outcomes: [out] };
   }
 
   // ========================================================== GOOGLE SHEET ===
