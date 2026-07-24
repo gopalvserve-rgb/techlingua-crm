@@ -630,9 +630,8 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- Help & Support ---------------- */
   { id: 'help', label: 'Help & Support', icon: 'help', subs: [
-    { id: 'tickets', label: 'Support Tickets', spec: p2('Support Tickets',
-      'Tickets raised by internal staff or students/customers — categories, priority, SLA, assignment & statuses.',
-      [cap('Categories & priority', 'Triage', true), cap('SLA & assignment', 'Routing', true), cap('Statuses', 'Open → resolved', true)]) },
+    { id: 'tickets', label: 'Support Tickets', spec: { dyn: 'supportTickets',
+      sub: 'Internal staff tickets — full lifecycle. Category (admin-managed master), priority, SLA target with overdue flagging, assignment (active users only), and the Open → In Progress → Resolved → Closed status flow with a reopen path. Comment thread per ticket. RBAC-scoped: you see your own / assigned / branch tickets per your access.' } },
     { id: 'helpcenter', label: 'Help Center', spec: {
       sub: 'In-app help articles maintained by Admin. Available at launch.',
       sprintNote: 'Help articles are being authored — they publish before go-live.',

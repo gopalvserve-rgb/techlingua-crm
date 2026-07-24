@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -56,6 +56,8 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   // Without this entry the row rendered as a bare lowercase "lead" and its Edit button
   // 400'd on an "Unknown numbering series", which the live smoke surfaced.
   lead:      { prefix: 'LD-', reset: 'none', label: 'Leads (not currently numbered)' },
+  // Support & Tickets (migration 037) — SUP-#### staff tickets.
+  support:   { prefix: 'SUP-', reset: 'none', label: 'Support tickets' },
 };
 
 export interface SeriesRow {

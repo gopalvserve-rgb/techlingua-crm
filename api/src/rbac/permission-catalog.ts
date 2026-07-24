@@ -78,4 +78,7 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'workspace', label: 'Workspace (messages & notes)', actions: ['read', 'post', 'manage'] },
   { module: 'kb', label: 'Knowledge Base', actions: ['read', 'manage'] },
   { module: 'announcement', label: 'Announcements', actions: ['read', 'manage'] },
+  // Support & Tickets (migration 037) — internal staff tickets, full lifecycle.
+  // 'comment' = reply on the thread (a reporter may comment on his own ticket, per scope).
+  { module: 'ticket', label: 'Support Tickets', actions: ['read', 'create', 'update', 'comment', 'delete'] },
 ];

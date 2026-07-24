@@ -22,7 +22,7 @@ export interface FormField {
   /** UAT-R2 — a STRING-valued select whose options come from a master list (RefData key).
    *  Unlike `src` (which stores an id and cascades), `mopts` stores the master's NAME, so
    *  the column/JSON stays text and edit-prefill is trivial. Carries the ＋ Master add. */
-  mopts?: keyof Pick<RefData, 'trainings' | 'visitPurposes' | 'walkinStatuses'>;
+  mopts?: keyof Pick<RefData, 'trainings' | 'visitPurposes' | 'walkinStatuses' | 'ticketCategories'>;
   /** client update #5 (Task module only) — render the logged-in user as "Myself",
    *  pinned to the top of the user list and selected by default. Scoped per field,
    *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
@@ -200,6 +200,18 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Assigned To', 'select', 0, 0, 'Users', 'users', 1),
     F('Report To', 'select', 0, 0, 'Users · the assignee reports progress to them', 'users', 1),
     { ...F('Due Date', 'datetime', 1), min: 'today' as const }, F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea')] },
+  // Support & Tickets (post-Phase-1 client request) — an INTERNAL staff ticket. Category is
+  // the Ticket Category MASTER (＋Master quick-add). Branch/Vertical are SENT (they set the
+  // ticket's RBAC scope) — so, unlike the lead forms where they are cascade-only, they are
+  // NOT exempt in the qa10 matrix. Assignee respects the no-deactivated-user rule.
+  'help.tickets': { title: 'Raise a Ticket', fields: [
+    F('Subject', 'text', 1),
+    { ...F('Category', 'select', 0, 0, 'master \u00b7 admin-managed'), mopts: 'ticketCategories' },
+    F('Priority', 'select', 1, ['Low', 'Medium', 'High', 'Urgent'], 'default: Medium', undefined, 0, 'Medium'),
+    F('Branch', 'select', 0, 0, 'sets the ticket\u2019s RBAC scope', 'branches'),
+    F('Vertical', 'select', 0, 0, 'filtered by Branch', 'verticals'),
+    F('Assignee', 'select', 0, 0, 'Users \u00b7 active only', 'users'),
+    F('Description', 'textarea')] },
 };
 SPEC_FORMS['dash.quickcontact'] = { ...SPEC_FORMS['leads.all'], title: 'Quick Add Lead' };
 SPEC_FORMS['leads.branch'] = { ...SPEC_FORMS['admin.branches'] };
@@ -448,6 +460,21 @@ SAVERS['leads.vertical'] = SAVERS['admin.verticals'];
 SAVERS['admin.verticalmgmt'] = SAVERS['admin.verticals'];
 SAVERS['admin.pipelines'] = SAVERS['leads.pipelinemaster'];
 
+// Support & Tickets — raise an internal ticket. Priority is normalised to the API's
+// lowercase enum; Category carries the master NAME; Branch/Vertical set the RBAC scope.
+SAVERS['help.tickets'] = async (vals, ids) => {
+  await api.post('/support-tickets', {
+    subject: need(vals['Subject'], 'A subject is required'),
+    category: vals['Category'] || undefined,
+    priority: (vals['Priority'] || 'Medium').toLowerCase(),
+    branch_id: ids['Branch'],
+    vertical_id: ids['Vertical'],
+    assignee_id: ids['Assignee'],
+    description: vals['Description'] || undefined,
+  });
+  return 'Ticket raised';
+};
+
 /* ---------------------- header action resolution ----------------------
  * SINGLE SOURCE OF TRUTH for the buttons a screen's header shows and what
  * each Add/New button opens. The shell renders `headerActions(mod,sub)` and
@@ -559,6 +586,7 @@ const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
 /** mopts (string-valued master selects) -> generic master type key (POST /api/masters/<type>). */
 const MOPTS_MASTER: Record<NonNullable<FormField['mopts']>, string> = {
   trainings: 'training', visitPurposes: 'visit_purpose', walkinStatuses: 'walkin_status',
+  ticketCategories: 'ticket_category',
 };
 /** Masters whose dedicated management screen has a richer form: ＋ Master opens that
  *  full form (client: adding a Course from a lead must show all course fields,

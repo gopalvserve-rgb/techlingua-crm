@@ -21,6 +21,8 @@ export const MASTER_TYPES: Record<string, { table: string; label: string; singul
   training: { table: 'm_training', label: 'Training Modes', singular: 'Training Mode' },                   // #5
   visit_purpose: { table: 'm_visit_purpose', label: 'Purposes of Visit', singular: 'Purpose of Visit' },  // #18
   walkin_status: { table: 'm_walkin_status', label: 'Walk-in Statuses', singular: 'Walk-in Status' },      // #19
+  // Support & Tickets (migration 037) — Ticket Category is admin-managed here.
+  ticket_category: { table: 'm_ticket_category', label: 'Ticket Categories', singular: 'Ticket Category' },
 };
 
 export interface MasterDto {

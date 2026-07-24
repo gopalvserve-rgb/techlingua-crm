@@ -29,6 +29,8 @@ export interface RefData {
   trainings: Named[];      // #5  Training mode
   visitPurposes: Named[];  // #18 Purpose of visit
   walkinStatuses: Named[]; // #19 Walk-in status
+  /** Support & Tickets — Ticket Category master (m_ticket_category). */
+  ticketCategories: Named[];
   /** DEF-2 — Branch City/State are real masters, so the Branch form can select them. */
   states: Named[];
   cities: Named[];
@@ -39,7 +41,7 @@ export interface RefData {
 const EMPTY: RefData = {
   branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], masterSources: [],
   users: [], statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
-  trainings: [], visitPurposes: [], walkinStatuses: [],
+  trainings: [], visitPurposes: [], walkinStatuses: [], ticketCategories: [],
   states: [], cities: [],
   loaded: false, reload: () => undefined,
 };
@@ -71,7 +73,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
     (async () => {
       const [branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
-        trainings, visitPurposes, walkinStatuses, states, cities] = await Promise.all([
+        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
@@ -89,12 +91,13 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), () => api.get<Named[]>('/masters/walkin_status'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/state'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/city'), []),
+        safe(can('master.read'), () => api.get<Named[]>('/masters/ticket_category'), []),
       ]);
       if (dead) return;
       setData({
         branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
-        trainings, visitPurposes, walkinStatuses, states, cities,
+        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories,
         loaded: true, reload: () => setTick((t) => t + 1),
       });
     })();

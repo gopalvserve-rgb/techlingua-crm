@@ -32,6 +32,7 @@ import { PerformanceModule } from './performance/performance.module';
 import { ReportsModule } from './reports/reports.module';
 import { WorkspaceModule } from './workspace/workspace.module';
 import { ApiAccessModule } from './apiaccess/api-access.module';
+import { SupportModule } from './support/support.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -78,6 +79,8 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
                         // (TASKS are the follow-up module — reused, not forked)
     // UAT-R3b — the Developer / API module (Administration › API)
     ApiAccessModule,    // API keys (hashed), docs, request log, enable/disable; key-authed public create-lead
+    // Post-Phase-1 client request — Help & Support › Support Tickets (internal, full lifecycle)
+    SupportModule,      // support_ticket + comments, ticket.* RBAC, SLA, notify assignee
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

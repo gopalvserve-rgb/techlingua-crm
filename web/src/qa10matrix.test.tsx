@@ -79,6 +79,8 @@ const REF = {
   trainings: [{ id: 71, name: 'Online', code: 'ONLINE' }, { id: 72, name: 'Offline', code: 'OFFLINE' }],
   visitPurposes: [{ id: 73, name: 'Admission enquiry', code: 'ADM_ENQ' }, { id: 74, name: 'Fee query', code: 'FEE_QUERY' }],
   walkinStatuses: [{ id: 75, name: 'Waiting', code: 'waiting' }, { id: 76, name: 'Converted', code: 'converted' }],
+  // Support & Tickets — Ticket Category master; TWO rows so the differential probe can switch it.
+  ticketCategories: [{ id: 91, name: 'Technical', code: 'TECH' }, { id: 92, name: 'Billing', code: 'BILL' }],
   users: [{ id: 3, name: 'Asha Rao', status: 'active' }, { id: 4, name: 'Ravi Nair', status: 'active' }],
   states: [{ id: 1, name: 'Delhi' }],
   cities: [{ id: 2, name: 'New Delhi', parent_id: 1 }],

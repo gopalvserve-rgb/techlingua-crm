@@ -153,6 +153,13 @@ export const DELETE_REGISTRY: Record<string, DeletableDef> = {
       dep('assignments', 'User assignments', 'user_assignment ua JOIN "user" d ON d.id = ua.user_id', `ua.team_id = $1 AND ua.is_active AND d.${ALIVE}`, 'd.name'),
     ],
   },
+  support_ticket: {
+    key: 'support_ticket', label: 'Support Ticket', table: 'support_ticket', nameExpr: 'ticket_no',
+    permission: 'ticket.delete', parents: [],
+    dependents: [
+      dep('comments', 'Comments', 'support_ticket_comment d', `d.ticket_id = $1 AND 'deleted_at IS NULL' = '${ALIVE}'`, `left(d.body, 40)`),
+    ],
+  },
   role: {
     key: 'role', label: 'Role', table: 'role', nameExpr: 'name',
     permission: 'role.delete', parents: [],
