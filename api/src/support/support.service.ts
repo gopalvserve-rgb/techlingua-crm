@@ -95,7 +95,7 @@ export class SupportService {
   /** Build the SLA-aware SELECT columns (resolution due + overdue), parameterised by config. */
   private slaSelect(cfg: Record<string, SlaTarget>, params: unknown[]): string {
     const mins = (pick: (t: SlaTarget) => number) => {
-      const c = (p: string) => { params.push(pick(cfg[p] ?? SLA_DEFAULTS[p])); return `$${params.length}`; };
+      const c = (p: string) => { params.push(pick(cfg[p] ?? SLA_DEFAULTS[p])); return `$${params.length}::int`; };
       return `CASE t.priority WHEN 'urgent' THEN ${c('urgent')} WHEN 'high' THEN ${c('high')} `
         + `WHEN 'medium' THEN ${c('medium')} ELSE ${c('low')} END`;
     };
