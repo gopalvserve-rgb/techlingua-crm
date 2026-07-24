@@ -1,6 +1,8 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Ip, Post, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
+import { PasswordResetService } from './password-reset.service';
 import { CurrentUser, Public } from '../rbac/rbac.decorators';
 
 @Controller('auth')
@@ -8,6 +10,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly otp: OtpService,
+    private readonly reset: PasswordResetService,
   ) {}
 
   /** identifier = mobile OR email; `email` kept for backward compatibility. */
@@ -40,6 +43,35 @@ export class AuthController {
     }
     const user = await this.otp.verify(body.mobile.trim(), body.code.trim());
     return this.auth.issueToken({ id: Number(user.id), name: user.name, email: user.email });
+  }
+
+  /**
+   * Forgot password step 1 — request a reset link by email (mobile optional).
+   * ALWAYS a generic 200 (enumeration-safe); the email only goes out to a real,
+   * active account, through the existing SMTP send path. Rate-limited per IP/email.
+   */
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(200)
+  forgotPassword(@Body() body: { email?: string; mobile?: string }, @Ip() ip: string, @Req() req: Request) {
+    if (!body?.email?.trim() && !body?.mobile?.trim()) {
+      throw new BadRequestException('email (or mobile) is required');
+    }
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const origin = host ? `${proto}://${host}` : undefined;
+    return this.reset.requestReset(body?.email, body?.mobile, ip, origin);
+  }
+
+  /** Forgot password step 2 — set a new password with a valid, unexpired, unused token. */
+  @Public()
+  @Post('reset-password')
+  @HttpCode(200)
+  resetPassword(@Body() body: { token?: string; new_password?: string }) {
+    if (!body?.token?.trim() || !body?.new_password) {
+      throw new BadRequestException('token and new_password are required');
+    }
+    return this.reset.performReset(body.token.trim(), body.new_password);
   }
 
   @Get('me')

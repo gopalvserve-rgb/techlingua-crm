@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
+import { PasswordResetService } from './password-reset.service';
 import { SmsService } from './sms.provider';
 import { AuthController } from './auth.controller';
 import { config } from '../config';
@@ -19,6 +20,6 @@ import { MessagingModule } from '../messaging/messaging.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, OtpService, SmsService],
+  providers: [AuthService, OtpService, SmsService, PasswordResetService],
 })
 export class AuthModule {}

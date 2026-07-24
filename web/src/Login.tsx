@@ -19,6 +19,9 @@ export function LoginPage() {
   const [mobile, setMobile] = useState('');
   const [code, setCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
+  const [forgot, setForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
   const [info, setInfo] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -43,6 +46,19 @@ export function LoginPage() {
       if (err instanceof ApiError && err.status === 503) {
         setError(err.message || 'SMS gateway not configured — add SMS API in Settings');
       } else setError(err.message ?? 'Could not send OTP');
+    } finally { setBusy(false); }
+  };
+
+  const submitForgot = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(''); setInfo(''); setBusy(true);
+    try {
+      // ALWAYS a generic success — the API never reveals whether the email exists.
+      const res = await api.post<{ message: string }>('/auth/forgot-password', { email: forgotEmail.trim() });
+      setForgotSent(true);
+      setInfo(res?.message || 'If an account exists for that address, a reset link has been sent.');
+    } catch (err: any) {
+      setError(err?.message ?? 'Could not send the reset link.');
     } finally { setBusy(false); }
   };
 
@@ -87,7 +103,27 @@ export function LoginPage() {
         </div>
         {error && <div className="login-err">{error}</div>}
         {info && !error && <div className="login-err" style={{ background: 'rgba(46,230,201,.08)', borderColor: 'var(--success, #2ee6c9)', color: 'var(--success, #2ee6c9)' }}>{info}</div>}
-        {mode === 'password' ? (
+        {forgot ? (
+          forgotSent ? (
+            <div>
+              <button type="button" className="btn primary" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
+                onClick={() => { setForgot(false); setForgotSent(false); setInfo(''); }}>Back to sign in</button>
+            </div>
+          ) : (
+            <form onSubmit={submitForgot}>
+              <div className="fld">
+                <label>Your account email</label>
+                <input className="ainp" type="email" value={forgotEmail} autoFocus required
+                  onChange={(e) => setForgotEmail(e.target.value)} placeholder="you@techlingua.in" />
+              </div>
+              <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} disabled={busy || !forgotEmail.trim()}>
+                {busy ? 'Sending…' : 'Send reset link'}
+              </button>
+              <button type="button" className="btn" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+                disabled={busy} onClick={() => { setForgot(false); setError(''); setInfo(''); }}>Back to sign in</button>
+            </form>
+          )
+        ) : mode === 'password' ? (
           <form onSubmit={submitPassword}>
             <div className="fld">
               <label>Mobile number or email</label>
@@ -102,6 +138,10 @@ export function LoginPage() {
             <button className="btn primary" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} disabled={busy}>
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <a role="button" tabIndex={0} onClick={() => { setForgot(true); setError(''); setInfo(''); }}
+                style={{ fontSize: 12.5, color: 'var(--primary)', cursor: 'pointer' }}>Forgot password?</a>
+            </div>
           </form>
         ) : (
           <form onSubmit={submitOtp}>

@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 
 /**
  * SECRETS AT REST (Sprint 2 / WS3 — lead capture channels).
@@ -81,4 +81,10 @@ export function safeEqual(a: string | null | undefined, b: string | null | undef
 /** URL-safe random token — channel public keys and Meta verify tokens. */
 export function randomToken(bytes = 24): string {
   return randomBytes(bytes).toString('base64url');
+}
+
+/** SHA-256 hex of a value — used to store the HASH of a single-use token at rest
+ *  (password-reset), never the token itself. A leaked row cannot be reversed. */
+export function sha256Hex(value: string): string {
+  return createHash('sha256').update(String(value), 'utf8').digest('hex');
 }
