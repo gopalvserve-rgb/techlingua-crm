@@ -77,11 +77,14 @@ export class PasswordResetService {
     private readonly configs: ChannelConfigService,
   ) {}
 
+  /** audit_log.action is an enumerated CHECK (migration 006/022); 'update' is the allowed
+   *  verb for this credential-lifecycle event. The specific step lives in the `after` JSON
+   *  (event=forgot_sent/reset_done/…) and entity_type='password_reset' tags the row. */
   private audit(userId: number | null, event: string, detail: Record<string, unknown>) {
     return this.db
       .query(
         `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, after)
-         VALUES ((SELECT id FROM organisation ORDER BY id LIMIT 1), $1, 'password_reset', $2, 'reset', $3)`,
+         VALUES ((SELECT id FROM organisation ORDER BY id LIMIT 1), $1, 'password_reset', $2, 'update', $3)`,
         [userId, userId, JSON.stringify({ event, ...detail })],
       )
       .catch((e) => console.error('audit_log write failed:', e.message));
