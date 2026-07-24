@@ -4,8 +4,19 @@ import {
 } from './providers';
 
 describe('provider registry', () => {
-  it('ships exactly the four channels the client asked for', () => {
-    expect(Object.keys(PROVIDERS).sort()).toEqual(['google_ads', 'google_sheet', 'meta', 'website']);
+  it('the Available Tools grid is EXACTLY the client\'s 12 tools (DEF-INT-01)', () => {
+    // The grid = the non-hidden providers (what ChannelService.providers() returns).
+    const visible = Object.values(PROVIDERS).filter((p) => !p.hidden).map((p) => p.key).sort();
+    expect(visible).toEqual([
+      '99acres', 'custom', 'google_ads', 'google_form', 'google_sheet',
+      'housing', 'indiamart', 'justdial', 'meta', 'meta_whatsapp', 'tradeindia', 'webhook',
+    ]);
+    expect(visible).toHaveLength(12);
+    // Meta WhatsApp is present and deep-links to Settings; the website form is HIDDEN, not deleted
+    // (existing website channels + ingestion keep working), so it never shows in the grid.
+    expect(PROVIDERS.meta_whatsapp?.deeplink).toBeTruthy();
+    expect(PROVIDERS.website?.hidden).toBe(true);
+    expect(visible).not.toContain('website');
   });
 
   it('is generic: JustDial/IndiaMART would be one registry entry, no schema change', () => {

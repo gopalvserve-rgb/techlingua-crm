@@ -167,17 +167,34 @@ export class LeadIngestionService {
 
   // ---- normalisation / validation (pure over the target) -------------------
 
-  /** Resolve a master value that may be an id or a name. Unknown -> throws (visible in preview). */
-  private master(target: IngestTarget, kind: string, label: string, raw: unknown): number | null {
+  /**
+   * Resolve a master value that may be an id or a name. Unknown -> throws (visible in
+   * preview; rejected for manual UI entry and CSV import).
+   *
+   * OBS-02: on an INBOUND integration/marketplace lead (`soft` = true) an unknown master
+   * value must NEVER drop the lead. Instead of throwing we record it in `unresolved`
+   * (surfaced on the lead note by normalise) and return null — the lead is still created
+   * with the raw value preserved, so no marketplace lead is silently lost. We do NOT
+   * auto-create the master value, because an untrusted inbound feed would pollute the
+   * City/Course masters with typos and spam; preserving the raw value is the safe option.
+   */
+  private master(
+    target: IngestTarget, kind: string, label: string, raw: unknown,
+    soft = false, unresolved?: Array<[string, string]>,
+  ): number | null {
     if (raw == null || String(raw).trim() === '') return null;
     const v = String(raw).trim();
     if (/^\d+$/.test(v)) {
       const id = Number(v);
       if ([...target.masters[kind].values()].includes(id)) return id;
+      if (soft) { unresolved?.push([label, v]); return null; }
       throw new IngestValidationError(`Unknown ${label}: "${v}"`);
     }
     const hit = target.masters[kind].get(v.toLowerCase());
-    if (hit == null) throw new IngestValidationError(`Unknown ${label}: "${v}"`);
+    if (hit == null) {
+      if (soft) { unresolved?.push([label, v]); return null; }
+      throw new IngestValidationError(`Unknown ${label}: "${v}"`);
+    }
     return hit;
   }
 
@@ -198,7 +215,10 @@ export class LeadIngestionService {
     throw new IngestValidationError(`Invalid date: "${v}" (use YYYY-MM-DD or DD/MM/YYYY)`);
   }
 
-  normalise(p: IngestPayload, target: IngestTarget): NormalisedLead {
+  normalise(p: IngestPayload, target: IngestTarget, opts: { softMasters?: boolean } = {}): NormalisedLead {
+    const soft = !!opts.softMasters;
+    // OBS-02: raw master values we could not resolve on an inbound lead — preserved on the note.
+    const unresolved: Array<[string, string]> = [];
     const name = String(p.full_name ?? '').trim();
     if (!name) throw new IngestValidationError('Name is required');
     const rawPhone = String(p.phone ?? '').trim();
@@ -238,7 +258,22 @@ export class LeadIngestionService {
 
     const tagNames = Array.isArray(p.tags) ? p.tags : String(p.tags ?? '').split(',');
     const tag_ids = tagNames.map((t) => String(t).trim()).filter(Boolean)
-      .map((t) => this.master(target, 'tag', 'Tag', t)!);
+      .map((t) => this.master(target, 'tag', 'Tag', t, soft, unresolved))
+      .filter((x): x is number => x != null);
+
+    // Resolve the validated masters (soft on inbound channels — OBS-02).
+    const state_id = this.master(target, 'state', 'State', p.state, soft, unresolved);
+    const city_id = this.master(target, 'city', 'City', p.city, soft, unresolved);
+    const course_id = this.master(target, 'course', 'Course', p.course, soft, unresolved);
+    const qualification_id = this.master(target, 'qualification', 'Qualification', p.qualification, soft, unresolved);
+    const budget_id = this.master(target, 'budget', 'Budget', p.budget, soft, unresolved);
+    const status_id = this.master(target, 'status', 'Status', p.status, soft, unresolved) ?? target.default_status_id;
+
+    // OBS-02: append any unresolved master values to the note so nothing the source sent is lost.
+    const baseNote = p.note ? String(p.note).trim() : null;
+    const note = unresolved.length
+      ? [baseNote, ...unresolved.map(([l, v]) => `${l}: ${v}`)].filter(Boolean).join('\n')
+      : baseNote;
 
     return {
       full_name: name, phone,
@@ -247,15 +282,10 @@ export class LeadIngestionService {
       whatsapp_phone: p.whatsapp_phone ? normalizePhone(String(p.whatsapp_phone)) : null,
       // an unparseable date must not fail the whole ingest — it just means no birthday journey
       dob: toDateString(p.dob) ?? null,
-      state_id: this.master(target, 'state', 'State', p.state),
-      city_id: this.master(target, 'city', 'City', p.city),
-      course_id: this.master(target, 'course', 'Course', p.course),
-      qualification_id: this.master(target, 'qualification', 'Qualification', p.qualification),
-      budget_id: this.master(target, 'budget', 'Budget', p.budget),
-      status_id: this.master(target, 'status', 'Status', p.status) ?? target.default_status_id,
+      state_id, city_id, course_id, qualification_id, budget_id, status_id,
       stage_id, priority, temperature, score,
       next_follow_up_at: this.date(p.next_follow_up_at),
-      note: p.note ? String(p.note).trim() : null,
+      note,
       tag_ids: [...new Set(tag_ids)],
       custom_fields: (p.custom_fields ?? {}) as Record<string, unknown>,
       external_id: p.external_id ? String(p.external_id).trim().slice(0, 120) : null,
@@ -424,7 +454,10 @@ export class LeadIngestionService {
     }
 
     // 2) normalise + resolve (throws IngestValidationError -> dead-letter, no retry)
-    const lead = this.normalise(payload, target);
+    // OBS-02: inbound integration/marketplace channels never drop a lead on an unknown
+    // master value; CSV import (preview) and manual UI entry stay strict.
+    const softMasters = ctx.channel === 'webhook' || ctx.channel === 'form' || ctx.channel === 'sheet';
+    const lead = this.normalise(payload, target, { softMasters });
 
     // 3) duplicate check (phone + WhatsApp cross-match, campaign-configured scope — #22)
     const dup = await this.findDuplicate([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[], target);

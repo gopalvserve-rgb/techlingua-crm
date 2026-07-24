@@ -90,8 +90,16 @@ describe('Channel admin — RBAC + secret handling', () => {
     const { db } = adminDb();
     const svc = new ChannelService(db, passEnforcer, allScopeResolver);
     await expect(svc.create(
-      { provider: 'justdial', name: 'X', campaign_id: 5, source_id: 7 }, ALL, 1,
+      { provider: 'no_such_provider', name: 'X', campaign_id: 5, source_id: 7 }, ALL, 1,
     )).rejects.toThrow(/Unknown channel provider/);
+  });
+
+  it('DEF-INT-01: a deep-link tile (Meta WhatsApp) cannot be created as a capture channel', async () => {
+    const { db } = adminDb();
+    const svc = new ChannelService(db, passEnforcer, allScopeResolver);
+    await expect(svc.create(
+      { provider: 'meta_whatsapp', name: 'WA', campaign_id: 5, source_id: 7 }, ALL, 1,
+    )).rejects.toThrow(/Settings/);
   });
 
   it('SECRETS: are encrypted at rest and NEVER returned in plaintext', async () => {

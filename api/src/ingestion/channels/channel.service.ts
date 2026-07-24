@@ -56,9 +56,13 @@ export class ChannelService {
 
   // ---------------------------------------------------------------- registry
 
-  /** Drives the admin UI's Configure form — one place to add a provider. */
+  /**
+   * Drives the admin UI's Available Tools grid + Configure form. DEF-INT-01: the grid
+   * must be EXACTLY the client's 12 tools, so `hidden` providers (the website form,
+   * kept functional for existing channels) are excluded here.
+   */
   providers(): ProviderSpec[] {
-    return Object.values(PROVIDERS);
+    return Object.values(PROVIDERS).filter((p) => !p.hidden);
   }
 
   // ------------------------------------------------------------------- reads
@@ -115,12 +119,15 @@ export class ChannelService {
     return this.present(rows[0]);
   }
 
-  /** Recent inbound events — the "why did this lead not arrive?" screen. */
-  async events(scope: ResolvedScope, channelId?: number, limit = 50) {
+  /** Recent inbound events — the "why did this lead not arrive?" screen.
+   *  DEF-INT-03: optional from/to (date strings) narrow the log; retention is 30 days. */
+  async events(scope: ResolvedScope, channelId?: number, limit = 50, from?: string, to?: string) {
     const params: unknown[] = [];
     const where = this.scopeWhere(scope, params);
     let extra = '';
-    if (channelId) { params.push(channelId); extra = ` AND e.channel_id = $${params.length}`; }
+    if (channelId) { params.push(channelId); extra += ` AND e.channel_id = $${params.length}`; }
+    if (from && String(from).trim()) { params.push(String(from).trim()); extra += ` AND e.created_at >= $${params.length}::date`; }
+    if (to && String(to).trim()) { params.push(String(to).trim()); extra += ` AND e.created_at < ($${params.length}::date + INTERVAL '1 day')`; }
     params.push(Math.min(Number(limit) || 50, 200));
     return this.db.query<any>(
       `SELECT e.id, e.provider, e.status, e.reason, e.external_key, e.lead_id, e.ip, e.origin,
@@ -140,6 +147,8 @@ export class ChannelService {
 
   async create(dto: any, scope: ResolvedScope, userId: number) {
     const spec = this.specOf(dto?.provider);
+    // DEF-INT-01: a deep-link tile (Meta WhatsApp) is connected in Settings, not here.
+    if (spec.deeplink) throw new BadRequestException(`${spec.label} is connected in Settings › Channels, not as a capture channel.`);
     const campaignId = Number(dto?.campaign_id);
     const sourceId = Number(dto?.source_id);
     if (!campaignId || !sourceId) throw new BadRequestException('Choose a target Campaign and Source.');

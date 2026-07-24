@@ -44,6 +44,12 @@ export interface ProviderSpec {
   secrets: FieldSpec[];
   /** what Gopal must paste where (rendered verbatim in the Configure drawer) */
   setup: string[];
+  /** DEF-INT-01 — hide from the Available Tools grid (still a valid provider for
+   *  existing channels + ingestion, just not offered in the Integrations tool list). */
+  hidden?: boolean;
+  /** DEF-INT-01 — this tool is connected elsewhere; the grid tile deep-links here
+   *  instead of opening the Connect drawer (e.g. Meta WhatsApp -> Settings › Channels). */
+  deeplink?: string;
 }
 
 export const PROVIDERS: Record<string, ProviderSpec> = {
@@ -78,6 +84,30 @@ export const PROVIDERS: Record<string, ProviderSpec> = {
     ],
   },
 
+  /**
+   * DEF-INT-01 — Meta WhatsApp tile. WhatsApp is NOT a lead-capture webhook; it is
+   * connected by Embedded Signup in Settings › Channels (permanent token / WABA /
+   * phone-number id are minted there, never pasted). This registry entry exists so
+   * the Available Tools grid carries the client's named tile; the tile deep-links to
+   * Settings and is NOT creatable as a capture_channel (endpoint is null, guarded in
+   * ChannelService.create).
+   */
+  meta_whatsapp: {
+    key: 'meta_whatsapp',
+    label: 'Meta WhatsApp (WhatsApp Business API)',
+    blurb: 'Connect WhatsApp by Embedded Signup — click, log in to Meta, done. Set up in Settings › Channels; the permanent token, WABA and phone-number id are minted there.',
+    kind: 'webhook',
+    endpoint: null,
+    deeplink: '/m/admin/settings',
+    config: [],
+    secrets: [],
+    setup: [
+      'This tile opens Settings › Channels, where "Connect WhatsApp" runs Meta Embedded Signup.',
+      'You log in to Meta once; the app mints a PERMANENT token, resolves your WABA + phone number id, and subscribes the webhook automatically.',
+      'Inbound WhatsApp and template messaging are then managed on the Engagement channels — not from this Integrations grid.',
+    ],
+  },
+
   google_ads: {
     key: 'google_ads',
     label: 'Google Ads lead form extension',
@@ -108,6 +138,9 @@ export const PROVIDERS: Record<string, ProviderSpec> = {
     blurb: 'A public endpoint your website posts to. No login required — protected by a public key, allowed origins, a honeypot and a rate limit.',
     kind: 'webhook',
     endpoint: 'form',
+    // DEF-INT-01 — the website-form capture stays fully functional, but it is NOT one
+    // of the client's 12 Integrations tools, so it is hidden from the Available Tools grid.
+    hidden: true,
     config: [
       { key: 'allowed_origins', label: 'Allowed website origins', type: 'list', required: true,
         placeholder: 'https://techlingua.in, https://www.techlingua.in',

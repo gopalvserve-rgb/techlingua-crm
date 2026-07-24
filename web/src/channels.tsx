@@ -11,11 +11,13 @@
  * says so, because that is the question the client asks first.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { ensureFbSdk } from './whatsappsignup';
 
 export interface FieldSpec {
   key: string; label: string; type: 'text' | 'password' | 'textarea' | 'number' | 'bool' | 'list';
@@ -25,6 +27,7 @@ export interface ProviderSpec {
   key: string; label: string; blurb: string; kind: 'webhook' | 'poll';
   endpoint: 'meta' | 'google' | 'form' | 'push' | null;
   config: FieldSpec[]; secrets: FieldSpec[]; setup: string[];
+  hidden?: boolean; deeplink?: string;
 }
 export interface Channel {
   id: number; provider: string; provider_label: string; kind: 'webhook' | 'poll'; name: string;
@@ -60,17 +63,17 @@ const EVENT_BADGE: Record<string, [string, string]> = {
   failed: ['Failed', 'b-rose'],
 };
 const PROVIDER_IC: Record<string, string> = {
-  meta: 'bolt', google_ads: 'target', website: 'link', google_sheet: 'grid',
+  meta: 'bolt', meta_whatsapp: 'bolt', google_ads: 'target', website: 'link', google_sheet: 'grid',
   google_form: 'grid', indiamart: 'target', justdial: 'target', tradeindia: 'target',
   housing: 'target', '99acres': 'target', custom: 'cfg', webhook: 'link',
 };
 
 /** NeoDove-style grouping of the Available Tools grid. */
 const TOOL_GROUPS: Array<{ title: string; keys: string[] }> = [
-  { title: 'Ad platforms', keys: ['meta', 'google_ads'] },
+  { title: 'Ad platforms', keys: ['meta', 'meta_whatsapp', 'google_ads'] },
   { title: 'Google', keys: ['google_sheet', 'google_form'] },
   { title: 'Marketplaces', keys: ['indiamart', 'justdial', 'tradeindia', 'housing', '99acres'] },
-  { title: 'Website, custom & webhook', keys: ['website', 'custom', 'webhook'] },
+  { title: 'Custom & webhook', keys: ['custom', 'webhook'] },
 ];
 /** PUSH = they post to us (webhook) · PULL = we fetch on a schedule (poll). */
 const typeBadge = (kind: string): [string, string] =>
@@ -103,13 +106,81 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint?: 
   );
 }
 
+/* ------------------------------------------------- Continue with Facebook --- */
+
+/**
+ * DEF-INT-04 — the "Continue with Facebook" button on the Meta Lead Ads connect flow,
+ * reusing the same Meta app + Facebook JS SDK as WhatsApp Embedded Signup (the project's
+ * smartcrm-saas design reference). It is credential-gated: the Meta App ID / secret /
+ * Embedded-Signup Config ID must be set in Settings › Channels. When they are absent the
+ * button shows a clean "connect your Meta app in Settings first" state and points the
+ * client at the manual webhook fields (which work today) — never a dead or missing button.
+ */
+function FacebookConnect() {
+  const nav = useNavigate();
+  const [info, setInfo] = useState<{ ready?: boolean; missing?: string[]; app_id?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get<{ ready: boolean; missing: string[]; app_id: string }>('/settings/whatsapp/embedded-signup')
+      .then(setInfo)
+      .catch(() => setInfo({ ready: false, missing: ['Meta App ID', 'App secret', 'Embedded Signup Configuration ID'] }));
+  }, []);
+
+  const ready = !!info?.ready;
+
+  const onClick = async () => {
+    if (!ready) { nav('/m/admin/settings'); return; }
+    setBusy(true);
+    try {
+      await ensureFbSdk(info!.app_id || '');
+      // FB Lead Ads OAuth entry — request Pages + leads_retrieval, exactly the smartcrm
+      // Facebook integration contract. Called synchronously inside the click handler so
+      // Chrome does not block the popup.
+      (window as unknown as { FB: { login: (cb: (r: any) => void, opts: any) => void } }).FB.login(
+        (resp: any) => {
+          const code = resp?.authResponse?.code;
+          toast(code
+            ? 'Facebook authorised. Choose the Page whose Lead Ads should flow here to finish connecting.'
+            : 'Facebook sign-in was cancelled.', !code);
+        },
+        { scope: 'pages_show_list,pages_manage_metadata,leads_retrieval', response_type: 'code', override_default_response_type: true },
+      );
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fld span2">
+      <button type="button" className="btn" data-testid="continue-with-facebook"
+        style={{ background: '#1877F2', color: '#fff', borderColor: '#1877F2', justifyContent: 'center', opacity: ready ? 1 : 0.8 }}
+        disabled={busy} onClick={onClick}>
+        <Ic k="bolt" />{busy ? 'Opening Facebook…' : 'Continue with Facebook'}
+      </button>
+      {ready ? (
+        <span className="fhint">One-click sign-in with your connected Meta app — pick the Page whose Lead Ads should land here. You can also use the manual webhook fields below.</span>
+      ) : (
+        <span className="fhint">
+          Connect your Meta app in{' '}
+          <a onClick={() => nav('/m/admin/settings')} style={{ cursor: 'pointer', textDecoration: 'underline' }}>Settings › Channels</a>{' '}
+          first (needs {(info?.missing ?? ['Meta App ID', 'App secret', 'Embedded Signup Configuration ID']).join(', ')}).
+          Until then use the manual webhook fields below — they work today.
+        </span>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ modal --- */
 
 function ConfigureModal({ spec, channel, onClose, onSaved }: {
   spec: ProviderSpec; channel: Channel | null; onClose: () => void; onSaved: () => void;
 }) {
   const ref = useRef_();
-  const editing = !!channel;
+  // DEF-INT-02: after a create we keep the drawer open in "editing" mode so the
+  // Webhook URL + generated key are shown immediately on the Connect result.
+  const [cur, setCur] = useState<Channel | null>(channel);
+  const [justCreated, setJustCreated] = useState(false);
+  const editing = !!cur;
   const [name, setName] = useState(channel?.name ?? spec.label);
   const [target, setTarget] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number; source?: number }>(
     channel
@@ -118,36 +189,42 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
   );
   const [config, setConfig] = useState<Record<string, unknown>>({ ...(channel?.config ?? {}) });
   const [secrets, setSecrets] = useState<Record<string, string>>({});
-  const [creds, setCreds] = useState<{ verify_token?: string; google_key?: string }>({});
+  const [creds, setCreds] = useState<{ verify_token?: string; google_key?: string; webhook_key?: string }>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  // the two read-back credentials live behind their own channel.manage endpoint
+  // The read-back credentials (Meta verify token / Google key / push webhook key) live
+  // behind their own channel.manage endpoint. DEF-INT-02: the push `webhook_key` is now
+  // surfaced too, so a marketplace push can be authenticated.
   useEffect(() => {
-    if (!channel) return;
-    api.get<{ verify_token?: string; google_key?: string }>(`/channels/${channel.id}/credentials`)
+    if (!cur) return;
+    api.get<{ verify_token?: string; google_key?: string; webhook_key?: string }>(`/channels/${cur.id}/credentials`)
       .then(setCreds).catch(() => undefined);
-  }, [channel]);
+  }, [cur]);
 
   const verticals = ref.verticals.filter((v) => !target.branch || Number(v.branch_id) === target.branch);
   const pipelines = ref.pipelines.filter((p) => !target.vertical || Number(p.vertical_id) === target.vertical);
   const campaigns = ref.campaigns.filter((c) => !target.pipeline || Number(c.pipeline_id) === target.pipeline);
   const sources = ref.sources.filter((s) => !target.campaign || Number(s.campaign_id) === target.campaign);
 
-  const url = channel?.webhook_path ? `${origin()}${channel.webhook_path}` : '';
+  const url = cur?.webhook_path ? `${origin()}${cur.webhook_path}` : '';
 
   const save = async () => {
     setErr(''); setBusy(true);
     try {
       if (editing) {
-        await api.patch(`/channels/${channel!.id}`, { name, config, secrets });
+        await api.patch(`/channels/${cur!.id}`, { name, config, secrets });
+        toast('Channel updated');
+        onSaved(); onClose();
       } else {
-        await api.post('/channels', {
+        const created = await api.post<Channel>('/channels', {
           provider: spec.key, name, campaign_id: target.campaign, source_id: target.source, config, secrets,
         });
+        toast('Channel connected');
+        onSaved();
+        // DEF-INT-02: stay open in editing mode so the URL + key show on the Connect result.
+        setSecrets({}); setCur(created); setJustCreated(true);
       }
-      toast(editing ? 'Channel updated' : 'Channel connected');
-      onSaved(); onClose();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
 
@@ -156,8 +233,8 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
     const set = (v: unknown) => secret
       ? setSecrets((s) => ({ ...s, [f.key]: String(v) }))
       : setConfig((c) => ({ ...c, [f.key]: v }));
-    const placeholder = secret && channel?.secrets_masked?.[f.key]
-      ? `${channel.secrets_masked[f.key]} — leave blank to keep`
+    const placeholder = secret && cur?.secrets_masked?.[f.key]
+      ? `${cur.secrets_masked[f.key]} — leave blank to keep`
       : f.placeholder ?? '';
 
     return (
@@ -200,7 +277,7 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
     <div className="add-scrim">
       <div className="add-modal" style={{ width: 720 }}>
         <div className="ah">
-          <h3><Ic k={PROVIDER_IC[spec.key] ?? 'link'} />{editing ? `Configure ${channel!.name}` : `Connect ${spec.label}`}</h3>
+          <h3><Ic k={PROVIDER_IC[spec.key] ?? 'link'} />{editing ? `Configure ${cur!.name}` : `Connect ${spec.label}`}</h3>
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
         </div>
         <div className="abody">
@@ -213,6 +290,15 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
           </div>
 
           {err && <div className="form-err" role="alert">{err}</div>}
+          {justCreated && (
+            <div className="notice" style={{ borderColor: 'var(--success, #16a34a)' }} role="status">
+              <Ic k="check" />
+              <div>
+                <b>Connected.</b> Copy the <b>Webhook URL</b>{spec.endpoint === 'push' ? ' and Webhook key' : ''} below into your
+                {' '}{spec.label} — that is what authenticates the inbound leads.
+              </div>
+            </div>
+          )}
 
           <div className="form-grid">
             <div className="fld span2">
@@ -230,7 +316,7 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
               <div className="fld">
                 <label>Target</label>
                 <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>
-                  {channel!.branch_name} › {channel!.vertical_name} › {channel!.campaign_name}
+                  {cur!.branch_name} › {cur!.vertical_name} › {cur!.campaign_name}
                 </div>
               </div>
             )}
@@ -250,6 +336,14 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
               <CopyRow label="Webhook key" value={creds.google_key}
                 hint='Paste this into Google Ads as the "Key". Google echoes it back and we reject any payload whose key does not match.' />
             )}
+            {/* DEF-INT-02: the generated shared secret for a push integration (marketplace /
+                Custom / Webhook / Google Form). Shown here + on the Connect result, admin-only. */}
+            {editing && spec.endpoint === 'push' && creds.webhook_key && (
+              <CopyRow label="Webhook key" value={creds.webhook_key}
+                hint="Optional shared secret. Send it in the request header X-Webhook-Key (or ?key= in the URL, or a &quot;key&quot; field in the body). A payload with the WRONG key is rejected; a source that cannot send it still works because the URL itself is unguessable." />
+            )}
+
+            {spec.key === 'meta' && <FacebookConnect />}
 
             {spec.config.map((f) => field(f, false))}
             {/* `generated` secrets (Meta verify token, Google webhook key) are minted
@@ -258,7 +352,7 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
           </div>
 
           {/* the copy-pasteable website snippet */}
-          {editing && spec.key === 'website' && <Snippet channel={channel!} />}
+          {editing && spec.key === 'website' && <Snippet channel={cur!} />}
 
           <div className="card-pad">
             <h4 style={{ fontSize: 12.5, marginBottom: 8 }}>Setup steps</h4>
@@ -323,7 +417,10 @@ document.getElementById('tl-lead-form').addEventListener('submit', async functio
 
 export default function Channels() {
   const { can } = useAuth();
+  const nav = useNavigate();
   const [tick, setTick] = useState(0);
+  const [logFrom, setLogFrom] = useState('');
+  const [logTo, setLogTo] = useState('');
   const [open, setOpen] = useState<{ spec: ProviderSpec; channel: Channel | null } | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
@@ -332,7 +429,10 @@ export default function Channels() {
 
   const providers = useFetch<ProviderSpec[]>(canRead ? '/channels/providers' : null, []);
   const channels = useFetch<Channel[]>(canRead ? '/channels' : null, [tick]);
-  const events = useFetch<ChannelEvent[]>(canRead ? '/channels/events?limit=50' : null, [tick]);
+  const eventsUrl = canRead
+    ? `/channels/events?limit=50${logFrom ? `&from=${logFrom}` : ''}${logTo ? `&to=${logTo}` : ''}`
+    : null;
+  const events = useFetch<ChannelEvent[]>(eventsUrl, [tick, logFrom, logTo]);
 
   const list = channels.data ?? [];
   const specs = providers.data ?? [];
@@ -421,23 +521,27 @@ export default function Channels() {
       {/* ------------------------- Available Tools ----------------------- */}
       {canManage && (() => {
         const grouped = new Set<string>();
+        // DEF-INT-01: hidden providers (the website form) never appear in the tools grid.
+        const visible = specs.filter((s) => !s.hidden);
         const groups = TOOL_GROUPS
-          .map((g) => ({ title: g.title, items: g.keys.map((k) => specs.find((s) => s.key === k)).filter(Boolean) as ProviderSpec[] }))
+          .map((g) => ({ title: g.title, items: g.keys.map((k) => visible.find((s) => s.key === k)).filter(Boolean) as ProviderSpec[] }))
           .filter((g) => g.items.length);
         groups.forEach((g) => g.items.forEach((s) => grouped.add(s.key)));
-        const other = specs.filter((s) => !grouped.has(s.key));
+        const other = visible.filter((s) => !grouped.has(s.key));
         if (other.length) groups.push({ title: 'Other', items: other });
 
-        const Tool = (s: ProviderSpec) => {
-          const [t, tone] = typeBadge(s.kind);
+        const Tool = (sp: ProviderSpec) => {
+          // DEF-INT-01: a deep-link tile (Meta WhatsApp) opens Settings › Channels, not the
+          // Connect drawer — WhatsApp is minted by Embedded Signup, never wired as a webhook.
+          const [t, tone] = sp.deeplink ? ['SETTINGS', 'b-indigo'] : typeBadge(sp.kind);
           return (
-            <div className="fld" key={s.key}>
+            <div className="fld" key={sp.key}>
               <button className="btn" style={{ justifyContent: 'flex-start', width: '100%' }}
-                onClick={() => setOpen({ spec: s, channel: null })}>
-                <Ic k={PROVIDER_IC[s.key] ?? 'link'} />{s.label}
+                onClick={() => (sp.deeplink ? nav(sp.deeplink) : setOpen({ spec: sp, channel: null }))}>
+                <Ic k={PROVIDER_IC[sp.key] ?? 'link'} />{sp.label}
                 <span className={`bdg ${tone}`} style={{ marginLeft: 'auto' }}>{t}</span>
               </button>
-              <span className="fhint">{s.blurb}</span>
+              <span className="fhint">{sp.blurb}</span>
             </div>
           );
         };
@@ -524,6 +628,24 @@ export default function Channels() {
         ])} />
 
       {/* -------------------------- inbound events ------------------------ */}
+      {/* DEF-INT-03: date filter + retention note for the Integrations Logs page. */}
+      <div className="card" style={{ padding: '10px 14px', display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}
+        data-testid="logs-filter">
+        <div className="fld" style={{ margin: 0 }}>
+          <label>From</label>
+          <input className="ainp" type="date" aria-label="Logs from date" value={logFrom}
+            max={logTo || undefined} onChange={(e) => setLogFrom(e.target.value)} />
+        </div>
+        <div className="fld" style={{ margin: 0 }}>
+          <label>To</label>
+          <input className="ainp" type="date" aria-label="Logs to date" value={logTo}
+            min={logFrom || undefined} onChange={(e) => setLogTo(e.target.value)} />
+        </div>
+        {(logFrom || logTo) && (
+          <button className="btn" type="button" onClick={() => { setLogFrom(''); setLogTo(''); }}>Clear</button>
+        )}
+        <span className="fhint" style={{ marginLeft: 'auto' }}>Logs are maintained for the last 30 days only.</span>
+      </div>
       <TableCard title="Recent inbound events" icon="clock"
         more="every request we received — accepted or rejected"
         cols={['When', 'Channel', 'Result', 'Lead', 'Reference', 'Detail']}

@@ -31,8 +31,14 @@ export class ChannelController {
 
   /** The inbound event log across all channels in scope (mounted before :id). */
   @Get('events') @RequirePermission('channel.read')
-  events(@CurrentScope() s: ResolvedScope, @Query('channel_id') cid?: string, @Query('limit') limit?: string) {
-    return this.svc.events(s, cid ? Number(cid) : undefined, limit ? Number(limit) : 50);
+  events(
+    @CurrentScope() s: ResolvedScope,
+    @Query('channel_id') cid?: string,
+    @Query('limit') limit?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.svc.events(s, cid ? Number(cid) : undefined, limit ? Number(limit) : 50, from, to);
   }
 
   @Get() @RequirePermission('channel.read')

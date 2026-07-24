@@ -4,6 +4,10 @@ import { makeChannel, makeWebhook } from './fake-channels.testkit';
 const KEY = 'pubkeyPUSH';
 const SECRET = 'WHKEY-abc123';
 
+// The lead note lands on the create timeline entry (lead_activity), not on the lead row.
+const createdNote = (st: { activities: Array<{ type: string; note?: string | null }> }) =>
+  String(st.activities.find((a) => a.type === 'create')?.note ?? '');
+
 const channel = (config: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => makeChannel({
   id: 8, provider: 'indiamart', public_key: KEY,
   secrets: { webhook_key: SECRET },
@@ -41,7 +45,7 @@ describe('Generic push webhook (marketplaces / custom / webhook)', () => {
   it('"capture other fields" appends the unmapped fields (city / product) to the lead note', async () => {
     const { hooks, st } = makeWebhook([channel()]);
     await hooks.pushReceive(KEY, body(), { ip: '3.3.3.4' });
-    const note = String(st.leads[0].note ?? '');
+    const note = createdNote(st);
     expect(note).toContain('Need details on IELTS');           // the mapped message
     expect(note).toContain('SENDER_CITY: Delhi');              // an unmapped field, preserved
     expect(note).toContain('PRODUCT_NAME: IELTS Coaching');
@@ -50,7 +54,7 @@ describe('Generic push webhook (marketplaces / custom / webhook)', () => {
   it('with capture_extra OFF, unmapped fields are dropped (only the note stays)', async () => {
     const { hooks, st } = makeWebhook([channel({ capture_extra: false })]);
     await hooks.pushReceive(KEY, body(), { ip: '3.3.3.5' });
-    const note = String(st.leads[0].note ?? '');
+    const note = createdNote(st);
     expect(note).toBe('Need details on IELTS');
     expect(note).not.toContain('SENDER_CITY');
   });
@@ -78,7 +82,7 @@ describe('Generic push webhook (marketplaces / custom / webhook)', () => {
   it('the shared-key fields (key / secret) are never written onto the lead', async () => {
     const { hooks, st } = makeWebhook([channel()]);
     await hooks.pushReceive(KEY, body({ key: SECRET }), { ip: '3.3.3.9' });
-    const note = String(st.leads[0].note ?? '');
+    const note = createdNote(st);
     expect(note).not.toContain(SECRET);
     expect(note).not.toContain('key:');
   });
@@ -88,6 +92,30 @@ describe('Generic push webhook (marketplaces / custom / webhook)', () => {
     await expect(hooks.pushReceive('nope', body(), { ip: '3.3.4.0' }))
       .rejects.toMatchObject({ http: 404 });
     expect(st.leads).toHaveLength(0);
+  });
+
+  // ---- OBS-02: an unknown master value must NOT drop an inbound marketplace lead ----
+
+  const cityChannel = () => channel({
+    field_map: '{"SENDER_NAME":"full_name","SENDER_MOBILE":"phone","SENDER_CITY":"city"}',
+  });
+
+  it('OBS-02: an UNKNOWN city on an inbound lead is created, not rejected — raw value preserved', async () => {
+    const { hooks, st, cst } = makeWebhook([cityChannel()]);
+    const out = await hooks.pushReceive(KEY, body({ SENDER_CITY: 'Nagpur' }), { ip: '3.3.9.9' });
+
+    expect(out.http).toBe(200);
+    expect(st.leads).toHaveLength(1);                      // CREATED, not a 400/failed
+    expect(st.leads[0].city_id).toBeNull();               // unknown city left unresolved
+    expect(createdNote(st)).toContain('City: Nagpur');   // the raw value is preserved
+    expect(cst.events[0]).toMatchObject({ status: 'ingested' });
+  });
+
+  it('OBS-02: a KNOWN city still resolves to its master id (strictness only relaxes on unknowns)', async () => {
+    const { hooks, st } = makeWebhook([cityChannel()]);
+    await hooks.pushReceive(KEY, body({ SENDER_CITY: 'Delhi' }), { ip: '3.3.9.8' });
+    expect(st.leads[0].city_id).toBe(71);
+    expect(createdNote(st)).not.toContain('City: Delhi');
   });
 
   it('a paused integration logs the payload but creates no lead', async () => {

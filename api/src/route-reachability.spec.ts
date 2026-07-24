@@ -218,6 +218,8 @@ const NOT_UI_DRIVEN: Record<string, string> = {
     'META LEAD ADS delivery — Meta POSTs leadgen_id with an X-Hub-Signature-256 HMAC over the raw body. The caller is Meta.',
   'POST /webhooks/google/:key':
     'GOOGLE ADS lead-form delivery, authenticated by the google_key shared secret. The caller is Google.',
+  'POST /webhooks/push/:key':
+    'THE GENERIC KEYED PUSH endpoint for the marketplaces (IndiaMART / JustDial / TradeIndia / Housing.com / 99acres), Google Form, Custom Integration and raw Webhook. The caller is that external system, authenticated by the unguessable URL key (plus an optional X-Webhook-Key). Deliberately outside this SPA — the client pastes the URL into each marketplace panel.',
   'POST /webhooks/form/:key':
     'THE PUBLIC WEBSITE FORM endpoint. The caller is the client\'s own marketing site, using the snippet the Lead Capture screen gives him — deliberately outside this app.',
   'OPTIONS /webhooks/form/:key':
@@ -293,8 +295,9 @@ const UNREACHABLE_BACKLOG: Record<string, string> = {
     'A numbering series can be created and edited from Settings > Numbering, but never deleted.',
   'DELETE /settings/channels/:id':
     'A saved channel credential row cannot be REMOVED from the UI — only overwritten via /settings/channels/save. "Disconnect WhatsApp" has no button.',
-  'POST /channels/:id/regenerate':
-    'Regenerating a capture channel\'s webhook key/secret — the thing to do if a key leaks — has no button on the Lead Capture screen.',
+  // POST /channels/:id/regenerate is now WIRED — the Integrations screen's "Re-Connect"
+  // action calls it to rotate the public URL + generated key. Removed from the quarantine
+  // (the census may shrink, never grow).
   'PATCH /users/:id/deactivate':
     'Probably superseded: the users list toggles status through PATCH /users/:id. Verify, then delete this route or wire it.',
   'PATCH /masters/:type/:id/deactivate':
