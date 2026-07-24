@@ -81,4 +81,8 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // Support & Tickets (migration 037) — internal staff tickets, full lifecycle.
   // 'comment' = reply on the thread (a reporter may comment on his own ticket, per scope).
   { module: 'ticket', label: 'Support Tickets', actions: ['read', 'create', 'update', 'comment', 'delete'] },
+  // Cross-Sell (migration 038) — CRM-level suggestions on converted contacts.
+  // 'act' = create a follow-up / a new lead / dismiss a suggestion (a counsellor acts on
+  // his own contacts). 'manage' = maintain the admin rule map (current -> suggested course).
+  { module: 'crosssell', label: 'Cross-Sell', actions: ['read', 'act', 'manage'] },
 ];

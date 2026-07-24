@@ -285,9 +285,8 @@ export const APP: ModuleItem[] = [
       sub: 'Progress = attendance + scores + assignments. Report cards visible to parents.',
       sprintNote: NOTE_S2,
       blocks: [{ type: 'hbars', title: 'Student progress', rows: [], empty: 'Progress charts appear once attendance & scores exist' }] } },
-    { id: 'crosssell', label: 'Cross-Sell', spec: p2('Cross-sell engine (Phase 2)',
-      'Recommend additional / next courses to current students. Triggers & offer tracking.',
-      [cap('Next-course recommend', 'e.g. IELTS → PTE / Visa prep', true), cap('Trigger on completion', 'Auto offer at 80% progress', true), cap('Offer tracking', 'Sent → viewed → enrolled', true)]) },
+    { id: 'crosssell', label: 'Cross-Sell', spec: { dyn: 'crossSell',
+      sub: 'CRM-level cross-sell on the contacts you have today. Converted contacts (won or enrolled) are paired with a suggested additional course from the Course master — via an admin rule map (current course → suggested course) or, failing a rule, other active courses in their vertical. Act on a suggestion: create a cross-sell follow-up, or create a new lead through the ingestion pipeline (dedup / distribution / audit), or dismiss it. Every act is logged so it is never suggested again. RBAC-scoped. (Deeper student-based cross-sell on academic progress remains Phase 2.)' } },
     { id: 'admissions', label: 'Admissions', spec: {
       sub: 'On enrolment a lead converts to a student record. Branch-set Student ID format. Online Admission Form supported.',
       sprintNote: NOTE_S2,

@@ -212,6 +212,13 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Vertical', 'select', 0, 0, 'filtered by Branch', 'verticals'),
     F('Assignee', 'select', 0, 0, 'Users \u00b7 active only', 'users'),
     F('Description', 'textarea')] },
+  // Cross-Sell rule (post-Phase-1 client request) — the admin map "current course ->
+  // suggested course". Both are id-valued Course selects (m_course); the saver sends both
+  // ids, so the qa10 matrix covers every rendered field.
+  'crosssell.rules': { title: 'New Cross-Sell Rule', fields: [
+    F('Current Course', 'select', 1, 0, 'the course the contact already has', 'courses'),
+    F('Suggest Course', 'select', 1, 0, 'the additional course to recommend', 'courses'),
+    F('Note', 'text', 0, 0, 'optional — why this pairing')] },
 };
 SPEC_FORMS['dash.quickcontact'] = { ...SPEC_FORMS['leads.all'], title: 'Quick Add Lead' };
 SPEC_FORMS['leads.branch'] = { ...SPEC_FORMS['admin.branches'] };
@@ -473,6 +480,17 @@ SAVERS['help.tickets'] = async (vals, ids) => {
     description: vals['Description'] || undefined,
   });
   return 'Ticket raised';
+};
+
+// Cross-Sell rule — map a current course to a suggested course. Both ids are required;
+// POST /cross-sell/rules validates them and refuses a self-referential or duplicate rule.
+SAVERS['crosssell.rules'] = async (vals, ids) => {
+  await api.post('/cross-sell/rules', {
+    source_course_id: need(ids['Current Course'], 'Pick the current course'),
+    target_course_id: need(ids['Suggest Course'], 'Pick the course to suggest'),
+    note: vals['Note'] || undefined,
+  });
+  return 'Cross-sell rule added';
 };
 
 /* ---------------------- header action resolution ----------------------

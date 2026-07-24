@@ -38,6 +38,7 @@ import {
 } from './sprint6';
 import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 import { SupportTickets } from './support';
+import { CrossSell } from './crosssell';
 
 export interface ScreenCtxT {
   go: (m: string, s: string) => void;
@@ -3005,6 +3006,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   workTasks: WorkTasks,
   waChat: WaChat,
   supportTickets: SupportTickets,
+  crossSell: CrossSell,
   sitemap: Sitemap,
 };
 
