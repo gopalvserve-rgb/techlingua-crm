@@ -67,6 +67,16 @@ export class LeadsController {
     return this.leads.reassign(id, Number(dto?.owner_id), u.id, s);
   }
 
+  // Users row action #7 — BULK reassign: move EVERY lead owned by from_user_id to
+  // to_user_id (active, in-scope). Gated on `lead.assign` like the single reassign.
+  @Post('reassign-all') @RequirePermission('lead.assign')
+  reassignAll(
+    @Body() dto: { from_user_id?: number; to_user_id?: number },
+    @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
+  ) {
+    return this.leads.reassignAllOwned(Number(dto?.from_user_id), Number(dto?.to_user_id), u.id, s);
+  }
+
   @Post(':id/notes') @RequirePermission('lead.update') @ScopedEntity('lead')
   addNote(@Param('id', ParseIntPipe) id: number, @Body() body: { note: string }, @CurrentUser() u: U) {
     return this.leads.addNote(id, body?.note, u.id);

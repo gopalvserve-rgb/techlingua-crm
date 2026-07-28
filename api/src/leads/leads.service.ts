@@ -298,6 +298,45 @@ export class LeadsService {
     return this.update(id, { owner_id: Number(ownerId) }, actorId, scope);
   }
 
+  /**
+   * Users row action #7 — BULK hand-off: reassign EVERY lead currently owned by user X
+   * to user Y. Scope-safe (only leads the caller may see are moved), reuses the per-lead
+   * reassign path (update → active-user guard + 'assign' timeline activity + SLA touch),
+   * and writes one audit_log 'transfer' row per lead. Returns the moved count.
+   */
+  async reassignAllOwned(fromUserId: number, toUserId: number, actorId: number, scope: ResolvedScope) {
+    const from = Number(fromUserId);
+    const to = Number(toUserId);
+    if (!Number.isInteger(from) || from <= 0) throw new BadRequestException('from_user_id (the user whose leads move) is required');
+    if (!Number.isInteger(to) || to <= 0) throw new BadRequestException('to_user_id (the user to reassign the leads to) is required');
+    if (from === to) throw new BadRequestException('to_user_id must be different from from_user_id');
+    // target must be an ACTIVE user AND inside the caller's scope (same guards as single reassign)
+    await assertActiveUser(this.db, to, 'to_user_id');
+    await this.enforcer.assertRefInScope(scope, 'user', to, actorId);
+    // the leads to move: owned by `from` AND visible to the caller (scope WHERE)
+    const params: unknown[] = [];
+    const where = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, params);
+    params.push(from);
+    const owned = await this.db.query<{ id: string; org_id: string }>(
+      `SELECT l.id, l.org_id FROM lead l
+        WHERE (${where}) AND l.deleted_at IS NULL AND l.is_active AND l.owner_id = $${params.length}
+        ORDER BY l.id`,
+      params,
+    );
+    let moved = 0;
+    for (const l of owned) {
+      await this.update(Number(l.id), { owner_id: to }, actorId, scope);
+      await this.db.query(
+        `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+         VALUES ($1,$2,'lead',$3,'transfer',$4,$5)`,
+        [Number(l.org_id), actorId, Number(l.id),
+          JSON.stringify({ owner_id: from }), JSON.stringify({ owner_id: to })],
+      );
+      moved++;
+    }
+    return { moved, from_user_id: from, to_user_id: to };
+  }
+
   async update(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
     const before = await this.db.one<Record<string, any>>(`SELECT * FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!before) throw new NotFoundException('lead not found');

@@ -59,4 +59,36 @@ export class UsersController {
   deactivate(@Param('id', ParseIntPipe) id: number) {
     return this.users.deactivate(id);
   }
+
+  /** Row action #2 — Activate / Deactivate the account (status toggle). */
+  @Patch(':id/status')
+  @RequirePermission('user.deactivate')
+  @ScopedEntity('user')
+  setStatus(@Param('id', ParseIntPipe) id: number, @Body() body: { status?: 'active' | 'disabled' }) {
+    return this.users.setStatus(id, body?.status as 'active' | 'disabled');
+  }
+
+  /** Rows #3/#4/#5 — the branches / verticals / campaigns this user is assigned to / an agent on. */
+  @Get(':id/access')
+  @RequirePermission('user.read')
+  @ScopedEntity('user')
+  access(@Param('id', ParseIntPipe) id: number) {
+    return this.users.access(id);
+  }
+
+  /** Row action #8 — the GLOBAL per-user lead-assignment switch (distribution skips a disabled user). */
+  @Patch(':id/lead-assignment')
+  @RequirePermission('user.update')
+  @ScopedEntity('user')
+  setLeadAssignment(@Param('id', ParseIntPipe) id: number, @Body() body: { enabled?: boolean }) {
+    return this.users.setLeadAssignment(id, body?.enabled === true);
+  }
+
+  /** Row action #9 — admin sets a new password (strength-validated, hashed, never logged). */
+  @Patch(':id/password')
+  @RequirePermission('user.update')
+  @ScopedEntity('user')
+  changePassword(@Param('id', ParseIntPipe) id: number, @Body() body: { password?: string }) {
+    return this.users.changePassword(id, String(body?.password ?? ''));
+  }
 }

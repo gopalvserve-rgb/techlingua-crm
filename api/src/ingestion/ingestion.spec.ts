@@ -61,6 +61,18 @@ describe('LeadIngestionService', () => {
     expect(st.leads.map((l) => l.owner_id)).toEqual([11, 13]);
   });
 
+  it('skips a user with the GLOBAL lead-assignment switch OFF (migration 039), org-wide', async () => {
+    // user 12 is active (still in the pool) but lead_assignment_enabled = FALSE, so the
+    // distribution engine hands NEW leads only to 11 and 13 — the org-wide equivalent of
+    // the per-campaign pause. Re-enabling (empty leadAssignOff) would restore 12.
+    const { db, st } = makeFakeDb({ leadAssignOff: [12] });
+    const { svc } = makeIngestion(db);
+    for (let i = 1; i <= 4; i++) {
+      await svc.ingest({ full_name: `G${i}`, phone: `98111000${30 + i}`, external_id: `G${i}` }, ctx());
+    }
+    expect(st.leads.map((l) => l.owner_id)).toEqual([11, 13, 11, 13]);
+  });
+
   it('applies CONDITIONAL distribution rules', async () => {
     const { db, st } = makeFakeDb({
       distribution: { mode: 'conditional', conditions: [{ field: 'course', value: 'IELTS', assign_to_user_ids: [13] }] },

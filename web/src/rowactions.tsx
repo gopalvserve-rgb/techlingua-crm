@@ -5,7 +5,8 @@
  * shell (same add-modal skin) and an "Include inactive" filter chip.
  * All additive — sanctioned in docs/design/01-prototype-parity-spec.md.
  */
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Ic } from './icons';
 import { toast } from './refdata';
 import { Cell } from './renderer';
@@ -35,6 +36,75 @@ export function rowActions(opts: {
       )}
     </span>
   ) };
+}
+
+/* --------------------------- row action menu (⋮) ----------------------- */
+
+export type RowMenuItem =
+  | 'divider'
+  | { label: string; icon?: string; danger?: boolean; disabled?: boolean; onClick: () => void };
+
+/**
+ * The kebab (⋮) row-action dropdown. Every item is a REAL wired action supplied by the
+ * caller — an item the caller does not pass (RBAC-gated off) simply is not rendered, so
+ * there are no dead/placeholder entries. Rendered into a document.body portal at a fixed
+ * position anchored to the trigger, so a table's overflow never clips it.
+ */
+export function RowMenu({ items, label = 'Actions' }: { items: Array<RowMenuItem | false | null | undefined>; label?: string }) {
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const open = pos != null;
+  const kept = items.filter((x): x is RowMenuItem => !!x);
+  // collapse leading/trailing/adjacent dividers so gated-off items never leave a stray rule
+  const shown: RowMenuItem[] = [];
+  for (const it of kept) {
+    if (it === 'divider') { if (shown.length && shown[shown.length - 1] !== 'divider') shown.push(it); }
+    else shown.push(it);
+  }
+  while (shown.length && shown[shown.length - 1] === 'divider') shown.pop();
+
+  const toggle = () => {
+    if (open) { setPos(null); return; }
+    const r = btn.current!.getBoundingClientRect();
+    setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setPos(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <span className="rowact" onClick={(e) => e.stopPropagation()}>
+      <button ref={btn} className="ract" title={label} aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+        <Ic k="dots" w={2.1} />
+      </button>
+      {open && pos && createPortal(
+        <>
+          <div className="rowmenu-backdrop" onClick={() => setPos(null)} />
+          <div className="rowmenu-pop" role="menu" style={{ top: pos.top, right: pos.right }}>
+            {shown.map((it, i) => (it === 'divider'
+              ? <div className="rowmenu-div" key={`d${i}`} />
+              : (
+                <button key={it.label} role="menuitem" className={`rowmenu-item${it.danger ? ' danger' : ''}`}
+                  disabled={it.disabled}
+                  onClick={() => { setPos(null); it.onClick(); }}>
+                  {it.icon && <Ic k={it.icon} w={2} />}{it.label}
+                </button>
+              )))}
+          </div>
+        </>, document.body)}
+    </span>
+  );
 }
 
 /* ----------------------------- confirm step ---------------------------- */

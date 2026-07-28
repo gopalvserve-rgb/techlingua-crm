@@ -396,6 +396,22 @@ export class LeadIngestionService {
           if (off.size) pool = pool.filter((id) => !off.has(id));
         } catch { /* table absent — no agent is paused */ }
       }
+      // Users row-action #8 — a user with lead_assignment_enabled = FALSE is skipped by
+      // round-robin AND by conditional distribution in EVERY campaign (the ORG-WIDE
+      // equivalent of the per-campaign campaign_agent_pause above), and resumes the
+      // instant it is re-enabled. Guarded: a DB/double without the column (migration 039
+      // not yet applied) simply yields no rows — every user is treated as enabled.
+      if (pool.length) {
+        try {
+          const disabled = await this.db.query<{ id: string }>(
+            `SELECT u.id FROM "user" u
+              WHERE u.id = ANY($1::bigint[]) AND u.lead_assignment_enabled = FALSE`,
+            [pool],
+          );
+          const skip = new Set(disabled.map((r) => Number(r.id)));
+          if (skip.size) pool = pool.filter((id) => !skip.has(id));
+        } catch { /* column absent — every user is assignment-enabled */ }
+      }
     }
     return { pool, note };
   }

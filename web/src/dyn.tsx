@@ -15,8 +15,9 @@ import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
 import {
-  ConfirmModal, DetailModal, IncInactiveChip, KV, Section, fmtFull, rowActions, toggleCell,
+  ConfirmModal, DetailModal, IncInactiveChip, KV, RowMenu, RowMenuItem, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
+import { UserPicker } from './userpicker';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { StageConfigurator } from './stageconfig';
@@ -2160,6 +2161,140 @@ function UserView({ user, onClose }: { user: any; onClose: () => void }) {
   );
 }
 
+/* ------------------------- Users row-action modals ---------------------- */
+
+/** Row action #9 — admin sets a new password (strength-validated; plaintext never logged). */
+export function ChangePasswordModal({ user, onClose }: { user: any; onClose: () => void }) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const strong = pw.length >= 8 && /[A-Za-z]/.test(pw) && /[0-9]/.test(pw);
+  const match = pw === pw2;
+  const go = async () => {
+    if (!strong || !match) return;
+    setBusy(true);
+    try {
+      await api.patch(`/users/${user.id}/password`, { password: pw });
+      toast(`Password updated for ${user.name}`);
+      onClose();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim" style={{ zIndex: 300 }}>
+      <div className="add-modal" style={{ width: 430 }}>
+        <div className="ah"><h3><Ic k="key" />Change password — {user.name}</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="fld"><label>New password</label>
+            <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Min 8 chars, a letter and a number" autoComplete="new-password" /></div>
+          <div className="fld"><label>Confirm password</label>
+            <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" /></div>
+          <div className="empty-note" style={{ fontSize: 11.5, padding: '6px 2px', textAlign: 'left' }}>
+            {pw && !strong ? 'Weak — needs 8+ characters including a letter and a number.'
+              : pw2 && !match ? 'Passwords do not match.'
+              : 'The user can sign in with this password immediately. It is never shown again.'}
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy || !strong || !match} onClick={go}><Ic k="check" />Set password</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Row action #7 — bulk hand-off: move ALL of this user's leads to another active user. */
+export function ReassignLeadsModal({ user, onDone, onClose }: { user: any; onDone: () => void; onClose: () => void }) {
+  const [to, setTo] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  const target = to[0];
+  const go = async () => {
+    if (!target) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{ moved: number }>(`/leads/reassign-all`, { from_user_id: Number(user.id), to_user_id: Number(target) });
+      toast(res.moved > 0 ? `Reassigned ${res.moved} lead${res.moved === 1 ? '' : 's'} from ${user.name}` : `${user.name} had no leads to reassign`);
+      onDone();
+      onClose();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim" style={{ zIndex: 300 }}>
+      <div className="add-modal" style={{ width: 460 }}>
+        <div className="ah"><h3><Ic k="swap" />Reassign leads — {user.name}</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="empty-note" style={{ fontSize: 12, padding: '2px 2px 10px', textAlign: 'left' }}>
+            Moves <b>every</b> lead currently owned by <b>{user.name}</b> to the user you pick below. Only active, in-scope users are offered.
+          </div>
+          <div className="fld"><label>Reassign to</label>
+            <UserPicker value={to} onChange={setTo} multiple={false} placeholder="Search a user…" />
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy || !target} onClick={go}><Ic k="check" />Reassign all</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Rows #3/#4/#5 — View Branch / Vertical / Campaign the user is assigned to (one endpoint). */
+function UserScopeModal({ user, kind, onClose }: { user: any; kind: 'branch' | 'vertical' | 'campaign'; onClose: () => void }) {
+  const [d, setD] = useState<{ branches: any[]; verticals: any[]; campaigns: any[] } | null>(null);
+  useEffect(() => {
+    api.get<any>(`/users/${user.id}/access`).then(setD).catch((e) => { toast(e.message, true); onClose(); });
+  }, [user.id, onClose]);
+  const cfg = {
+    branch: { title: 'Branches', icon: 'branch', rows: d?.branches ?? [], empty: 'Not assigned to any branch' },
+    vertical: { title: 'Verticals', icon: 'grid', rows: d?.verticals ?? [], empty: 'Not assigned to any vertical' },
+    campaign: { title: 'Campaigns', icon: 'target', rows: d?.campaigns ?? [], empty: 'Not on any campaign' },
+  }[kind];
+  return (
+    <DetailModal title={`${cfg.title} — ${user.name}`} icon={cfg.icon} width={480} onClose={onClose}>
+      {!d ? <div className="empty-note">Loading…</div>
+        : cfg.rows.length === 0 ? <div className="empty-note">{cfg.empty}</div>
+        : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {cfg.rows.map((r: any) => (
+              <div key={r.id} className="fchip" style={{ justifyContent: 'flex-start' }}>
+                <Ic k={cfg.icon} />{r.name}
+              </div>
+            ))}
+          </div>
+        )}
+    </DetailModal>
+  );
+}
+
+/** Row action #6 — View Lead: the leads this user owns (scoped, read-only list). */
+function UserLeadsModal({ user, onClose }: { user: any; onClose: () => void }) {
+  const [d, setD] = useState<{ total: number; rows: any[] } | null>(null);
+  useEffect(() => {
+    api.get<any>(`/leads?owner_id=${user.id}&limit=200`).then(setD).catch((e) => { toast(e.message, true); onClose(); });
+  }, [user.id, onClose]);
+  return (
+    <DetailModal title={`Leads owned by ${user.name}`} icon="leads" width={640} onClose={onClose}>
+      {!d ? <div className="empty-note">Loading…</div>
+        : d.rows.length === 0 ? <div className="empty-note">This user owns no leads in your scope</div>
+        : (
+          <>
+            <div className="empty-note" style={{ textAlign: 'left', padding: '0 2px 10px', fontSize: 12 }}>
+              <b>{d.total}</b> lead{d.total === 1 ? '' : 's'} owned by {user.name} (showing {d.rows.length}).
+            </div>
+            <TableCard cols={['Lead', 'Stage', 'Temp', 'Created']}
+              rows={d.rows.map((l: any) => [
+                { node: <div><div className="nm">{l.full_name || l.name || '—'}</div><div className="sub mono">{l.phone}</div></div> } as Cell,
+                l.stage_name || '—',
+                l.temperature ? renderCell({ b: [l.temperature, l.temperature === 'hot' ? 'b-red' : l.temperature === 'warm' ? 'b-amber' : 'b-gray'] }) : '—',
+                fmtFull(l.created_at),
+              ])} empty="No leads" />
+          </>
+        )}
+    </DetailModal>
+  );
+}
+
 function Users() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
@@ -2180,6 +2315,41 @@ function Users() {
   const { me } = useAuth();
   const del = useDelete('User', '/users', () => { list.reload(); ref.reload(); bump(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
+
+  // Row-action modal state (each menu item opens a REAL wired action)
+  const [pwUser, setPwUser] = useState<any | null>(null);
+  const [reassignUser, setReassignUser] = useState<any | null>(null);
+  const [scopeModal, setScopeModal] = useState<{ user: any; kind: 'branch' | 'vertical' | 'campaign' } | null>(null);
+  const [leadsUser, setLeadsUser] = useState<any | null>(null);
+  const [confirm, setConfirm] = useState<{ title: string; body: any; confirmLabel: string; danger?: boolean; onConfirm: () => Promise<void> } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const runConfirm = async () => {
+    if (!confirm) return;
+    setConfirmBusy(true);
+    try { await confirm.onConfirm(); setConfirm(null); } catch (e: any) { toast(e.message, true); } finally { setConfirmBusy(false); }
+  };
+  const toggleStatus = (u: any) => {
+    const next = u.status === 'disabled' ? 'active' : 'disabled';
+    setConfirm({
+      title: next === 'active' ? 'Activate user' : 'Deactivate user',
+      danger: next === 'disabled', confirmLabel: next === 'active' ? 'Activate' : 'Deactivate',
+      body: next === 'active'
+        ? <>Reactivate <b>{u.name}</b>? They can sign in again immediately.</>
+        : <>Deactivate <b>{u.name}</b>? They can no longer sign in and are skipped by every owner picker. Existing leads are untouched.</>,
+      onConfirm: async () => { await api.patch(`/users/${u.id}/status`, { status: next }); toast(`${u.name} ${next === 'active' ? 'activated' : 'deactivated'}`); after(); },
+    });
+  };
+  const toggleLeadAssign = (u: any, enabled: boolean) => {
+    const next = !enabled;
+    setConfirm({
+      title: next ? 'Enable lead assignment' : 'Disable lead assignment',
+      danger: !next, confirmLabel: next ? 'Enable' : 'Disable',
+      body: next
+        ? <>Resume automatic lead assignment for <b>{u.name}</b>? The distribution engine will include them in round-robin and conditional hand-out again.</>
+        : <>Stop assigning NEW leads to <b>{u.name}</b>? The distribution engine skips them everywhere. They keep their existing leads and can still sign in. Re-enable any time.</>,
+      onConfirm: async () => { await api.patch(`/users/${u.id}/lead-assignment`, { enabled: next }); toast(`Lead assignment ${next ? 'enabled' : 'disabled'} for ${u.name}`); after(); },
+    });
+  };
 
   const [details, setDetails] = useState<Record<number, any>>({});
   useEffect(() => {
@@ -2232,15 +2402,45 @@ function Users() {
               active: u.status !== 'disabled', name: u.name, entity: 'User', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/users/${u.id}`, { status: next ? 'active' : 'disabled' }); after(); },
             }),
-            rowActions({
-              onView: () => setView(u), onEdit: canEdit ? () => setEdit(u) : undefined,
-              // self-delete is refused by the API (400); hide the button for yourself
-              onDelete: can('user.delete') && Number(u.id) !== Number(me?.user.id) ? () => del.openDelete(Number(u.id), u.name) : undefined,
-            }),
+            { node: (() => {
+              const isSelf = Number(u.id) === Number(me?.user.id);
+              const laEnabled = u.lead_assignment_enabled !== false;
+              const items: Array<RowMenuItem | false | null | undefined> = [
+                // 1 — Edit (multi-branch, role, etc.)
+                canEdit && { label: 'Edit', icon: 'pencil', onClick: () => setEdit(u) },
+                // 2 — Activate / Deactivate the account
+                can('user.deactivate') && { label: u.status === 'disabled' ? 'Activate' : 'Deactivate', icon: 'power', danger: u.status !== 'disabled', onClick: () => toggleStatus(u) },
+                'divider',
+                // 3/4/5 — View Branch / Vertical / Campaign
+                { label: 'View branches', icon: 'branch', onClick: () => setScopeModal({ user: u, kind: 'branch' }) },
+                { label: 'View verticals', icon: 'grid', onClick: () => setScopeModal({ user: u, kind: 'vertical' }) },
+                { label: 'View campaigns', icon: 'target', onClick: () => setScopeModal({ user: u, kind: 'campaign' }) },
+                // 6 — View Lead (leads owned by this user)
+                can('lead.read') && { label: 'View leads', icon: 'leads', onClick: () => setLeadsUser(u) },
+                'divider',
+                // 7 — Reassign Lead (bulk hand-off of ALL their leads)
+                can('lead.assign') && { label: 'Reassign leads', icon: 'swap', onClick: () => setReassignUser(u) },
+                // 8 — Enable / Disable Lead Assignment (global per-user switch)
+                canEdit && { label: laEnabled ? 'Disable lead assignment' : 'Enable lead assignment', icon: 'bolt', danger: laEnabled, onClick: () => toggleLeadAssign(u, laEnabled) },
+                // 9 — Change Password
+                canEdit && { label: 'Change password', icon: 'key', onClick: () => setPwUser(u) },
+                // 10 — Delete (soft delete; self-delete is refused by the API)
+                (can('user.delete') && !isSelf) && { label: 'Delete', icon: 'trash', danger: true, onClick: () => del.openDelete(Number(u.id), u.name) },
+              ];
+              return <RowMenu items={items} />;
+            })() } as Cell,
           ];
         })} empty="No users match the current filters" />
       {del.deleteModal}
       {view && <UserView user={view} onClose={() => setView(null)} />}
+      {pwUser && <ChangePasswordModal user={pwUser} onClose={() => setPwUser(null)} />}
+      {reassignUser && <ReassignLeadsModal user={reassignUser} onDone={after} onClose={() => setReassignUser(null)} />}
+      {scopeModal && <UserScopeModal user={scopeModal.user} kind={scopeModal.kind} onClose={() => setScopeModal(null)} />}
+      {leadsUser && <UserLeadsModal user={leadsUser} onClose={() => setLeadsUser(null)} />}
+      {confirm && (
+        <ConfirmModal title={confirm.title} body={confirm.body} confirmLabel={confirm.confirmLabel}
+          danger={confirm.danger} busy={confirmBusy} onConfirm={runConfirm} onClose={() => setConfirm(null)} />
+      )}
       {edit && (() => {
         // MULTI-BRANCH: prefill EVERY branch/vertical the user currently holds from the
         // already-fetched detail (details[id].assignments). Rows scoped to a pipeline/

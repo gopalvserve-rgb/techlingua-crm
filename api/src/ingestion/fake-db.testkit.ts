@@ -29,6 +29,8 @@ export interface FakeState {
   duplicacy: any;
   stages: FakeStage[];
   pausedAgents: Array<{ campaign_id: number; user_id: number }>;
+  /** users with lead_assignment_enabled = FALSE (global per-user switch, migration 039) */
+  leadAssignOff: number[];
 }
 
 const DEFAULT_STAGES: FakeStage[] = [
@@ -106,6 +108,7 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
     duplicacy: { check_scope: 'this_campaign', match_key: 'phone', on_duplicate: 'ignore', open_reassign_same_user: true },
     stages: DEFAULT_STAGES,
     pausedAgents: [],
+    leadAssignOff: [],
     ...init,
   };
   let seq = 100;
@@ -176,6 +179,13 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
     }
     if (s.startsWith('SELECT id FROM "user" WHERE id = ANY')) {
       return (params[0] as number[]).filter((id) => st.users.includes(id)).map((id) => ({ id }));
+    }
+    // migration 039 — the ORG-WIDE per-user lead-assignment switch: which of these pool
+    // users are globally disabled for NEW hand-out. Distinct alias (u.id) so it never
+    // collides with the pool-hygiene handler above.
+    if (s.startsWith('SELECT u.id FROM "user" u WHERE u.id = ANY')) {
+      const ids = (params[0] as number[]) ?? [];
+      return st.leadAssignOff.filter((id) => ids.includes(Number(id))).map((id) => ({ id }));
     }
     if (s.startsWith('INSERT INTO campaign_distribution_state')) {
       st.cursor += 1;

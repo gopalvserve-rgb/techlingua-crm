@@ -452,6 +452,17 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .ract{width:26px;height:26px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);display:inline-flex;align-items:center;justify-content:center;padding:0;transition:.14s}
 .ract svg{width:13px;height:13px}
 .ract:hover{color:var(--primary);border-color:var(--primary)}
+.rowmenu-backdrop{position:fixed;inset:0;z-index:310}
+.rowmenu-pop{position:fixed;z-index:320;min-width:196px;max-width:240px;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 14px 38px rgba(0,0,0,.34);padding:5px;display:flex;flex-direction:column;animation:mfade .12s forwards}
+.rowmenu-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 11px;border:0;background:none;color:var(--text);font-family:inherit;font-size:12.5px;font-weight:500;border-radius:8px;cursor:pointer;transition:.12s;white-space:nowrap}
+.rowmenu-item svg{width:14px;height:14px;color:var(--text-muted);flex:none}
+.rowmenu-item:hover{background:var(--surface-2)}
+.rowmenu-item:hover svg{color:var(--primary)}
+.rowmenu-item.danger{color:var(--danger)}
+.rowmenu-item.danger svg{color:var(--danger)}
+.rowmenu-item.danger:hover{background:color-mix(in srgb,var(--danger) 12%,transparent)}
+.rowmenu-item:disabled{opacity:.45;cursor:not-allowed}
+.rowmenu-div{height:1px;background:var(--border);margin:4px 6px}
 .tbl tbody tr.row-inactive{opacity:.55}
 .bdg.togglable{cursor:pointer}
 .bdg.togglable:hover{filter:brightness(1.18)}

@@ -57,6 +57,10 @@ export const I: Record<string, string> = {
   logout: '<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>',
   eye: '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
   pencil: '<path d="M17 3a2.8 2.8 0 014 4L7.5 20.5 2 22l1.5-5.5z"/>',
+  dots: '<circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/>',
+  key: '<circle cx="8" cy="15" r="5"/><path d="M11.5 11.5L21 2M17 6l3 3M14 9l3 3"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 11-12.8 0"/>',
+  swap: '<path d="M7 10l-4 4 4 4"/><path d="M3 14h14a4 4 0 004-4V4"/>',
 };
 
 /** Inline SVG icon, mirrors the prototype's svg() helper. */

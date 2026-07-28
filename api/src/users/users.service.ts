@@ -83,7 +83,7 @@ export class UsersService {
     const scopeWhere = `((${where}) OR u.id = $${params.length})`;
     const filterSql = buildUserFilters(filters, params);
     return this.db.query(
-      `SELECT DISTINCT u.id, u.name, u.email, u.phone, u.status, u.created_at,
+      `SELECT DISTINCT u.id, u.name, u.email, u.phone, u.status, u.lead_assignment_enabled, u.created_at,
               (SELECT COALESCE(string_agg(DISTINCT r.name, ', '), '')
                  FROM user_assignment ra JOIN role r ON r.id = ra.role_id
                 WHERE ra.user_id = u.id AND ra.is_active) AS role_names,
@@ -108,7 +108,7 @@ export class UsersService {
 
   async get(id: number) {
     const user = await this.db.one(
-      `SELECT id, name, email, phone, status, mfa_enabled, created_at FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [id],
+      `SELECT id, name, email, phone, status, mfa_enabled, lead_assignment_enabled, created_at FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [id],
     );
     if (!user) throw new NotFoundException('User not found');
     const assignments = await this.db.query(
@@ -258,6 +258,86 @@ export class UsersService {
   /** Soft delete: disable login + hide from pickers. */
   deactivate(id: number) {
     return this.update(id, { status: 'disabled' });
+  }
+
+  /**
+   * Users row action #2 — Activate / Deactivate the account (status toggle). Reuses the
+   * validated update() path; gated at the controller on `user.deactivate`. A disabled
+   * user cannot log in (auth.service) and is skipped by every owner/reassign guard.
+   */
+  async setStatus(id: number, status: 'active' | 'disabled') {
+    if (!['active', 'disabled'].includes(status)) throw new BadRequestException("invalid status — expected 'active' or 'disabled'");
+    return this.update(id, { status });
+  }
+
+  /**
+   * Users row action #8 — the GLOBAL per-user lead-assignment switch (migration 039).
+   * When disabled, the distribution engine skips this user for NEW hand-outs everywhere
+   * (see lead-ingestion.service resolvePool). Distinct from Activate/Deactivate (login).
+   */
+  async setLeadAssignment(id: number, enabled: boolean) {
+    await this.get(id); // 404 if missing / soft-deleted
+    if (typeof enabled !== 'boolean') throw new BadRequestException('enabled must be a boolean');
+    const res = await this.db.one<{ id: string; lead_assignment_enabled: boolean }>(
+      `UPDATE "user" SET lead_assignment_enabled = $2, updated_at = now()
+        WHERE id = $1 AND deleted_at IS NULL
+       RETURNING id, lead_assignment_enabled`,
+      [id, enabled],
+    );
+    if (!res) throw new NotFoundException('User not found');
+    return { id: Number(res.id), lead_assignment_enabled: res.lead_assignment_enabled };
+  }
+
+  /**
+   * Users row action #9 — admin sets a new password for the user. Strength-validated,
+   * bcrypt-hashed exactly like create/update; the plaintext is NEVER logged or returned.
+   * Gated on `user.update` at the controller.
+   */
+  async changePassword(id: number, password: string) {
+    const pw = String(password ?? '');
+    // strength first (cheap) — a weak password never touches the DB
+    if (pw.length < 8) throw new BadRequestException('password must be at least 8 characters');
+    if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) {
+      throw new BadRequestException('password must contain at least one letter and one number');
+    }
+    await this.get(id); // 404 if missing / soft-deleted
+    const hash = await bcrypt.hash(pw, 10);
+    await this.db.query(
+      `UPDATE "user" SET password_hash = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+      [id, hash],
+    );
+    // NB: return NOTHING about the password — not the hash, never the plaintext.
+    return { ok: true };
+  }
+
+  /**
+   * Users row actions #3/#4/#5 — the branches / verticals / campaigns this user is
+   * assigned to, read from their ACTIVE user_assignment rows. One scoped read backs all
+   * three "View …" menu items. Gated on `user.read`.
+   */
+  async access(id: number) {
+    await this.get(id); // 404 if missing / soft-deleted
+    const branches = await this.db.query(
+      `SELECT DISTINCT b.id, b.name FROM user_assignment ua JOIN branch b ON b.id = ua.branch_id
+        WHERE ua.user_id = $1 AND ua.is_active AND b.deleted_at IS NULL ORDER BY b.name`, [id],
+    );
+    const verticals = await this.db.query(
+      `SELECT DISTINCT v.id, v.name, v.branch_id FROM user_assignment ua JOIN vertical v ON v.id = ua.vertical_id
+        WHERE ua.user_id = $1 AND ua.is_active AND v.deleted_at IS NULL ORDER BY v.name`, [id],
+    );
+    // A user "is on" a campaign three ways: a direct user_assignment.campaign_id, being a
+    // campaign MANAGER (campaign_manager), or being an AGENT in its distribution pool
+    // (distribution_config.agent_user_ids). UNION all three, live campaigns only.
+    const campaigns = await this.db.query(
+      `SELECT c.id, c.name, c.branch_id, c.vertical_id FROM campaign c WHERE c.deleted_at IS NULL AND (
+             EXISTS (SELECT 1 FROM user_assignment ua
+                      WHERE ua.user_id = $1 AND ua.is_active AND ua.campaign_id = c.id)
+          OR EXISTS (SELECT 1 FROM campaign_manager cm
+                      WHERE cm.campaign_id = c.id AND cm.user_id = $1)
+          OR (c.distribution_config->'agent_user_ids') @> to_jsonb(ARRAY[$1::bigint])
+        ) ORDER BY c.name`, [id],
+    );
+    return { branches, verticals, campaigns };
   }
 
   /**
