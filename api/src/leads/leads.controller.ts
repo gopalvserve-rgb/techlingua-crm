@@ -28,6 +28,8 @@ export class LeadsController {
       sla_breached: q.sla_breached === '1' || q.sla_breached === 'true',
       flagged: q.flagged === '1' || q.flagged === 'true',
       duplicate: q.duplicate === '1' || q.duplicate === 'true',
+      // Bulk actions (Jul 2026) — the paused-only filter (find parked leads to resume).
+      paused: q.paused === '1' || q.paused === 'true',
       sort: q.sort || undefined,
       q: q.q || undefined, limit: num(q.limit), offset: num(q.offset),
     });
