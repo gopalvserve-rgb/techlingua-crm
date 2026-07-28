@@ -160,8 +160,9 @@ const CASES: Array<{ name: string; formKey: string; spec: EditSpec }> = [
     name: 'User', formKey: 'admin.users',
     spec: {
       title: 'Edit User', optional: ['Password / Login Method'], submit: vi.fn(),
-      initialVals: { 'Full Name': 'Asha Rao', 'Email ID': 'asha@techlingua.in', 'Mobile Number': '+919000000002', Status: 'Active' },
-      initialIds: { 'System Role': 2, 'Branch Access': 9 },
+      // Branch/Vertical Access are now CSV-driven multipick (task 18) — Branch Access rides in vals.
+      initialVals: { 'Full Name': 'Asha Rao', 'Email ID': 'asha@techlingua.in', 'Mobile Number': '+919000000002', Status: 'Active', 'Branch Access': '9' },
+      initialIds: { 'System Role': 2 },
     },
   },
 ];

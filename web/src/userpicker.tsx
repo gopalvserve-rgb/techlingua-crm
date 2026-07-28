@@ -17,7 +17,7 @@ export interface PickUser {
   id: number; name: string; role_names?: string; branch_names?: string; status?: string;
 }
 
-export function UserPicker({ value, onChange, multiple = true, branchId, placeholder, disabled }: {
+export function UserPicker({ value, onChange, multiple = true, branchId, placeholder, disabled, options }: {
   value: number[];
   onChange: (ids: number[]) => void;
   /** false = single-select (conditional rules' assign-to) */
@@ -26,6 +26,13 @@ export function UserPicker({ value, onChange, multiple = true, branchId, placeho
   branchId?: number;
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * GENERIC MODE (multi-branch user access, etc.): when supplied, the picker offers
+   * exactly these options (already in the caller's scope) and filters them CLIENT-SIDE
+   * by the typed query — no `/users` fetch. Same searchable multi-select UI/CSS, so
+   * the campaign agent pool and a Branch/Vertical Access picker are the ONE control.
+   */
+  options?: PickUser[];
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -39,6 +46,21 @@ export function UserPicker({ value, onChange, multiple = true, branchId, placeho
   const seq = useRef(0);
 
   const fetchUsers = (query: string) => {
+    // Generic option mode: no network — filter the supplied options client-side.
+    if (options) {
+      const ql = query.trim().toLowerCase();
+      const live = (ql ? options.filter((o) => o.name.toLowerCase().includes(ql)) : options)
+        .filter((o) => o.status !== 'disabled');
+      setRows(live);
+      setActive(0);
+      setKnown((k) => {
+        const next = { ...k };
+        for (const o of options) next[Number(o.id)] = o; // resolve ALL chip names, not just filtered
+        return next;
+      });
+      setLoading(false);
+      return;
+    }
     const n = ++seq.current;
     setLoading(true);
     const params = new URLSearchParams();
@@ -61,12 +83,13 @@ export function UserPicker({ value, onChange, multiple = true, branchId, placeho
       .finally(() => n === seq.current && setLoading(false));
   };
 
-  // debounced server-side search while open; instant first load on open
+  // debounced server-side search while open; instant filter in option mode (and on
+  // options change, e.g. Vertical Access re-narrowing when Branch Access changes)
   useEffect(() => {
     if (!open) return;
-    const t = setTimeout(() => fetchUsers(q), q ? 220 : 0);
+    const t = setTimeout(() => fetchUsers(q), q && !options ? 220 : 0);
     return () => clearTimeout(t);
-  }, [open, q, branchId]);
+  }, [open, q, branchId, options]);
 
   // resolve chip names for ids selected before the first dropdown open (edit mode)
   useEffect(() => {
@@ -130,7 +153,7 @@ export function UserPicker({ value, onChange, multiple = true, branchId, placeho
       {open && !disabled && (
         <div className="upick-drop" role="listbox">
           {loading && rows.length === 0 && <div className="upick-empty">Searching…</div>}
-          {!loading && rows.length === 0 && <div className="upick-empty">No users match{q ? ` “${q}”` : ''}{branchId ? ' in this branch' : ''}</div>}
+          {!loading && rows.length === 0 && <div className="upick-empty">{options ? 'No matches' : 'No users match'}{q ? ` “${q}”` : ''}{!options && branchId ? ' in this branch' : ''}</div>}
           {rows.map((u, i) => {
             const id = Number(u.id);
             const sel = selected.has(id);

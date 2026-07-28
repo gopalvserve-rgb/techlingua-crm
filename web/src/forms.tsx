@@ -48,12 +48,66 @@ const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
  */
 export const CASCADE: Array<{ src: NonNullable<FormField['src']>; parent: string; fk: string; strict?: boolean }> = [
   { src: 'verticals', parent: 'Branch', fk: 'branch_id', strict: true },
-  { src: 'verticals', parent: 'Branch Access', fk: 'branch_id' },
+  // (Branch Access → Vertical Access cascade is handled by the multipick renderer, which
+  //  narrows Vertical Access to the verticals under the ticked branches and prunes stale ones.)
   { src: 'pipelines', parent: 'Vertical', fk: 'vertical_id', strict: true },
   { src: 'campaigns', parent: 'Pipeline', fk: 'pipeline_id', strict: true },
   { src: 'sources', parent: 'Campaign', fk: 'campaign_id', strict: true },
   { src: 'cities', parent: 'State', fk: 'parent_id' },
 ];
+
+/* ──────────────────  MULTI-BRANCH USER ACCESS  ────────────────
+ * A user may be granted access to SEVERAL branches (and, optionally, specific
+ * verticals) at creation/edit. The `/users` API already accepts an `assignments[]`
+ * array and the RBAC ScopeResolver UNIONS every active assignment, so lead
+ * visibility spans all granted branches. The UI just has to emit one assignment
+ * row per selected branch. Selections ride in `vals` (a string map) as CSV so the
+ * existing `Ids` (number|undefined) contract is untouched:
+ *   Branch Access   → "9,10"                (plain branch ids)
+ *   Vertical Access → "5:9,6:10"            (verticalId:branchId, self-describing so
+ *                                            the saver needs no RefData lookup)
+ */
+export const parseIdCsv = (s?: string): number[] =>
+  (s ?? '').split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n) && n > 0);
+export const parseVertCsv = (s?: string): Array<{ v: number; b: number }> =>
+  (s ?? '').split(',').map((t) => t.trim()).filter(Boolean)
+    .map((t) => { const [v, b] = t.split(':').map(Number); return { v, b }; })
+    .filter((x) => Number.isFinite(x.v) && x.v > 0);
+
+export type AssignmentRow = {
+  role_id: number; branch_id: number | null; vertical_id: number | null;
+  pipeline_id?: number | null; campaign_id?: number | null; team_id?: number | null;
+};
+
+/**
+ * One `user_assignment` per selected branch, all carrying the chosen System Role.
+ *  • no branch + no vertical  → a single ORG-WIDE row (branch_id null) — today's meaning.
+ *  • branch with selected verticals → one row PER vertical (branch+vertical scoped);
+ *    a branch with none of its verticals ticked → one whole-branch row.
+ *  • a vertical whose branch was NOT ticked still grants that vertical (mapped to its own branch).
+ * `extra` re-emits assignment rows this form does not manage (pipeline/campaign/team
+ * scoped), so an Edit reconcile never drops a user's other access.
+ */
+export function buildUserAssignments(
+  roleId: number,
+  branchIds: number[],
+  verts: Array<{ v: number; b: number }>,
+  extra: AssignmentRow[] = [],
+): AssignmentRow[] {
+  const rows: AssignmentRow[] = [];
+  if (branchIds.length === 0) {
+    if (verts.length === 0) rows.push({ role_id: roleId, branch_id: null, vertical_id: null });
+    else for (const { v, b } of verts) rows.push({ role_id: roleId, branch_id: b || null, vertical_id: v });
+  } else {
+    for (const b of branchIds) {
+      const vs = verts.filter((x) => x.b === b);
+      if (!vs.length) rows.push({ role_id: roleId, branch_id: b, vertical_id: null });
+      else for (const { v } of vs) rows.push({ role_id: roleId, branch_id: b, vertical_id: v });
+    }
+    for (const { v, b } of verts) if (b && !branchIds.includes(b)) rows.push({ role_id: roleId, branch_id: b, vertical_id: v });
+  }
+  return [...rows, ...extra];
+}
 
 export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> = {
   'leads.all': { title: 'Add Lead', fields: [
@@ -182,8 +236,8 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.users': { title: 'Add User', fields: [
     F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
-    F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'select', 0, 0, 'blank = org-wide', 'branches'),
-    F('Vertical Access', 'select', 0, 0, 'filtered by Branch', 'verticals'), F('Status', 'select', 0, ['Active', 'Deactivated'])] },
+    F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'multipick', 0, 0, 'blank = org-wide · pick one or more', 'branches'),
+    F('Vertical Access', 'multipick', 0, 0, 'optional · verticals under the chosen branches', 'verticals'), F('Status', 'select', 0, ['Active', 'Deactivated'])] },
   'fran.partners': { title: 'Add Franchise Partner', fields: [
     F('Franchise ID', 'auto', 1, 0, 'Auto-generated'), F('Legal Name', 'text', 1), F('Brand Name', 'text'), F('Owner', 'text', 1), F('Mobile', 'tel', 1), F('Email', 'email'),
     F('Branch / Territory', 'text'), F('Status', 'select', 0, ['Onboarding', 'Active', 'Inactive']), F('KYC Documents', 'file')] },
@@ -432,11 +486,8 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       phone: need(vals['Mobile Number'], 'Mobile Number is required'),
       email: vals['Email ID'] || undefined,
       password: need(vals['Password / Login Method'], 'Password is required'),
-      assignments: ids['System Role'] ? [{
-        role_id: ids['System Role'],
-        branch_id: ids['Branch Access'] ?? null,
-        vertical_id: ids['Vertical Access'] ?? null,
-      }] : [],
+      // MULTI-BRANCH: one user_assignment per selected branch (blank branches = one org-wide row).
+      assignments: ids['System Role'] ? buildUserAssignments(ids['System Role'], parseIdCsv(vals['Branch Access']), parseVertCsv(vals['Vertical Access'])) : [],
       // QA-10 sweep: Status is a live select on Add User — honour it (same mapping as Edit)
       status: vals['Status'] === 'Deactivated' ? 'disabled' : 'active',
     });
@@ -984,7 +1035,35 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
         </select>
       );
     }
-    if (t === 'select' || t === 'multiselect') {
+    // Multi-branch / multi-vertical access — the SAME searchable multi-select the
+    // campaign agent pool uses (UserPicker in generic option mode), fed from RefData.
+    // Selections ride in `vals` as CSV (see parseIdCsv / parseVertCsv).
+    if (t === 'multipick' && f.src === 'branches') {
+      const selected = parseIdCsv(v);
+      const opts = ((ref as any).branches as Named[] ?? []).map((b) => ({ id: Number(b.id), name: b.name }));
+      return (
+        <UserPicker options={opts} value={selected}
+          placeholder="Search & tick branches — leave empty for org-wide access…"
+          onChange={(arr) => setVals((x) => {
+            const kept = parseVertCsv(x['Vertical Access']).filter((z) => arr.includes(z.b)); // drop verticals of un-ticked branches
+            return { ...x, 'Branch Access': arr.join(','), 'Vertical Access': kept.map((z) => `${z.v}:${z.b}`).join(',') };
+          })} />
+      );
+    }
+    if (t === 'multipick' && f.src === 'verticals') {
+      const bids = parseIdCsv(vals['Branch Access']);
+      const all = (ref as any).verticals as Named[] ?? [];
+      const opts = all.filter((vt) => bids.includes(Number((vt as any).branch_id))).map((vt) => ({ id: Number(vt.id), name: vt.name }));
+      const vb = new Map(all.map((vt) => [Number(vt.id), Number((vt as any).branch_id)]));
+      const selected = parseVertCsv(v).map((z) => z.v);
+      const blocked = bids.length === 0;
+      return (
+        <UserPicker options={opts} value={selected} disabled={blocked}
+          placeholder={blocked ? 'Pick one or more branches first…' : 'Optional — tick verticals to narrow access…'}
+          onChange={(arr) => setVals((x) => ({ ...x, [f.label]: arr.map((vid) => `${vid}:${vb.get(Number(vid)) ?? ''}`).join(',') }))} />
+      );
+    }
+    if (t === 'select' || t === 'multiselect' || t === 'multipick') {
       return (
         <select className="ainp" value={v} onChange={(e) => setField(f.label, e.target.value)}>
           <option value="">Select…</option>

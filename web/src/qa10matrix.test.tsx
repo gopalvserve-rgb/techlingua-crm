@@ -61,8 +61,10 @@ vi.mock('./auth', () => ({
  * Everything else has TWO, so the probe can switch it to a different value.
  */
 const REF = {
-  branches: [{ id: 9, name: 'Vikaspuri' }],
-  verticals: [{ id: 1, name: 'BCL', branch_id: 9 }],
+  // MULTI-BRANCH probe (task 18): TWO branches, and branch 9 carries TWO verticals so the
+  // differential probe can switch Branch Access (9→10) AND Vertical Access (1→2) independently.
+  branches: [{ id: 9, name: 'Vikaspuri' }, { id: 10, name: 'Rohini' }],
+  verticals: [{ id: 1, name: 'BCL', branch_id: 9 }, { id: 2, name: 'PTE', branch_id: 9 }, { id: 3, name: 'Coaching', branch_id: 10 }],
   pipelines: [{ id: 4, name: 'Admissions', vertical_id: 1 }],
   campaigns: [{ id: 5, name: 'Meta Jul', pipeline_id: 4 }],
   sources: [{ id: 7, name: 'Meta Ads', campaign_id: 5 }],

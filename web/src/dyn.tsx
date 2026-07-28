@@ -10,7 +10,7 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
-import { AddModal, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow } from './forms';
+import { AddModal, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
@@ -2241,43 +2241,62 @@ function Users() {
         })} empty="No users match the current filters" />
       {del.deleteModal}
       {view && <UserView user={view} onClose={() => setView(null)} />}
-      {edit && (
-        <AddModal formKey="admin.users" onClose={() => setEdit(null)} onSaved={after}
-          edit={{
-            title: `Edit User \u2014 ${edit.name}`,
-            // DEF-2: Email ID / System Role / Branch + Vertical Access are editable and prefilled.
-            initialVals: {
-              'Full Name': edit.name ?? '', 'Email ID': edit.email ?? '', 'Mobile Number': edit.phone ?? '',
-              'System Role': edit.role_names ?? '',
-              'Branch Access': edit.branch_names ?? '',
-              'Status': edit.status === 'disabled' ? 'Deactivated' : 'Active',
-            },
-            initialIds: {
-              'System Role': edit.role_id ? Number(edit.role_id) : undefined,
-              'Branch Access': edit.branch_id ? Number(edit.branch_id) : undefined,
-              'Vertical Access': edit.vertical_id ? Number(edit.vertical_id) : undefined,
-            },
-            // password is only set when the admin types a new one
-            optional: ['Password / Login Method'],
-            submit: async (vals, ids) => {
-              await api.patch(`/users/${edit.id}`, {
-                name: need(vals['Full Name'], 'Name is required'),
-                email: vals['Email ID'] || null,
-                phone: vals['Mobile Number'] || null,
-                ...(vals['Password / Login Method'] ? { password: vals['Password / Login Method'] } : {}),
-                ...(ids['System Role'] ? {
-                  assignments: [{
-                    role_id: ids['System Role'],
-                    branch_id: ids['Branch Access'] ?? null,
-                    vertical_id: ids['Vertical Access'] ?? null,
-                  }],
-                } : {}),
-                status: vals['Status'] === 'Active' ? 'active' : 'disabled',
-              });
-              return 'User updated';
-            },
-          }} />
-      )}
+      {edit && (() => {
+        // MULTI-BRANCH: prefill EVERY branch/vertical the user currently holds from the
+        // already-fetched detail (details[id].assignments). Rows scoped to a pipeline/
+        // campaign/team are NOT managed by this form — carry them through untouched (`extra`).
+        const ed = details[Number(edit.id)];
+        const eas: any[] = ed?.assignments ?? [];
+        const isPlain = (a: any) => a.pipeline_id == null && a.campaign_id == null && a.team_id == null;
+        const plain = eas.filter(isPlain);
+        const extra: AssignmentRow[] = eas.filter((a) => !isPlain(a)).map((a) => ({
+          role_id: Number(a.role_id),
+          branch_id: a.branch_id != null ? Number(a.branch_id) : null,
+          vertical_id: a.vertical_id != null ? Number(a.vertical_id) : null,
+          pipeline_id: a.pipeline_id != null ? Number(a.pipeline_id) : null,
+          campaign_id: a.campaign_id != null ? Number(a.campaign_id) : null,
+          team_id: a.team_id != null ? Number(a.team_id) : null,
+        }));
+        const branchCsv = [...new Set(plain.filter((a) => a.branch_id != null).map((a) => Number(a.branch_id)))].join(',');
+        const vertCsv = plain.filter((a) => a.vertical_id != null).map((a) => {
+          const b = a.branch_id != null ? Number(a.branch_id)
+            : Number(ref.verticals.find((v) => Number(v.id) === Number(a.vertical_id))?.branch_id);
+          return `${Number(a.vertical_id)}:${b || ''}`;
+        }).join(',');
+        const roleId = plain[0]?.role_id ?? eas[0]?.role_id;
+        return (
+          <AddModal formKey="admin.users" onClose={() => setEdit(null)} onSaved={after}
+            edit={{
+              title: `Edit User — ${edit.name}`,
+              // Email ID / System Role / Branch + Vertical Access are editable and prefilled.
+              initialVals: {
+                'Full Name': edit.name ?? '', 'Email ID': edit.email ?? '', 'Mobile Number': edit.phone ?? '',
+                'System Role': edit.role_names ?? '',
+                'Branch Access': branchCsv,
+                'Vertical Access': vertCsv,
+                'Status': edit.status === 'disabled' ? 'Deactivated' : 'Active',
+              },
+              initialIds: { 'System Role': roleId ? Number(roleId) : undefined },
+              // password is only set when the admin types a new one
+              optional: ['Password / Login Method'],
+              submit: async (vals, ids) => {
+                const role = ids['System Role'];
+                await api.patch(`/users/${edit.id}`, {
+                  name: need(vals['Full Name'], 'Name is required'),
+                  email: vals['Email ID'] || null,
+                  phone: vals['Mobile Number'] || null,
+                  ...(vals['Password / Login Method'] ? { password: vals['Password / Login Method'] } : {}),
+                  // Reconcile: send the FULL desired set. The API deactivates old assignments and
+                  // re-inserts these, so ticking/un-ticking a branch adds/removes it; `extra`
+                  // preserves the user's pipeline/campaign/team grants.
+                  ...(role ? { assignments: buildUserAssignments(role, parseIdCsv(vals['Branch Access']), parseVertCsv(vals['Vertical Access']), extra) } : {}),
+                  status: vals['Status'] === 'Active' ? 'active' : 'disabled',
+                });
+                return 'User updated';
+              },
+            }} />
+        );
+      })()}
     </>
   );
 }
