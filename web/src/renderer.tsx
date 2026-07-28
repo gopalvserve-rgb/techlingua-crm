@@ -77,14 +77,24 @@ export function Kpis({ items, cols = 4 }: { items: KpiItem[]; cols?: number }) {
   );
 }
 
-export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky }: {
+export interface TableSelect {
+  /** is row `i` selected? */ checked: (rowIndex: number) => boolean;
+  /** toggle row `i` */ onToggle: (rowIndex: number) => void;
+  /** are all visible rows selected? (header checkbox state) */ allChecked: boolean;
+  /** toggle all visible rows */ onToggleAll: () => void;
+}
+
+export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
   /** optional per-row tint class (e.g. error-log severity highlighting) */
   rowClass?: (rowIndex: number) => string | undefined;
   /** UAT-R2 #11 — SaaS-style scrollable body with a sticky header (used by the Leads list). */
   sticky?: boolean;
+  /** Bulk actions (Jul 2026) — an optional leading checkbox column for multi-select. */
+  select?: TableSelect;
 }) {
+  const span = cols.length + (select ? 1 : 0);
   return (
     <div className="card">
       {title && (
@@ -95,13 +105,27 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
       )}
       <div className={sticky ? 'tbl-scroll' : 'scroll-x'}>
         <table className="tbl">
-          <thead><tr>{cols.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
+          <thead><tr>
+            {select && (
+              <th style={{ width: 34 }}>
+                <input type="checkbox" aria-label="Select all rows on this page"
+                  checked={select.allChecked} onChange={select.onToggleAll} onClick={(e) => e.stopPropagation()} />
+              </th>
+            )}
+            {cols.map((c, i) => <th key={i}>{c}</th>)}
+          </tr></thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td className="empty" colSpan={cols.length}>{empty || 'No records yet'}</td></tr>
+              <tr><td className="empty" colSpan={span}>{empty || 'No records yet'}</td></tr>
             ) : rows.map((r, ri) => (
               <tr key={ri} className={rowClass?.(ri) || undefined} onClick={onRowClick ? () => onRowClick(ri) : undefined}
                 style={onRowClick ? { cursor: 'pointer' } : undefined}>
+                {select && (
+                  <td style={{ width: 34 }} onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" aria-label={`Select row ${ri + 1}`}
+                      checked={select.checked(ri)} onChange={() => select.onToggle(ri)} />
+                  </td>
+                )}
                 {r.map((c, ci) => <td key={ci}>{renderCell(c)}</td>)}
               </tr>
             ))}

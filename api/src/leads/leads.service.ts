@@ -8,6 +8,7 @@ import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { looksLikePhoneQuery, normalizePhone, phoneQueryFragments } from '../common/phone.util';
 import { assertActiveUser } from './active-user.util';
+import { DistributionConfig } from './distribution.util';
 import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 
@@ -65,6 +66,8 @@ export interface LeadFilters {
   flagged?: boolean;
   /** Client change (Jul 2026): the "Duplicates" filter — leads marked is_duplicate. */
   duplicate?: boolean;
+  /** Bulk actions (Jul 2026): only leads currently PAUSED (parked out of distribution/SLA). */
+  paused?: boolean;
   /** Sprint 3 — the band must be SORTABLE too. */
   sort?: string;
   /** UAT-R2 #26 — created-date range (YYYY-MM-DD), inclusive of both ends. */
@@ -112,6 +115,7 @@ const LEAD_SELECT = `
          l.next_follow_up_at, l.last_activity_at, l.is_duplicate, l.custom_fields,
          l.duplicate_of_id, l.merged_into_id,
          l.score_breakdown, l.scored_at, l.is_flagged, l.flag_reason,
+         l.paused, l.paused_at,
          EXISTS (SELECT 1 FROM lead_sla s
                   WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now()) AS sla_breached,
          l.state_id, l.city_id, l.course_id, l.qualification_id, l.budget_id,
@@ -151,6 +155,10 @@ export class LeadsService {
     private readonly journeys?: JourneyService,
   ) {}
 
+  /** Hard cap on the size of ONE bulk action / select-all, so a runaway selection cannot
+   *  block the event loop or a transaction. The UI narrows the filter past this. */
+  static readonly BULK_MAX = 2000;
+
   private async orgId(): Promise<number> {
     const row = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
     if (!row) throw new BadRequestException('Organisation not seeded');
@@ -159,8 +167,10 @@ export class LeadsService {
 
   // ---- list ---------------------------------------------------------------
 
-  async list(scope: ResolvedScope, f: LeadFilters) {
-    const params: unknown[] = [];
+  /** Shared list/select filter WHERE (scope + the Batch-B filters). Reused by list() and
+   *  selectIds() so the "select all matching filter" affordance and the paged list can
+   *  never diverge on which leads a filter matches. Appends to `params`. */
+  private leadFilterWhere(scope: ResolvedScope, f: LeadFilters, params: unknown[]): string {
     const where: string[] = [this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, params), 'l.deleted_at IS NULL', 'l.is_active'];
     const eq = (col: string, val: unknown) => { params.push(val); where.push(`${col} = $${params.length}`); };
     if (f.branch_id) eq('l.branch_id', f.branch_id);
@@ -177,12 +187,19 @@ export class LeadsService {
     if (f.created_to) { params.push(f.created_to); where.push(`l.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
     if (f.flagged) where.push('l.is_flagged');
     if (f.duplicate) where.push('l.is_duplicate');
+    // Bulk actions (Jul 2026): the paused-only filter (find parked leads to resume).
+    if (f.paused) where.push('l.paused');
     if (f.sla_breached) {
       where.push(`EXISTS (SELECT 1 FROM lead_sla s
                            WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now())`);
     }
     if (f.q) where.push(buildLeadSearch(f.q, params));
-    const cond = where.join(' AND ');
+    return where.join(' AND ');
+  }
+
+  async list(scope: ResolvedScope, f: LeadFilters) {
+    const params: unknown[] = [];
+    const cond = this.leadFilterWhere(scope, f, params);
     const total = await this.db.one<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM lead l WHERE ${cond}`, params.slice(),
     );
@@ -196,6 +213,23 @@ export class LeadsService {
       params,
     );
     return { total: total?.n ?? 0, rows };
+  }
+
+  /**
+   * Bulk actions (Jul 2026) — "select all matching filter". Returns just the lead IDs that
+   * match the SAME filters + record scope as list(), capped at BULK_MAX, so the UI can turn
+   * a filtered view into a bulk selection without paging. Ids only (small payload).
+   */
+  async selectIds(scope: ResolvedScope, f: LeadFilters) {
+    const params: unknown[] = [];
+    const cond = this.leadFilterWhere(scope, f, params);
+    const total = await this.db.one<{ n: number }>(`SELECT COUNT(*)::int AS n FROM lead l WHERE ${cond}`, params.slice());
+    params.push(LeadsService.BULK_MAX);
+    const rows = await this.db.query<{ id: string }>(
+      `SELECT l.id FROM lead l WHERE ${cond} ORDER BY l.id LIMIT $${params.length}`, params,
+    );
+    const ids = rows.map((r) => Number(r.id));
+    return { ids, total: total?.n ?? 0, capped: (total?.n ?? 0) > ids.length };
   }
 
   async get(id: number) {
@@ -338,6 +372,270 @@ export class LeadsService {
       moved++;
     }
     return { moved, from_user_id: from, to_user_id: to };
+  }
+
+  // ==========================================================================
+  // LEAD TRANSFER + BULK ACTIONS (client request, Jul 2026)
+  // ==========================================================================
+  // Transfer moves a lead to another Branch/Vertical/(Pipeline)/Campaign, re-denormalising
+  // the full path in one transaction exactly like the pipeline re-parent. Bulk actions run
+  // the same per-lead primitives over a scoped id set, RBAC-skipping anything the caller may
+  // not see, writing per-lead audit + activity, idempotent, returning counts.
+
+  /** "Branch > Vertical > Campaign" label for a campaign, for the timeline note. */
+  private async pathLabel(campaignId: number): Promise<string> {
+    const r = await this.db.one<{ b: string; v: string; c: string }>(
+      `SELECT b.name AS b, v.name AS v, c.name AS c
+         FROM campaign c JOIN branch b ON b.id = c.branch_id JOIN vertical v ON v.id = c.vertical_id
+        WHERE c.id = $1`, [campaignId]);
+    return r ? `${r.b} › ${r.v} › ${r.c}` : `campaign #${campaignId}`;
+  }
+
+  /** Resolve (and RBAC-check) a transfer target from a campaign_id. Branch/Vertical/Pipeline
+   *  are DERIVED from the campaign; a mismatching id in the body is a 400. Picks/creates the
+   *  in-campaign source. Returns the fully-derived target the transfer applies. */
+  private async resolveTransferTarget(dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
+    const campaignId = Number(dto.campaign_id);
+    if (!Number.isInteger(campaignId) || campaignId <= 0) {
+      throw new BadRequestException('campaign_id (the target campaign) is required');
+    }
+    const camp = await this.db.one<any>(
+      `SELECT id, org_id, branch_id, vertical_id, pipeline_id, distribution_config, name
+         FROM campaign WHERE id = $1 AND is_active AND deleted_at IS NULL`, [campaignId]);
+    if (!camp) throw new NotFoundException('target campaign not found');
+    const mismatch = (k: string, v: unknown) =>
+      dto[k] != null && String(dto[k]) !== '' && Number(dto[k]) !== Number(v);
+    if (mismatch('branch_id', camp.branch_id) || mismatch('vertical_id', camp.vertical_id) || mismatch('pipeline_id', camp.pipeline_id)) {
+      throw new BadRequestException('branch/vertical/pipeline do not match the target campaign');
+    }
+    // RBAC: the caller can only transfer INTO a campaign inside their scope.
+    await this.enforcer.assertRefInScope(scope, 'campaign', campaignId, actorId);
+    const source_id = await this.resolveTargetSource(camp, dto.source_id, actorId);
+    const st = await this.db.one<{ id: string }>(
+      `SELECT id FROM pipeline_stage WHERE pipeline_id = $1 AND is_active
+        ORDER BY is_default DESC, sort_order ASC LIMIT 1`, [Number(camp.pipeline_id)]);
+    return {
+      org_id: Number(camp.org_id), branch_id: Number(camp.branch_id), vertical_id: Number(camp.vertical_id),
+      pipeline_id: Number(camp.pipeline_id), campaign_id: campaignId, source_id,
+      distribution: (camp.distribution_config ?? {}) as DistributionConfig,
+      default_stage_id: st ? Number(st.id) : null,
+      label: await this.pathLabel(campaignId),
+    };
+  }
+
+  /** A source under the target campaign: an explicit one (validated), else an existing active
+   *  one (preferring a manual source), else a freshly-created "Transferred in" manual source. */
+  private async resolveTargetSource(camp: any, explicit: unknown, actorId: number): Promise<number> {
+    const campaignId = Number(camp.id);
+    if (explicit != null && String(explicit) !== '') {
+      const s = await this.db.one<{ id: string }>(
+        `SELECT id FROM source WHERE id = $1 AND campaign_id = $2 AND deleted_at IS NULL`,
+        [Number(explicit), campaignId]);
+      if (!s) throw new BadRequestException('source does not belong to the target campaign');
+      return Number(s.id);
+    }
+    const existing = await this.db.one<{ id: string }>(
+      `SELECT id FROM source WHERE campaign_id = $1 AND deleted_at IS NULL AND is_active
+        ORDER BY (channel = 'manual') DESC, id ASC LIMIT 1`, [campaignId]);
+    if (existing) return Number(existing.id);
+    const created = await this.db.one<{ id: string }>(
+      `INSERT INTO source (org_id, branch_id, vertical_id, pipeline_id, campaign_id, name, channel,
+                           config, cost_per_lead, is_active, created_by)
+       VALUES ($1,$2,$3,$4,$5,'Transferred in','manual','{}'::jsonb,0,TRUE,$6) RETURNING id`,
+      [Number(camp.org_id), Number(camp.branch_id), Number(camp.vertical_id), Number(camp.pipeline_id), campaignId, actorId]);
+    if (!created) throw new BadRequestException('could not create a source under the target campaign');
+    return Number(created.id);
+  }
+
+  /** Apply ONE lead transfer in a single transaction (path re-denormalisation + owner
+   *  behaviour + activity + audit). Shared by the single and bulk transfer endpoints. */
+  private async transferOneLead(
+    leadId: number, target: Awaited<ReturnType<LeadsService['resolveTransferTarget']>>,
+    ownerMode: 'keep' | 'distribute', actorId: number,
+  ) {
+    const before = await this.db.one<Record<string, any>>(
+      `SELECT * FROM lead WHERE id = $1 AND deleted_at IS NULL`, [leadId]);
+    if (!before) throw new NotFoundException('lead not found');
+    const org = Number(before.org_id);
+    const fromLabel = await this.pathLabel(Number(before.campaign_id));
+    const crossPipeline = Number(before.pipeline_id) !== target.pipeline_id;
+    const prevOwner = before.owner_id == null ? null : Number(before.owner_id);
+
+    // distribute owner: resolve the eligible pool up front (pool hygiene queries), pick inside tx.
+    let pool: number[] = [];
+    let assignNote: string | null = null;
+    if (ownerMode === 'distribute') {
+      const ctx: Record<string, unknown> = {
+        course_id: before.course_id, city_id: before.city_id, state_id: before.state_id,
+        budget_id: before.budget_id, temperature: before.temperature, priority: before.priority,
+      };
+      const r = await this.ingestion.resolvePool(
+        { campaign_id: target.campaign_id, distribution: target.distribution } as any, ctx);
+      pool = r.pool; assignNote = r.note;
+    }
+
+    const saved = await this.db.tx(async (c) => {
+      let ownerId = prevOwner;
+      if (ownerMode === 'distribute' && pool.length) {
+        const picked = await this.ingestion.pickOwner(c, target.campaign_id, pool);
+        if (picked != null) ownerId = Number(picked);
+      }
+      const newStage = crossPipeline ? target.default_stage_id : (before.stage_id == null ? null : Number(before.stage_id));
+      const upd = await c.query(
+        `UPDATE lead SET branch_id = $1, vertical_id = $2, pipeline_id = $3, campaign_id = $4,
+                source_id = $5, stage_id = $6, owner_id = $7, updated_at = now(), last_activity_at = now()
+          WHERE id = $8 RETURNING *`,
+        [target.branch_id, target.vertical_id, target.pipeline_id, target.campaign_id,
+          target.source_id, newStage, ownerId, leadId]);
+      // the transfer timeline event
+      await c.query(
+        `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value, note)
+         VALUES ($1,$2,$3,$4,'transfer',$5,$6,$7)`,
+        [leadId, org, target.branch_id, actorId,
+          JSON.stringify({ branch_id: Number(before.branch_id), vertical_id: Number(before.vertical_id),
+            pipeline_id: Number(before.pipeline_id), campaign_id: Number(before.campaign_id),
+            source_id: Number(before.source_id), owner_id: prevOwner }),
+          JSON.stringify({ branch_id: target.branch_id, vertical_id: target.vertical_id,
+            pipeline_id: target.pipeline_id, campaign_id: target.campaign_id,
+            source_id: target.source_id, owner_id: ownerId }),
+          `Transferred from ${fromLabel} to ${target.label}`]);
+      // owner-change event when distribution moved it
+      if (ownerMode === 'distribute' && ownerId !== prevOwner) {
+        await c.query(
+          `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value, note)
+           VALUES ($1,$2,$3,$4,'assign',$5,$6,$7)`,
+          [leadId, org, target.branch_id, actorId,
+            JSON.stringify({ owner_id: prevOwner }), JSON.stringify({ owner_id: ownerId }),
+            assignNote ? `Transfer: ${assignNote}` : 'Transfer: assigned via the target campaign distribution']);
+      }
+      // crossing pipelines resets the stage to the target pipeline's entry stage — record the
+      // stage move + drive the SLA/TAT clocks in the SAME transaction.
+      if (crossPipeline) {
+        if (Number(before.stage_id ?? 0) !== Number(newStage ?? 0)) {
+          await c.query(
+            `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value)
+             VALUES ($1,$2,$3,$4,'stage_change',$5,$6)`,
+            [leadId, org, target.branch_id, actorId,
+              JSON.stringify({ id: before.stage_id }), JSON.stringify({ id: newStage })]);
+        }
+        await this.sla.safe(() => this.sla.onStageChanged(leadId, newStage ? Number(newStage) : null, c), 'sla.onStageChanged');
+      }
+      // per-lead audit row (the interceptor writes ONE summary row for the request; this is the
+      // per-lead trail the client can audit — matching reassign-all's shape).
+      await c.query(
+        `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+         VALUES ($1,$2,'lead',$3,'transfer',$4,$5)`,
+        [org, actorId, leadId,
+          JSON.stringify({ branch_id: Number(before.branch_id), vertical_id: Number(before.vertical_id),
+            pipeline_id: Number(before.pipeline_id), campaign_id: Number(before.campaign_id), owner_id: prevOwner }),
+          JSON.stringify({ branch_id: target.branch_id, vertical_id: target.vertical_id,
+            pipeline_id: target.pipeline_id, campaign_id: target.campaign_id, owner_id: ownerId })]);
+      return upd.rows[0];
+    });
+    await this.scoring.safeRescore(leadId);
+    return saved;
+  }
+
+  /** Single-lead transfer (controller gates on lead.transfer + @ScopedEntity(:id)). */
+  async transfer(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
+    const target = await this.resolveTransferTarget(dto, actorId, scope);
+    const ownerMode = dto.owner_mode === 'distribute' ? 'distribute' : 'keep';
+    await this.transferOneLead(Number(id), target, ownerMode, actorId);
+    return this.get(Number(id));
+  }
+
+  // ---- shared bulk helpers -------------------------------------------------
+
+  /** Normalise a bulk id list: unique positive ints, non-empty, capped at BULK_MAX. */
+  private normIds(leadIds: unknown): number[] {
+    if (!Array.isArray(leadIds)) throw new BadRequestException('lead_ids must be an array of lead ids');
+    const ids = [...new Set(leadIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!ids.length) throw new BadRequestException('lead_ids is required (a non-empty array of lead ids)');
+    if (ids.length > LeadsService.BULK_MAX) {
+      throw new BadRequestException(`too many leads in one bulk action (max ${LeadsService.BULK_MAX}) — narrow the selection`);
+    }
+    return ids;
+  }
+
+  /** The subset of `ids` the caller may actually see (record scope), with the columns the
+   *  bulk primitives need. Ids absent from the result were out of scope / gone -> "skipped". */
+  private async scopedLeadRows(ids: number[], scope: ResolvedScope) {
+    const params: unknown[] = [];
+    const where = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, params);
+    params.push(ids);
+    return this.db.query<Record<string, any>>(
+      `SELECT l.id, l.org_id, l.branch_id, l.owner_id, l.paused, l.campaign_id, l.pipeline_id
+         FROM lead l
+        WHERE (${where}) AND l.deleted_at IS NULL AND l.is_active AND l.id = ANY($${params.length}::bigint[])
+        ORDER BY l.id`, params);
+  }
+
+  /** Bulk TRANSFER — every in-scope selected lead to one target campaign. */
+  async bulkTransfer(leadIds: unknown, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
+    const ids = this.normIds(leadIds);
+    const target = await this.resolveTransferTarget(dto, actorId, scope);
+    const ownerMode = dto.owner_mode === 'distribute' ? 'distribute' : 'keep';
+    const rows = await this.scopedLeadRows(ids, scope);
+    let transferred = 0;
+    for (const r of rows) { await this.transferOneLead(Number(r.id), target, ownerMode as any, actorId); transferred++; }
+    return { transferred, skipped: ids.length - rows.length, requested: ids.length,
+             owner_mode: ownerMode, campaign_id: target.campaign_id };
+  }
+
+  /** Bulk REASSIGN — every in-scope selected lead to one active, in-scope user. Reuses the
+   *  per-lead reassign path (active-user guard + 'assign' activity + SLA touch); idempotent
+   *  (a lead already owned by the target is skipped). */
+  async bulkReassign(leadIds: unknown, toUserId: number, actorId: number, scope: ResolvedScope) {
+    const ids = this.normIds(leadIds);
+    const to = Number(toUserId);
+    if (!Number.isInteger(to) || to <= 0) throw new BadRequestException('to_user_id (the user to reassign to) is required');
+    await assertActiveUser(this.db, to, 'to_user_id');
+    await this.enforcer.assertRefInScope(scope, 'user', to, actorId);
+    const rows = await this.scopedLeadRows(ids, scope);
+    let reassigned = 0;
+    for (const r of rows) {
+      if (Number(r.owner_id ?? 0) === to) continue; // already there — idempotent no-op
+      await this.update(Number(r.id), { owner_id: to }, actorId, scope);
+      await this.db.query(
+        `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+         VALUES ($1,$2,'lead',$3,'transfer',$4,$5)`,
+        [Number(r.org_id), actorId, Number(r.id),
+          JSON.stringify({ owner_id: r.owner_id == null ? null : Number(r.owner_id) }), JSON.stringify({ owner_id: to })]);
+      reassigned++;
+    }
+    return { reassigned, skipped: ids.length - rows.length,
+             already: rows.length - reassigned, requested: ids.length, to_user_id: to };
+  }
+
+  /** Bulk PAUSE / RESUME — park (or un-park) the selected leads. A paused lead is excluded
+   *  from the hand-out pool and the SLA-breach / overdue-escalation sweeps until resumed.
+   *  Idempotent (a lead already in the target state is skipped) with per-lead activity+audit. */
+  async bulkSetPaused(leadIds: unknown, paused: boolean, actorId: number, scope: ResolvedScope) {
+    const ids = this.normIds(leadIds);
+    const rows = await this.scopedLeadRows(ids, scope);
+    const toChange = rows.filter((r) => Boolean(r.paused) !== paused);
+    for (const r of toChange) {
+      await this.db.tx(async (c) => {
+        const upd = await c.query(
+          `UPDATE lead SET paused = $2, paused_at = $3, paused_by = $4, updated_at = now()
+            WHERE id = $1 AND paused = $5 RETURNING id`,
+          [Number(r.id), paused, paused ? new Date() : null, paused ? actorId : null, !paused]);
+        if (!upd.rows.length) return; // lost a race — someone else flipped it; stays idempotent
+        await c.query(
+          `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, note)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [Number(r.id), Number(r.org_id), Number(r.branch_id), actorId, paused ? 'pause' : 'resume',
+            paused ? 'Lead paused — excluded from distribution and the SLA / escalation sweeps until resumed'
+                   : 'Lead resumed — back in distribution and the SLA / escalation sweeps']);
+        await c.query(
+          `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+           VALUES ($1,$2,'lead',$3,'update',$4,$5)`,
+          [Number(r.org_id), actorId, Number(r.id), JSON.stringify({ paused: !paused }), JSON.stringify({ paused })]);
+      });
+    }
+    const key = paused ? 'paused' : 'resumed';
+    return { [key]: toChange.length, already: rows.length - toChange.length,
+             skipped: ids.length - rows.length, requested: ids.length } as Record<string, number>;
   }
 
   async update(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {

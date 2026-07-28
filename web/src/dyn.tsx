@@ -24,6 +24,7 @@ import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
 import ApiModule from './apimodule';
+import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
@@ -865,6 +866,32 @@ function LeadsAll() {
   };
   const rows = data.data?.rows ?? [];
 
+  // Bulk actions (Jul 2026) — multi-select in the Classic list + a bulk-action toolbar.
+  const canTransfer = can('lead.transfer');
+  const canAssign = can('lead.assign');
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume'>(null);
+  const [transferLead, setTransferLead] = useState<{ id: number; name?: string } | null>(null);
+  const [selCap, setSelCap] = useState<number | null>(null);
+  // changing the filter (or a refresh) clears the selection — it can no longer be trusted to
+  // still match what the user sees.
+  useEffect(() => { setSel(new Set()); setSelCap(null); }, [params.toString(), refreshTick]);
+  const toggleOne = (id: number) => setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allLoadedSelected = rows.length > 0 && rows.every((r: any) => sel.has(Number(r.id)));
+  const toggleAllLoaded = () => setSel((p) => {
+    if (rows.every((r: any) => p.has(Number(r.id))) && rows.length) return new Set<number>();
+    const n = new Set(p); for (const r of rows) n.add(Number(r.id)); return n;
+  });
+  const selectAllMatching = async () => {
+    try {
+      const q = new URLSearchParams(params); q.delete('limit'); q.delete('offset');
+      const r = await api.get<{ ids: number[]; total: number; capped: boolean }>(`/leads/select-ids?${q.toString()}`);
+      setSel(new Set(r.ids)); setSelCap(r.capped ? r.ids.length : null);
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const selectedIds = [...sel];
+  const clearSel = () => { setSel(new Set()); setSelCap(null); };
+
   const chip = (label: string, icon: string, value: number | undefined, list: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
     <div className="fchip" key={label}>
       <Ic k={icon} />{label}
@@ -953,13 +980,37 @@ function LeadsAll() {
         </button>
       </div>
       </div>
+      {/* Bulk-action toolbar — appears when one or more leads are selected (Classic view). */}
+      {sel.size > 0 && (
+        <div className="card" data-testid="bulk-bar" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', marginBottom: 10, flexWrap: 'wrap' }}>
+          <b>{sel.size} selected</b>
+          {allLoadedSelected && (data.data?.total ?? 0) > rows.length && selCap == null && (
+            <button className="fchip" onClick={selectAllMatching}>Select all {data.data?.total} matching</button>
+          )}
+          {selCap != null && <span className="empty-note" style={{ fontSize: 12 }}>All {selCap} matching selected (max {2000}).</span>}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {canTransfer && <button className="btn" onClick={() => setBulk('transfer')}><Ic k="swap" />Transfer</button>}
+            {canAssign && <button className="btn" onClick={() => setBulk('reassign')}><Ic k="users" />Reassign</button>}
+            {canEditLead && <button className="btn" onClick={() => setBulk('pause')}><Ic k="clock" />Pause</button>}
+            {canEditLead && <button className="btn" onClick={() => setBulk('resume')}><Ic k="check" />Resume</button>}
+            <button className="btn" onClick={clearSel}>Clear</button>
+          </div>
+        </div>
+      )}
       {/* Classic view — the traditional dense data table (default), untouched from Batch E. */}
       {view === 'classic' && (
         <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']} sticky
+          select={{
+            checked: (i) => sel.has(Number(rows[i].id)),
+            onToggle: (i) => toggleOne(Number(rows[i].id)),
+            allChecked: allLoadedSelected,
+            onToggleAll: toggleAllLoaded,
+          }}
           rows={rows.map((l) => [...leadRow(l), rowActions({
             onView: () => openLead(Number(l.id)),
             onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
+            extra: canTransfer ? [{ k: 'swap', title: 'Transfer', onClick: () => setTransferLead({ id: Number(l.id), name: l.full_name }) }] : undefined,
           })])}
           empty="No leads in scope yet — add a lead or connect a source"
           onRowClick={(i) => openLead(Number(rows[i].id))} />
@@ -974,6 +1025,11 @@ function LeadsAll() {
         <InboxLeads rows={rows} openLead={openLead}
           canEditLead={canEditLead} canDeleteLead={canDeleteLead} del={del} />
       )}
+      {transferLead && <LeadTransferModal leadId={transferLead.id} leadName={transferLead.name}
+        onDone={bump} onClose={() => setTransferLead(null)} />}
+      {bulk === 'transfer' && <BulkTransferModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
+      {bulk === 'reassign' && <BulkReassignModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
+      {(bulk === 'pause' || bulk === 'resume') && <BulkPauseModal ids={selectedIds} action={bulk} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {del.deleteModal}
     </>
   );

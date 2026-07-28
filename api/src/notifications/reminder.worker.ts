@@ -98,7 +98,7 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
          JOIN lead l ON l.id = f.lead_id
          LEFT JOIN m_followup_type ft ON ft.id = f.type_id
         WHERE f.status = 'pending' AND f.reminded_at IS NULL
-          AND f.deleted_at IS NULL AND f.is_active AND l.deleted_at IS NULL
+          AND f.deleted_at IS NULL AND f.is_active AND l.deleted_at IS NULL AND l.paused IS NOT TRUE
           AND COALESCE(f.remind_at, f.scheduled_at - ($1 || ' minutes')::interval) <= now()
         ORDER BY f.scheduled_at
         LIMIT $2`,
@@ -160,7 +160,7 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
          JOIN lead l ON l.id = f.lead_id
          LEFT JOIN m_followup_type ft ON ft.id = f.type_id
         WHERE f.status = 'pending'
-          AND f.deleted_at IS NULL AND f.is_active AND l.deleted_at IS NULL
+          AND f.deleted_at IS NULL AND f.is_active AND l.deleted_at IS NULL AND l.paused IS NOT TRUE
           AND f.scheduled_at <= now() - ($1 || ' minutes')::interval
           AND f.escalation_level < $2
           AND (f.escalated_at IS NULL
@@ -264,7 +264,7 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
          JOIN sla_policy p ON p.id = s.policy_id
          JOIN lead l ON l.id = s.lead_id
         WHERE s.satisfied_at IS NULL AND s.notified_at IS NULL
-          AND l.deleted_at IS NULL AND l.is_active
+          AND l.deleted_at IS NULL AND l.is_active AND l.paused IS NOT TRUE
           AND s.due_at + (p.escalate_after_minutes || ' minutes')::interval <= now()
         ORDER BY s.due_at
         LIMIT $1`,

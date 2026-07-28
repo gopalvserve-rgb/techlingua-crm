@@ -8,6 +8,7 @@ import { AddModal } from './forms';
 import { PhoneInput } from './phonefield';
 import { Avatar, TempBadge } from './renderer';
 import { DuplicatePanel } from './mergemodal';
+import { LeadTransferModal } from './leadtransfer';
 import { toast, useRef_, Named, selectableUsers } from './refdata';
 
 interface Stage { id: number; name: string; sort_order: number; stage_type: string }
@@ -51,6 +52,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const [masterAdd, setMasterAdd] = useState<{ type: string; k: string } | null>(null);
   const [courseAdd, setCourseAdd] = useState(false);
   const [reassign, setReassign] = useState(false); // UAT-R3 #23 reassign-owner modal
+  const [transfer, setTransfer] = useState(false); // Jul 2026 — transfer to another Branch/Vertical/Campaign
   const [extra, setExtra] = useState<Record<string, Named[]>>({});
 
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
@@ -147,6 +149,8 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           <button className="qa" onClick={() => setTab('notes')}><Ic k="note" />Edit</button>
           {/* UAT-R3 #23 — reassign the lead's owner to another (active, in-scope) user. */}
           {can('lead.assign') && <button className="qa" onClick={() => setReassign(true)}><Ic k="users" />Reassign</button>}
+          {/* Jul 2026 — transfer the lead to another Branch / Vertical / Campaign (re-parents its path). */}
+          {can('lead.transfer') && <button className="qa" onClick={() => setTransfer(true)}><Ic k="swap" />Transfer</button>}
         </div>
         <div className="sheet-body">
           <div className="sheet-sec">
@@ -327,6 +331,11 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             setEdits((x) => ({ ...x, course_id: Number(row.id) })); // auto-select + fee hint re-renders from meta.fee
             ref.reload();
           }} />
+      )}
+      {transfer && (
+        <LeadTransferModal leadId={Number(lead.id)} leadName={lead.full_name}
+          onClose={() => setTransfer(false)}
+          onDone={() => { setTransfer(false); load(); onChanged?.(); }} />
       )}
       {reassign && (
         <ReassignModal lead={lead} users={ref.users}

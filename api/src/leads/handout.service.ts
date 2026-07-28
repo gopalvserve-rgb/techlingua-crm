@@ -57,6 +57,7 @@ const ORDER_BY = `CASE l.priority WHEN 'high' THEN 0 WHEN 'med' THEN 1 ELSE 2 EN
 
 /** A lead is "in the pool" when it is unassigned, live, and not closed (won/lost). */
 const POOL_WHERE = `l.owner_id IS NULL AND l.is_active AND l.deleted_at IS NULL
+  AND l.paused IS NOT TRUE
   AND COALESCE(st.stage_type, 'open') NOT IN ('won', 'lost')
   AND NOT EXISTS (SELECT 1 FROM lead_handout_item hi WHERE hi.lead_id = l.id)`;
 

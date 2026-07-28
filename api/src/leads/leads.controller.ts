@@ -39,6 +39,52 @@ export class LeadsController {
     return this.leads.summary(s, u.id);
   }
 
+  // Bulk actions — "select all matching filter": just the in-scope ids for the current
+  // filters (capped), so the UI can bulk-act over the whole filtered set, not one page.
+  // Declared BEFORE @Get(':id') so 'select-ids' is not swallowed by the id route.
+  @Get('select-ids') @RequirePermission('lead.read')
+  selectIds(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
+    return this.leads.selectIds(s, {
+      branch_id: num(q.branch_id), vertical_id: num(q.vertical_id), pipeline_id: num(q.pipeline_id),
+      campaign_id: num(q.campaign_id), stage_id: num(q.stage_id), status_id: num(q.status_id),
+      owner_id: num(q.owner_id), source_id: num(q.source_id), temperature: q.temperature || undefined,
+      created_from: q.created_from || undefined, created_to: q.created_to || undefined,
+      sla_breached: q.sla_breached === '1' || q.sla_breached === 'true',
+      flagged: q.flagged === '1' || q.flagged === 'true',
+      duplicate: q.duplicate === '1' || q.duplicate === 'true',
+      paused: q.paused === '1' || q.paused === 'true',
+      q: q.q || undefined,
+    });
+  }
+
+  // ---- BULK actions over a selected/filtered set (client request, Jul 2026) --------------
+  // Declared BEFORE the `:id/...` routes so `/leads/bulk/...` is not matched as `:id='bulk'`.
+  // Each is RBAC-gated by permission AND per-lead record scope (skipped leads are reported).
+
+  /** Transfer ALL selected leads to a Branch/Vertical/Campaign (owner_mode keep|distribute). */
+  @Post('bulk/transfer') @RequirePermission('lead.transfer')
+  bulkTransfer(@Body() dto: { lead_ids?: number[] } & Record<string, unknown>, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.leads.bulkTransfer(dto?.lead_ids, dto ?? {}, u.id, s);
+  }
+
+  /** Reassign ALL selected leads to one active, in-scope user. */
+  @Post('bulk/reassign') @RequirePermission('lead.assign')
+  bulkReassign(@Body() dto: { lead_ids?: number[]; to_user_id?: number }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.leads.bulkReassign(dto?.lead_ids, Number(dto?.to_user_id), u.id, s);
+  }
+
+  /** Pause ALL selected leads (park out of distribution + SLA/escalation sweeps). */
+  @Post('bulk/pause') @RequirePermission('lead.update')
+  bulkPause(@Body() dto: { lead_ids?: number[] }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.leads.bulkSetPaused(dto?.lead_ids, true, u.id, s);
+  }
+
+  /** Resume ALL selected leads. */
+  @Post('bulk/resume') @RequirePermission('lead.update')
+  bulkResume(@Body() dto: { lead_ids?: number[] }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.leads.bulkSetPaused(dto?.lead_ids, false, u.id, s);
+  }
+
   @Get(':id') @RequirePermission('lead.read') @ScopedEntity('lead')
   get(@Param('id', ParseIntPipe) id: number) { return this.leads.get(id); }
 
@@ -76,6 +122,18 @@ export class LeadsController {
     @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
   ) {
     return this.leads.reassignAllOwned(Number(dto?.from_user_id), Number(dto?.to_user_id), u.id, s);
+  }
+
+  // Single-lead TRANSFER — move THIS lead to another Branch/Vertical/(Pipeline)/Campaign.
+  // Gated on `lead.transfer`; :id checked by @ScopedEntity, the TARGET campaign by the
+  // service (assertRefInScope). Declared AFTER the `bulk/*` routes above.
+  @Post(':id/transfer') @RequirePermission('lead.transfer') @ScopedEntity('lead')
+  transfer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { campaign_id?: number; source_id?: number; owner_mode?: 'keep' | 'distribute' } & Record<string, unknown>,
+    @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
+  ) {
+    return this.leads.transfer(id, dto ?? {}, u.id, s);
   }
 
   @Post(':id/notes') @RequirePermission('lead.update') @ScopedEntity('lead')
