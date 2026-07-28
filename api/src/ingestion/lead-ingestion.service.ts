@@ -17,9 +17,12 @@ import { toDateString } from '../common/date.util';
 
 /** Campaign duplicacy_config (migration 002). */
 export interface DuplicacyConfig {
-  check_scope?: 'this_campaign' | 'this_pipeline' | 'global';
+  // Client change (Jul 2026): scope = { this_campaign, this_vertical, this_branch,
+  // global }. `this_pipeline` removed; a legacy stored value is treated as
+  // `this_campaign` (see findDuplicate).
+  check_scope?: 'this_campaign' | 'this_vertical' | 'this_branch' | 'global' | 'this_pipeline';
   match_key?: 'phone';
-  on_duplicate?: 'ignore' | 'merge' | 'create' | 'merge_and_reopen';
+  on_duplicate?: 'ignore' | 'merge' | 'create' | 'merge_and_reopen' | 'flag';
   open_reassign_same_user?: boolean;
 }
 
@@ -333,11 +336,18 @@ export class LeadIngestionService {
   async findDuplicate(numbers: string | string[], target: IngestTarget) {
     const nums = [...new Set((Array.isArray(numbers) ? numbers : [numbers]).map((n) => n).filter(Boolean))];
     if (!nums.length) return null;
-    const scope = target.duplicacy.check_scope ?? 'this_campaign';
+    // Client change (Jul 2026): scope = campaign | vertical | branch | global.
+    // A legacy `this_pipeline` value is narrowed to `this_campaign` (pipeline
+    // scope was removed); migration 040 rewrites stored rows, this is defence in
+    // depth for any row that slips through.
+    const raw = target.duplicacy.check_scope ?? 'this_campaign';
+    const scope = raw === 'this_pipeline' ? 'this_campaign' : raw;
     const params: unknown[] = [nums];
     let extra = '';
     if (scope === 'this_campaign') { params.push(target.campaign_id); extra = `AND l.campaign_id = $${params.length}`; }
-    else if (scope === 'this_pipeline') { params.push(target.pipeline_id); extra = `AND l.pipeline_id = $${params.length}`; }
+    else if (scope === 'this_vertical') { params.push(target.vertical_id); extra = `AND l.vertical_id = $${params.length}`; }
+    else if (scope === 'this_branch') { params.push(target.branch_id); extra = `AND l.branch_id = $${params.length}`; }
+    // scope === 'global' -> no extra clause (match anywhere in the org)
     return this.db.one<{ id: string; owner_id: string | null; stage_type: string | null }>(
       `SELECT l.id, l.owner_id, st.stage_type
          FROM lead l LEFT JOIN pipeline_stage st ON st.id = l.stage_id
@@ -497,8 +507,12 @@ export class LeadIngestionService {
     }
 
     // 3b) MERGE / MERGE & REOPEN — fold the payload into the EXISTING lead.
-    //     No second lead, no round-robin: the existing owner is preserved, which
-    //     IS §4's "open duplicate stays with the same user" rule.
+    //     No second lead is created. For a plain `merge` the existing owner is
+    //     preserved (§4's "open duplicate stays with the same user" rule).
+    //     Client change (Jul 2026): for `merge_and_reopen`, when a CLOSED (won/
+    //     lost) lead is actually re-opened, it is RE-ASSIGNED to the campaign's
+    //     next round-robin agent (the reopened lead is fresh work). An OPEN
+    //     duplicate is not reopened and keeps its owner, unchanged.
     if (dup && (action === 'merge' || action === 'merge_and_reopen')) {
       try {
         const merged = await this.db.tx(async (c) => {
@@ -508,6 +522,35 @@ export class LeadIngestionService {
             action, channel: ctx.channel, actorId: ctx.actor_id,
             note: lead.note, incomingTagIds: lead.tag_ids,
           });
+          // Client change (Jul 2026): a CLOSED lead re-opened by merge_and_reopen
+          // is handed to the campaign's NEXT round-robin agent (not kept with the
+          // old owner). Only fires when the lead was genuinely reopened (res.reopened)
+          // and the campaign has an eligible pool; an empty pool leaves the owner as-is.
+          let reopenOwner: number | null = null;
+          if (action === 'merge_and_reopen' && res.reopened && policy === 'campaign') {
+            const conditionCtx: Record<string, unknown> = {
+              ...lead.custom_fields, ...payload,
+              full_name: lead.full_name, phone: lead.phone, email: lead.email,
+              priority: lead.priority, temperature: lead.temperature, score: lead.score,
+              source_id: target.source_id, course_id: lead.course_id, city_id: lead.city_id,
+              state_id: lead.state_id, budget_id: lead.budget_id, qualification_id: lead.qualification_id,
+            };
+            const { pool } = await this.resolvePool(target, conditionCtx);
+            const nextOwner = await this.pickOwner(c, target.campaign_id, pool);
+            if (nextOwner != null) {
+              reopenOwner = nextOwner;
+              const prevOwner = existing.owner_id == null ? null : Number(existing.owner_id);
+              await c.query(`UPDATE lead SET owner_id = $1, updated_at = now() WHERE id = $2`, [nextOwner, Number(dup.id)]);
+              await c.query(
+                `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value, note)
+                 VALUES ($1,$2,$3,$4,'assign',$5,$6,$7)`,
+                [Number(dup.id), target.org_id, target.branch_id, ctx.actor_id,
+                  prevOwner == null ? null : JSON.stringify({ owner_id: prevOwner }),
+                  JSON.stringify({ owner_id: nextOwner }),
+                  'Re-opened duplicate assigned to the next round-robin agent (campaign rule: merge & reopen)'],
+              );
+            }
+          }
           // ledger LAST: a unique conflict = a concurrent worker already ingested
           // this record -> roll the whole tx back, so the merge happens ONCE.
           const led = await c.query(
@@ -519,12 +562,12 @@ export class LeadIngestionService {
               Number(dup.id), action, res.merge_id],
           );
           if (!led.rowCount) throw new AlreadyIngested();
-          return res;
+          return { ...res, reopenOwner };
         });
         return {
           status: 'duplicate', lead_id: Number(dup.id), duplicate_of: Number(dup.id),
           action, merged: true, merge_id: merged.merge_id, reopened: merged.reopened,
-          owner_id: merged.owner_id,
+          owner_id: merged.reopenOwner ?? merged.owner_id,
           reason: `Duplicate of lead #${dup.id} — merged into it${merged.reopened ? ' and re-opened' : ''}`,
         };
       } catch (e) {
@@ -533,7 +576,12 @@ export class LeadIngestionService {
       }
     }
 
-    // 3c) CREATE (or manual always_create) — a second, flagged lead.
+    // 3c) CREATE / FLAG (or manual always_create) — a second, flagged lead.
+    //     Client change (Jul 2026): the `flag` action lands the incoming duplicate
+    //     as its own lead marked is_duplicate=TRUE (linked via duplicate_of_id), so
+    //     every duplicate-type lead is visible and filterable on the Leads list
+    //     (Duplicates filter). Functionally like `create`; recorded distinctly so
+    //     the timeline/ledger say "flagged" rather than "created".
     // 4) owner: explicit > same-owner-on-open-duplicate (§4) > distribution engine
     let ownerId: number | null = ctx.owner_id ?? null;
     let assignNote: string | null = ownerId ? null : null;
@@ -588,7 +636,7 @@ export class LeadIngestionService {
                                            applied_action, duplicate_of_id)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (source_id, dedupe_key) DO NOTHING RETURNING id`,
           [target.org_id, target.source_id, key, ctx.channel, dup ? 'duplicate' : 'created', leadId,
-            ctx.batch_id ?? null, dup ? 'create' : null, dup ? Number(dup.id) : null],
+            ctx.batch_id ?? null, dup ? action : null, dup ? Number(dup.id) : null],
         );
         if (!led.rowCount) throw new AlreadyIngested();
 
@@ -598,7 +646,11 @@ export class LeadIngestionService {
           [leadId, target.org_id, target.branch_id, ctx.actor_id, type,
             from == null ? null : JSON.stringify(from), to == null ? null : JSON.stringify(to), note ?? null],
         );
-        const dupNote = dup ? `Duplicate phone — matches lead #${dup.id} (campaign rule: create duplicate leads)` : null;
+        const dupNote = dup
+          ? (action === 'flag'
+              ? `Duplicate phone — matches lead #${dup.id}; flagged as a duplicate (campaign rule: flag duplicates)`
+              : `Duplicate phone — matches lead #${dup.id} (campaign rule: create duplicate leads)`)
+          : null;
         await log('create', null, { source_id: target.source_id, campaign_id: target.campaign_id, channel: ctx.channel },
           dupNote ?? lead.note);
         if (dupNote && lead.note) await log('note', null, null, lead.note);
@@ -618,9 +670,13 @@ export class LeadIngestionService {
         status: dup ? 'duplicate' : 'created',
         lead_id: created.leadId,
         duplicate_of: dup ? Number(dup.id) : null,
-        action: dup ? 'create' : null,
+        action: dup ? action : null,
         owner_id: created.owner ?? null,
-        reason: dup ? `Duplicate of lead #${dup.id} — created & flagged` : null,
+        reason: dup
+          ? (action === 'flag'
+              ? `Duplicate of lead #${dup.id} — created & flagged as a duplicate`
+              : `Duplicate of lead #${dup.id} — created & flagged`)
+          : null,
       };
     } catch (e) {
       if (e instanceof AlreadyIngested) return this.replay(target.source_id, key);

@@ -63,6 +63,8 @@ export interface LeadFilters {
   /** Sprint 3 — only leads with an open SLA breach / an escalation flag. */
   sla_breached?: boolean;
   flagged?: boolean;
+  /** Client change (Jul 2026): the "Duplicates" filter — leads marked is_duplicate. */
+  duplicate?: boolean;
   /** Sprint 3 — the band must be SORTABLE too. */
   sort?: string;
   /** UAT-R2 #26 — created-date range (YYYY-MM-DD), inclusive of both ends. */
@@ -174,6 +176,7 @@ export class LeadsService {
     if (f.created_from) { params.push(f.created_from); where.push(`l.created_at >= $${params.length}::date`); }
     if (f.created_to) { params.push(f.created_to); where.push(`l.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
     if (f.flagged) where.push('l.is_flagged');
+    if (f.duplicate) where.push('l.is_duplicate');
     if (f.sla_breached) {
       where.push(`EXISTS (SELECT 1 FROM lead_sla s
                            WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now())`);

@@ -823,7 +823,10 @@ function LeadsAll() {
     // and the hierarchy dropdowns follow Branch › Vertical › Pipeline › Campaign › Source.
     source?: number; status?: number; owner?: number; from?: string; to?: string;
     // Sprint 3 — the score BAND is filterable, and SLA breaches are their own filter
-    temperature?: string; sla?: boolean; sort: string; q: string;
+    temperature?: string; sla?: boolean;
+    // Client change (Jul 2026) — the Duplicates filter (leads marked is_duplicate)
+    dup?: boolean;
+    sort: string; q: string;
   }>({ q: '', sort: 'recent' });
   const params = new URLSearchParams();
   if (f.branch) params.set('branch_id', String(f.branch));
@@ -837,6 +840,7 @@ function LeadsAll() {
   if (f.to) params.set('created_to', f.to);
   if (f.temperature) params.set('temperature', f.temperature);
   if (f.sla) params.set('sla_breached', '1');
+  if (f.dup) params.set('duplicate', '1');
   if (f.sort && f.sort !== 'recent') params.set('sort', f.sort);
   if (f.q.trim()) params.set('q', f.q.trim());
   params.set('limit', '100');
@@ -940,6 +944,12 @@ function LeadsAll() {
         <button className={`fchip${f.sla ? ' on' : ''}`} style={{ marginLeft: 'auto' }}
           onClick={() => setF((x) => ({ ...x, sla: !x.sla }))}>
           <Ic k="clock" />SLA breached
+        </button>
+        {/* Client change (Jul 2026) — surface all duplicate-type leads (the `flag`
+            action, and any is_duplicate lead) in one click. */}
+        <button className={`fchip${f.dup ? ' on' : ''}`} data-testid="dup-filter"
+          onClick={() => setF((x) => ({ ...x, dup: !x.dup }))}>
+          <Ic k="refresh" />Duplicates
         </button>
       </div>
       </div>
@@ -1775,9 +1785,9 @@ const DIST_DESC: Record<string, string> = {
   equal: 'Distributes leads equally among all agents in the campaign.',
   conditional: 'Assigns leads to agents based on configured conditions.',
 };
-const DUP_SCOPE_LABEL: Record<string, string> = { this_campaign: 'Within this campaign', this_pipeline: 'Within this pipeline', global: 'All campaigns (global)' };
+const DUP_SCOPE_LABEL: Record<string, string> = { this_campaign: 'Within this campaign', this_vertical: 'Within this vertical', this_branch: 'Within this branch', global: 'All / global', this_pipeline: 'Within this campaign' };
 const DUP_ACTION_LABEL: Record<string, string> = {
-  ignore: 'Ignore duplicate', merge: 'Merge duplicate', create: 'Create duplicate leads', merge_and_reopen: 'Merge & reopen closed leads',
+  ignore: 'Ignore duplicate', merge: 'Merge duplicate', create: 'Create duplicate leads', merge_and_reopen: 'Merge & reopen closed leads — assign to round-robin user', flag: 'Flag all these types of leads',
 };
 const PRIORITY_LABEL: Record<string, string> = { low: 'Low', med: 'Medium', high: 'High' };
 

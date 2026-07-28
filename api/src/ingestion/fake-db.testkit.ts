@@ -159,13 +159,16 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
       // #22 — the incoming numbers are an array; a lead matches when EITHER its
       // phone OR its whatsapp_phone equals ANY of them (WhatsApp cross-match).
       const nums = (Array.isArray(params[0]) ? params[0] : [params[0]]) as string[];
-      const byCampaign = s.includes('l.campaign_id =');
-      const byPipeline = s.includes('l.pipeline_id =');
-      const scopeVal = byCampaign || byPipeline ? Number(params[1]) : null;
+      // Client change (Jul 2026): scope columns are campaign | vertical | branch
+      // (pipeline removed). Detect which one findDuplicate emitted, if any.
+      let scopeCol: 'campaign_id' | 'vertical_id' | 'branch_id' | null = null;
+      if (s.includes('l.campaign_id =')) scopeCol = 'campaign_id';
+      else if (s.includes('l.vertical_id =')) scopeCol = 'vertical_id';
+      else if (s.includes('l.branch_id =')) scopeCol = 'branch_id';
+      const scopeVal = scopeCol ? Number(params[1]) : null;
       const hit = st.leads.find((l) => (nums.includes(l.phone) || (l.whatsapp_phone && nums.includes(l.whatsapp_phone)))
         && !l.deleted_at && l.is_active !== false
-        && (scopeVal == null
-          || (byCampaign ? Number(l.campaign_id) === scopeVal : Number(l.pipeline_id) === scopeVal)));
+        && (scopeVal == null || Number((l as any)[scopeCol!]) === scopeVal));
       if (!hit) return [];
       return [{ id: hit.id, owner_id: hit.owner_id, stage_type: stageOf(hit.stage_id)?.stage_type ?? 'open' }];
     }

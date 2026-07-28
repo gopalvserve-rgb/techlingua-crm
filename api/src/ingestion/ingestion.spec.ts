@@ -211,29 +211,66 @@ describe('LeadIngestionService', () => {
       expect(st.cursor).toBe(0);                // the cursor did NOT move
     });
 
-    it('MERGE & REOPEN moves a LOST lead back to an open stage', async () => {
+    it('MERGE & REOPEN moves a LOST lead back to an open stage AND assigns it to the next round-robin agent', async () => {
+      // Client change (Jul 2026): a re-opened CLOSED lead is FRESH work — it goes to
+      // the campaign's next round-robin agent, not the old owner. Default pool
+      // [11,12,13]: the create put it on 11 (cursor 0); the reopen bumps to 12.
       const { db, st } = makeFakeDb({ duplicacy: dup({ on_duplicate: 'merge_and_reopen' }) });
       const { svc } = makeIngestion(db);
       await svc.ingest({ full_name: 'A', phone: '9811100121', external_id: 'W1' }, ctx());
+      expect(st.leads[0].owner_id).toBe(11);
       st.leads[0].stage_id = 59;                                   // the counsellor lost it
       const out = await svc.ingest({ full_name: 'A', phone: '9811100121', email: 'back@x.com', external_id: 'W2' }, ctx());
       expect(out.action).toBe('merge_and_reopen');
       expect(out.reopened).toBe(true);
       expect(Number(st.leads[0].stage_id)).toBe(51);               // back to the default OPEN stage
       expect(st.leads[0].email).toBe('back@x.com');
-      expect(st.leads[0].owner_id).toBe(11);                       // still the same owner
+      expect(st.leads[0].owner_id).toBe(12);                       // re-assigned to the NEXT round-robin agent
+      expect(out.owner_id).toBe(12);
       expect(st.activities.some((a) => a.type === 'stage_change' && String(a.note).includes('re-opened'))).toBe(true);
+      expect(st.activities.some((a) => a.type === 'assign' && String(a.note).includes('round-robin'))).toBe(true);
       expect(st.merges[0].reopened).toBe(true);
     });
 
-    it('MERGE & REOPEN leaves an already-OPEN lead where it is', async () => {
+    it('MERGE & REOPEN with NO eligible agents leaves the re-opened lead with its owner', async () => {
+      // Empty pool (on_demand) -> pickOwner returns null -> owner is left unchanged.
+      const { db, st } = makeFakeDb({
+        duplicacy: dup({ on_duplicate: 'merge_and_reopen' }),
+        distribution: { mode: 'on_demand', batch_size: 10 },
+      });
+      const { svc } = makeIngestion(db);
+      await svc.ingest({ full_name: 'A', phone: '9811100141', external_id: 'Y1' }, ctx());
+      st.leads[0].owner_id = 77;                                   // set an owner by hand (on_demand created it unassigned)
+      st.leads[0].stage_id = 59;                                   // lost
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100141', external_id: 'Y2' }, ctx());
+      expect(out.reopened).toBe(true);
+      expect(st.leads[0].owner_id).toBe(77);                       // no pool -> owner kept
+    });
+
+    it('MERGE & REOPEN leaves an already-OPEN lead where it is, WITH its owner (no round-robin)', async () => {
       const { db, st } = makeFakeDb({ duplicacy: dup({ on_duplicate: 'merge_and_reopen' }) });
       const { svc } = makeIngestion(db);
       await svc.ingest({ full_name: 'A', phone: '9811100131', external_id: 'X1' }, ctx());
+      expect(st.leads[0].owner_id).toBe(11);
       st.leads[0].stage_id = 52;                                   // "Contacted" — open
       const out = await svc.ingest({ full_name: 'A', phone: '9811100131', external_id: 'X2' }, ctx());
       expect(out.reopened).toBe(false);
       expect(Number(st.leads[0].stage_id)).toBe(52);               // not dragged backwards
+      expect(st.leads[0].owner_id).toBe(11);                       // OPEN duplicate stays with its owner
+      expect(st.cursor).toBe(0);                                   // round-robin did NOT advance
+    });
+
+    it('FLAG action creates a second lead flagged is_duplicate, linked to the original', async () => {
+      const { db, st } = makeFakeDb({ duplicacy: dup({ on_duplicate: 'flag' }) });
+      const { svc } = makeIngestion(db);
+      await svc.ingest({ full_name: 'A', phone: '9811100151', external_id: 'Z1' }, ctx());
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100151', email: 'dup@x.com', external_id: 'Z2' }, ctx());
+      expect(out.status).toBe('duplicate');
+      expect(out.action).toBe('flag');
+      expect(st.leads).toHaveLength(2);                            // the duplicate is kept, not swallowed
+      const flagged = st.leads[1];
+      expect(flagged.is_duplicate).toBe(true);
+      expect(Number(flagged.duplicate_of_id)).toBe(Number(st.leads[0].id));
     });
 
     it('a repeated MERGE ingest is IDEMPOTENT — the merge happens exactly once', async () => {
@@ -351,29 +388,34 @@ describe('LeadIngestionService', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // duplicate SCOPE: campaign vs pipeline vs global
+  // duplicate SCOPE: campaign vs vertical vs branch vs global
+  // (Client change Jul 2026: `this_pipeline` REMOVED; a stray legacy value is
+  //  treated as `this_campaign`. Target hierarchy = branch 2 / vertical 3 /
+  //  pipeline 4 / campaign 5.)
   // ---------------------------------------------------------------------------
-  describe('duplicate scope (§4)', () => {
-    /** Seed a lead that lives in ANOTHER campaign of the SAME pipeline. */
-    const seedOther = (st: any, phone: string, campaignId: number, pipelineId: number) => st.leads.push({
-      id: 900, phone, campaign_id: campaignId, pipeline_id: pipelineId, owner_id: 77,
-      stage_id: 51, is_active: true, deleted_at: null, custom_fields: {},
-      org_id: 1, branch_id: 2, full_name: 'Existing', email: null,
-    });
+  describe('duplicate scope (§4, client Jul 2026)', () => {
+    /** Seed an existing same-phone lead anywhere in the org (id 900). */
+    const seedOther = (st: any, phone: string, h: { campaign_id: number; pipeline_id?: number; vertical_id: number; branch_id: number }) =>
+      st.leads.push({
+        id: 900, phone, campaign_id: h.campaign_id, pipeline_id: h.pipeline_id ?? 4,
+        vertical_id: h.vertical_id, branch_id: h.branch_id, owner_id: 77,
+        stage_id: 51, is_active: true, deleted_at: null, custom_fields: {},
+        org_id: 1, full_name: 'Existing', email: null,
+      });
 
-    it('this_campaign: a lead in a DIFFERENT campaign is not a duplicate', async () => {
+    it('this_campaign: a lead in a DIFFERENT campaign (same vertical/branch) is not a duplicate', async () => {
       const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'this_campaign', on_duplicate: 'merge' } });
       const { svc } = makeIngestion(db);
-      seedOther(st, '+919811100201', 999, 4);              // other campaign, same pipeline (4)
+      seedOther(st, '+919811100201', { campaign_id: 999, vertical_id: 3, branch_id: 2 });
       const out = await svc.ingest({ full_name: 'A', phone: '9811100201', external_id: 'SC1' }, ctx());
-      expect(out.status).toBe('created');                  // not seen as a duplicate
+      expect(out.status).toBe('created');
       expect(st.merges).toHaveLength(0);
     });
 
-    it('this_pipeline: the SAME lead IS a duplicate across campaigns of one pipeline', async () => {
-      const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'this_pipeline', on_duplicate: 'merge' } });
+    it('this_vertical: a same-phone lead in the SAME vertical (other campaign) IS a duplicate', async () => {
+      const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'this_vertical', on_duplicate: 'merge' } });
       const { svc } = makeIngestion(db);
-      seedOther(st, '+919811100202', 999, 4);              // other campaign, SAME pipeline
+      seedOther(st, '+919811100202', { campaign_id: 999, vertical_id: 3, branch_id: 2 });
       const out = await svc.ingest({ full_name: 'A', phone: '9811100202', email: 'a@x.com', external_id: 'SC2' }, ctx());
       expect(out.status).toBe('duplicate');
       expect(out.merged).toBe(true);
@@ -381,20 +423,47 @@ describe('LeadIngestionService', () => {
       expect(st.leads).toHaveLength(1);
     });
 
-    it('global: a lead in another PIPELINE is a duplicate too', async () => {
+    it('this_vertical: a same-phone lead in ANOTHER vertical is NOT a duplicate', async () => {
+      const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'this_vertical', on_duplicate: 'merge' } });
+      const { svc } = makeIngestion(db);
+      seedOther(st, '+919811100205', { campaign_id: 999, vertical_id: 99, branch_id: 2 });
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100205', external_id: 'SC5' }, ctx());
+      expect(out.status).toBe('created');
+      expect(st.merges).toHaveLength(0);
+    });
+
+    it('this_branch: a same-phone lead in the SAME branch (other vertical) IS a duplicate', async () => {
+      const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'this_branch', on_duplicate: 'merge' } });
+      const { svc } = makeIngestion(db);
+      seedOther(st, '+919811100206', { campaign_id: 999, vertical_id: 99, branch_id: 2 });
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100206', email: 'a@x.com', external_id: 'SC6' }, ctx());
+      expect(out.status).toBe('duplicate');
+      expect(out.merged).toBe(true);
+      expect(out.lead_id).toBe(900);
+    });
+
+    it('this_branch: a same-phone lead in ANOTHER branch is NOT a duplicate', async () => {
+      const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'this_branch', on_duplicate: 'merge' } });
+      const { svc } = makeIngestion(db);
+      seedOther(st, '+919811100207', { campaign_id: 999, vertical_id: 3, branch_id: 88 });
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100207', external_id: 'SC7' }, ctx());
+      expect(out.status).toBe('created');
+    });
+
+    it('global: a lead in another branch AND vertical is a duplicate too', async () => {
       const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'global', on_duplicate: 'merge' } });
       const { svc } = makeIngestion(db);
-      seedOther(st, '+919811100203', 999, 888);            // other campaign AND other pipeline
+      seedOther(st, '+919811100203', { campaign_id: 999, vertical_id: 88, branch_id: 88 });
       const out = await svc.ingest({ full_name: 'A', phone: '9811100203', email: 'a@x.com', external_id: 'SC3' }, ctx());
       expect(out.status).toBe('duplicate');
       expect(out.merged).toBe(true);
       expect(out.lead_id).toBe(900);
     });
 
-    it('global scope does NOT match a lead in another pipeline when scope is this_pipeline', async () => {
+    it('legacy this_pipeline is treated as this_campaign — a diff-campaign same-pipeline lead is NOT a duplicate', async () => {
       const { db, st } = makeFakeDb({ duplicacy: { check_scope: 'this_pipeline', on_duplicate: 'merge' } });
       const { svc } = makeIngestion(db);
-      seedOther(st, '+919811100204', 999, 888);            // different pipeline
+      seedOther(st, '+919811100204', { campaign_id: 999, pipeline_id: 4, vertical_id: 3, branch_id: 2 });
       const out = await svc.ingest({ full_name: 'A', phone: '9811100204', external_id: 'SC4' }, ctx());
       expect(out.status).toBe('created');
     });
@@ -446,7 +515,8 @@ describe('LeadIngestionService', () => {
 describe('#22 — duplicate detection cross-matches phone AND WhatsApp', () => {
   const seed = (over: Record<string, unknown> = {}) => ([{
     id: 900, full_name: 'Existing', phone: '+919811100050', whatsapp_phone: '+919811100051',
-    campaign_id: 5, pipeline_id: 4, is_active: true, deleted_at: null, stage_id: 51, owner_id: 11,
+    campaign_id: 5, pipeline_id: 4, vertical_id: 3, branch_id: 2,
+    is_active: true, deleted_at: null, stage_id: 51, owner_id: 11,
     ...over,
   }]);
 
@@ -494,10 +564,10 @@ describe('#22 — duplicate detection cross-matches phone AND WhatsApp', () => {
     expect(st.leads).toHaveLength(2);
   });
 
-  it('SCOPE this_pipeline — a WhatsApp match across campaigns in the SAME pipeline IS a duplicate', async () => {
+  it('SCOPE this_vertical — a WhatsApp match across campaigns in the SAME vertical IS a duplicate', async () => {
     const { db } = makeFakeDb({
-      leads: seed({ campaign_id: 99, pipeline_id: 4 }),
-      duplicacy: { check_scope: 'this_pipeline', match_key: 'phone', on_duplicate: 'ignore', open_reassign_same_user: true },
+      leads: seed({ campaign_id: 99, vertical_id: 3 }),
+      duplicacy: { check_scope: 'this_vertical', match_key: 'phone', on_duplicate: 'ignore', open_reassign_same_user: true },
     });
     const { svc } = makeIngestion(db);
     const out = await svc.ingest(
@@ -506,9 +576,9 @@ describe('#22 — duplicate detection cross-matches phone AND WhatsApp', () => {
     expect(out.duplicate_of).toBe(900);
   });
 
-  it('SCOPE global — a match in any campaign/pipeline IS a duplicate', async () => {
+  it('SCOPE global — a match in any campaign/vertical/branch IS a duplicate', async () => {
     const { db } = makeFakeDb({
-      leads: seed({ campaign_id: 99, pipeline_id: 88 }),
+      leads: seed({ campaign_id: 99, pipeline_id: 88, vertical_id: 88, branch_id: 88 }),
       duplicacy: { check_scope: 'global', match_key: 'phone', on_duplicate: 'ignore', open_reassign_same_user: true },
     });
     const { svc } = makeIngestion(db);

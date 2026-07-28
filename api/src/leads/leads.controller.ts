@@ -27,6 +27,7 @@ export class LeadsController {
       // Sprint 3 — the score BAND is filterable and sortable; SLA breaches are filterable
       sla_breached: q.sla_breached === '1' || q.sla_breached === 'true',
       flagged: q.flagged === '1' || q.flagged === 'true',
+      duplicate: q.duplicate === '1' || q.duplicate === 'true',
       sort: q.sort || undefined,
       q: q.q || undefined, limit: num(q.limit), offset: num(q.offset),
     });

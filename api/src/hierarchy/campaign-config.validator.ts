@@ -8,8 +8,16 @@ import { BadRequestException } from '@nestjs/common';
 
 export const DISTRIBUTION_MODES = ['on_demand', 'equal', 'conditional'] as const;
 export const ROUND_ROBIN_SCOPES = ['branch', 'vertical', 'pipeline', 'campaign'] as const;
-export const DUPLICACY_CHECK_SCOPES = ['this_campaign', 'this_pipeline', 'global'] as const;
-export const DUPLICACY_ACTIONS = ['ignore', 'merge', 'create', 'merge_and_reopen'] as const;
+// Client change (Jul 2026): the duplicate-check SCOPE is now exactly
+// { this_campaign, this_vertical, this_branch, global }. `this_pipeline` was
+// REMOVED at the client's explicit request; a stored legacy `this_pipeline`
+// value is normalised to `this_campaign` (the narrowest, safest scope) both by
+// migration 040 and by the coercion below, so an un-migrated row re-saved from
+// the UI never 400s.
+export const DUPLICACY_CHECK_SCOPES = ['this_campaign', 'this_vertical', 'this_branch', 'global'] as const;
+// Client change (Jul 2026): a fifth action, `flag`, marks the incoming duplicate
+// lead so all duplicate-type leads are filterable on the Leads list.
+export const DUPLICACY_ACTIONS = ['ignore', 'merge', 'create', 'merge_and_reopen', 'flag'] as const;
 export const CONDITION_OPS = ['equals', 'not_equals', 'contains', 'in'] as const;
 
 function fail(message: string): never {
@@ -115,7 +123,12 @@ export function validateDuplicacyConfig(input: unknown): Record<string, unknown>
   if (!isPlainObject(input)) fail('duplicacy_config must be a JSON object');
   assertKnownKeys(input, ['check_scope', 'match_key', 'on_duplicate', 'open_reassign_same_user'], 'duplicacy_config');
 
-  const checkScope = input.check_scope ?? 'this_campaign';
+  // Back-compat: a legacy campaign stored with the removed `this_pipeline` scope
+  // is silently narrowed to `this_campaign` rather than rejected, so editing such
+  // a campaign from the (now pipeline-free) UI cannot 400. Migration 040 also
+  // rewrites these rows in place.
+  const rawScope = input.check_scope === 'this_pipeline' ? 'this_campaign' : (input.check_scope ?? 'this_campaign');
+  const checkScope = rawScope;
   if (typeof checkScope !== 'string' || !(DUPLICACY_CHECK_SCOPES as readonly string[]).includes(checkScope)) {
     fail(`duplicacy_config.check_scope must be one of: ${DUPLICACY_CHECK_SCOPES.join(', ')} (got '${String(input.check_scope)}')`);
   }

@@ -24,7 +24,8 @@ const ACTION_REASON: Record<DuplicateAction, string> = {
   ignore: 'campaign rule: IGNORE — this row will be skipped, the existing lead is untouched',
   create: 'campaign rule: CREATE — a second, flagged lead will be added',
   merge: 'campaign rule: MERGE — this row will be folded into the existing lead (blanks filled; conflicts keep the existing value and are recorded)',
-  merge_and_reopen: 'campaign rule: MERGE & REOPEN — folded into the existing lead, and a closed lead is re-opened',
+  merge_and_reopen: 'campaign rule: MERGE & REOPEN — folded into the existing lead; a CLOSED lead is re-opened and re-assigned to the next round-robin agent',
+  flag: 'campaign rule: FLAG — a second lead is added and flagged as a duplicate so it is filterable on the Leads list',
 };
 
 export interface PreviewRow {
@@ -36,7 +37,7 @@ export interface PreviewRow {
   duplicate_of?: number | null;
   /** the campaign's duplicacy action this row WILL get: ignore | create | merge | merge_and_reopen
    *  ('skip' = the row repeats earlier in the same file and is imported once). */
-  action?: 'ignore' | 'create' | 'merge' | 'merge_and_reopen' | 'skip' | null;
+  action?: 'ignore' | 'create' | 'merge' | 'merge_and_reopen' | 'flag' | 'skip' | null;
 }
 
 @Injectable()

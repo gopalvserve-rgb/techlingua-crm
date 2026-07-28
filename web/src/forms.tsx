@@ -1237,8 +1237,11 @@ const COND_FIELDS = [
 const COND_OPS = [['equals', 'equals'], ['not_equals', 'not equals'], ['contains', 'contains'], ['in', 'is one of (comma-sep)']] as const;
 type CondRow = { field: string; op: string; value: string; assign_to_user_ids: number[] };
 
-const DUP_SCOPES = [['Within This Campaign', 'this_campaign'], ['Within This Pipeline', 'this_pipeline'], ['All Campaigns (Global)', 'global']] as const;
-const DUP_ACTIONS = [['Ignore Duplicate', 'ignore'], ['Merge Duplicate', 'merge'], ['Create Duplicate Leads', 'create'], ['Merge Duplicate & Reopen Closed Leads', 'merge_and_reopen']] as const;
+// Client change (Jul 2026): scope options are exactly these four — "Within This
+// Pipeline" was REMOVED at the client's request.
+const DUP_SCOPES = [['Within This Campaign', 'this_campaign'], ['Within This Vertical', 'this_vertical'], ['Within This Branch', 'this_branch'], ['All / Global', 'global']] as const;
+// Client change (Jul 2026): five actions — the last two are new/relabelled.
+const DUP_ACTIONS = [['Ignore Duplicate', 'ignore'], ['Merge Duplicate', 'merge'], ['Create Duplicate Leads', 'create'], ['Merge & Reopen Closed Leads — assign to round-robin user', 'merge_and_reopen'], ['Flag All These Types of Leads', 'flag']] as const;
 
 /** `initial` switches the same NeoDove modal into edit mode (PATCH /campaigns/:id, path locked). */
 export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => void; onSaved?: () => void; initial?: any }) {
@@ -1280,7 +1283,10 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
   const [managers, setManagers] = useState<number[]>(() =>
     Array.isArray((initial as any)?.manager_user_ids)
       ? ((initial as any).manager_user_ids as number[]).map(Number) : []);
-  const [dupScope, setDupScope] = useState<string>((initial?.duplicacy_config as any)?.check_scope ?? 'this_campaign');
+  // Back-compat: a campaign saved with the removed `this_pipeline` scope shows as
+  // "Within This Campaign" (the value migration 040 also writes).
+  const _initScope = (initial?.duplicacy_config as any)?.check_scope ?? 'this_campaign';
+  const [dupScope, setDupScope] = useState<string>(_initScope === 'this_pipeline' ? 'this_campaign' : _initScope);
   const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
   const [busy, setBusy] = useState(false);
 

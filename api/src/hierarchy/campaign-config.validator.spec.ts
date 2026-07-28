@@ -71,9 +71,21 @@ describe('validateDistributionConfig', () => {
 describe('validateDuplicacyConfig', () => {
   it('accepts a full valid config', () => {
     expect(validateDuplicacyConfig({
-      check_scope: 'this_pipeline', match_key: 'phone', on_duplicate: 'merge_and_reopen', open_reassign_same_user: true,
+      check_scope: 'this_vertical', match_key: 'phone', on_duplicate: 'merge_and_reopen', open_reassign_same_user: true,
     })).toEqual({
-      check_scope: 'this_pipeline', match_key: 'phone', on_duplicate: 'merge_and_reopen', open_reassign_same_user: true,
+      check_scope: 'this_vertical', match_key: 'phone', on_duplicate: 'merge_and_reopen', open_reassign_same_user: true,
+    });
+  });
+
+  it('accepts the new this_branch scope and the flag action', () => {
+    expect(validateDuplicacyConfig({ check_scope: 'this_branch', on_duplicate: 'flag' })).toEqual({
+      check_scope: 'this_branch', match_key: 'phone', on_duplicate: 'flag', open_reassign_same_user: true,
+    });
+  });
+
+  it('normalises a legacy this_pipeline scope to this_campaign (client removed pipeline scope)', () => {
+    expect(validateDuplicacyConfig({ check_scope: 'this_pipeline', on_duplicate: 'merge' })).toEqual({
+      check_scope: 'this_campaign', match_key: 'phone', on_duplicate: 'merge', open_reassign_same_user: true,
     });
   });
 

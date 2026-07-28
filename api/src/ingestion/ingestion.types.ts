@@ -54,8 +54,11 @@ export type IngestChannel = 'csv' | 'webhook' | 'form' | 'sheet' | 'api' | 'manu
  */
 export type DuplicatePolicy = 'campaign' | 'always_create';
 
-/** The four NeoDove §4 duplicate actions (campaign.duplicacy_config.on_duplicate). */
-export type DuplicateAction = 'ignore' | 'create' | 'merge' | 'merge_and_reopen';
+/** The NeoDove §4 duplicate actions (campaign.duplicacy_config.on_duplicate).
+ *  Client change (Jul 2026): `flag` added (mark the incoming duplicate lead so it
+ *  is filterable on the Leads list); merge_and_reopen now re-assigns a re-opened
+ *  CLOSED lead to the campaign's next round-robin agent. */
+export type DuplicateAction = 'ignore' | 'create' | 'merge' | 'merge_and_reopen' | 'flag';
 
 export interface IngestContext {
   channel: IngestChannel;
