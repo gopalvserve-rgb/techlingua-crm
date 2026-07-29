@@ -236,8 +236,8 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.users': { title: 'Add User', fields: [
     F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
-    F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'multipick', 0, 0, 'blank = org-wide · pick one or more', 'branches'),
-    F('Vertical Access', 'multipick', 0, 0, 'optional · verticals under the chosen branches', 'verticals'), F('Status', 'select', 0, ['Active', 'Deactivated'])] },
+    F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'multipick', 0, 0, 'select branch(es)', 'branches'),
+    F('Vertical Access', 'multipick', 0, 0, 'optional', 'verticals'), F('Status', 'select', 0, ['Active', 'Deactivated'])] },
   'fran.partners': { title: 'Add Franchise Partner', fields: [
     F('Franchise ID', 'auto', 1, 0, 'Auto-generated'), F('Legal Name', 'text', 1), F('Brand Name', 'text'), F('Owner', 'text', 1), F('Mobile', 'tel', 1), F('Email', 'email'),
     F('Branch / Territory', 'text'), F('Status', 'select', 0, ['Onboarding', 'Active', 'Inactive']), F('KYC Documents', 'file')] },
@@ -832,6 +832,8 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   const [masterAdd, setMasterAdd] = useState<{ type: string; field: string } | null>(null);
   const [masterForm, setMasterForm] = useState<{ form: string; field: string } | null>(null);
   const [subForm, setSubForm] = useState<{ form: string; field: string } | null>(null);
+  // ＋ Add Branch / ＋ Add Vertical quick-add beside Branch Access (opens the real create form).
+  const [accessAdd, setAccessAdd] = useState<{ form: string } | null>(null);
   const [subCampaign, setSubCampaign] = useState(false);
   const [extras, setExtras] = useState<Record<string, Named[]>>({});
   const [roles, setRoles] = useState<Named[]>([]);
@@ -1043,7 +1045,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       const opts = ((ref as any).branches as Named[] ?? []).map((b) => ({ id: Number(b.id), name: b.name }));
       return (
         <UserPicker options={opts} value={selected}
-          placeholder="Search & tick branches — leave empty for org-wide access…"
+          placeholder="Select branch(es)…"
           onChange={(arr) => setVals((x) => {
             const kept = parseVertCsv(x['Vertical Access']).filter((z) => arr.includes(z.b)); // drop verticals of un-ticked branches
             return { ...x, 'Branch Access': arr.join(','), 'Vertical Access': kept.map((z) => `${z.v}:${z.b}`).join(',') };
@@ -1059,7 +1061,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       const blocked = bids.length === 0;
       return (
         <UserPicker options={opts} value={selected} disabled={blocked}
-          placeholder={blocked ? 'Pick one or more branches first…' : 'Optional — tick verticals to narrow access…'}
+          placeholder={blocked ? 'Select access first…' : 'Tick verticals to narrow access…'}
           onChange={(arr) => setVals((x) => ({ ...x, [f.label]: arr.map((vid) => `${vid}:${vb.get(Number(vid)) ?? ''}`).join(',') }))} />
       );
     }
@@ -1151,6 +1153,19 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     );
   };
 
+  /** ＋ Add Branch / ＋ Add Vertical shortcuts beside Branch Access — open the real
+   *  create forms and inject the new row into the access pickers (reuses the master-add
+   *  pattern; multipick-aware so the value rides the CSV, not a single select). */
+  const accessLinks = (f: FormField) => {
+    if (f.type !== 'multipick' || f.src !== 'branches') return null;
+    return (
+      <>
+        {can('branch.create') && <a className="mlink" onClick={(e) => { e.preventDefault(); setAccessAdd({ form: 'admin.branches' }); }}>＋ Add Branch</a>}
+        {can('vertical.create') && <a className="mlink" onClick={(e) => { e.preventDefault(); setAccessAdd({ form: 'admin.verticals' }); }}>＋ Add Vertical</a>}
+      </>
+    );
+  };
+
   return (
     <div className="add-scrim">
       <div className="add-modal">
@@ -1176,6 +1191,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
                     {f.label}{f.req && !edit?.optional?.includes(f.label) ? <> <span className="star">*</span></> : null}
                     {f.hint && !inField ? <span className="fhint">{f.hint}</span> : null}
                     {masterLink(f)}
+                    {accessLinks(f)}
                   </label>
                   {input(f)}
                 </div>
@@ -1216,6 +1232,27 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
           setExtras((x) => ({ ...x, [subForm.field]: [...(x[subForm.field] ?? []), row] }));
           setField(subForm.field, row.name, Number(row.id));
           ref.reload();
+        }} />}
+      {accessAdd && <AddModal formKey={accessAdd.form} onClose={() => setAccessAdd(null)}
+        onSaved={() => ref.reload()}
+        onSavedRow={(row) => {
+          // Show the new branch/vertical in the access pickers without a page refresh and
+          // auto-tick it. Branch/Vertical Access ride in `vals` as CSV; a vertical only shows
+          // under a ticked branch, so adding a vertical also ticks its parent branch.
+          ref.reload();
+          setVals((x) => {
+            if (accessAdd.form === 'admin.branches') {
+              const bids = parseIdCsv(x['Branch Access']);
+              if (!bids.includes(Number(row.id))) bids.push(Number(row.id));
+              return { ...x, 'Branch Access': bids.join(',') };
+            }
+            const bid = Number((row as any).branch_id);
+            const bids = parseIdCsv(x['Branch Access']);
+            if (bid && !bids.includes(bid)) bids.push(bid);
+            const verts = parseVertCsv(x['Vertical Access']);
+            if (!verts.some((z) => z.v === Number(row.id))) verts.push({ v: Number(row.id), b: bid });
+            return { ...x, 'Branch Access': bids.join(','), 'Vertical Access': verts.map((z) => `${z.v}:${z.b}`).join(',') };
+          });
         }} />}
       {subCampaign && <CampaignModal onClose={() => setSubCampaign(false)} onSaved={() => ref.reload()} />}
     </div>
