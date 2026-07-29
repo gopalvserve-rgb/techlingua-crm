@@ -1044,7 +1044,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       const selected = parseIdCsv(v);
       const opts = ((ref as any).branches as Named[] ?? []).map((b) => ({ id: Number(b.id), name: b.name }));
       return (
-        <UserPicker options={opts} value={selected}
+        <UserPicker options={opts} value={selected} hideBranch
           placeholder="Select branch(es)…"
           onChange={(arr) => setVals((x) => {
             const kept = parseVertCsv(x['Vertical Access']).filter((z) => arr.includes(z.b)); // drop verticals of un-ticked branches
@@ -1060,7 +1060,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       const selected = parseVertCsv(v).map((z) => z.v);
       const blocked = bids.length === 0;
       return (
-        <UserPicker options={opts} value={selected} disabled={blocked}
+        <UserPicker options={opts} value={selected} disabled={blocked} hideBranch
           placeholder={blocked ? 'Select access first…' : 'Tick verticals to narrow access…'}
           onChange={(arr) => setVals((x) => ({ ...x, [f.label]: arr.map((vid) => `${vid}:${vb.get(Number(vid)) ?? ''}`).join(',') }))} />
       );

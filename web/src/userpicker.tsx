@@ -17,7 +17,7 @@ export interface PickUser {
   id: number; name: string; role_names?: string; branch_names?: string; status?: string;
 }
 
-export function UserPicker({ value, onChange, multiple = true, branchId, placeholder, disabled, options }: {
+export function UserPicker({ value, onChange, multiple = true, branchId, placeholder, disabled, options, hideBranch }: {
   value: number[];
   onChange: (ids: number[]) => void;
   /** false = single-select (conditional rules' assign-to) */
@@ -33,6 +33,9 @@ export function UserPicker({ value, onChange, multiple = true, branchId, placeho
    * the campaign agent pool and a Branch/Vertical Access picker are the ONE control.
    */
   options?: PickUser[];
+  /** hide the per-row branch subtitle (used by the Branch/Vertical Access pickers, whose
+   *  options are branches/verticals themselves — the "All branches" fallback is meaningless there). */
+  hideBranch?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -165,7 +168,7 @@ export function UserPicker({ value, onChange, multiple = true, branchId, placeho
                 <span className={`upick-box ${sel ? 'on' : ''}`}>{sel && <Ic k="check" w={3} />}</span>
                 <span className="upick-name">{u.name}</span>
                 {u.role_names ? <span className="bdg b-indigo">{u.role_names.split(',')[0].trim()}</span> : null}
-                <span className="upick-branch">{u.branch_names || 'All branches'}</span>
+                {!hideBranch && <span className="upick-branch">{u.branch_names || 'All branches'}</span>}
               </div>
             );
           })}
