@@ -2043,7 +2043,7 @@ function Campaigns() {
         <SearchChip q={q} setQ={setQ} ph="Search campaign name\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      <TableCard title="Campaigns" cols={['Campaign', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
+      <TableCard title="Campaigns" cols={['Campaign', 'Branch', 'Vertical', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => {
           const src = ref.sources.find((x) => Number(x.campaign_id) === Number(c.id));
@@ -2052,6 +2052,8 @@ function Campaigns() {
           const cost = Number(c.cost ?? 0);
           return [
             { node: <span className="nm">{c.name}</span> } as Cell,
+            String(c.branch_name ?? '\u2014'),
+            String(c.vertical_name ?? '\u2014'),
             String(c.pipeline_name ?? '\u2014'),
             src ? ({ b: [src.name, 'b-indigo'] } as Cell) : '\u2014',
             { mono: utm === '\u2014' ? '\u2014' : `utm=${utm}`, dim: true } as Cell,
