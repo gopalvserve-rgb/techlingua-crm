@@ -30,6 +30,9 @@ export class LeadsController {
       duplicate: q.duplicate === '1' || q.duplicate === 'true',
       // Bulk actions (Jul 2026) — the paused-only filter (find parked leads to resume).
       paused: q.paused === '1' || q.paused === 'true',
+      // Dashboard card links (Aug 2026) — Conversions (won) and Unassigned filters.
+      won: q.won === '1' || q.won === 'true',
+      unassigned: q.unassigned === '1' || q.unassigned === 'true',
       sort: q.sort || undefined,
       q: q.q || undefined, limit: num(q.limit), offset: num(q.offset),
     });
@@ -55,6 +58,8 @@ export class LeadsController {
       flagged: q.flagged === '1' || q.flagged === 'true',
       duplicate: q.duplicate === '1' || q.duplicate === 'true',
       paused: q.paused === '1' || q.paused === 'true',
+      won: q.won === '1' || q.won === 'true',
+      unassigned: q.unassigned === '1' || q.unassigned === 'true',
       q: q.q || undefined,
     });
   }

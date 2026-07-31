@@ -1055,7 +1055,14 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (t === 'multipick' && f.src === 'verticals') {
       const bids = parseIdCsv(vals['Branch Access']);
       const all = (ref as any).verticals as Named[] ?? [];
-      const opts = all.filter((vt) => bids.includes(Number((vt as any).branch_id))).map((vt) => ({ id: Number(vt.id), name: vt.name }));
+      // Client (Aug 2026): show each vertical as its "Branch → Vertical" path so the admin can
+      // tell same-named verticals apart and see the parent branch. branch_name rides on the
+      // vertical RefData row; fall back to joining the branch name from the branches RefData.
+      const branchName = new Map(((ref as any).branches as Named[] ?? []).map((b) => [Number(b.id), b.name]));
+      const opts = all.filter((vt) => bids.includes(Number((vt as any).branch_id))).map((vt) => {
+        const bn = (vt as any).branch_name || branchName.get(Number((vt as any).branch_id));
+        return { id: Number(vt.id), name: bn ? `${bn} → ${vt.name}` : vt.name };
+      });
       const vb = new Map(all.map((vt) => [Number(vt.id), Number((vt as any).branch_id)]));
       const selected = parseVertCsv(v).map((z) => z.v);
       const blocked = bids.length === 0;

@@ -68,6 +68,10 @@ export interface LeadFilters {
   duplicate?: boolean;
   /** Bulk actions (Jul 2026): only leads currently PAUSED (parked out of distribution/SLA). */
   paused?: boolean;
+  /** Dashboard card links (Aug 2026): only WON leads (current stage_type = 'won') — the
+   *  Conversions cards; and only UNASSIGNED leads (owner_id IS NULL) — the Unassigned card. */
+  won?: boolean;
+  unassigned?: boolean;
   /** Sprint 3 — the band must be SORTABLE too. */
   sort?: string;
   /** UAT-R2 #26 — created-date range (YYYY-MM-DD), inclusive of both ends. */
@@ -189,6 +193,10 @@ export class LeadsService {
     if (f.duplicate) where.push('l.is_duplicate');
     // Bulk actions (Jul 2026): the paused-only filter (find parked leads to resume).
     if (f.paused) where.push('l.paused');
+    // Dashboard card links (Aug 2026): Conversions -> won (current stage is a 'won' stage,
+    // via EXISTS so the COUNT query needs no pipeline_stage join); Unassigned -> no owner.
+    if (f.won) where.push(`EXISTS (SELECT 1 FROM pipeline_stage ps WHERE ps.id = l.stage_id AND ps.stage_type = 'won')`);
+    if (f.unassigned) where.push('l.owner_id IS NULL');
     if (f.sla_breached) {
       where.push(`EXISTS (SELECT 1 FROM lead_sla s
                            WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now())`);

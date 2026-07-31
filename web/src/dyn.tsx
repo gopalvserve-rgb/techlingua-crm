@@ -43,7 +43,9 @@ import { SupportTickets } from './support';
 import { CrossSell } from './crosssell';
 
 export interface ScreenCtxT {
-  go: (m: string, s: string) => void;
+  // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
+  // unassigned, created_from/to, sla_breached, …) so a KPI card opens its list pre-filtered.
+  go: (m: string, s: string, params?: Record<string, string | number | undefined>) => void;
   openLead: (id: number) => void;
   openAdd: (formKey: string) => void;
   refreshTick: number;
@@ -231,6 +233,7 @@ const VIEW_LABEL: Record<Dash['view'], string> = {
 
 function DashOverview() {
   const { openLead, refreshTick, go, bump } = useScreen();
+  const { me } = useAuth();
   const d = useFetch<Dash>('/dashboard', [refreshTick]);
   const today = useFetch<any[]>('/follow-ups?due=today&limit=5', [refreshTick]);
   const mine = useFetch<any[]>('/follow-ups?mine=1&status=pending&limit=4', [refreshTick]);
@@ -242,10 +245,19 @@ function DashOverview() {
   const fu = data?.follow_ups;
   const personal = data?.view === 'counsellor' || data?.view === 'team';
 
+  // Aug 2026 (client) — EVERY meaningful KPI card opens the filtered list behind its number.
+  // Cards go through go('leads','all', <filter>) (owner_id/won/temperature/created/sla/unassigned
+  // are all honoured by the Leads list + API) or go('dash', <sub>) for task/walk-in lists.
+  const myId = me?.user?.id != null ? Number(me.user.id) : undefined;
+  const TODAY = new Date().toISOString().slice(0, 10);           // matches the server's CURRENT_DATE (UTC)
+  const leadsTo = (filter: Record<string, string | number | undefined>) => () => go('leads', 'all', filter);
+
   // a counsellor's KPI strip is about THEIR work; a manager's is about the unit.
   const kpiItems = personal ? [
-    { lab: 'My leads', val: String(k?.total ?? 0), ic: 'leads' },
-    { lab: 'My conversions', val: String(k?.won ?? 0), ic: 'check' },
+    { lab: 'My leads', val: String(k?.total ?? 0), ic: 'leads',
+      onClick: leadsTo({ owner_id: myId }), navLabel: `My leads: ${k?.total ?? 0}. Open my Leads list` },
+    { lab: 'My conversions', val: String(k?.won ?? 0), ic: 'check',
+      onClick: leadsTo({ owner_id: myId, won: 1 }), navLabel: `My conversions: ${k?.won ?? 0}. Open my won Leads` },
     // #13(c) — the task SUMMARY tiles open the My Tasks list (this is the "Task Summary"
     // the client clicks). Card-header "View all ›" keeps working too.
     { lab: 'My open tasks', val: String(fu?.my_open ?? 0), ic: 'clock',
@@ -253,20 +265,27 @@ function DashOverview() {
       onClick: () => go('dash', 'mytasks'), navLabel: `My open tasks: ${fu?.my_open ?? 0}. Open My Tasks list` },
     { lab: 'Due today', val: String(fu?.my_due_today ?? 0), ic: 'cal',
       onClick: () => go('dash', 'mytasks'), navLabel: `Tasks due today: ${fu?.my_due_today ?? 0}. Open My Tasks list` },
-    { lab: 'Hot leads', val: String(k?.hot ?? 0), ic: 'bolt' },
-    { lab: 'New today', val: String(k?.today ?? 0), ic: 'users' },
+    { lab: 'Hot leads', val: String(k?.hot ?? 0), ic: 'bolt',
+      onClick: leadsTo({ owner_id: myId, temperature: 'hot' }), navLabel: `Hot leads: ${k?.hot ?? 0}. Open my Hot leads` },
+    { lab: 'New today', val: String(k?.today ?? 0), ic: 'users',
+      onClick: leadsTo({ owner_id: myId, created_from: TODAY, created_to: TODAY }), navLabel: `New today: ${k?.today ?? 0}. Open my leads created today` },
   ] : [
-    { lab: "Today's leads", val: String(k?.today ?? 0), ic: 'leads' },
-    { lab: 'Conversions', val: String(k?.won ?? 0), ic: 'check' },
+    { lab: "Today's leads", val: String(k?.today ?? 0), ic: 'leads',
+      onClick: leadsTo({ created_from: TODAY, created_to: TODAY }), navLabel: `Today's leads: ${k?.today ?? 0}. Open leads created today` },
+    { lab: 'Conversions', val: String(k?.won ?? 0), ic: 'check',
+      onClick: leadsTo({ won: 1 }), navLabel: `Conversions: ${k?.won ?? 0}. Open won Leads` },
     { lab: 'Pending follow-ups', val: String(fu?.pending ?? 0), ic: 'clock',
       delta: fu?.overdue ? `${fu.overdue} overdue` : undefined, tone: fu?.overdue ? 'down' as const : 'flat' as const,
       // #13(c) — the manager's task-summary tile opens the My Tasks list (the follow-up module,
       // §4i). My Tasks is the actionable task/follow-up list; Today's Follow-ups is due=today only.
       onClick: () => go('dash', 'mytasks'), navLabel: `Pending follow-ups: ${fu?.pending ?? 0}. Open My Tasks list` },
     { lab: 'SLA breaches', val: String(data?.sla?.open_breaches ?? 0), ic: 'bolt',
-      tone: (data?.sla?.open_breaches ?? 0) > 0 ? 'down' as const : 'flat' as const },
-    { lab: 'Walk-ins today', val: String(data?.walkins?.today ?? 0), ic: 'users' },
-    { lab: 'Unassigned', val: String(k?.unassigned ?? 0), ic: 'target' },
+      tone: (data?.sla?.open_breaches ?? 0) > 0 ? 'down' as const : 'flat' as const,
+      onClick: leadsTo({ sla_breached: 1 }), navLabel: `SLA breaches: ${data?.sla?.open_breaches ?? 0}. Open breached Leads` },
+    { lab: 'Walk-ins today', val: String(data?.walkins?.today ?? 0), ic: 'users',
+      onClick: () => go('dash', 'walkins'), navLabel: `Walk-ins today: ${data?.walkins?.today ?? 0}. Open Walk-ins list` },
+    { lab: 'Unassigned', val: String(k?.unassigned ?? 0), ic: 'target',
+      onClick: leadsTo({ unassigned: 1 }), navLabel: `Unassigned: ${k?.unassigned ?? 0}. Open unassigned Leads` },
   ];
 
   return (
@@ -592,7 +611,7 @@ const PRESETS: Array<[string, () => { from: string; to: string }]> = [
 ];
 
 function QuickStats() {
-  const { refreshTick } = useScreen();
+  const { refreshTick, go } = useScreen();
   const [preset, setPreset] = useState('This month');
   const [range, setRange] = useState(() => PRESETS[2][1]());
   const stats = useFetch<any>(`/dashboard/quick-stats?from=${range.from}&to=${range.to}`, [range.from, range.to, refreshTick]);
@@ -626,14 +645,24 @@ function QuickStats() {
       </div>
 
       <Kpis cols={4} items={[
-        { lab: 'Leads', val: String(s?.leads ?? 0), ic: 'leads' },
+        { lab: 'Leads', val: String(s?.leads ?? 0), ic: 'leads',
+          onClick: () => go('leads', 'all', { created_from: range.from, created_to: range.to }),
+          navLabel: `Leads: ${s?.leads ?? 0}. Open leads created in this range` },
+        // Conversions/Lost count by WON/LOST date (updated_at) — the Leads list filters by
+        // CREATED date, so a range-matched count isn't reproducible; left non-clickable.
         { lab: 'Conversions', val: String(s?.won ?? 0), ic: 'check' },
         { lab: 'Lost', val: String(s?.lost ?? 0), ic: 'clock' },
         // OBS-S16-05: named, not just 'Conversion rate' — the funnel report shows the
-        // SAME number, and Counsellor Performance shows a different one.
+        // SAME number, and Counsellor Performance shows a different one. (Informational — no list.)
         { lab: CONVERSION_LABEL_LEAD_WON, val: s ? `${s.conversion_rate}%` : '—', ic: 'target' },
-        { lab: 'Hot leads', val: String(s?.hot ?? 0), ic: 'bolt' },
-        { lab: 'Duplicates', val: String(s?.duplicates ?? 0), ic: 'users' },
+        { lab: 'Hot leads', val: String(s?.hot ?? 0), ic: 'bolt',
+          onClick: () => go('leads', 'all', { temperature: 'hot', created_from: range.from, created_to: range.to }),
+          navLabel: `Hot leads: ${s?.hot ?? 0}. Open Hot leads created in this range` },
+        { lab: 'Duplicates', val: String(s?.duplicates ?? 0), ic: 'users',
+          onClick: () => go('leads', 'all', { duplicate: 1, created_from: range.from, created_to: range.to }),
+          navLabel: `Duplicates: ${s?.duplicates ?? 0}. Open duplicate leads created in this range` },
+        // Follow-ups done/scheduled have no date-ranged Follow-ups list, so no matching-count
+        // destination exists — left non-clickable.
         { lab: 'Follow-ups done', val: String(s?.followups_done ?? 0), ic: 'check' },
         { lab: 'Follow-ups scheduled', val: String(s?.followups_scheduled ?? 0), ic: 'cal' },
       ]} />
@@ -812,6 +841,26 @@ function QuickContact() {
   );
 }
 
+/**
+ * Aug 2026 — a KPI card opens the Leads list pre-filtered by carrying its filter in the URL
+ * query (go('leads','all', {...})). LeadsAll seeds its filter state from those params ONCE on
+ * mount. Read straight from window.location.search (not useSearchParams) so the component still
+ * renders bare in unit tests, with no Router; an empty search yields exactly the old defaults.
+ */
+function readLeadNavFilters() {
+  const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+  const n = (key: string) => { const v = Number(sp.get(key)); return Number.isFinite(v) && v > 0 ? v : undefined; };
+  const b = (key: string) => sp.get(key) === '1' || sp.get(key) === 'true';
+  return {
+    branch: n('branch_id'), vertical: n('vertical_id'), pipeline: n('pipeline_id'), campaign: n('campaign_id'),
+    source: n('source_id'), status: n('status_id'), owner: n('owner_id'),
+    from: sp.get('created_from') || undefined, to: sp.get('created_to') || undefined,
+    temperature: sp.get('temperature') || undefined,
+    sla: b('sla_breached'), dup: b('duplicate'), won: b('won'), unassigned: b('unassigned'),
+    sort: sp.get('sort') || 'recent', q: sp.get('q') || '',
+  };
+}
+
 function LeadsAll() {
   const { openLead, refreshTick, bump } = useScreen();
   const { can } = useAuth();
@@ -827,8 +876,10 @@ function LeadsAll() {
     temperature?: string; sla?: boolean;
     // Client change (Jul 2026) — the Duplicates filter (leads marked is_duplicate)
     dup?: boolean;
+    // Aug 2026 — dashboard card links: won (Conversions) + unassigned open the list pre-filtered.
+    won?: boolean; unassigned?: boolean;
     sort: string; q: string;
-  }>({ q: '', sort: 'recent' });
+  }>(() => readLeadNavFilters());
   const params = new URLSearchParams();
   if (f.branch) params.set('branch_id', String(f.branch));
   if (f.vertical) params.set('vertical_id', String(f.vertical));
@@ -842,6 +893,8 @@ function LeadsAll() {
   if (f.temperature) params.set('temperature', f.temperature);
   if (f.sla) params.set('sla_breached', '1');
   if (f.dup) params.set('duplicate', '1');
+  if (f.won) params.set('won', '1');
+  if (f.unassigned) params.set('unassigned', '1');
   if (f.sort && f.sort !== 'recent') params.set('sort', f.sort);
   if (f.q.trim()) params.set('q', f.q.trim());
   params.set('limit', '100');
@@ -1990,7 +2043,7 @@ export function CampaignView({ campaign, leadCount, onClose, onChanged }: { camp
 }
 
 function Campaigns() {
-  const { refreshTick, bump } = useScreen();
+  const { refreshTick, bump, go } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
   const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
@@ -2028,7 +2081,9 @@ function Campaigns() {
     <>
       <Kpis items={[
         { lab: 'Active campaigns', val: String(rows.filter((c) => c.is_active !== false).length), ic: 'bolt' },
-        { lab: 'Leads (MTD)', val: String(sum.data?.kpis.mtd ?? '0'), ic: 'leads' },
+        { lab: 'Leads (MTD)', val: String(sum.data?.kpis.mtd ?? '0'), ic: 'leads',
+          onClick: () => go('leads', 'all', { created_from: `${new Date().toISOString().slice(0, 7)}-01` }),
+          navLabel: `Leads this month: ${sum.data?.kpis.mtd ?? 0}. Open leads created month-to-date` },
         { lab: 'Avg CPL', val: '\u2014', ic: 'rupee' },
         { lab: 'Best conv%', val: '\u2014', ic: 'target' },
       ]} />

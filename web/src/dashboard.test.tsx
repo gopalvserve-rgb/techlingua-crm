@@ -284,13 +284,16 @@ describe('#13(c) — the task-summary KPI tiles open the My Tasks list', () => {
     expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
   });
 
-  it('non-task tiles stay PLAIN — "My leads" is not a button (no dead affordance)', async () => {
+  it('every meaningful counsellor tile is now a navigating button ("My leads" opens my Leads list)', async () => {
+    // Aug 2026 — the client asked that EVERY card open the filtered list behind its number.
+    // "My leads" used to be a plain stat; it is now a button that navigates owner=me.
     ROUTES = clickList;
     draw('dashOverview');
     await screen.findByText('My work');
-    // "My leads" has no navigation, so it must not carry a button role.
-    expect(screen.queryByRole('button', { name: /My leads/ })).toBeNull();
-    expect(screen.getByText('My leads')).toBeTruthy();     // still shown as a stat
+    const tile = screen.getByRole('button', { name: /My leads: 12\. Open my Leads list/ });
+    CTX.go.mockClear();
+    fireEvent.click(tile);
+    expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { owner_id: 3 });
   });
 
   it('the My Tasks screen summary tiles are NOT clickable-looking-but-dead', async () => {
@@ -305,5 +308,66 @@ describe('#13(c) — the task-summary KPI tiles open the My Tasks list', () => {
     expect(await screen.findByText('Open tasks')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Open tasks/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Overdue/ })).toBeNull();
+  });
+});
+
+/**
+ * Aug 2026 (client) — "make EVERY dashboard KPI card number link to its filtered list, and
+ * test that every card links to the right data." This is the automated version of that: for
+ * each wired card we assert it is a real button that calls navigation with the expected
+ * (mod, sub, filter); for each purely-informational card we assert it is NOT clickable. It
+ * locks the behaviour so a future edit can't silently drop a card link (or add a dead one).
+ */
+describe('card-links — every meaningful KPI card opens its filtered list (and info cards do not)', () => {
+  const TODAY = new Date().toISOString().slice(0, 10);
+  const clickBtn = (name: RegExp) => { CTX.go.mockClear(); fireEvent.click(screen.getByRole('button', { name })); };
+
+  it('COUNSELLOR overview — each card navigates to its filtered Leads/Tasks list', async () => {
+    ROUTES = { '/dashboard': COUNSELLOR, '/follow-ups': [], '/leads': { total: 0, rows: [] } };
+    draw('dashOverview');
+    await screen.findByText('My work');
+
+    clickBtn(/My leads: 12\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { owner_id: 3 });
+    clickBtn(/My conversions: 2\. /);   expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { owner_id: 3, won: 1 });
+    clickBtn(/My open tasks: 4\. /);    expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+    clickBtn(/Tasks due today: 2\. /);  expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+    clickBtn(/Hot leads: 4\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { owner_id: 3, temperature: 'hot' });
+    clickBtn(/New today: 3\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { owner_id: 3, created_from: TODAY, created_to: TODAY });
+  });
+
+  it('MANAGER overview — each unit card navigates to its filtered Leads/Walk-ins/Tasks list', async () => {
+    ROUTES = { '/dashboard': BRANCH_MGR, '/follow-ups': [], '/leads': { total: 0, rows: [] } };
+    draw('dashOverview');
+    await screen.findByText('My branch');
+
+    clickBtn(/Today's leads: 3\. /);     expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { created_from: TODAY, created_to: TODAY });
+    clickBtn(/Conversions: 2\. /);       expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { won: 1 });
+    clickBtn(/Pending follow-ups: 5\. /);expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+    clickBtn(/SLA breaches: 2\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { sla_breached: 1 });
+    clickBtn(/Walk-ins today: 2\. /);    expect(CTX.go).toHaveBeenCalledWith('dash', 'walkins');
+    clickBtn(/Unassigned: 0\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { unassigned: 1 });
+  });
+
+  it('QUICK STATS — created-range cards link; won/lost/rate/follow-up cards stay informational', async () => {
+    const STATS = { range: { from: '2026-07-01', to: '2026-07-14' }, view: 'admin',
+      leads: 12, won: 2, lost: 1, hot: 4, duplicates: 3, followups_done: 5, followups_scheduled: 9, conversion_rate: 17 };
+    ROUTES = { '/dashboard/quick-stats': STATS };
+    draw('quickStats');
+    await screen.findByText('17%');
+    // the card carries the range the USER has selected — set it explicitly so the assertion is
+    // deterministic (the default preset is "This month", which drifts with the clock).
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-07-14' } });
+
+    // exact-count matches (all "created within the selected range")
+    clickBtn(/Leads: 12\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { created_from: '2026-07-01', created_to: '2026-07-14' });
+    clickBtn(/Hot leads: 4\. /);   expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { temperature: 'hot', created_from: '2026-07-01', created_to: '2026-07-14' });
+    clickBtn(/Duplicates: 3\. /);  expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { duplicate: 1, created_from: '2026-07-01', created_to: '2026-07-14' });
+
+    // informational — no matching-count list target, so NOT clickable
+    expect(screen.queryByRole('button', { name: /Conversions/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Lost/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Follow-ups done/ })).toBeNull();
+    expect(screen.getByText('Follow-ups done')).toBeTruthy();      // still shown as a stat
   });
 });

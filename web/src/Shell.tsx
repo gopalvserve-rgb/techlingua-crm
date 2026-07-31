@@ -42,7 +42,16 @@ export function Shell() {
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('tl_theme', theme); }, [theme]);
   useEffect(() => { setOpenMods((x) => ({ ...x, [mod]: true })); }, [mod]);
 
-  const go = (m: string, s: string) => { setDrawer(false); nav(`/m/${m}/${s}`); };
+  // Aug 2026 — an optional 3rd arg carries list filter params so a KPI card opens its list
+  // pre-filtered (e.g. go('leads','all',{ owner_id, temperature:'hot' })). Undefined/empty
+  // values are dropped; with no params the URL is exactly as before.
+  const go = (m: string, s: string, filter?: Record<string, string | number | undefined>) => {
+    setDrawer(false);
+    const qs = new URLSearchParams();
+    if (filter) for (const [key, val] of Object.entries(filter)) if (val !== undefined && val !== '') qs.set(key, String(val));
+    const suffix = qs.toString();
+    nav(`/m/${m}/${s}${suffix ? `?${suffix}` : ''}`);
+  };
 
   const q = filter.toLowerCase().trim();
   const visible = useMemo(() => APP.map((m) => {
@@ -132,7 +141,7 @@ export function Shell() {
   );
 }
 
-function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s: string) => void }) {
+function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s: string, filter?: Record<string, string | number | undefined>) => void }) {
   const screen = findScreen(mod, sub) ?? findScreen('dash', 'overview')!;
   const spec = screen.sub.spec;
   const ref = useRef_();
