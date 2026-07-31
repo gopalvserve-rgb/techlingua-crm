@@ -197,6 +197,8 @@ export class FollowUpsController {
       mine: q.mine === '1' || q.mine === 'true', limit: num(q.limit),
       view: (q.view as 'assigned' | 'reported') || undefined,
       priority: (q.priority as 'low' | 'medium' | 'high') || undefined,
+      branch_id: num(q.branch_id), vertical_id: num(q.vertical_id),
+      pipeline_id: num(q.pipeline_id), campaign_id: num(q.campaign_id),
     }, u.id);
   }
 

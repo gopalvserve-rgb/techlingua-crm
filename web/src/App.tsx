@@ -4,6 +4,7 @@ import { Shell } from './Shell';
 import { LoginPage } from './Login';
 import { ResetPasswordPage } from './resetpassword';
 import { RefDataProvider } from './refdata';
+import { GlobalScopeProvider } from './scope';
 
 export default function App() {
   const { me, loading } = useAuth();
@@ -22,11 +23,13 @@ export default function App() {
 
   return (
     <RefDataProvider>
-      <Routes>
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-        <Route path="/m/:mod/:sub" element={<Shell />} />
-        <Route path="*" element={<Navigate to="/m/dash/overview" replace />} />
-      </Routes>
+      <GlobalScopeProvider>
+        <Routes>
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/m/:mod/:sub" element={<Shell />} />
+          <Route path="*" element={<Navigate to="/m/dash/overview" replace />} />
+        </Routes>
+      </GlobalScopeProvider>
     </RefDataProvider>
   );
 }

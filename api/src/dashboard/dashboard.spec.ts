@@ -187,3 +187,57 @@ describe('Quick Stats — CUSTOM DATE RANGE (the client asked for it explicitly)
     expect(calls[0].sql).toContain('l.owner_id = $1');
   });
 });
+
+describe('GLOBAL SCOPE NARROW — the top-bar selector narrows within RBAC, never widens it', () => {
+  it('an admin who selects a branch gets (1=1) AND l.branch_id = <it>', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(ADMIN, 1, { branch_id: 9 });
+    const kpi = calls.find((c) => /FROM lead l/.test(c.sql))!;
+    expect(kpi.sql).toMatch(/\(1=1\)/);
+    expect(kpi.sql).toMatch(/l\.branch_id = \$/);   // narrowed on top of the open scope
+    expect(kpi.params).toContain(9);
+  });
+
+  it('narrows the full chain (branch+vertical+pipeline+campaign) onto the lead query', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(ADMIN, 1, { branch_id: 2, vertical_id: 3, pipeline_id: 4, campaign_id: 5 });
+    const kpi = calls.find((c) => /FROM lead l/.test(c.sql))!;
+    for (const col of ['l.branch_id', 'l.vertical_id', 'l.pipeline_id', 'l.campaign_id']) expect(kpi.sql).toContain(col);
+  });
+
+  it('CANNOT WIDEN: a branch-9 manager selecting branch 99 still carries BOTH predicates (scope AND narrow) — an empty set, never branch 99', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(BRANCH, 5, { branch_id: 99 });
+    const kpi = calls.find((c) => /FROM lead l/.test(c.sql))!;
+    // scope predicate (branch 9) is still present …
+    expect(kpi.sql).toContain('l.branch_id = $1');
+    expect(kpi.params[0]).toBe(9);
+    // … AND the client narrow (99) is ANDed on top, so the two can only intersect (=> no rows)
+    expect(kpi.params).toContain(99);
+    expect((kpi.sql.match(/l\.branch_id = \$/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('an absent / zero / non-numeric selection adds no narrow at all (unchanged behaviour)', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(ADMIN, 1, { branch_id: 0 as any });
+    const kpi = calls.find((c) => /FROM lead l/.test(c.sql))!;
+    // only the scope's single (no) param — no extra branch predicate beyond the date range
+    expect(kpi.sql).not.toMatch(/l\.branch_id = \$/);
+  });
+
+  it('walk-in and referral widgets honour the narrow through their own lead alias', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(ADMIN, 1, { branch_id: 7 });
+    const w = calls.find((c) => /FROM walk_in w/.test(c.sql))!;
+    const r = calls.find((c) => /FROM referral r/.test(c.sql))!;
+    expect(w.sql).toContain('wl.branch_id = $');
+    expect(r.sql).toContain('rl.branch_id = $');
+  });
+
+  it('quick stats honour the narrow too', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).quickStats(ADMIN, { branch_id: 4 });
+    expect(calls[0].sql).toContain('l.branch_id = $');
+    expect(calls[0].params).toContain(4);
+  });
+});

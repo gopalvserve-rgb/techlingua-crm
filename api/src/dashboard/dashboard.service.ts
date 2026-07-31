@@ -55,12 +55,37 @@ export const WIDGETS: Record<DashboardView, string[]> = {
 
 const isManagerView = (v: DashboardView) => v === 'branch' || v === 'vertical' || v === 'admin';
 
+/** Optional global-scope narrow carried from the top-bar selector. */
+export interface DashScopeFilter {
+  branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
+}
+
 @Injectable()
 export class DashboardService {
   constructor(
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
   ) {}
+
+  /**
+   * GLOBAL SCOPE NARROW (Aug 2026). The top-bar scope selector sends an optional
+   * branch/vertical/pipeline/campaign. It NARROWS the dashboard within the caller's RBAC
+   * scope and can NEVER widen it: this predicate is ANDed on TOP of buildScopeWhere, so a
+   * branch a user may not see still yields nothing (scope AND branch=X → empty), never
+   * another unit's numbers. Every id is a positive integer or it is ignored.
+   */
+  private narrow(
+    cols: { branch: string; vertical: string; pipeline: string; campaign: string },
+    f: DashScopeFilter, params: unknown[],
+  ): string {
+    const parts: string[] = [];
+    const add = (col: string, val: number | undefined) => {
+      if (val && Number.isFinite(val) && val > 0) { params.push(val); parts.push(`${col} = $${params.length}`); }
+    };
+    add(cols.branch, f.branch_id); add(cols.vertical, f.vertical_id);
+    add(cols.pipeline, f.pipeline_id); add(cols.campaign, f.campaign_id);
+    return parts.length ? ' AND ' + parts.join(' AND ') : '';
+  }
 
   /**
    * Quick Stats with a CUSTOM DATE RANGE (Phase-1 scope: "Quick Stats (custom date range)").
@@ -85,9 +110,11 @@ export class DashboardService {
   }
 
   /** THE dashboard payload. One call, scoped, with the widget list for the caller's view. */
-  async overview(scope: ResolvedScope, userId: number, q: { from?: string; to?: string } = {}) {
+  async overview(scope: ResolvedScope, userId: number, q: { from?: string; to?: string } & DashScopeFilter = {}) {
     const view = viewOf(scope);
     const { from, to } = this.range(q.from, q.to);
+    const gf: DashScopeFilter = { branch_id: q.branch_id, vertical_id: q.vertical_id, pipeline_id: q.pipeline_id, campaign_id: q.campaign_id };
+    const L = { branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' };
 
     const p: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p);
@@ -110,7 +137,7 @@ export class DashboardService {
               COUNT(*) FILTER (WHERE l.owner_id IS NULL)::int AS unassigned
          FROM lead l
          LEFT JOIN pipeline_stage st ON st.id = l.stage_id
-        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL`, p,
+        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL${this.narrow(L, gf, p)}`, p,
     );
 
     // follow-ups: the SAME resolved scope, mapped onto the follow-up columns
@@ -130,7 +157,7 @@ export class DashboardService {
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = ${me}
                                  AND f.scheduled_at < date_trunc('day', now()))::int AS my_overdue
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
-        WHERE (${wf}) AND f.is_active AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, pf,
+        WHERE (${wf}) AND f.is_active AND f.deleted_at IS NULL AND l.deleted_at IS NULL${this.narrow(L, gf, pf)}`, pf,
     );
 
     const p2: unknown[] = [];
@@ -143,20 +170,21 @@ export class DashboardService {
     const byStage = await this.db.query(
       `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, COUNT(l.id)::int AS ct
          FROM ${STAGE_COUNT_FROM}
-        WHERE (${w2}) AND ${STAGE_COUNT_LIVE}
+        WHERE (${w2}) AND ${STAGE_COUNT_LIVE}${this.narrow(L, gf, p2)}
         GROUP BY st.id, st.name, st.stage_type, st.sort_order
         ORDER BY st.sort_order`, p2,
     );
 
     const p3: unknown[] = [];
     const w3 = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p3);
+    const nb3 = this.narrow(L, gf, p3);
     const series = await this.db.query(
       `SELECT d::date AS day,
               (SELECT COUNT(*)::int FROM lead l
-                WHERE (${w3}) AND l.is_active AND l.deleted_at IS NULL AND l.created_at::date = d::date) AS leads,
+                WHERE (${w3}) AND l.is_active AND l.deleted_at IS NULL AND l.created_at::date = d::date${nb3}) AS leads,
               (SELECT COUNT(*)::int FROM lead l JOIN pipeline_stage st ON st.id = l.stage_id
                 WHERE (${w3}) AND l.is_active AND l.deleted_at IS NULL AND st.stage_type = 'won'
-                  AND l.updated_at::date = d::date) AS won
+                  AND l.updated_at::date = d::date${nb3}) AS won
          FROM generate_series(CURRENT_DATE - 13, CURRENT_DATE, '1 day') d
         ORDER BY d`, p3,
     );
@@ -177,7 +205,7 @@ export class DashboardService {
            FROM lead l
            JOIN "user" u ON u.id = l.owner_id
            LEFT JOIN pipeline_stage st ON st.id = l.stage_id
-          WHERE (${w4}) AND l.is_active AND l.deleted_at IS NULL
+          WHERE (${w4}) AND l.is_active AND l.deleted_at IS NULL${this.narrow(L, gf, p4)}
           GROUP BY u.id, u.name
           ORDER BY won DESC, leads DESC
           LIMIT 10`, p4,
@@ -192,7 +220,7 @@ export class DashboardService {
                 COALESCE(ROUND(AVG(s.elapsed_seconds) FILTER (
                   WHERE s.metric = 'first_response' AND s.satisfied_at IS NOT NULL))::int, 0) AS avg_response_seconds
            FROM lead_sla s JOIN lead l ON l.id = s.lead_id
-          WHERE (${w5}) AND l.deleted_at IS NULL AND l.is_active`, p5,
+          WHERE (${w5}) AND l.deleted_at IS NULL AND l.is_active${this.narrow(L, gf, p5)}`, p5,
       );
     }
 
@@ -204,7 +232,7 @@ export class DashboardService {
               COUNT(*) FILTER (WHERE w.visited_at::date = CURRENT_DATE)::int AS today,
               COUNT(*) FILTER (WHERE w.status = 'converted')::int AS converted
          FROM walk_in w LEFT JOIN lead wl ON wl.id = w.lead_id
-        WHERE (${w6}) AND w.deleted_at IS NULL`, p6,
+        WHERE (${w6}) AND w.deleted_at IS NULL${this.narrow({ branch: 'wl.branch_id', vertical: 'wl.vertical_id', pipeline: 'wl.pipeline_id', campaign: 'wl.campaign_id' }, gf, p6)}`, p6,
     );
     const p7: unknown[] = [];
     const w7 = this.resolver.buildScopeWhere(scope, { owner: 'rl.owner_id', team: 'rl.team_id', branch: 'rl.branch_id', vertical: 'rl.vertical_id', pipeline: 'rl.pipeline_id', campaign: 'rl.campaign_id' }, p7);
@@ -214,7 +242,7 @@ export class DashboardService {
               COUNT(*) FILTER (WHERE r.status = 'converted')::int AS converted,
               COUNT(*) FILTER (WHERE r.status IN ('converted','rewarded'))::int AS rewardable
          FROM referral r LEFT JOIN lead rl ON rl.id = r.lead_id
-        WHERE (${w7}) AND r.deleted_at IS NULL`, p7,
+        WHERE (${w7}) AND r.deleted_at IS NULL${this.narrow({ branch: 'rl.branch_id', vertical: 'rl.vertical_id', pipeline: 'rl.pipeline_id', campaign: 'rl.campaign_id' }, gf, p7)}`, p7,
     );
 
     return {
@@ -237,8 +265,10 @@ export class DashboardService {
    * custom date range). Separate endpoint so the range control doesn't refetch the
    * whole dashboard.
    */
-  async quickStats(scope: ResolvedScope, q: { from?: string; to?: string }) {
+  async quickStats(scope: ResolvedScope, q: { from?: string; to?: string } & DashScopeFilter) {
     const { from, to } = this.range(q.from, q.to);
+    const gf: DashScopeFilter = { branch_id: q.branch_id, vertical_id: q.vertical_id, pipeline_id: q.pipeline_id, campaign_id: q.campaign_id };
+    const L = { branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' };
     const p: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p);
     p.push(from, to);
@@ -255,7 +285,7 @@ export class DashboardService {
               COUNT(*) FILTER (WHERE l.is_duplicate
                                  AND l.created_at::date BETWEEN ${a} AND ${b})::int AS duplicates
          FROM lead l LEFT JOIN pipeline_stage st ON st.id = l.stage_id
-        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL`, p,
+        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL${this.narrow(L, gf, p)}`, p,
     );
     const pf: unknown[] = [];
     const wf = this.resolver.buildScopeWhere(scope, FOLLOWUP_SCOPE_COLS, pf);
@@ -267,7 +297,7 @@ export class DashboardService {
                                  AND f.completed_at::date BETWEEN ${fa} AND ${fb})::int AS followups_done,
               COUNT(*) FILTER (WHERE f.scheduled_at::date BETWEEN ${fa} AND ${fb})::int AS followups_scheduled
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
-        WHERE (${wf}) AND f.is_active AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, pf,
+        WHERE (${wf}) AND f.is_active AND f.deleted_at IS NULL AND l.deleted_at IS NULL${this.narrow(L, gf, pf)}`, pf,
     );
     const leads = Number((row as any)?.leads ?? 0);
     const won = Number((row as any)?.won ?? 0);

@@ -15,6 +15,8 @@ export interface FollowUpFilters {
   /** client update #4 — My Tasks tabs: assigned (owner_id = me) | reported (created_by = me) */
   view?: 'assigned' | 'reported';
   priority?: 'low' | 'medium' | 'high';
+  /** Global scope narrow (top-bar selector) — ANDed on top of the RBAC scope, never widens it. */
+  branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
 }
 
 export interface CreateFollowUpDto {
@@ -97,6 +99,12 @@ export class FollowUpsService {
     if (f.view === 'reported') { params.push(userId); where.push(`f.created_by = $${params.length}`); }
     if (f.priority) { params.push(assertPriority(f.priority)); where.push(`f.priority = $${params.length}`); }
     if (f.status) { params.push(f.status); where.push(`f.status = $${params.length}`); }
+    // Global scope narrow — filters through the follow-up's lead path (l.*), ANDed on top of the
+    // RBAC scope so it can only narrow within what the caller may already see.
+    if (f.branch_id) { params.push(f.branch_id); where.push(`l.branch_id = $${params.length}`); }
+    if (f.vertical_id) { params.push(f.vertical_id); where.push(`l.vertical_id = $${params.length}`); }
+    if (f.pipeline_id) { params.push(f.pipeline_id); where.push(`l.pipeline_id = $${params.length}`); }
+    if (f.campaign_id) { params.push(f.campaign_id); where.push(`l.campaign_id = $${params.length}`); }
     if (f.due === 'today') where.push(`f.status = 'pending' AND f.scheduled_at::date <= CURRENT_DATE`);
     if (f.due === 'overdue') where.push(`f.status = 'pending' AND f.scheduled_at < now()`);
     if (f.due === 'upcoming') where.push(`f.status = 'pending' AND f.scheduled_at >= now()`);

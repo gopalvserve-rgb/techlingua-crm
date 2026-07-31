@@ -20,6 +20,7 @@ import {
 import { UserPicker } from './userpicker';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
+import { useScope } from './scope';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
@@ -53,6 +54,14 @@ export interface ScreenCtxT {
 }
 export const ScreenCtx = createContext<ScreenCtxT>(null as unknown as ScreenCtxT);
 const useScreen = () => useContext(ScreenCtx);
+
+/** Append the active global scope (branch_id/vertical_id/...) to a fetch path as a query. */
+function withScope(path: string, sp: Record<string, string>): string {
+  const keys = Object.keys(sp);
+  if (!keys.length) return path;
+  const qs = new URLSearchParams(sp).toString();
+  return path + (path.includes('?') ? '&' : '?') + qs;
+}
 
 /* ------------------------------ helpers ------------------------------ */
 
@@ -234,10 +243,14 @@ const VIEW_LABEL: Record<Dash['view'], string> = {
 function DashOverview() {
   const { openLead, refreshTick, go, bump } = useScreen();
   const { me } = useAuth();
-  const d = useFetch<Dash>('/dashboard', [refreshTick]);
-  const today = useFetch<any[]>('/follow-ups?due=today&limit=5', [refreshTick]);
+  // Global scope (top-bar selector) narrows the dashboard within the caller's RBAC scope.
+  // The /dashboard endpoint ANDs these ids on top of the ScopeResolver, so they can only
+  // ever narrow — never widen — what the user is allowed to see.
+  const { params: sp, key: scopeKey } = useScope();
+  const d = useFetch<Dash>(withScope('/dashboard', sp), [refreshTick, scopeKey]);
+  const today = useFetch<any[]>(withScope('/follow-ups?due=today&limit=5', sp), [refreshTick, scopeKey]);
   const mine = useFetch<any[]>('/follow-ups?mine=1&status=pending&limit=4', [refreshTick]);
-  const recent = useFetch<{ total: number; rows: any[] }>('/leads?limit=5', [refreshTick]);
+  const recent = useFetch<{ total: number; rows: any[] }>(withScope('/leads?limit=5', sp), [refreshTick, scopeKey]);
 
   const data = d.data;
   const has = (w: string) => !!data?.widgets.includes(w);
@@ -534,10 +547,11 @@ function TodayFollowupCard({ rows, count, onChanged, onOpenList }: { rows: any[]
 
 function MyTasks() {
   const { refreshTick } = useScreen();
+  const { params: sp, key: scopeKey } = useScope();
   // client update #4 — two views: Assigned to Me (owner) | Reported by Me (creator)
   const [view, setView] = useState<'assigned' | 'reported'>('assigned');
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
-  const list = useFetch<any[]>(`/follow-ups?view=${view}&status=pending&limit=50`, [view, refreshTick]);
+  const list = useFetch<any[]>(withScope(`/follow-ups?view=${view}&status=pending&limit=50`, sp), [view, refreshTick, scopeKey]);
   const s = sum.data ?? {};
   const k = view === 'assigned'
     ? { open: s.my_open, due: s.my_due_today, over: s.my_overdue, done: s.my_done_week }
@@ -864,6 +878,10 @@ function readLeadNavFilters() {
 function LeadsAll() {
   const { openLead, refreshTick, bump } = useScreen();
   const { can } = useAuth();
+  // GLOBAL SCOPE seeds the hierarchy filters as a baseline; an explicit URL filter (a KPI card
+  // link) still wins, and the user can narrow further with the in-panel chips. The component
+  // remounts when the global scope changes (Shell keys Screen by the scope), so it re-seeds.
+  const { scope: gScope } = useScope();
   const canEditLead = can('lead.update');
   const canDeleteLead = can('lead.delete');
   const ref = useRef_();
@@ -879,7 +897,16 @@ function LeadsAll() {
     // Aug 2026 — dashboard card links: won (Conversions) + unassigned open the list pre-filtered.
     won?: boolean; unassigned?: boolean;
     sort: string; q: string;
-  }>(() => readLeadNavFilters());
+  }>(() => {
+    const base = readLeadNavFilters();
+    return {
+      ...base,
+      branch: base.branch ?? gScope.branch,
+      vertical: base.vertical ?? gScope.vertical,
+      pipeline: base.pipeline ?? gScope.pipeline,
+      campaign: base.campaign ?? gScope.campaign,
+    };
+  });
   const params = new URLSearchParams();
   if (f.branch) params.set('branch_id', String(f.branch));
   if (f.vertical) params.set('vertical_id', String(f.vertical));
@@ -1374,8 +1401,9 @@ function Sources() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
+  const { params: sp, key: scopeKey } = useScope();
   const [inc, setInc] = useState(false);
-  const list = useFetch<any[]>(`/sources${inc ? '?include_inactive=1' : ''}`, [refreshTick]);
+  const list = useFetch<any[]>(withScope(`/sources${inc ? '?include_inactive=1' : ''}`, sp), [refreshTick, scopeKey]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -1586,10 +1614,11 @@ function Verticals() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
+  const { scope: gScope } = useScope();
   const [inc, setInc] = useState(false);
-  // UAT-R3 #19 — Vertical list filters: by Branch (+ search, status).
+  // UAT-R3 #19 — Vertical list filters: by Branch (+ search, status). Seeded by the global scope.
   const [q, setQ] = useState('');
-  const [fBranch, setFBranch] = useState<number | undefined>(undefined);
+  const [fBranch, setFBranch] = useState<number | undefined>(gScope.branch);
   const vparams = new URLSearchParams();
   if (inc) vparams.set('include_inactive', '1');
   if (fBranch) vparams.set('branch_id', String(fBranch));
@@ -1774,11 +1803,12 @@ function Pipelines() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
+  const { scope: gScope } = useScope();
   const [inc, setInc] = useState(false);
-  // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); child resets on parent change.
+  // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); seeded by the global scope.
   const [q, setQ] = useState('');
-  const [fBranch, setFBranch] = useState<number | undefined>(undefined);
-  const [fVertical, setFVertical] = useState<number | undefined>(undefined);
+  const [fBranch, setFBranch] = useState<number | undefined>(gScope.branch);
+  const [fVertical, setFVertical] = useState<number | undefined>(gScope.vertical);
   const pparams = new URLSearchParams();
   if (inc) pparams.set('include_inactive', '1');
   if (fBranch) pparams.set('branch_id', String(fBranch));
@@ -2050,10 +2080,11 @@ function Campaigns() {
   const [inc, setInc] = useState(false);
   // UAT-R3 #19 — Campaign list filters follow Branch \u2192 Vertical \u2192 Pipeline (+ search, status);
   // each child resets when its parent changes and the API honours the params.
+  const { scope: gScope } = useScope();
   const [q, setQ] = useState('');
-  const [fBranch, setFBranch] = useState<number | undefined>(undefined);
-  const [fVertical, setFVertical] = useState<number | undefined>(undefined);
-  const [fPipeline, setFPipeline] = useState<number | undefined>(undefined);
+  const [fBranch, setFBranch] = useState<number | undefined>(gScope.branch);
+  const [fVertical, setFVertical] = useState<number | undefined>(gScope.vertical);
+  const [fPipeline, setFPipeline] = useState<number | undefined>(gScope.pipeline);
   const cparams = new URLSearchParams();
   if (inc) cparams.set('include_inactive', '1');
   if (fBranch) cparams.set('branch_id', String(fBranch));

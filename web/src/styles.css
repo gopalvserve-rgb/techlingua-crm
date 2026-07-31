@@ -52,6 +52,17 @@ a{color:inherit;text-decoration:none}
 .scope-chip.org .vl{color:var(--primary)}
 .scope-chip .vl svg{width:12px;height:12px;opacity:.6}
 .scope-sep{color:var(--text-dim);flex:none}.scope-sep svg{width:14px;height:14px;display:block}
+/* Global scope selector (top bar) — each level is a native <select> blended into a scope chip. */
+.scope-pick{cursor:pointer}
+.scope-pick .vl{position:relative}
+.scope-pick .vl select{appearance:none;-webkit-appearance:none;background:transparent;border:none;color:var(--text);font-family:inherit;font-weight:600;font-size:12.5px;padding:0 2px;margin:0;cursor:pointer;outline:none;max-width:150px}
+.scope-pick .vl select:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:5px}
+.scope-pick .vl svg{width:12px;height:12px;opacity:.6;pointer-events:none}
+.scope-pick.on{background:var(--surface-2);border-color:var(--border)}
+.scope-pick.on .vl select{color:var(--primary)}
+.scope-clear{display:inline-flex;align-items:center;gap:4px;flex:none;margin-left:6px;padding:5px 9px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-dim);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;transition:.16s}
+.scope-clear:hover{color:var(--text);border-color:var(--primary)}
+.scope-clear svg{width:12px;height:12px}
 .tb-actions{display:flex;align-items:center;gap:8px;flex:none}
 .searchbox{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:7px 11px;width:200px;color:var(--text-muted);transition:.16s}
 .searchbox:focus-within{border-color:var(--primary)}

@@ -12,6 +12,7 @@ import { LeadSheet } from './leadsheet';
 import { RoleModal } from './rolemodal';
 import { toast, useRef_, Toaster } from './refdata';
 import { NotificationBell } from './notifications';
+import { ScopeSelector, useScope } from './scope';
 
 
 function Logo() {
@@ -27,7 +28,6 @@ function Logo() {
 
 export function Shell() {
   const { me, logout } = useAuth();
-  const ref = useRef_();
   const nav = useNavigate();
   const params = useParams<{ mod: string; sub: string }>();
   const mod = params.mod || 'dash';
@@ -38,6 +38,7 @@ export function Shell() {
   const [filter, setFilter] = useState('');
   const [openMods, setOpenMods] = useState<Record<string, boolean>>({ [mod]: true });
   const [globalQ, setGlobalQ] = useState('');
+  const { params: scopeParams, key: scopeKey } = useScope();
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('tl_theme', theme); }, [theme]);
   useEffect(() => { setOpenMods((x) => ({ ...x, [mod]: true })); }, [mod]);
@@ -48,7 +49,13 @@ export function Shell() {
   const go = (m: string, s: string, filter?: Record<string, string | number | undefined>) => {
     setDrawer(false);
     const qs = new URLSearchParams();
-    if (filter) for (const [key, val] of Object.entries(filter)) if (val !== undefined && val !== '') qs.set(key, String(val));
+    // GLOBAL SCOPE as the BASELINE: fold the top-bar Branch/Vertical/Pipeline/Campaign into every
+    // navigation so the target screen seeds pre-scoped. An explicit filter param from the caller
+    // (e.g. a KPI card link) still WINS, so a card can narrow further inside the global scope.
+    for (const [key, val] of Object.entries(scopeParams)) qs.set(key, val);
+    if (filter) for (const [key, val] of Object.entries(filter)) {
+      if (val !== undefined && val !== '') qs.set(key, String(val)); else qs.delete(key);
+    }
     const suffix = qs.toString();
     nav(`/m/${m}/${s}${suffix ? `?${suffix}` : ''}`);
   };
@@ -60,9 +67,6 @@ export function Shell() {
   }), [q]);
 
   const roleName = (me?.assignments?.[0] as any)?.role_name ?? '';
-  const firstBranch = ref.branches[0]?.name;
-  const firstVertical = ref.verticals[0]?.name;
-  const firstPipeline = ref.pipelines[0]?.name;
 
   return (
     <div className="app">
@@ -73,15 +77,7 @@ export function Shell() {
       <div className="topbar">
         <button className="icon-btn hamb" onClick={() => setDrawer((d) => !d)} aria-label="Open menu"><Ic k="menu" /></button>
         <div className="mbrand"><div className="logo" style={{ fontSize: 11, color: '#fff' }}>TL</div><span>Tech Lingua</span></div>
-        <div className="scope">
-          <button className="scope-chip org"><span className="lv">Org</span><span className="vl">Tech Lingua LLP</span></button>
-          <span className="scope-sep"><Ic k="chev" /></span>
-          <button className="scope-chip"><span className="lv">Branch</span><span className="vl">{firstBranch ? (ref.branches.length > 1 ? `All (${ref.branches.length})` : firstBranch) : 'All'} <Ic k="chevd" /></span></button>
-          <span className="scope-sep"><Ic k="chev" /></span>
-          <button className="scope-chip"><span className="lv">Vertical</span><span className="vl">{firstVertical ? (ref.verticals.length > 1 ? `All (${ref.verticals.length})` : firstVertical) : 'All'} <Ic k="chevd" /></span></button>
-          <span className="scope-sep"><Ic k="chev" /></span>
-          <button className="scope-chip"><span className="lv">Pipeline</span><span className="vl">{firstPipeline ? (ref.pipelines.length > 1 ? `All (${ref.pipelines.length})` : firstPipeline) : 'All'} <Ic k="chevd" /></span></button>
-        </div>
+        <ScopeSelector />
         <div className="tb-actions">
           <div className="searchbox">
             <Ic k="search" />
@@ -134,7 +130,7 @@ export function Shell() {
       </nav>
       <div className={`scrim ${drawer ? 'open' : ''}`} onClick={() => setDrawer(false)} />
       <main className="main" id="main">
-        <Screen key={`${mod}.${sub}`} mod={mod} sub={sub} go={go} />
+        <Screen key={`${mod}.${sub}.${scopeKey}`} mod={mod} sub={sub} go={go} />
       </main>
       <Toaster />
     </div>
