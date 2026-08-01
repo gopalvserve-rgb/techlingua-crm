@@ -38,7 +38,8 @@ export class ReportController {
       operators: Object.entries(FILTER_OPS).map(([key, v]) => ({ key, label: v.label, types: v.types, arity: v.arity })),
       date_presets: [
         { key: 'all', label: 'All time' }, { key: 'today', label: 'Today' },
-        { key: 'yesterday', label: 'Yesterday' }, { key: 'last_7', label: 'Last 7 days' },
+        { key: 'yesterday', label: 'Yesterday' }, { key: 'this_week', label: 'This week' },
+        { key: 'last_7', label: 'Last 7 days' },
         { key: 'last_30', label: 'Last 30 days' }, { key: 'this_month', label: 'This month' },
         { key: 'last_month', label: 'Last month' }, { key: 'this_quarter', label: 'This quarter' },
         { key: 'this_year', label: 'This year' }, { key: 'custom', label: 'Custom range…' },

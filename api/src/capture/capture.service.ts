@@ -7,6 +7,7 @@ import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { normalizePhone } from '../common/phone.util';
+import { assertDateRange } from '../common/date.util';
 
 /**
  * WALK-INS & REFERRALS — the two manual capture screens on the Dashboard.
@@ -116,12 +117,16 @@ export class CaptureService {
 
   /* ================================ WALK-INS ================================ */
 
-  async listWalkIns(scope: ResolvedScope, q: { today?: boolean; status?: string; limit?: number }) {
+  async listWalkIns(scope: ResolvedScope, q: { today?: boolean; status?: string; from?: string; to?: string; limit?: number }) {
     const params: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, WALKIN_SCOPE_COLS, params);
     const where = [w, 'w.deleted_at IS NULL'];
     if (q.today) where.push(`w.visited_at::date = CURRENT_DATE`);
     if (q.status) { params.push(q.status); where.push(`w.status = $${params.length}`); }
+    // Shared date range — filters by the VISIT date (visited_at). Bad date -> 400; either bound optional.
+    const dr = assertDateRange(q.from, q.to);
+    if (dr.from) { params.push(dr.from); where.push(`w.visited_at::date >= $${params.length}::date`); }
+    if (dr.to) { params.push(dr.to); where.push(`w.visited_at::date <= $${params.length}::date`); }
     params.push(Math.min(Number(q.limit) || 100, 500));
     return this.db.query(
       // DEF-S34-03: the Edit form prefills from this row, so EVERY editable column is

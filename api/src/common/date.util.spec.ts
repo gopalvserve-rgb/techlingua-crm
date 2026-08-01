@@ -1,6 +1,29 @@
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative } from 'path';
-import { toDateString, toIsoString, requireDateString } from './date.util';
+import { toDateString, toIsoString, requireDateString, assertDateRange } from './date.util';
+import { BadRequestException } from '@nestjs/common';
+
+/**
+ * assertDateRange — the shared validator behind the date-range control on every list
+ * (walk-ins, follow-ups, audit, …). Bad date = 400, from>to = 400, either bound optional.
+ */
+describe('assertDateRange — the shared list date-range validator', () => {
+  it('accepts a well-formed range and normalises it', () => {
+    expect(assertDateRange('2026-07-01', '2026-07-31')).toEqual({ from: '2026-07-01', to: '2026-07-31' });
+  });
+  it('treats empty / missing bounds as unbounded (open-ended is valid)', () => {
+    expect(assertDateRange('', '')).toEqual({ from: null, to: null });
+    expect(assertDateRange('2026-07-01', undefined)).toEqual({ from: '2026-07-01', to: null });
+    expect(assertDateRange(undefined, '2026-07-31')).toEqual({ from: null, to: '2026-07-31' });
+  });
+  it('rejects a malformed date with a 400', () => {
+    expect(() => assertDateRange('last-tuesday', '2026-07-31')).toThrow(BadRequestException);
+  });
+  it('rejects from > to with a 400', () => {
+    expect(() => assertDateRange('2026-08-01', '2026-07-01')).toThrow(/not be after/);
+  });
+});
+
 
 /**
  * =============================================================================

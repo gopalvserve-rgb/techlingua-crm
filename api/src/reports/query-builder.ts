@@ -55,7 +55,7 @@ export interface ReportFilter { col: string; op: FilterOp; value?: unknown; valu
 export interface ReportSort { col: string; dir?: 'asc' | 'desc' }
 
 export type DatePreset =
-  | 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'this_month'
+  | 'all' | 'today' | 'yesterday' | 'this_week' | 'last_7' | 'last_30' | 'this_month'
   | 'last_month' | 'this_quarter' | 'this_year' | 'custom';
 
 export interface ReportConfig {
@@ -93,6 +93,8 @@ export function presetWindow(preset: DatePreset, now: Date): [string | null, str
   switch (preset) {
     case 'today':      return [d(at(Y, M, D)), d(at(Y, M, D + 1))];
     case 'yesterday':  return [d(at(Y, M, D - 1)), d(at(Y, M, D))];
+    // This week — Sunday start, matching the shared front-end date-range control (daterange.tsx).
+    case 'this_week':  return [d(at(Y, M, D - now.getUTCDay())), d(at(Y, M, D + 1))];
     case 'last_7':     return [d(at(Y, M, D - 6)), d(at(Y, M, D + 1))];
     case 'last_30':    return [d(at(Y, M, D - 29)), d(at(Y, M, D + 1))];
     case 'this_month': return [d(at(Y, M, 1)), d(at(Y, M + 1, 1))];

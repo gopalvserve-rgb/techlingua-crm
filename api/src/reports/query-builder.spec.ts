@@ -185,6 +185,8 @@ describe('the date window', () => {
   it.each([
     ['today', '2026-07-16', '2026-07-17'],
     ['yesterday', '2026-07-15', '2026-07-16'],
+    // 2026-07-16 is a Thursday; the Sunday-start week began 2026-07-12 (matches daterange.tsx).
+    ['this_week', '2026-07-12', '2026-07-17'],
     ['last_7', '2026-07-10', '2026-07-17'],
     ['this_month', '2026-07-01', '2026-08-01'],
     ['last_month', '2026-06-01', '2026-07-01'],

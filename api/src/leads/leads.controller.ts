@@ -199,6 +199,7 @@ export class FollowUpsController {
       priority: (q.priority as 'low' | 'medium' | 'high') || undefined,
       branch_id: num(q.branch_id), vertical_id: num(q.vertical_id),
       pipeline_id: num(q.pipeline_id), campaign_id: num(q.campaign_id),
+      from: q.from || undefined, to: q.to || undefined,
     }, u.id);
   }
 

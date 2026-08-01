@@ -8,6 +8,7 @@ import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { SettingsService } from '../common/settings.service';
 import { assertActiveUser } from './active-user.util';
+import { assertDateRange } from '../common/date.util';
 
 export interface FollowUpFilters {
   lead_id?: number; owner_id?: number; status?: string;
@@ -17,6 +18,8 @@ export interface FollowUpFilters {
   priority?: 'low' | 'medium' | 'high';
   /** Global scope narrow (top-bar selector) — ANDed on top of the RBAC scope, never widens it. */
   branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
+  /** Shared date-range control — filters by the task's DUE date (scheduled_at). */
+  from?: string; to?: string;
 }
 
 export interface CreateFollowUpDto {
@@ -108,6 +111,10 @@ export class FollowUpsService {
     if (f.due === 'today') where.push(`f.status = 'pending' AND f.scheduled_at::date <= CURRENT_DATE`);
     if (f.due === 'overdue') where.push(`f.status = 'pending' AND f.scheduled_at < now()`);
     if (f.due === 'upcoming') where.push(`f.status = 'pending' AND f.scheduled_at >= now()`);
+    // Shared date range — filters tasks by their DUE date (scheduled_at). Bad date -> 400.
+    const dr = assertDateRange(f.from, f.to);
+    if (dr.from) { params.push(dr.from); where.push(`f.scheduled_at::date >= $${params.length}::date`); }
+    if (dr.to) { params.push(dr.to); where.push(`f.scheduled_at::date <= $${params.length}::date`); }
     params.push(Math.min(Number(f.limit) || 100, 500));
     // priority sorts within the due DATE (high > medium > low), hot leads first inside a slot
     return this.db.query(

@@ -1,0 +1,132 @@
+/**
+ * SHARED DATE-RANGE CONTROL (Aug 2026, client) — one control, used EVERYWHERE data is listed
+ * (Leads, Dashboard/Quick Stats, Reports, Walk-ins, Follow-ups, Enrolments, Fee receipts,
+ * Audit log, Integration/Error logs). The client asked for the SAME picker on every screen:
+ * Today · Yesterday · This Week · This Month · Custom, plus an "All time" (clear) option.
+ *
+ * ONE COMPUTATION. Every screen resolves a preset through `presetRange()` here, so "This Week"
+ * means exactly the same span on the dashboard as it does on the Leads list. This generalises the
+ * Quick Stats preset logic that used to live (privately) in dyn.tsx.
+ *
+ * LOCAL CALENDAR DAYS. The window is computed in the BROWSER's local day boundaries — the same
+ * way the app already handles created-date filters (created_from / created_to). We deliberately
+ * do NOT convert to UTC here: the list/API filters compare `created_at::date` and the app has
+ * always filtered on local calendar days, so a user picking "Today" gets the day they see on the
+ * wall clock. (This inherits the app's known 1-day server-timezone edge at the day boundary; it is
+ * consistent across every screen rather than different per screen.)
+ *
+ * EMITS { from, to } as YYYY-MM-DD — exactly the shape the list + API filters already understand
+ * (created_from/created_to and equivalents). An undefined/empty bound = unbounded ("All time").
+ */
+import { Ic } from './icons';
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** YYYY-MM-DD in the browser's LOCAL day (not UTC — avoids the toISOString() off-by-one). */
+export const isoDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+export interface DateRangeValue { from?: string; to?: string }
+
+export type PresetKey = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom';
+
+/** The five presets the client asked for, plus "All time". `custom` is implicit (the inputs). */
+export const DR_PRESETS: Array<{ key: Exclude<PresetKey, 'custom'>; label: string }> = [
+  { key: 'all', label: 'All time' },
+  { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
+  { key: 'week', label: 'This Week' },
+  { key: 'month', label: 'This Month' },
+];
+
+/**
+ * A preset -> { from, to } in LOCAL calendar days. PURE — the clock is an argument, so the
+ * unit tests are stable and never flake at midnight. "This Week" starts on Sunday, matching the
+ * span Quick Stats has always used; "This Month" runs from the 1st to today.
+ */
+export function presetRange(key: PresetKey, now: Date = new Date()): DateRangeValue {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (key) {
+    case 'today':
+      return { from: isoDay(today), to: isoDay(today) };
+    case 'yesterday': {
+      const y = new Date(today); y.setDate(today.getDate() - 1);
+      return { from: isoDay(y), to: isoDay(y) };
+    }
+    case 'week': {
+      const s = new Date(today); s.setDate(today.getDate() - today.getDay()); // Sunday start
+      return { from: isoDay(s), to: isoDay(today) };
+    }
+    case 'month': {
+      const s = new Date(today.getFullYear(), today.getMonth(), 1);
+      return { from: isoDay(s), to: isoDay(today) };
+    }
+    case 'all':
+    case 'custom':
+    default:
+      return {};
+  }
+}
+
+/** Which preset does a value correspond to (for highlighting the active chip)? */
+export function matchPreset(v: DateRangeValue, now: Date = new Date()): PresetKey {
+  const from = v.from || undefined;
+  const to = v.to || undefined;
+  if (!from && !to) return 'all';
+  for (const { key } of DR_PRESETS) {
+    if (key === 'all') continue;
+    const r = presetRange(key, now);
+    if ((r.from || undefined) === from && (r.to || undefined) === to) return key;
+  }
+  return 'custom';
+}
+
+/**
+ * THE control. Controlled component: it takes the current `{from,to}` and calls `onChange` with a
+ * new one. Same markup and classes on every screen (`.daterange` + the shared `.fchip` chips),
+ * so it looks and behaves identically wherever it is dropped.
+ *
+ * `allowAllTime` — hide the "All time" chip on screens that are inherently range-scoped (Quick
+ * Stats always shows some range). `defaultToday` is not a prop: each SCREEN owns its own default
+ * (see docs/dev/24), because "don't hide existing data by defaulting to Today" is a per-screen call.
+ */
+export function DateRange({
+  value, onChange, allowAllTime = true, idPrefix = 'dr', style,
+}: {
+  value: DateRangeValue;
+  onChange: (v: DateRangeValue) => void;
+  allowAllTime?: boolean;
+  idPrefix?: string;
+  style?: React.CSSProperties;
+}) {
+  const active = matchPreset(value);
+  const pick = (key: PresetKey) => onChange(presetRange(key));
+  const setCustom = (k: 'from' | 'to', val: string) => onChange({ ...value, [k]: val || undefined });
+
+  return (
+    <div className="daterange" role="group" aria-label="Date range" style={style}>
+      {DR_PRESETS.filter((p) => allowAllTime || p.key !== 'all').map((p) => (
+        <button
+          key={p.key} type="button"
+          className={`fchip${active === p.key ? ' on' : ''}`}
+          aria-pressed={active === p.key}
+          onClick={() => pick(p.key)}
+        >{p.label}</button>
+      ))}
+      <span className={`fchip dr-custom${active === 'custom' ? ' on' : ''}`}>
+        <Ic k="cal" />
+        {/* the visible <label> IS the accessible name (no aria-label) — so getByLabelText('From')
+            keeps working and screen readers read the on-screen text. */}
+        <label htmlFor={`${idPrefix}-from`} className="dr-lbl">From</label>
+        <input
+          id={`${idPrefix}-from`} type="date" className="ainp dr-inp"
+          value={value.from ?? ''} onChange={(e) => setCustom('from', e.target.value)}
+        />
+        <label htmlFor={`${idPrefix}-to`} className="dr-lbl">To</label>
+        <input
+          id={`${idPrefix}-to`} type="date" className="ainp dr-inp"
+          value={value.to ?? ''} onChange={(e) => setCustom('to', e.target.value)}
+        />
+      </span>
+    </div>
+  );
+}

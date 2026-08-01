@@ -241,3 +241,42 @@ describe('GLOBAL SCOPE NARROW — the top-bar selector narrows within RBAC, neve
     expect(calls[0].params).toContain(4);
   });
 });
+
+/* ---- the shared date-range control: the overview KPI/funnel cohort honours from/to ---- */
+describe('the overview KPI cohort honours the shared date range (created_at), additively', () => {
+  // the FUNNEL (byStage) query is the clean discriminator: with no range it has NO created_at
+  // filter at all, so it agrees all-time with the Funnel report (reconcile.spec). A range adds one.
+  const funnelOf = (calls: Array<{ sql: string; params: unknown[] }>) => calls.find((c) => /GROUP BY st\.id/.test(c.sql))!;
+
+  it('WITHOUT a range the funnel query is ALL-TIME — default unchanged, still agrees with the report', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(ADMIN, 1);
+    expect(funnelOf(calls).sql).not.toContain('l.created_at::date BETWEEN $');
+  });
+
+  it('WITH a range the funnel + KPI + leaderboard queries AND in created_at BETWEEN from..to', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(ADMIN, 1, { from: '2026-07-01', to: '2026-07-15' });
+    // the funnel query now carries the created-cohort predicate
+    expect(funnelOf(calls).sql).toContain('l.created_at::date BETWEEN $');
+    // kpis, funnel and leaderboard all carry a created_at BETWEEN once the range is applied
+    const applied = calls.filter((c) => c.sql.includes('l.created_at::date BETWEEN $'));
+    expect(applied.length).toBeGreaterThanOrEqual(3);
+    expect(funnelOf(calls).params).toContain('2026-07-01');
+    expect(funnelOf(calls).params).toContain('2026-07-15');
+  });
+
+  it('a malformed range is a 400 (never a silently-wrong default)', async () => {
+    const { db } = spyDb();
+    await expect(svc(db).overview(ADMIN, 1, { from: 'last-tuesday', to: '2026-07-15' })).rejects.toThrow(/YYYY-MM-DD/);
+  });
+
+  it('an open-ended range (only from) is honoured', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).overview(ADMIN, 1, { from: '2026-07-01' });
+    const applied = calls.filter((c) => c.sql.includes('l.created_at::date BETWEEN $'));
+    expect(applied.length).toBeGreaterThanOrEqual(3);
+    // the missing `to` becomes an unbounded upper sentinel, not a 400
+    for (const c of applied) expect(c.params).toContain('2026-07-01');
+  });
+});

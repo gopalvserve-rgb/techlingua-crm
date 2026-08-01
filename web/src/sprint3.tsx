@@ -15,6 +15,7 @@ import { ConfirmModal, DetailModal, KV, Section, fmtFull, rowActions } from './r
 import { AddModal, EditSpec, need } from './forms';
 import { AddMasterModal } from './mastermodal';
 import { ScreenCtx } from './dyn';
+import { DateRange, presetRange } from './daterange';
 
 const useScreen = () => useContext(ScreenCtx);
 
@@ -943,9 +944,15 @@ export function WalkIns() {
   const { can } = useAuth();
   const ref = useRef_();
   const [addStatus, setAddStatus] = useState(false);
-  const [today, setToday] = useState(true);
+  // SHARED date range on the VISIT date. Walk-ins is a reception-desk daily view, so it opens
+  // on Today (like it always has); the presets/All-time reveal older visits. (docs/dev/24)
+  const [range, setRange] = useState<{ from?: string; to?: string }>(() => presetRange('today'));
+  const rq = new URLSearchParams({ limit: '100' });
+  if (range.from) rq.set('from', range.from);
+  if (range.to) rq.set('to', range.to);
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
   const sum = useFetch<any>('/walk-ins/summary', [refreshTick]);
-  const list = useFetch<any[]>(`/walk-ins?limit=100${today ? '&today=1' : ''}`, [today, refreshTick]);
+  const list = useFetch<any[]>(`/walk-ins?${rq.toString()}`, [rangeKey, refreshTick]);
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   // #19 — Delete action for walk-in records (soft-delete, RBAC-gated, confirm).
@@ -969,12 +976,11 @@ export function WalkIns() {
       ]} />
 
       <div className="filters">
-        <button className={`fchip${today ? ' on' : ''}`} onClick={() => setToday(true)}>Today</button>
-        <button className={`fchip${!today ? ' on' : ''}`} onClick={() => setToday(false)}>All walk-ins</button>
+        <DateRange value={range} onChange={setRange} idPrefix="walkins-dr" />
       </div>
 
       <TableCard
-        title={today ? "Today's walk-ins" : 'All walk-ins'}
+        title={range.from && range.from === range.to && range.to === presetRange('today').to ? "Today's walk-ins" : 'Walk-ins'}
         icon="users"
         more={can('walkin.create')
           ? <a onClick={() => openAdd('dash.walkins')} style={{ cursor: 'pointer', color: 'var(--primary)' }}>+ Add walk-in</a>

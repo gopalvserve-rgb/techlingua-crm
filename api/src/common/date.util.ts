@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 /**
  * =============================================================================
  * DATE NORMALISATION AT THE BOUNDARY — the one place a date becomes a string.
@@ -30,6 +32,9 @@
  * get to choose which one arrives. `date-pattern.spec.ts` then greps `api/src` and FAILS
  * THE BUILD on any new `String(x).slice(0, 10)` outside a written allowlist, so the third
  * instance cannot be written — which is the only kind of fix that closes a class.
+ *
+ * (`assertDateRange` at the foot of this file also throws `BadRequestException` for the list
+ * date-range filters — same reason: one place, one message.)
  *
  * WHY NOT A pg TYPE PARSER? Registering a parser for OID 1082 so `date` columns arrive as
  * strings would kill the class at the source — and it would silently change the shape of
@@ -106,4 +111,25 @@ export function requireDateString(v: unknown, onInvalid: () => never): string | 
   const d = toDateString(v);
   if (d === undefined) onInvalid();
   return d;
+}
+
+/**
+ * SHARED DATE-RANGE VALIDATION for the list endpoints that got the date-range control
+ * (Aug 2026 client). A `from`/`to` pair arrives from the query string; each is optional
+ * (an open-ended range is valid), a cleared bound is `''` = none, and a MALFORMED date is a
+ * 400 with a consistent message (never a silently-wrong result). `from > to` is a 400 too.
+ * Returns normalised `{from, to}` (either may be null) ready to bind into the SQL.
+ *
+ * Kept here so every list — walk-ins, follow-ups, enrolments, fee receipts, audit — validates
+ * a date range the one same way, exactly as `toDateString` centralised the parsing.
+ */
+export function assertDateRange(
+  from: unknown, to: unknown,
+  fail: (msg: string) => never = (m) => { throw new BadRequestException(m); },
+): { from: string | null; to: string | null } {
+  const f = toDateString(from);
+  const t = toDateString(to);
+  if (f === undefined || t === undefined) fail('from / to must be YYYY-MM-DD dates');
+  if (f && t && f > t) fail('"from" must not be after "to"');
+  return { from: f ?? null, to: t ?? null };
 }

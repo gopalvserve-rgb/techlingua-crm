@@ -109,10 +109,38 @@ export class DashboardService {
     return { from: f, to: t };
   }
 
+  /**
+   * The OPTIONAL created-cohort range carried by the shared date-range control (Aug 2026).
+   * Distinct from `range()` above: `range()` always resolves to a concrete window (defaulting to
+   * the current month, for `in_range`); this returns `null` when NO range was supplied, so the
+   * dashboard's headline totals stay ALL-TIME by default and only narrow when the user picks one.
+   * An open-ended bound (only `from`, or only `to`) is honoured. A malformed date is a 400.
+   */
+  private appliedRange(from?: string, to?: string): { from: string; to: string } | null {
+    if ((from == null || from === '') && (to == null || to === '')) return null;
+    const f = toDateString(from);
+    const t = toDateString(to);
+    if (f === undefined || t === undefined) throw new BadRequestException('from / to must be YYYY-MM-DD dates');
+    const lo = f ?? '0001-01-01';
+    const hi = t ?? '9999-12-31';
+    if (lo > hi) throw new BadRequestException('"from" must not be after "to"');
+    return { from: lo, to: hi };
+  }
+
+  /** Append ` AND <col>::date BETWEEN $a AND $b` when a range is applied (else ''). Pushes params. */
+  private rangeAnd(col: string, ar: { from: string; to: string } | null, p: unknown[]): string {
+    if (!ar) return '';
+    p.push(ar.from, ar.to);
+    return ` AND ${col}::date BETWEEN $${p.length - 1}::date AND $${p.length}::date`;
+  }
+
   /** THE dashboard payload. One call, scoped, with the widget list for the caller's view. */
   async overview(scope: ResolvedScope, userId: number, q: { from?: string; to?: string } & DashScopeFilter = {}) {
     const view = viewOf(scope);
     const { from, to } = this.range(q.from, q.to);
+    // When the user picks a preset, narrow the lead cohort by CREATED date (consistent with the
+    // Leads list's created_from/created_to). Absent = all-time (unchanged default behaviour).
+    const ar = this.appliedRange(q.from, q.to);
     const gf: DashScopeFilter = { branch_id: q.branch_id, vertical_id: q.vertical_id, pipeline_id: q.pipeline_id, campaign_id: q.campaign_id };
     const L = { branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' };
 
@@ -137,7 +165,7 @@ export class DashboardService {
               COUNT(*) FILTER (WHERE l.owner_id IS NULL)::int AS unassigned
          FROM lead l
          LEFT JOIN pipeline_stage st ON st.id = l.stage_id
-        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL${this.narrow(L, gf, p)}`, p,
+        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL${this.narrow(L, gf, p)}${this.rangeAnd('l.created_at', ar, p)}`, p,
     );
 
     // follow-ups: the SAME resolved scope, mapped onto the follow-up columns
@@ -170,7 +198,7 @@ export class DashboardService {
     const byStage = await this.db.query(
       `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, COUNT(l.id)::int AS ct
          FROM ${STAGE_COUNT_FROM}
-        WHERE (${w2}) AND ${STAGE_COUNT_LIVE}${this.narrow(L, gf, p2)}
+        WHERE (${w2}) AND ${STAGE_COUNT_LIVE}${this.narrow(L, gf, p2)}${this.rangeAnd('l.created_at', ar, p2)}
         GROUP BY st.id, st.name, st.stage_type, st.sort_order
         ORDER BY st.sort_order`, p2,
     );
@@ -205,7 +233,7 @@ export class DashboardService {
            FROM lead l
            JOIN "user" u ON u.id = l.owner_id
            LEFT JOIN pipeline_stage st ON st.id = l.stage_id
-          WHERE (${w4}) AND l.is_active AND l.deleted_at IS NULL${this.narrow(L, gf, p4)}
+          WHERE (${w4}) AND l.is_active AND l.deleted_at IS NULL${this.narrow(L, gf, p4)}${this.rangeAnd('l.created_at', ar, p4)}
           GROUP BY u.id, u.name
           ORDER BY won DESC, leads DESC
           LIMIT 10`, p4,

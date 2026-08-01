@@ -21,6 +21,7 @@ import { UserPicker } from './userpicker';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
+import { DateRange, presetRange } from './daterange';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
@@ -247,7 +248,16 @@ function DashOverview() {
   // The /dashboard endpoint ANDs these ids on top of the ScopeResolver, so they can only
   // ever narrow — never widen — what the user is allowed to see.
   const { params: sp, key: scopeKey } = useScope();
-  const d = useFetch<Dash>(withScope('/dashboard', sp), [refreshTick, scopeKey]);
+  // SHARED date range (client, Aug 2026). Default = All time so the dashboard opens on the same
+  // all-time numbers it always has; picking a preset narrows the LEAD COHORT by created date
+  // (the endpoint ANDs created_at BETWEEN from/to on top of RBAC + global scope). It never widens.
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const rq = new URLSearchParams();
+  if (range.from) rq.set('from', range.from);
+  if (range.to) rq.set('to', range.to);
+  const rqs = rq.toString();
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  const d = useFetch<Dash>(withScope('/dashboard' + (rqs ? `?${rqs}` : ''), sp), [refreshTick, scopeKey, rangeKey]);
   const today = useFetch<any[]>(withScope('/follow-ups?due=today&limit=5', sp), [refreshTick, scopeKey]);
   const mine = useFetch<any[]>('/follow-ups?mine=1&status=pending&limit=4', [refreshTick]);
   const recent = useFetch<{ total: number; rows: any[] }>(withScope('/leads?limit=5', sp), [refreshTick, scopeKey]);
@@ -308,6 +318,9 @@ function DashOverview() {
           <Ic k="users" />{data ? VIEW_LABEL[data.view] : 'Loading…'}
         </span>
         {data?.view === 'admin' && <span className="fchip" style={{ cursor: 'default' }}>Org-wide</span>}
+        {/* SHARED date range — narrows the lead cohort (created date) behind the KPIs,
+            funnel and leaderboard. Default All time, so nothing is hidden on open. */}
+        <DateRange value={range} onChange={setRange} idPrefix="dash-dr" style={{ marginLeft: 'auto' }} />
       </div>
 
       <Kpis cols={6} items={kpiItems} />
@@ -550,8 +563,14 @@ function MyTasks() {
   const { params: sp, key: scopeKey } = useScope();
   // client update #4 — two views: Assigned to Me (owner) | Reported by Me (creator)
   const [view, setView] = useState<'assigned' | 'reported'>('assigned');
+  // SHARED date range on the task DUE date (scheduled_at). Default All time — never hide open tasks.
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const rq = new URLSearchParams({ view, status: 'pending', limit: '50' });
+  if (range.from) rq.set('from', range.from);
+  if (range.to) rq.set('to', range.to);
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
-  const list = useFetch<any[]>(withScope(`/follow-ups?view=${view}&status=pending&limit=50`, sp), [view, refreshTick, scopeKey]);
+  const list = useFetch<any[]>(withScope(`/follow-ups?${rq.toString()}`, sp), [view, rangeKey, refreshTick, scopeKey]);
   const s = sum.data ?? {};
   const k = view === 'assigned'
     ? { open: s.my_open, due: s.my_due_today, over: s.my_overdue, done: s.my_done_week }
@@ -565,6 +584,9 @@ function MyTasks() {
         <button className={view === 'reported' ? 'on' : ''} onClick={() => setView('reported')}>
           Reported by Me{s.reported_open != null ? ` (${s.reported_open})` : ''}
         </button>
+      </div>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <DateRange value={range} onChange={setRange} idPrefix="mytasks-dr" />
       </div>
       <Kpis items={[
         { lab: 'Open tasks', val: String(k.open ?? '0'), ic: 'check' },
@@ -604,58 +626,25 @@ function TodayFollowups() {
 }
 
 /**
- * QUICK STATS — with the CUSTOM DATE RANGE the client asked for explicitly.
- * Presets plus a real from/to picker; the numbers are scoped exactly like the dashboard.
+ * QUICK STATS — with the CUSTOM DATE RANGE the client asked for explicitly, now on the SHARED
+ * DateRange control (daterange.tsx) so its presets match every other screen. Quick Stats is
+ * inherently range-scoped, so it never shows "All time" (allowAllTime=false) and defaults to
+ * This Month; the numbers are scoped exactly like the dashboard. The global scope narrows within.
  */
-const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const PRESETS: Array<[string, () => { from: string; to: string }]> = [
-  ['Today', () => ({ from: iso(new Date()), to: iso(new Date()) })],
-  ['This week', () => {
-    const n = new Date(); const s = new Date(n); s.setDate(n.getDate() - n.getDay());
-    return { from: iso(s), to: iso(n) };
-  }],
-  ['This month', () => {
-    const n = new Date();
-    return { from: iso(new Date(n.getFullYear(), n.getMonth(), 1)), to: iso(n) };
-  }],
-  ['Last 90 days', () => {
-    const n = new Date(); const s = new Date(n); s.setDate(n.getDate() - 89);
-    return { from: iso(s), to: iso(n) };
-  }],
-];
-
 function QuickStats() {
   const { refreshTick, go } = useScreen();
-  const [preset, setPreset] = useState('This month');
-  const [range, setRange] = useState(() => PRESETS[2][1]());
-  const stats = useFetch<any>(`/dashboard/quick-stats?from=${range.from}&to=${range.to}`, [range.from, range.to, refreshTick]);
+  const { params: sp, key: scopeKey } = useScope();
+  // both bounds always defined here (This Month by default); the quick-stats endpoint expects a range.
+  const [range, setRange] = useState<{ from?: string; to?: string }>(() => presetRange('month'));
+  const from = range.from ?? '';
+  const to = range.to ?? '';
+  const stats = useFetch<any>(withScope(`/dashboard/quick-stats?from=${from}&to=${to}`, sp), [from, to, refreshTick, scopeKey]);
   const s = stats.data;
-
-  const setPre = (name: string) => {
-    const p = PRESETS.find(([n]) => n === name);
-    if (!p) return;
-    setPreset(name);
-    setRange(p[1]());
-  };
-  const setCustom = (k: 'from' | 'to', v: string) => {
-    setPreset('Custom');
-    setRange((r) => ({ ...r, [k]: v }));
-  };
 
   return (
     <>
       <div className="filters" style={{ marginBottom: 12, alignItems: 'center' }}>
-        {PRESETS.map(([name]) => (
-          <button key={name} className={`fchip${preset === name ? ' on' : ''}`} onClick={() => setPre(name)}>{name}</button>
-        ))}
-        <span className={`fchip${preset === 'Custom' ? ' on' : ''}`} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <label htmlFor="qs-from" style={{ fontSize: 11 }}>From</label>
-          <input id="qs-from" type="date" className="ainp" style={{ padding: '2px 6px', fontSize: 11.5, width: 130 }}
-            value={range.from} onChange={(e) => setCustom('from', e.target.value)} />
-          <label htmlFor="qs-to" style={{ fontSize: 11 }}>To</label>
-          <input id="qs-to" type="date" className="ainp" style={{ padding: '2px 6px', fontSize: 11.5, width: 130 }}
-            value={range.to} onChange={(e) => setCustom('to', e.target.value)} />
-        </span>
+        <DateRange value={range} onChange={setRange} allowAllTime={false} idPrefix="qs" />
       </div>
 
       <Kpis cols={4} items={[
@@ -1017,12 +1006,10 @@ function LeadsAll() {
         {chip('Source', 'leads', f.source, ref.sources.filter((so) => !f.campaign || Number(so.campaign_id) === f.campaign), (v) => setF((x) => ({ ...x, source: v })))}
         {chip('Status', 'check', f.status, ref.statuses, (v) => setF((x) => ({ ...x, status: v })))}
         {chip('Owner', 'users', f.owner, selectableUsers(ref.users), (v) => setF((x) => ({ ...x, owner: v })))}
-        <div className="fchip" data-testid="date-from"><Ic k="clock" />From
-          <input type="date" aria-label="Created from" value={f.from ?? ''}
-            onChange={(e) => setF((x) => ({ ...x, from: e.target.value || undefined }))} /></div>
-        <div className="fchip" data-testid="date-to"><Ic k="clock" />To
-          <input type="date" aria-label="Created to" value={f.to ?? ''}
-            onChange={(e) => setF((x) => ({ ...x, to: e.target.value || undefined }))} /></div>
+        {/* SHARED date-range control — filters the list by lead CREATED date (created_from/
+            created_to). Default = All time so the list never hides existing leads. */}
+        <DateRange value={{ from: f.from, to: f.to }} idPrefix="leads-dr"
+          onChange={(v) => setF((x) => ({ ...x, from: v.from, to: v.to }))} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / email…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         {/* Sprint 3 — the band is FILTERABLE (client requirement). These chips are real. */}
         <div className="fchip" data-testid="band-filter">
@@ -2745,7 +2732,13 @@ function Roles() {
 
 function Audit() {
   const { refreshTick } = useScreen();
-  const logs = useFetch<any[]>('/audit-logs?limit=100', [refreshTick]);
+  // SHARED date range on when the action occurred. Default All time.
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const aq = new URLSearchParams({ limit: '100' });
+  if (range.from) aq.set('from', range.from);
+  if (range.to) aq.set('to', range.to);
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  const logs = useFetch<any[]>(`/audit-logs?${aq.toString()}`, [refreshTick, rangeKey]);
   const rows = logs.data ?? [];
   const [sel, setSel] = useState<any | null>(null);
   const todays = rows.filter((r) => new Date(r.occurred_at).toDateString() === new Date().toDateString());
@@ -2761,6 +2754,9 @@ function Audit() {
         { lab: 'Messages sent', val: '\u2014', ic: 'wa' },
         { lab: 'Calls logged', val: '\u2014', ic: 'phone' },
       ]} />
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <DateRange value={range} onChange={setRange} idPrefix="audit-dr" />
+      </div>
       <TableCard title="Activity log \u2014 all users" cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
         rows={rows.map((r) => [
           { mono: new Date(r.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), dim: true } as Cell,
@@ -3068,14 +3064,6 @@ function ErrorLogs() {
       </select>
     </div>
   );
-  const dateInp = (label: string, value: string | undefined, set: (v?: string) => void) => (
-    <div className="fchip" key={label}>
-      <Ic k="cal" />{label}
-      <input type="date" value={value ?? ''} onChange={(e) => set(e.target.value || undefined)}
-        style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} />
-    </div>
-  );
-
   const cols = grouped
     ? ['Severity', 'Count', 'Message', 'Path', 'Source', 'Code', 'Last seen', 'Status', 'User']
     : ['Severity', 'Message', 'Path', 'Source', 'Code', 'Time', 'Status', 'User'];
@@ -3109,8 +3097,9 @@ function ErrorLogs() {
         {chip('Level', 'bolt', f.level, [['error', 'Error'], ['warning', 'Warning']], (v) => setF((x) => ({ ...x, level: v })))}
         {chip('Source', 'grid', f.source, [['api', 'API'], ['web', 'Web']], (v) => setF((x) => ({ ...x, source: v })))}
         {chip('Status', 'shield', f.status, [['open', 'Open'], ['resolved', 'Resolved']], (v) => setF((x) => ({ ...x, status: v })))}
-        {dateInp('From', f.from, (v) => setF((x) => ({ ...x, from: v })))}
-        {dateInp('To', f.to, (v) => setF((x) => ({ ...x, to: v })))}
+        {/* SHARED date range (standardised from the old two date inputs) — filters by event time. */}
+        <DateRange value={{ from: f.from, to: f.to }} idPrefix="errlog-dr"
+          onChange={(v) => setF((x) => ({ ...x, from: v.from, to: v.to }))} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search message / path…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         <button className="fchip" style={{ marginLeft: 'auto', cursor: 'pointer', color: grouped ? 'var(--primary)' : 'var(--text-muted)', borderColor: grouped ? 'var(--primary)' : undefined }}
           onClick={() => setGrouped((g) => !g)}>

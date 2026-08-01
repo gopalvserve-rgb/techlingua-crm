@@ -22,6 +22,7 @@ import { toast, useFetch, useRef_ } from './refdata';
 import { UserPicker } from './userpicker';
 import { fmtINR } from './money';
 import { CONVERSION_LABEL_LEAD_WON } from './metrics';
+import { DateRange } from './daterange';
 
 /* ==================================================================== */
 /*  shared                                                               */
@@ -795,22 +796,20 @@ export function ScheduledDelivery() {
 /*  STANDARD REPORTS                                                     */
 /* ==================================================================== */
 
-/** A from/to control shared by the standard reports. */
+/** A from/to control shared by the standard reports — now the SHARED DateRange (presets +
+ *  custom + All time), so activity / TAT / funnel / campaign-ROI get the same picker as the
+ *  Leads list and the dashboard. Default = All time (empty from/to). */
 function RangeBar({ from, to, setFrom, setTo }: {
   from: string; to: string; setFrom: (v: string) => void; setTo: (v: string) => void;
 }) {
   return (
     <div className="card" style={{ marginBottom: 12 }}>
-      <div className="cb" style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div className="fld" style={{ margin: 0 }}>
-          <label htmlFor="rr-from">From</label>
-          <input id="rr-from" className="ainp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </div>
-        <div className="fld" style={{ margin: 0 }}>
-          <label htmlFor="rr-to">To</label>
-          <input id="rr-to" className="ainp" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </div>
-        {from || to ? <button className="btn sm" onClick={() => { setFrom(''); setTo(''); }}>All time</button> : null}
+      <div className="cb">
+        <DateRange
+          value={{ from: from || undefined, to: to || undefined }}
+          onChange={(v) => { setFrom(v.from || ''); setTo(v.to || ''); }}
+          idPrefix="rr"
+        />
       </div>
     </div>
   );

@@ -24,6 +24,7 @@ import {
   DiscountType, LineDraft, computeTotals, fmtINR, minorToInput, parseRupees,
 } from './money';
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
+import { DateRange } from './daterange';
 
 /* ==================================================================== */
 /*  shared bits                                                          */
@@ -851,7 +852,13 @@ export function EnrolmentModal({ initial, prefill, onClose, onSaved }: {
 
 export function SaleClosure() {
   const { can } = useAuth();
-  const { data, reload } = useFetch<any[]>('/enrolments');
+  // SHARED date range on the enrolment date (created_at). Default All time so nothing is hidden.
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const eq = new URLSearchParams();
+  if (range.from) eq.set('from', range.from);
+  if (range.to) eq.set('to', range.to);
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  const { data, reload } = useFetch<any[]>('/enrolments' + (eq.toString() ? `?${eq}` : ''), [rangeKey]);
   const summary = useFetch<any>('/enrolments/summary');
   const queue = useFetch<any[]>(can('enrolment.approve') ? '/enrolments/approvals?status=pending' : null);
   const policy = useFetch<any>('/enrolments/approval-policy');
@@ -882,6 +889,10 @@ export function SaleClosure() {
         { lab: 'Avg discount', val: s ? `${s.avg_discount_pct}%` : '—', ic: 'perf' },
         { lab: 'Pending approval', val: String(s?.pending_approval ?? 0), ic: 'clock' },
       ]} />
+
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <DateRange value={range} onChange={setRange} idPrefix="enrol-dr" />
+      </div>
 
       {policy.data && !policy.data.enabled ? (
         <PhaseNote>
@@ -1285,7 +1296,13 @@ export function CollectModal({ enrolmentId, onClose, onSaved }: {
 
 export function FeeCollection() {
   const { can } = useAuth();
-  const { data, reload } = useFetch<any[]>('/fees/receipts');
+  // SHARED date range on the receipt date (received_at). Default All time.
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const fq = new URLSearchParams();
+  if (range.from) fq.set('from', range.from);
+  if (range.to) fq.set('to', range.to);
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  const { data, reload } = useFetch<any[]>('/fees/receipts' + (fq.toString() ? `?${fq}` : ''), [rangeKey]);
   const summary = useFetch<any>('/fees/summary');
   const [modal, setModal] = useState(false);
   const rows = data ?? [];
@@ -1313,6 +1330,9 @@ export function FeeCollection() {
         { lab: 'Outstanding', val: s ? fmtINR(s.outstanding_minor) : '—', ic: 'clock' },
         { lab: 'Receipts', val: String(s?.receipts ?? 0), ic: 'doc' },
       ]} />
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <DateRange value={range} onChange={setRange} idPrefix="fees-dr" />
+      </div>
       <PhaseNote>
         This is <b>lite fee collection</b>: a receipt and a collection entry.
         <b> GST invoices, dues &amp; ageing, installment schedules, refunds and Razorpay capture are Phase 3.</b>

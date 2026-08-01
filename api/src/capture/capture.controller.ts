@@ -15,6 +15,7 @@ export class WalkInController {
     return this.capture.listWalkIns(s, {
       today: q.today === '1' || q.today === 'true',
       status: q.status || undefined,
+      from: q.from || undefined, to: q.to || undefined,
       limit: Number(q.limit) || 100,
     });
   }
