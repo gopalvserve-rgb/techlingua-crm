@@ -7,7 +7,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
-import { toDateString } from '../common/date.util';
+import { toDateString, isRealCalendarDate } from '../common/date.util';
 
 /**
  * CALENDAR — follow-ups, demos and meetings on one view.
@@ -65,7 +65,8 @@ export class CalendarService {
     // them turns a malformed window into a silently different one — see dashboard.service.
     const parse = (v: unknown, dflt: string) => {
       const d = toDateString(v);
-      if (d === undefined) throw new BadRequestException('from / to must be YYYY-MM-DD dates');
+      // DEF-DR-01: reject calendar-invalid (2026-13-99) here too, not just at the ::date cast.
+      if (d === undefined || (d && !isRealCalendarDate(d))) throw new BadRequestException('from / to must be YYYY-MM-DD dates');
       return d ?? dflt;
     };
     const f = parse(from, iso(new Date(now.getFullYear(), now.getMonth(), 1)));

@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative } from 'path';
-import { toDateString, toIsoString, requireDateString, assertDateRange } from './date.util';
+import { toDateString, toIsoString, requireDateString, assertDateRange, isRealCalendarDate, APP_TZ, SQL_TODAY, istDay } from './date.util';
 import { BadRequestException } from '@nestjs/common';
 
 /**
@@ -21,6 +21,43 @@ describe('assertDateRange — the shared list date-range validator', () => {
   });
   it('rejects from > to with a 400', () => {
     expect(() => assertDateRange('2026-08-01', '2026-07-01')).toThrow(/not be after/);
+  });
+  it('DEF-DR-01: rejects a calendar-INVALID but pattern-valid date with a 400 (never a 500)', () => {
+    // These pass the YYYY-MM-DD shape but are not real dates; before the fix they reached the
+    // `::date` cast in Postgres and 500ed. Now they are a clean 400 at the boundary.
+    expect(() => assertDateRange('2026-13-99', undefined)).toThrow(BadRequestException);
+    expect(() => assertDateRange('2026-02-30', undefined)).toThrow(BadRequestException);
+    expect(() => assertDateRange(undefined, '2026-00-10')).toThrow(BadRequestException);
+    expect(() => assertDateRange(undefined, '2026-04-31')).toThrow(BadRequestException);
+  });
+  it('still accepts the calendar edges that ARE real (leap day, month ends)', () => {
+    expect(assertDateRange('2028-02-29', '2028-12-31')).toEqual({ from: '2028-02-29', to: '2028-12-31' });
+  });
+});
+
+describe('isRealCalendarDate', () => {
+  it('accepts real dates including a leap day', () => {
+    for (const d of ['2026-01-01', '2026-12-31', '2028-02-29', '2026-07-15']) {
+      expect(isRealCalendarDate(d)).toBe(true);
+    }
+  });
+  it('rejects calendar-invalid or misshaped values', () => {
+    for (const d of ['2026-13-99', '2026-02-30', '2026-00-10', '2026-04-31', '2027-02-29', 'nope', '2026-7-5', '2026-07-15T00:00:00Z']) {
+      expect(isRealCalendarDate(d)).toBe(false);
+    }
+  });
+});
+
+describe('IST day-bucket SQL helpers — the single-source-of-truth app timezone', () => {
+  it('APP_TZ is Asia/Kolkata', () => {
+    expect(APP_TZ).toBe('Asia/Kolkata');
+  });
+  it('SQL_TODAY buckets now() in the app timezone (replaces CURRENT_DATE)', () => {
+    expect(SQL_TODAY).toBe("(now() AT TIME ZONE 'Asia/Kolkata')::date");
+  });
+  it('istDay(col) converts a timestamptz column to its IST calendar day (session-tz independent)', () => {
+    expect(istDay('l.created_at')).toBe("(l.created_at AT TIME ZONE 'Asia/Kolkata')::date");
+    expect(istDay('w.visited_at')).toBe("(w.visited_at AT TIME ZONE 'Asia/Kolkata')::date");
   });
 });
 

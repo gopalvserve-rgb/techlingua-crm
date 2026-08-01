@@ -7,7 +7,7 @@ import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { normalizePhone } from '../common/phone.util';
-import { assertDateRange } from '../common/date.util';
+import { assertDateRange, SQL_TODAY, istDay } from '../common/date.util';
 
 /**
  * WALK-INS & REFERRALS — the two manual capture screens on the Dashboard.
@@ -121,7 +121,7 @@ export class CaptureService {
     const params: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, WALKIN_SCOPE_COLS, params);
     const where = [w, 'w.deleted_at IS NULL'];
-    if (q.today) where.push(`w.visited_at::date = CURRENT_DATE`);
+    if (q.today) where.push(`(w.visited_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date`);
     if (q.status) { params.push(q.status); where.push(`w.status = $${params.length}`); }
     // Shared date range — filters by the VISIT date (visited_at). Bad date -> 400; either bound optional.
     const dr = assertDateRange(q.from, q.to);
@@ -163,7 +163,7 @@ export class CaptureService {
     const params: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, WALKIN_SCOPE_COLS, params);
     return this.db.one(
-      `SELECT COUNT(*) FILTER (WHERE w.visited_at::date = CURRENT_DATE)::int AS today,
+      `SELECT COUNT(*) FILTER (WHERE (w.visited_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today,
               COUNT(*) FILTER (WHERE w.status = 'converted')::int AS converted,
               COUNT(*) FILTER (WHERE w.status = 'waiting')::int AS waiting,
               COUNT(*)::int AS total,

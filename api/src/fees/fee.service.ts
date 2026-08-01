@@ -6,6 +6,7 @@ import { NumberingService } from '../numbering/numbering.service';
 import { formatINR, rupeesToMinor } from '../common/money.util';
 import { Letterhead, receiptPdf } from '../pdf/documents';
 import { paidAsAtMinor } from './as-at';
+import { assertDateRange } from '../common/date.util';
 
 /**
  * LITE FEE — a collection entry and a receipt. That is the WHOLE Phase-1 scope
@@ -69,8 +70,10 @@ export class FeeService {
     const where = [`fr.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params)];
     if (f.mode) { params.push(f.mode); where.push(`fr.mode = $${params.length}::varchar`); }
     if (f.enrolment_id) { params.push(Number(f.enrolment_id)); where.push(`fr.enrolment_id = $${params.length}::bigint`); }
-    if (f.from) { params.push(f.from); where.push(`fr.received_at >= $${params.length}::timestamptz`); }
-    if (f.to) { params.push(f.to); where.push(`fr.received_at < ($${params.length}::date + 1)`); }
+    // DEF-DR-02: strict validation — malformed date -> 400, never a 500.
+    const _dr = assertDateRange(f.from, f.to);
+    if (_dr.from) { params.push(_dr.from); where.push(`fr.received_at >= $${params.length}::timestamptz`); }
+    if (_dr.to) { params.push(_dr.to); where.push(`fr.received_at < ($${params.length}::date + 1)`); }
     if (f.q) { params.push(`%${f.q}%`); where.push(`(fr.receipt_no ILIKE $${params.length} OR l.full_name ILIKE $${params.length} OR fr.reference ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 200), 500));
 

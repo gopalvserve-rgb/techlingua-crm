@@ -10,7 +10,7 @@ import {
   STAGE_COUNT_FROM, STAGE_COUNT_LIVE,
   leadWonConversionPct,
 } from './shared-metrics';
-import { toDateString } from '../common/date.util';
+import { toDateString, assertDateRange } from '../common/date.util';
 
 /**
  * THE STANDARD REPORTS — the four the client asked for by name (§5):
@@ -37,7 +37,10 @@ export class StandardReportService {
   }
 
   private window(f: { from?: string; to?: string }) {
-    return [toDateString(f.from) ?? null, toDateString(f.to) ?? null];
+    // DEF-DR-02: standard reports used to silently ignore a bad date (or 500 on a calendar-invalid
+    // one). Route through the ONE strict validator so a malformed date is a consistent 400.
+    const dr = assertDateRange(f.from, f.to);
+    return [dr.from, dr.to];
   }
 
   /* ==================================================================== FUNNEL */

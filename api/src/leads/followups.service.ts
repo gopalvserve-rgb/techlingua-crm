@@ -8,7 +8,7 @@ import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { SettingsService } from '../common/settings.service';
 import { assertActiveUser } from './active-user.util';
-import { assertDateRange } from '../common/date.util';
+import { assertDateRange, SQL_TODAY, istDay } from '../common/date.util';
 
 export interface FollowUpFilters {
   lead_id?: number; owner_id?: number; status?: string;
@@ -108,7 +108,7 @@ export class FollowUpsService {
     if (f.vertical_id) { params.push(f.vertical_id); where.push(`l.vertical_id = $${params.length}`); }
     if (f.pipeline_id) { params.push(f.pipeline_id); where.push(`l.pipeline_id = $${params.length}`); }
     if (f.campaign_id) { params.push(f.campaign_id); where.push(`l.campaign_id = $${params.length}`); }
-    if (f.due === 'today') where.push(`f.status = 'pending' AND f.scheduled_at::date <= CURRENT_DATE`);
+    if (f.due === 'today') where.push(`f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date <= (now() AT TIME ZONE 'Asia/Kolkata')::date`);
     if (f.due === 'overdue') where.push(`f.status = 'pending' AND f.scheduled_at < now()`);
     if (f.due === 'upcoming') where.push(`f.status = 'pending' AND f.scheduled_at >= now()`);
     // Shared date range — filters tasks by their DUE date (scheduled_at). Bad date -> 400.
@@ -134,24 +134,24 @@ export class FollowUpsService {
     params.push(userId);
     return this.db.one(
       `SELECT COUNT(*) FILTER (WHERE f.status = 'pending')::int AS open,
-              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at::date = CURRENT_DATE)::int AS due_today,
-              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at < date_trunc('day', now()))::int AS overdue,
-              COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at::date = CURRENT_DATE)::int AS done_today,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS due_today,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS overdue,
+              COUNT(*) FILTER (WHERE f.status = 'done' AND (f.completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS done_today,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at >= date_trunc('week', now())
                                AND f.scheduled_at < date_trunc('week', now()) + interval '7 days')::int AS this_week,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at >= date_trunc('week', now()))::int AS done_week,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${params.length})::int AS my_open,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${params.length}
-                               AND f.scheduled_at::date = CURRENT_DATE)::int AS my_due_today,
+                               AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS my_due_today,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${params.length}
-                               AND f.scheduled_at < date_trunc('day', now()))::int AS my_overdue,
+                               AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS my_overdue,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.owner_id = $${params.length}
                                AND f.completed_at >= date_trunc('week', now()))::int AS my_done_week,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.created_by = $${params.length})::int AS reported_open,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.created_by = $${params.length}
-                               AND f.scheduled_at::date = CURRENT_DATE)::int AS reported_due_today,
+                               AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS reported_due_today,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.created_by = $${params.length}
-                               AND f.scheduled_at < date_trunc('day', now()))::int AS reported_overdue,
+                               AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS reported_overdue,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.created_by = $${params.length}
                                AND f.completed_at >= date_trunc('week', now()))::int AS reported_done_week
          FROM follow_up f JOIN lead l ON l.id = f.lead_id

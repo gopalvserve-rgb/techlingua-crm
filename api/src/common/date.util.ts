@@ -123,6 +123,47 @@ export function requireDateString(v: unknown, onInvalid: () => never): string | 
  * Kept here so every list — walk-ins, follow-ups, enrolments, fee receipts, audit — validates
  * a date range the one same way, exactly as `toDateString` centralised the parsing.
  */
+/**
+ * =============================================================================
+ * APP TIMEZONE — the ONE timezone all "today" / day-bucket logic uses (server + client).
+ * =============================================================================
+ * The recurring "off by a day" came from the browser computing presets in the browser's
+ * LOCAL day while the server bucketed by UTC (CURRENT_DATE). We fix it by adopting ONE app
+ * timezone, Asia/Kolkata (IST, UTC+5:30), applied IDENTICALLY on both sides. This constant
+ * is the SINGLE SOURCE OF TRUTH; a per-org timezone setting is a later enhancement.
+ *
+ * SERVER: the pg pool is opened in this timezone (`SET TIME ZONE APP_TZ`, see
+ * database.service.ts), so every CURRENT_DATE / now()::date / date_trunc / `::date` cast
+ * across the app buckets days in IST — dashboard counters, follow-ups due/overdue, SLA
+ * sweeps' `date_trunc('day', now())`, the sparklines, and the list date-range filters
+ * (`created_at::date >= $from`). The SQL helpers below additionally spell the IST intent
+ * out on the flagship "today" counters; they are session-timezone-INDEPENDENT (AT TIME
+ * ZONE returns a wall-clock timestamp), so those stay correct even if the session GUC were
+ * ever lost (e.g. behind a pooling proxy).
+ */
+export const APP_TZ = 'Asia/Kolkata';
+
+/** SQL for "today" in the app timezone — the IST replacement for CURRENT_DATE. */
+export const SQL_TODAY = `(now() AT TIME ZONE '${APP_TZ}')::date`;
+
+/** SQL: bucket a timestamptz column to its calendar day IN THE APP TIMEZONE. */
+export const istDay = (col: string) => `(${col} AT TIME ZONE '${APP_TZ}')::date`;
+
+/**
+ * True only for a REAL calendar date in `YYYY-MM-DD` form. Rejects a pattern-valid but
+ * calendar-invalid value like `2026-13-99` (month 13, day 99) or `2026-02-30` — which would
+ * otherwise pass the shape check in `toDateString` and blow up as a 500 at the `::date` cast
+ * in Postgres (DEF-DR-01). Used by `assertDateRange` so a bad date is always a clean 400.
+ */
+export function isRealCalendarDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
 export function assertDateRange(
   from: unknown, to: unknown,
   fail: (msg: string) => never = (m) => { throw new BadRequestException(m); },
@@ -130,6 +171,10 @@ export function assertDateRange(
   const f = toDateString(from);
   const t = toDateString(to);
   if (f === undefined || t === undefined) fail('from / to must be YYYY-MM-DD dates');
+  // DEF-DR-01: shape-valid but calendar-invalid (2026-13-99, 2026-02-30) must be a 400, not a
+  // 500 at the SQL `::date` cast. One strict check here covers every list endpoint that routes
+  // its range through this helper.
+  if ((f && !isRealCalendarDate(f)) || (t && !isRealCalendarDate(t))) fail('from / to must be YYYY-MM-DD dates');
   if (f && t && f > t) fail('"from" must not be after "to"');
   return { from: f ?? null, to: t ?? null };
 }

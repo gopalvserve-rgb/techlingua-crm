@@ -5,6 +5,7 @@ import { ScopeResolverService } from '../../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../../rbac/rbac.types';
 import { decryptSecret, encryptSecret, maskSecret, randomToken } from '../../common/crypto.util';
 import { PROVIDERS, ProviderSpec, missingRequirements } from './providers';
+import { assertDateRange } from '../../common/date.util';
 
 /** Channels scope through their denormalised path — the same columns as leads. */
 export const CHANNEL_SCOPE_COLS: ScopeColumnMap = {
@@ -126,8 +127,10 @@ export class ChannelService {
     const where = this.scopeWhere(scope, params);
     let extra = '';
     if (channelId) { params.push(channelId); extra += ` AND e.channel_id = $${params.length}`; }
-    if (from && String(from).trim()) { params.push(String(from).trim()); extra += ` AND e.created_at >= $${params.length}::date`; }
-    if (to && String(to).trim()) { params.push(String(to).trim()); extra += ` AND e.created_at < ($${params.length}::date + INTERVAL '1 day')`; }
+    // DEF-DR-02: strict validation — malformed date -> 400, never a 500.
+    const _dr = assertDateRange(from, to);
+    if (_dr.from) { params.push(_dr.from); extra += ` AND e.created_at >= $${params.length}::date`; }
+    if (_dr.to) { params.push(_dr.to); extra += ` AND e.created_at < ($${params.length}::date + INTERVAL '1 day')`; }
     params.push(Math.min(Number(limit) || 50, 200));
     return this.db.query<any>(
       `SELECT e.id, e.provider, e.status, e.reason, e.external_key, e.lead_id, e.ip, e.origin,

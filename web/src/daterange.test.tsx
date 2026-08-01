@@ -12,32 +12,36 @@ import { DateRange, presetRange, matchPreset, isoDay, DR_PRESETS } from './dater
 
 beforeEach(() => cleanup());
 
-const pad = (n: number) => String(n).padStart(2, '0');
-const local = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-describe('preset math — LOCAL calendar days', () => {
-  // A fixed clock: Wed 15 Jul 2026, 09:30 local. getDay() for 2026-07-15 is Wednesday (3).
-  const NOW = new Date(2026, 6, 15, 9, 30, 0);
+describe('preset math — IST (Asia/Kolkata) calendar days, independent of browser TZ', () => {
+  // A fixed instant: 15 Jul 2026 04:00 UTC = 09:30 IST → the IST day is the 15th (a Wednesday).
+  const NOW = new Date('2026-07-15T04:00:00Z');
 
-  it('isoDay uses local parts (not toISOString) — no midnight off-by-one', () => {
-    // 23:30 local on the 15th must still be "the 15th", where toISOString would roll to the 16th (UTC+).
-    expect(isoDay(new Date(2026, 6, 15, 23, 30))).toBe('2026-07-15');
+  it('isoDay returns the IST day of an instant (not the browser-local / UTC day)', () => {
+    // The boundary case from the brief: 30 Jul 21:00 UTC = 31 Jul 02:30 IST → "today" is 31 Jul.
+    expect(isoDay(new Date('2026-07-30T21:00:00Z'))).toBe('2026-07-31');
+    // 15 Jul 18:00 UTC = 23:30 IST — still the 15th in IST.
+    expect(isoDay(new Date('2026-07-15T18:00:00Z'))).toBe('2026-07-15');
   });
 
-  it('Today = [today, today]', () => {
+  it('Today = [today, today] in IST', () => {
     expect(presetRange('today', NOW)).toEqual({ from: '2026-07-15', to: '2026-07-15' });
   });
 
-  it('Yesterday = [yesterday, yesterday]', () => {
+  it('Today at the UTC/IST boundary: 30 Jul 21:00 UTC is 31 Jul in IST', () => {
+    expect(presetRange('today', new Date('2026-07-30T21:00:00Z'))).toEqual({ from: '2026-07-31', to: '2026-07-31' });
+  });
+
+  it('Yesterday = [yesterday, yesterday] in IST', () => {
     expect(presetRange('yesterday', NOW)).toEqual({ from: '2026-07-14', to: '2026-07-14' });
   });
 
-  it('This Week = [Sunday of this week, today]', () => {
+  it('This Week = [Sunday of this IST week, today]', () => {
     // 2026-07-15 is a Wednesday; the Sunday before is 2026-07-12.
     expect(presetRange('week', NOW)).toEqual({ from: '2026-07-12', to: '2026-07-15' });
   });
 
-  it('This Month = [1st of month, today]', () => {
+  it('This Month = [1st of month, today] in IST', () => {
     expect(presetRange('month', NOW)).toEqual({ from: '2026-07-01', to: '2026-07-15' });
   });
 
@@ -73,8 +77,8 @@ describe('the control — renders 5 presets and emits the right range', () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
     fireEvent.click(screen.getByText('Today'));
-    const t = local(new Date());
-    expect(onChange).toHaveBeenCalledWith({ from: t, to: t });
+    // The control emits the IST "today" (via presetRange), regardless of the browser timezone.
+    expect(onChange).toHaveBeenCalledWith(presetRange('today'));
   });
 
   it('typing a custom From/To emits it verbatim', () => {

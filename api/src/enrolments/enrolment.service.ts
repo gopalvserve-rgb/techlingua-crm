@@ -5,7 +5,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { NumberingService } from '../numbering/numbering.service';
 import { rupeesToMinor } from '../common/money.util';
 import { ApprovalService, requiredSteps } from './approval.service';
-import { requireDateString } from '../common/date.util';
+import { requireDateString, assertDateRange } from '../common/date.util';
 
 /**
  * ENROLMENT — the SALE CLOSURE record. "Sale closure = enrolment" (§5).
@@ -67,8 +67,10 @@ export class EnrolmentService {
     const params: unknown[] = [];
     const where = [`e.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params)];
     if (f.status) { params.push(f.status); where.push(`e.status = $${params.length}::varchar`); }
-    if (f.from) { params.push(f.from); where.push(`e.created_at >= $${params.length}::timestamptz`); }
-    if (f.to) { params.push(f.to); where.push(`e.created_at < ($${params.length}::date + 1)`); }
+    // DEF-DR-02: one strict validator — malformed date -> 400, not a 500 at the ::date cast.
+    const _dr = assertDateRange(f.from, f.to);
+    if (_dr.from) { params.push(_dr.from); where.push(`e.created_at >= $${params.length}::timestamptz`); }
+    if (_dr.to) { params.push(_dr.to); where.push(`e.created_at < ($${params.length}::date + 1)`); }
     if (f.q) { params.push(`%${f.q}%`); where.push(`(e.enrolment_no ILIKE $${params.length} OR l.full_name ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 200), 500));
 

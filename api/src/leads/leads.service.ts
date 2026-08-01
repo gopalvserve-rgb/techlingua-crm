@@ -8,6 +8,7 @@ import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { looksLikePhoneQuery, normalizePhone, phoneQueryFragments } from '../common/phone.util';
 import { assertActiveUser } from './active-user.util';
+import { assertDateRange, SQL_TODAY, istDay } from '../common/date.util';
 import { DistributionConfig } from './distribution.util';
 import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
@@ -187,8 +188,10 @@ export class LeadsService {
     if (f.source_id) eq('l.source_id', f.source_id);
     if (f.temperature) eq('l.temperature', f.temperature);
     // UAT-R2 #26 — created-date range: `to` is made inclusive by using < next day.
-    if (f.created_from) { params.push(f.created_from); where.push(`l.created_at >= $${params.length}::date`); }
-    if (f.created_to) { params.push(f.created_to); where.push(`l.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
+    // DEF-DR-02: route through the ONE strict validator so a malformed date is a 400, not a 500.
+    const _dr = assertDateRange(f.created_from, f.created_to);
+    if (_dr.from) { params.push(_dr.from); where.push(`l.created_at >= $${params.length}::date`); }
+    if (_dr.to) { params.push(_dr.to); where.push(`l.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
     if (f.flagged) where.push('l.is_flagged');
     if (f.duplicate) where.push('l.is_duplicate');
     // Bulk actions (Jul 2026): the paused-only filter (find parked leads to resume).
@@ -795,10 +798,10 @@ export class LeadsService {
     const w = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p1);
     const kpis = await this.db.one(
       `SELECT COUNT(*)::int AS total,
-              COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE)::int AS today,
+              COUNT(*) FILTER (WHERE (l.created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today,
               COUNT(*) FILTER (WHERE l.created_at >= date_trunc('month', now()))::int AS mtd,
               COUNT(*) FILTER (WHERE st.stage_type = 'won')::int AS won,
-              COUNT(*) FILTER (WHERE st.stage_type = 'won' AND l.updated_at::date = CURRENT_DATE)::int AS won_today,
+              COUNT(*) FILTER (WHERE st.stage_type = 'won' AND (l.updated_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS won_today,
               COUNT(*) FILTER (WHERE l.temperature = 'hot')::int AS hot,
               COUNT(*) FILTER (WHERE l.temperature = 'warm')::int AS warm,
               COUNT(*) FILTER (WHERE l.temperature = 'cold')::int AS cold,
@@ -833,10 +836,10 @@ export class LeadsService {
     const wf = this.resolver.buildScopeWhere(scope, FOLLOWUP_SCOPE_COLS, p2);
     p2.push(userId);
     const fu = await this.db.one(
-      `SELECT COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at::date = CURRENT_DATE)::int AS due_today,
-              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at < date_trunc('day', now()))::int AS overdue,
+      `SELECT COUNT(*) FILTER (WHERE f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS due_today,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS overdue,
               COUNT(*) FILTER (WHERE f.status = 'pending')::int AS pending,
-              COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at::date = CURRENT_DATE)::int AS done_today,
+              COUNT(*) FILTER (WHERE f.status = 'done' AND (f.completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS done_today,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at >= date_trunc('week', now()))::int AS done_week,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = $${p2.length})::int AS my_open
          FROM follow_up f JOIN lead l ON l.id = f.lead_id

@@ -4,7 +4,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { FOLLOWUP_SCOPE_COLS, LEAD_SCOPE_COLS } from '../rbac/scope-cols';
 import { STAGE_COUNT_FROM, STAGE_COUNT_LIVE, leadWonConversionPct } from '../reports/shared-metrics';
-import { toDateString } from '../common/date.util';
+import { toDateString, SQL_TODAY, istDay } from '../common/date.util';
 
 /**
  * ROLE-BASED DASHBOARDS (client decision, 14 Jul 2026).
@@ -152,7 +152,7 @@ export class DashboardService {
 
     const kpis = await this.db.one(
       `SELECT COUNT(*)::int AS total,
-              COUNT(*) FILTER (WHERE l.created_at::date = CURRENT_DATE)::int AS today,
+              COUNT(*) FILTER (WHERE (l.created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today,
               COUNT(*) FILTER (WHERE l.created_at::date BETWEEN ${iFrom}::date AND ${iTo}::date)::int AS in_range,
               COUNT(*) FILTER (WHERE st.stage_type = 'won')::int AS won,
               COUNT(*) FILTER (WHERE st.stage_type = 'won'
@@ -175,15 +175,15 @@ export class DashboardService {
     const me = `$${pf.length}`;
     const followUps = await this.db.one(
       `SELECT COUNT(*) FILTER (WHERE f.status = 'pending')::int AS pending,
-              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at::date = CURRENT_DATE)::int AS due_today,
-              COUNT(*) FILTER (WHERE f.status = 'pending' AND f.scheduled_at < date_trunc('day', now()))::int AS overdue,
-              COUNT(*) FILTER (WHERE f.status = 'done' AND f.completed_at::date = CURRENT_DATE)::int AS done_today,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS due_today,
+              COUNT(*) FILTER (WHERE f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS overdue,
+              COUNT(*) FILTER (WHERE f.status = 'done' AND (f.completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS done_today,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.escalated_at IS NOT NULL)::int AS escalated,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = ${me})::int AS my_open,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = ${me}
-                                 AND f.scheduled_at::date = CURRENT_DATE)::int AS my_due_today,
+                                 AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS my_due_today,
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.owner_id = ${me}
-                                 AND f.scheduled_at < date_trunc('day', now()))::int AS my_overdue
+                                 AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS my_overdue
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
         WHERE (${wf}) AND f.is_active AND f.deleted_at IS NULL AND l.deleted_at IS NULL${this.narrow(L, gf, pf)}`, pf,
     );

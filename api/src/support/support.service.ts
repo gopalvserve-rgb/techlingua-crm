@@ -4,6 +4,7 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { NumberingService } from '../numbering/numbering.service';
+import { assertDateRange } from '../common/date.util';
 import { NotifierService } from '../notifications/notifier.service';
 import { SettingsService } from '../common/settings.service';
 import { assertActiveUser } from '../leads/active-user.util';
@@ -127,8 +128,10 @@ export class SupportService {
     if (f.assignee_id) { params.push(Number(f.assignee_id)); where.push(`t.assignee_id = $${params.length}::bigint`); }
     if (f.branch_id) { params.push(Number(f.branch_id)); where.push(`t.branch_id = $${params.length}::bigint`); }
     if (f.vertical_id) { params.push(Number(f.vertical_id)); where.push(`t.vertical_id = $${params.length}::bigint`); }
-    if (f.from) { params.push(f.from); where.push(`t.created_at >= $${params.length}::timestamptz`); }
-    if (f.to) { params.push(f.to); where.push(`t.created_at < ($${params.length}::date + 1)`); }
+    // DEF-DR-02: strict validation — malformed date -> 400, never a 500.
+    const _dr = assertDateRange(f.from, f.to);
+    if (_dr.from) { params.push(_dr.from); where.push(`t.created_at >= $${params.length}::timestamptz`); }
+    if (_dr.to) { params.push(_dr.to); where.push(`t.created_at < ($${params.length}::date + 1)`); }
     if (f.q) {
       params.push(`%${f.q}%`);
       where.push(`(t.subject ILIKE $${params.length} OR t.ticket_no ILIKE $${params.length} OR t.description ILIKE $${params.length})`);

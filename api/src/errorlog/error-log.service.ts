@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { createHash } from 'crypto';
 import { DatabaseService } from '../database/database.service';
 import { redact } from '../common/redact';
+import { assertDateRange, SQL_TODAY } from '../common/date.util';
 
 /**
  * Error Log module — capture, grouping and resolve workflow for the
@@ -130,8 +131,10 @@ export class ErrorLogService {
       params.push(`%${f.q.trim()}%`);
       where.push(`(e.path ILIKE $${params.length} OR e.message ILIKE $${params.length})`);
     }
-    if (f.from) { params.push(f.from); where.push(`e.occurred_at >= $${params.length}::timestamptz`); }
-    if (f.to) { params.push(f.to); where.push(`e.occurred_at < ($${params.length}::date + 1)::timestamptz`); }
+    // DEF-DR-02: strict validation — malformed date -> 400, never a 500.
+    const _dr = assertDateRange(f.from, f.to);
+    if (_dr.from) { params.push(_dr.from); where.push(`e.occurred_at >= $${params.length}::timestamptz`); }
+    if (_dr.to) { params.push(_dr.to); where.push(`e.occurred_at < ($${params.length}::date + 1)::timestamptz`); }
     return where.join(' AND ');
   }
 
@@ -192,8 +195,8 @@ export class ErrorLogService {
   /** KPI card + 14-day trend numbers for the Error Logs screen. */
   async summary() {
     const [core] = await this.db.query(
-      `SELECT COUNT(*) FILTER (WHERE level = 'error'   AND occurred_at >= CURRENT_DATE)::int AS errors_today,
-              COUNT(*) FILTER (WHERE level = 'warning' AND occurred_at >= CURRENT_DATE)::int AS warnings_today,
+      `SELECT COUNT(*) FILTER (WHERE level = 'error'   AND (occurred_at AT TIME ZONE 'Asia/Kolkata')::date >= (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS errors_today,
+              COUNT(*) FILTER (WHERE level = 'warning' AND (occurred_at AT TIME ZONE 'Asia/Kolkata')::date >= (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS warnings_today,
               COUNT(*) FILTER (WHERE status = 'open')::int AS open_count,
               COUNT(*) FILTER (WHERE status = 'open' AND level = 'error')::int AS open_errors,
               COUNT(*) FILTER (WHERE status = 'resolved'

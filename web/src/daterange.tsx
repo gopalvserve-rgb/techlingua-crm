@@ -8,12 +8,12 @@
  * means exactly the same span on the dashboard as it does on the Leads list. This generalises the
  * Quick Stats preset logic that used to live (privately) in dyn.tsx.
  *
- * LOCAL CALENDAR DAYS. The window is computed in the BROWSER's local day boundaries — the same
- * way the app already handles created-date filters (created_from / created_to). We deliberately
- * do NOT convert to UTC here: the list/API filters compare `created_at::date` and the app has
- * always filtered on local calendar days, so a user picking "Today" gets the day they see on the
- * wall clock. (This inherits the app's known 1-day server-timezone edge at the day boundary; it is
- * consistent across every screen rather than different per screen.)
+ * ONE APP TIMEZONE — Asia/Kolkata (IST). The window is computed in the APP timezone, NOT the
+ * browser's local day, so a user in ANY browser timezone gets the SAME IST days — and, crucially,
+ * the SAME days the server buckets by (the pg pool runs in APP_TZ too; see api date.util.ts). This
+ * closes the old off-by-one where the browser computed "Today" in local days while the server
+ * bucketed created_at by UTC. APP_TZ here is the single client-side source of truth (mirrors the
+ * server constant); a per-org timezone setting is a later enhancement.
  *
  * EMITS { from, to } as YYYY-MM-DD — exactly the shape the list + API filters already understand
  * (created_from/created_to and equivalents). An undefined/empty bound = unbounded ("All time").
@@ -22,8 +22,23 @@ import { Ic } from './icons';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/** YYYY-MM-DD in the browser's LOCAL day (not UTC — avoids the toISOString() off-by-one). */
-export const isoDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/** The ONE app timezone, mirrored from the server (api/src/common/date.util.ts APP_TZ). */
+export const APP_TZ = 'Asia/Kolkata';
+
+/** The {y,m,day} of an instant as seen on the wall clock in APP_TZ (IST). */
+function tzYMD(d: Date): { y: number; m: number; day: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(d);
+  const val = (t: string) => Number(parts.find((p) => p.type === t)!.value);
+  return { y: val('year'), m: val('month'), day: val('day') };
+}
+
+/** YYYY-MM-DD of an instant IN THE APP TIMEZONE (IST) — NOT the browser-local or UTC day. */
+export const isoDay = (d: Date = new Date()) => {
+  const { y, m, day } = tzYMD(d);
+  return `${y}-${pad(m)}-${pad(day)}`;
+};
 
 export interface DateRangeValue { from?: string; to?: string }
 
@@ -44,21 +59,25 @@ export const DR_PRESETS: Array<{ key: Exclude<PresetKey, 'custom'>; label: strin
  * span Quick Stats has always used; "This Month" runs from the 1st to today.
  */
 export function presetRange(key: PresetKey, now: Date = new Date()): DateRangeValue {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Take the IST wall-clock date of `now`, then do all calendar math on a UTC-ANCHORED date so it
+  // is independent of the BROWSER's timezone — a user in any tz gets IST days, matching the server.
+  const { y, m, day } = tzYMD(now);
+  const today = new Date(Date.UTC(y, m - 1, day));
+  const fmt = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
   switch (key) {
     case 'today':
-      return { from: isoDay(today), to: isoDay(today) };
+      return { from: fmt(today), to: fmt(today) };
     case 'yesterday': {
-      const y = new Date(today); y.setDate(today.getDate() - 1);
-      return { from: isoDay(y), to: isoDay(y) };
+      const yd = new Date(today); yd.setUTCDate(today.getUTCDate() - 1);
+      return { from: fmt(yd), to: fmt(yd) };
     }
     case 'week': {
-      const s = new Date(today); s.setDate(today.getDate() - today.getDay()); // Sunday start
-      return { from: isoDay(s), to: isoDay(today) };
+      const s = new Date(today); s.setUTCDate(today.getUTCDate() - today.getUTCDay()); // Sunday start
+      return { from: fmt(s), to: fmt(today) };
     }
     case 'month': {
-      const s = new Date(today.getFullYear(), today.getMonth(), 1);
-      return { from: isoDay(s), to: isoDay(today) };
+      const s = new Date(Date.UTC(y, m - 1, 1));
+      return { from: fmt(s), to: fmt(today) };
     }
     case 'all':
     case 'custom':
