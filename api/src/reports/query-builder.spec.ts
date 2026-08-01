@@ -214,6 +214,17 @@ describe('the date window', () => {
     expect(q.params).toContain('2026-08-01');   // <- +1 day, so the 31st is in
   });
 
+  it('DEF-DR-01: a CUSTOM calendar-invalid date is a 400, not a 500 at the ::date cast', () => {
+    for (const bad of ['2026-13-01', '2026-13-99', '2026-02-30', 'nope']) {
+      expect(() => buildReportQuery(leads, {
+        columns: ['full_name'], date_preset: 'custom', date_from: bad,
+      }, ADMIN, resolver)).toThrow(BadRequestException);
+      expect(() => buildReportQuery(leads, {
+        columns: ['full_name'], date_preset: 'custom', date_to: bad,
+      }, ADMIN, resolver)).toThrow(BadRequestException);
+    }
+  });
+
   it('the date bounds carry an explicit ::date cast (the Sprint-3 $3-cast lesson)', () => {
     const q = buildReportQuery(leads, { columns: ['full_name'], date_preset: 'this_month' }, ADMIN, resolver);
     expect(q.sql).toMatch(/>= \$\d+::date/);

@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ColType, ReportColumn, ReportEntity, columnByKey, isFilterable, isGroupable } from './entities';
-import { toDateString } from '../common/date.util';
+import { toDateString, isRealCalendarDate } from '../common/date.util';
 
 /**
  * =============================================================================
@@ -248,8 +248,19 @@ export function buildReportQuery(
     }
     let from: string | null; let to: string | null;
     if (config.date_preset === 'custom') {
-      from = toDateString(config.date_from) ?? null;
-      to = toDateString(config.date_to) ?? null;
+      // DEF-DR-01/02: a custom bound must be a REAL calendar date. `2026-13-99` / `2026-13-01`
+      // are shape-valid but invalid, and used to reach the `::date` cast (500) or blow up the
+      // inclusive-`to` `new Date(...)` below. Validate here for a consistent 400 (covers Campaign
+      // ROI, which builds a custom window, and the Report Builder's custom range).
+      const parseCustom = (v: unknown): string | null => {
+        const d = toDateString(v);
+        if (d === undefined || (d && !isRealCalendarDate(d))) {
+          throw new BadRequestException('date_from / date_to must be YYYY-MM-DD dates');
+        }
+        return d ?? null;
+      };
+      from = parseCustom(config.date_from);
+      to = parseCustom(config.date_to);
       // `to` is INCLUSIVE for a human ("1st to 31st") and EXCLUSIVE in SQL, or the
       // 31st's rows vanish. Adding a day here is the difference between a report the
       // client trusts and one he corrects by hand every month.
