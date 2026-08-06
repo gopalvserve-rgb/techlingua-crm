@@ -8,7 +8,7 @@
  *          and posts ONLY campaign_id (path derived server-side).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/react';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { AddModal, CampaignModal } from './forms';
 
 vi.mock('./auth', () => ({ useAuth: () => ({ can: () => true, me: { user: { id: 1, name: 'Super Admin' } } }) }));
@@ -108,3 +108,39 @@ describe('#20 — Add Campaign walks Branch -> Vertical -> Pipeline (strict)', (
     expect([...csel('Pipeline').options].filter((o) => o.value).map((o) => o.value)).toEqual(['4']);
   });
 });
+
+describe('#5 — Add Campaign ＋ quick-add: masters are addable inline and appear immediately', () => {
+  const nestedFld = (name: string) => {
+    const nested = document.querySelectorAll('.add-modal')[1] as HTMLElement;
+    return [...nested.querySelectorAll('.fld')].find((f) => f.querySelector('label')?.textContent?.trim().startsWith(name)) as HTMLElement;
+  };
+
+  it('every add-mode master (Branch/Vertical/Pipeline) shows a ＋ Add link', () => {
+    render(<CampaignModal onClose={() => {}} />);
+    const links = () => [...document.querySelectorAll('.add-modal a.mlink')].map((a) => a.textContent);
+    expect(links().some((t) => /Add Branch/.test(t || ''))).toBe(true);
+    fireEvent.change(csel('Branch'), { target: { value: '9' } });
+    expect(links().some((t) => /Add Vertical/.test(t || ''))).toBe(true);
+    fireEvent.change(csel('Vertical'), { target: { value: '1' } });
+    expect(links().some((t) => /Add Pipeline/.test(t || ''))).toBe(true);
+  });
+
+  it('＋ Add Vertical creates one and injects + selects it in the campaign form without reload', async () => {
+    post.mockResolvedValueOnce({ id: 77, name: 'New Vertical', branch_id: 9 }); // POST /verticals
+    render(<CampaignModal onClose={() => {}} />);
+    fireEvent.change(csel('Branch'), { target: { value: '9' } });
+    const addVert = [...document.querySelectorAll('.add-modal a.mlink')].find((a) => /Add Vertical/.test(a.textContent || '')) as HTMLElement;
+    fireEvent.click(addVert);
+    // fill the nested Add Vertical form (it carries its own Branch + Name + Code)
+    fireEvent.change(nestedFld('Branch').querySelector('select')!, { target: { value: '9' } });
+    fireEvent.change(nestedFld('Vertical Name').querySelector('input')!, { target: { value: 'New Vertical' } });
+    fireEvent.change(nestedFld('Vertical Code').querySelector('input')!, { target: { value: 'NV' } });
+    const nested = document.querySelectorAll('.add-modal')[1] as HTMLElement;
+    fireEvent.click([...nested.querySelectorAll('button')].find((b) => /^save$/i.test((b.textContent || '').trim()))!);
+    // the new vertical (77) is now selectable AND auto-selected in the campaign's Vertical dropdown
+    await waitFor(() => expect(csel('Vertical').value).toBe('77'));
+    expect([...csel('Vertical').options].map((o) => o.value)).toContain('77');
+    expect(post).toHaveBeenCalledWith('/verticals', expect.objectContaining({ name: 'New Vertical', branch_id: 9 }));
+  });
+});
+

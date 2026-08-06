@@ -2164,9 +2164,13 @@ const courseEditSpec = (edit: any): EditSpec => ({
     'Status': edit.is_active === false ? 'Inactive' : 'Active',
   },
   initialIds: {
-    // Branch › Vertical — prefill both so the Configure Course form reopens cascading.
+    // Branch › Vertical › Pipeline › Campaign — prefill the whole chain so Configure Course
+    // reopens fully cascading. Branch+Vertical are the course's ownership; Pipeline/Campaign are
+    // the optional associations (blank on legacy courses, which simply reopen at Branch→Vertical).
     'Branch': (edit.meta as any)?.branch_id ? Number((edit.meta as any).branch_id) : undefined,
     'Vertical': (edit.meta as any)?.vertical_id ? Number((edit.meta as any).vertical_id) : undefined,
+    'Pipeline': (edit.meta as any)?.pipeline_id ? Number((edit.meta as any).pipeline_id) : undefined,
+    'Campaign': (edit.meta as any)?.campaign_id ? Number((edit.meta as any).campaign_id) : undefined,
   },
   submit: async (vals, ids) => {
     await api.patch(`/masters/course/${edit.id}`, {
@@ -2179,6 +2183,10 @@ const courseEditSpec = (edit: any): EditSpec => ({
         fee: vals['Standard Fee'] || undefined,
         branch_id: need(ids['Branch'], 'Pick a Branch'),
         vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
+        // optional hierarchy associations — persisted so they prefill + cascade on the next Edit.
+        // Sent as null (not undefined) when cleared so the PATCH actually drops a prior value.
+        pipeline_id: ids['Pipeline'] ?? null,
+        campaign_id: ids['Campaign'] ?? null,
         eligibility: vals['Eligibility Criteria'] || undefined,
       },
       is_active: vals['Status'] !== 'Inactive',

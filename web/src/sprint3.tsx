@@ -15,7 +15,7 @@ import { ConfirmModal, DetailModal, KV, Section, fmtFull, rowActions } from './r
 import { AddModal, EditSpec, need } from './forms';
 import { AddMasterModal } from './mastermodal';
 import { ScreenCtx } from './dyn';
-import { DateRange, presetRange } from './daterange';
+import { DateRange, presetRange, WEEK_START } from './daterange';
 
 const useScreen = () => useContext(ScreenCtx);
 
@@ -562,7 +562,7 @@ interface CalFeed {
   sync: { provider: string | null; configured: boolean; missing: string[]; note: string };
 }
 
-const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // week starts Monday (WEEK_START)
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 export function EventModal({ onClose, onSaved, initial }: {
@@ -679,10 +679,10 @@ export function Calendar() {
     return m;
   }, [feed.data]);
 
-  // a 6x7 grid starting on the Sunday on or before the 1st
+  // a 6x7 grid starting on the WEEK_START (Monday) on or before the 1st
   const cells = useMemo(() => {
     const start = new Date(first);
-    start.setDate(start.getDate() - start.getDay());
+    start.setDate(start.getDate() - ((start.getDay() - WEEK_START + 7) % 7));
     return Array.from({ length: 42 }, (_, i) => {
       const d = new Date(start);
       d.setDate(start.getDate() + i);

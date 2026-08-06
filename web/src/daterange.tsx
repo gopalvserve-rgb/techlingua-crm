@@ -25,6 +25,17 @@ const pad = (n: number) => String(n).padStart(2, '0');
 /** The ONE app timezone, mirrored from the server (api/src/common/date.util.ts APP_TZ). */
 export const APP_TZ = 'Asia/Kolkata';
 
+/**
+ * WEEK START — the day "This Week" begins on, mirrored app-wide (client + Calendar grid).
+ * India conventionally treats MONDAY as the first day of the week, so "This Week" runs
+ * Monday 00:00 → today (a mid-week Wednesday returns Mon..Wed; a Sunday returns the full
+ * Mon..Sun week, not just that one day — the old Sunday-start collapsed "This Week" to
+ * "Today" on Sundays, which the client reported as broken). 0 = Sunday, 1 = Monday. Change
+ * this ONE constant (and its server mirror, if a week-bucketed report is ever added) to
+ * switch the whole app's week-start; it is the single source of truth, like APP_TZ.
+ */
+export const WEEK_START = 1; // Monday
+
 /** The {y,m,day} of an instant as seen on the wall clock in APP_TZ (IST). */
 function tzYMD(d: Date): { y: number; m: number; day: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -55,8 +66,8 @@ export const DR_PRESETS: Array<{ key: Exclude<PresetKey, 'custom'>; label: strin
 
 /**
  * A preset -> { from, to } in LOCAL calendar days. PURE — the clock is an argument, so the
- * unit tests are stable and never flake at midnight. "This Week" starts on Sunday, matching the
- * span Quick Stats has always used; "This Month" runs from the 1st to today.
+ * unit tests are stable and never flake at midnight. "This Week" starts on WEEK_START (Monday by
+ * default — India convention); "This Month" runs from the 1st to today.
  */
 export function presetRange(key: PresetKey, now: Date = new Date()): DateRangeValue {
   // Take the IST wall-clock date of `now`, then do all calendar math on a UTC-ANCHORED date so it
@@ -72,7 +83,13 @@ export function presetRange(key: PresetKey, now: Date = new Date()): DateRangeVa
       return { from: fmt(yd), to: fmt(yd) };
     }
     case 'week': {
-      const s = new Date(today); s.setUTCDate(today.getUTCDate() - today.getUTCDay()); // Sunday start
+      // Wind back to the most recent WEEK_START (Monday by default). `getUTCDay()` is
+      // 0=Sun..6=Sat; `back` is how many days we are past this week's start. A mid-week
+      // day returns [weekStart, today]; on the week-start day itself back=0 (= [today,today]);
+      // and, crucially, a Sunday returns the FULL Mon..Sun week instead of collapsing to Today.
+      const s = new Date(today);
+      const back = (today.getUTCDay() - WEEK_START + 7) % 7;
+      s.setUTCDate(today.getUTCDate() - back);
       return { from: fmt(s), to: fmt(today) };
     }
     case 'month': {

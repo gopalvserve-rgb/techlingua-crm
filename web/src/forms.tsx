@@ -195,8 +195,17 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // the same cascade engine as the lead forms (CASCADE / srcOptions). The old form put
   // Vertical first and offered a lone "Applicable Branch(es)" select that never related to
   // it, so the two dropdowns did nothing — the bug the client reported.
+  // UAT (Aug 2026) — the course form now walks the FULL hierarchy the client asked for:
+  // Branch \u2192 Vertical \u2192 Pipeline \u2192 Campaign, each STRICTLY filtered by (and empty until)
+  // its parent, each resetting its descendants on change — the same cascade engine as the lead
+  // forms (CASCADE / srcOptions). OWNERSHIP is unchanged: a course still BELONGS to Branch \u2192
+  // Vertical (both required, stored in meta.branch_id / meta.vertical_id, update #7/#9). Pipeline
+  // and Campaign are OPTIONAL associations (stored in meta.pipeline_id / meta.campaign_id) so the
+  // client can narrow a course to a specific pipeline/campaign; leaving them blank keeps the course
+  // at Branch \u2192 Vertical exactly as before.
   'students.courses': { title: 'Add Course', fields: [
     F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
+    F('Pipeline', 'select', 0, 0, 'optional \u2014 filtered by Vertical', 'pipelines'), F('Campaign', 'select', 0, 0, 'optional \u2014 filtered by Pipeline', 'campaigns'),
     F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
     F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
@@ -504,6 +513,9 @@ SAVERS['students.courses'] = async (vals, ids) => {
       fee: vals['Standard Fee'] || undefined,
       branch_id: need(ids['Branch'], 'Pick a Branch'),
       vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
+      // optional hierarchy associations (course still BELONGS to Branch \u2192 Vertical)
+      pipeline_id: ids['Pipeline'] || undefined,
+      campaign_id: ids['Campaign'] || undefined,
       eligibility: vals['Eligibility Criteria'] || undefined,
     },
     is_active: vals['Status'] !== 'Inactive',
@@ -1333,11 +1345,56 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
   const [dupScope, setDupScope] = useState<string>(_initScope === 'this_pipeline' ? 'this_campaign' : _initScope);
   const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
   const [busy, setBusy] = useState(false);
+  const { can } = useAuth();
+  // UAT (Aug 2026) — ＋ quick-add for the campaign's masters. The rich CampaignModal did not
+  // reuse AddModal's ＋ Master wiring, so there was NO way to add a Branch / Vertical / Pipeline
+  // from inside Create Campaign (the client reported "masters not working"). A nested create form
+  // opens here; on save its row is injected into the live cascade (`extra`) AND auto-selected, and
+  // RefData is reloaded — so the new value is usable immediately, no page refresh.
+  const [quickAdd, setQuickAdd] = useState<{ form: string; field: 'Branch' | 'Vertical' | 'Pipeline' } | null>(null);
+  const [extra, setExtra] = useState<{ branches: Named[]; verticals: Named[]; pipelines: Named[] }>(
+    { branches: [], verticals: [], pipelines: [] });
 
   // UAT-R3 #20 — STRICT cascade: a child is EMPTY until its parent is chosen, so the user
   // is walked Branch \u2192 Vertical \u2192 Pipeline in order and only valid children appear.
-  const verticals = branchId ? ref.verticals.filter((v) => Number(v.branch_id) === branchId) : [];
-  const pipelines = verticalId ? ref.pipelines.filter((p) => Number(p.vertical_id) === verticalId) : [];
+  // Just-quick-added rows (`extra`) are merged in so they appear before RefData reload lands.
+  const allBranches = [...ref.branches, ...extra.branches.filter((b) => !ref.branches.some((r) => Number(r.id) === Number(b.id)))];
+  const allVerticals = [...ref.verticals, ...extra.verticals.filter((v) => !ref.verticals.some((r) => Number(r.id) === Number(v.id)))];
+  const allPipelines = [...ref.pipelines, ...extra.pipelines.filter((p) => !ref.pipelines.some((r) => Number(r.id) === Number(p.id)))];
+  const verticals = branchId ? allVerticals.filter((v) => Number(v.branch_id) === branchId) : [];
+  const pipelines = verticalId ? allPipelines.filter((p) => Number(p.vertical_id) === verticalId) : [];
+
+  /** Inject + auto-select a just-created master, then reload RefData. */
+  const onQuickAdded = (field: 'Branch' | 'Vertical' | 'Pipeline', row: Named) => {
+    const id = Number(row.id);
+    if (field === 'Branch') {
+      setExtra((x) => ({ ...x, branches: [...x.branches, row] }));
+      setBranchId(id); setVerticalId(undefined); setPipelineId(undefined);
+    } else if (field === 'Vertical') {
+      // STAMP the parent FK so the row is visible in the filtered cascade even if the create
+      // API's returned row omits it (the live /verticals returns RETURNING *, but be robust).
+      const bid = Number((row as any).branch_id) || branchId;
+      const stamped = { ...row, branch_id: bid } as Named;
+      setExtra((x) => ({ ...x, verticals: [...x.verticals, stamped] }));
+      if (bid) setBranchId(bid);
+      setVerticalId(id); setPipelineId(undefined);
+    } else {
+      const vid = Number((row as any).vertical_id) || verticalId;
+      const bid = Number((row as any).branch_id) || branchId;
+      const stamped = { ...row, vertical_id: vid, branch_id: bid } as Named;
+      setExtra((x) => ({ ...x, pipelines: [...x.pipelines, stamped] }));
+      if (bid) setBranchId(bid);
+      if (vid) setVerticalId(vid);
+      setPipelineId(id);
+    }
+    ref.reload();
+  };
+
+  /** ＋ quick-add link beside a master dropdown (add mode only; permission-gated). */
+  const qLink = (field: 'Branch' | 'Vertical' | 'Pipeline', form: string, perm: string) =>
+    (!initial && can(perm)
+      ? <a className="mlink" onClick={(e) => { e.preventDefault(); setQuickAdd({ form, field }); }}>＋ Add {field}</a>
+      : null);
 
   const save = async () => {
     if (!vals['name']?.trim()) return toast('Campaign Name is required', true);
@@ -1433,18 +1490,18 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
         <div className="abody">
           <div className="form-grid">
             <div className="fld"><label>Campaign Name <span className="star">*</span></label>{txt('name')}</div>
-            <div className="fld"><label>Branch <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'master'}</span></label>
-              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.branch_name ?? ref.branches.find((b) => Number(b.id) === branchId)?.name ?? '—'}</div>
+            <div className="fld"><label>Branch <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'master'}</span>{qLink('Branch', 'admin.branches', 'branch.create')}</label>
+              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.branch_name ?? allBranches.find((b) => Number(b.id) === branchId)?.name ?? '—'}</div>
                 : <select className="ainp" value={branchId ?? ''} onChange={(e) => { setBranchId(e.target.value ? Number(e.target.value) : undefined); setVerticalId(undefined); setPipelineId(undefined); }}>
-                <option value="">Select…</option>{ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                <option value="">Select…</option>{allBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>}</div>
-            <div className="fld"><label>Vertical <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Branch'}</span></label>
-              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.vertical_name ?? ref.verticals.find((v) => Number(v.id) === verticalId)?.name ?? '—'}</div>
+            <div className="fld"><label>Vertical <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Branch'}</span>{branchId ? qLink('Vertical', 'admin.verticals', 'vertical.create') : null}</label>
+              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.vertical_name ?? allVerticals.find((v) => Number(v.id) === verticalId)?.name ?? '—'}</div>
                 : <select className="ainp" disabled={!branchId} value={verticalId ?? ''} onChange={(e) => { setVerticalId(e.target.value ? Number(e.target.value) : undefined); setPipelineId(undefined); }}>
                 <option value="">{branchId ? 'Select…' : 'Select Branch first…'}</option>{verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>}</div>
-            <div className="fld"><label>Pipeline <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Vertical'}</span></label>
-              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.pipeline_name ?? ref.pipelines.find((p) => Number(p.id) === pipelineId)?.name ?? '—'}</div>
+            <div className="fld"><label>Pipeline <span className="star">*</span><span className="fhint">{initial ? 'path locked' : 'filtered by Vertical'}</span>{verticalId ? qLink('Pipeline', 'leads.pipelinemaster', 'pipeline.create') : null}</label>
+              {initial ? <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{initial.pipeline_name ?? allPipelines.find((p) => Number(p.id) === pipelineId)?.name ?? '—'}</div>
                 : <select className="ainp" disabled={!verticalId} value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
                 <option value="">{verticalId ? 'Select…' : 'Select Vertical first…'}</option>{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>}</div>
@@ -1541,6 +1598,11 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button>
         </div>
       </div>
+      {quickAdd && (
+        <AddModal formKey={quickAdd.form} onClose={() => setQuickAdd(null)}
+          onSaved={() => ref.reload()}
+          onSavedRow={(row) => onQuickAdded(quickAdd.field, row)} />
+      )}
     </div>
   );
 }

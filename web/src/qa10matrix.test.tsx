@@ -442,6 +442,17 @@ const EXEMPT: Record<string, Allow> = {
     Pipeline: 'cascade filter only — derived from the Campaign (see Branch)',
   },
 };
+// UAT (Aug 2026) — the course form gained an OPTIONAL Pipeline \u2192 Campaign cascade on top of its
+// required Branch \u2192 Vertical ownership. Both ARE sent (meta.pipeline_id / meta.campaign_id — see
+// SAVERS['students.courses'] and courseEditSpec), but the shared REF fixture carries a single
+// pipeline (id 4) under vertical 1 and a single campaign (id 5) under it, so the differential probe
+// cannot SWITCH them to a second value to observe the payload change. Their persistence, strict
+// gating and parent-reset are proven directly in coursecascade.test.tsx instead.
+EXEMPT['students.courses'] = {
+  Pipeline: 'optional association; one pipeline under the fixture vertical, so the probe cannot switch it \u2014 persistence proven in coursecascade.test.tsx',
+  Campaign: 'optional association; one campaign under the fixture pipeline, so the probe cannot switch it \u2014 persistence proven in coursecascade.test.tsx',
+};
+EXEMPT['admin.courseconfig'] = EXEMPT['students.courses'];
 EXEMPT['dash.quickcontact'] = EXEMPT['leads.all'];
 EXEMPT['leads.pipeline'] = EXEMPT['leads.all'];
 EXEMPT['admin.pipelines'] = EXEMPT['leads.pipelinemaster'];

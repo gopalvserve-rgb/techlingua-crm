@@ -36,9 +36,16 @@ describe('preset math — IST (Asia/Kolkata) calendar days, independent of brows
     expect(presetRange('yesterday', NOW)).toEqual({ from: '2026-07-14', to: '2026-07-14' });
   });
 
-  it('This Week = [Sunday of this IST week, today]', () => {
-    // 2026-07-15 is a Wednesday; the Sunday before is 2026-07-12.
-    expect(presetRange('week', NOW)).toEqual({ from: '2026-07-12', to: '2026-07-15' });
+  it('This Week = [Monday of this IST week, today] (WEEK_START = Monday, India convention)', () => {
+    // 2026-07-15 is a Wednesday; the Monday of that week is 2026-07-13. A MID-WEEK "This Week"
+    // must return the whole running week to date, not collapse (the client-reported bug was the
+    // old Sunday-start turning "This Week" into "Today" every Sunday).
+    expect(presetRange('week', NOW)).toEqual({ from: '2026-07-13', to: '2026-07-15' });
+  });
+
+  it('This Week on a Sunday returns the full Mon..Sun week, not just that day', () => {
+    // 2026-07-19 is a Sunday; its Monday is 2026-07-13 → the week is [13th, 19th], NOT [19,19].
+    expect(presetRange('week', new Date('2026-07-19T06:00:00Z'))).toEqual({ from: '2026-07-13', to: '2026-07-19' });
   });
 
   it('This Month = [1st of month, today] in IST', () => {
