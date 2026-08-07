@@ -2,7 +2,7 @@
  * Dynamic screens — prototype layouts fed by live API data.
  * Each component matches the corresponding prototype screen's blocks & columns 1:1.
  */
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
@@ -53,9 +53,37 @@ export interface ScreenCtxT {
   openAdd: (formKey: string) => void;
   refreshTick: number;
   bump: () => void;
+  // DEF-05 — the live location.search, fed by the Shell. URL-driven filter screens (Today's
+  // Follow-ups, Leads) re-seed from it when an in-app re-navigation changes the query while the
+  // screen is ALREADY mounted (e.g. the top-bar Upcoming/Due Today/New Leads shortcuts).
+  search?: string;
 }
 export const ScreenCtx = createContext<ScreenCtxT>(null as unknown as ScreenCtxT);
 const useScreen = () => useContext(ScreenCtx);
+
+/**
+ * DEF-05 — re-seed a URL-driven filter when an IN-APP re-navigation changes the query string while
+ * the target screen is already mounted. Fires only when the search string actually CHANGES; a manual
+ * filter edit never touches the URL, so the user's own changes are preserved. The initial mount is a
+ * no-op (the useState seed already ran with the same value). When `search` is undefined (bare unit
+ * tests with no Shell), the effect never fires and the on-mount seed is untouched.
+ */
+function useReseedOnSearch(search: string | undefined, reseed: (search?: string) => void) {
+  const seeded = useRef(search);
+  useEffect(() => {
+    if (search === seeded.current) return;
+    seeded.current = search;
+    reseed(search);
+  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+/** Read the Today's-Follow-ups preset from a query string (defaults to Today, the screen's name). */
+function seedTodayFollowup(search?: string): FollowupValue {
+  const sp = new URLSearchParams(typeof search === 'string' ? search : (typeof window !== 'undefined' ? window.location.search : ''));
+  const f = sp.get('followup');
+  if (f) return { followup: f, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined };
+  return { followup: 'today' };
+}
 
 /** Append the active global scope (branch_id/vertical_id/...) to a fetch path as a query. */
 function withScope(path: string, sp: Record<string, string>): string {
@@ -610,17 +638,16 @@ function MyTasks() {
 }
 
 function TodayFollowups() {
-  const { refreshTick, bump } = useScreen();
+  const { refreshTick, bump, search } = useScreen();
   // Follow-up date filter (client #3). Seed the preset from the URL so the top-bar shortcuts
   // "Due Today" (followup=today) and "Upcoming" (followup=next7) land here pre-filtered;
   // default to Today, matching the screen's name. "No Followup" is hidden (this list IS
   // follow-ups). Switching the preset re-queries with the same IST windows used everywhere.
-  const [fu, setFu] = useState<FollowupValue>(() => {
-    const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
-    const f = sp.get('followup');
-    if (f) return { followup: f, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined };
-    return { followup: 'today' };
-  });
+  const [fu, setFu] = useState<FollowupValue>(() => seedTodayFollowup(search));
+  // DEF-05 — when a top-bar shortcut re-navigates here while this screen is already open
+  // (Missed -> Upcoming/Due Today), the query param changes but the screen does not remount;
+  // re-seed the preset from the new query so the chip + header follow the shortcut.
+  useReseedOnSearch(search, (s) => setFu(seedTodayFollowup(s)));
   const rq = new URLSearchParams({ limit: '100' });
   if (fu.followup) rq.set('followup', fu.followup);
   if (fu.fu_from) rq.set('fu_from', fu.fu_from);
@@ -878,8 +905,8 @@ function QuickContact() {
  * mount. Read straight from window.location.search (not useSearchParams) so the component still
  * renders bare in unit tests, with no Router; an empty search yields exactly the old defaults.
  */
-function readLeadNavFilters() {
-  const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+function readLeadNavFilters(search?: string) {
+  const sp = new URLSearchParams(typeof search === 'string' ? search : (typeof window !== 'undefined' ? window.location.search : ''));
   const n = (key: string) => { const v = Number(sp.get(key)); return Number.isFinite(v) && v > 0 ? v : undefined; };
   const b = (key: string) => sp.get(key) === '1' || sp.get(key) === 'true';
   return {
@@ -894,12 +921,24 @@ function readLeadNavFilters() {
 }
 
 function LeadsAll() {
-  const { openLead, refreshTick, bump } = useScreen();
+  const { openLead, refreshTick, bump, search } = useScreen();
   const { can } = useAuth();
   // GLOBAL SCOPE seeds the hierarchy filters as a baseline; an explicit URL filter (a KPI card
   // link) still wins, and the user can narrow further with the in-panel chips. The component
   // remounts when the global scope changes (Shell keys Screen by the scope), so it re-seeds.
   const { scope: gScope } = useScope();
+  // Seed the full filter set from the URL (a KPI card / top-bar shortcut), then fall back to the
+  // global scope for any hierarchy level the URL does not pin. Reused on mount AND on in-app re-nav.
+  const seedLeadFilters = (s?: string) => {
+    const base = readLeadNavFilters(s);
+    return {
+      ...base,
+      branch: base.branch ?? gScope.branch,
+      vertical: base.vertical ?? gScope.vertical,
+      pipeline: base.pipeline ?? gScope.pipeline,
+      campaign: base.campaign ?? gScope.campaign,
+    };
+  };
   const canEditLead = can('lead.update');
   const canDeleteLead = can('lead.delete');
   const ref = useRef_();
@@ -918,16 +957,12 @@ function LeadsAll() {
     // Aug 2026 — dashboard card links: won (Conversions) + unassigned open the list pre-filtered.
     won?: boolean; unassigned?: boolean;
     sort: string; q: string;
-  }>(() => {
-    const base = readLeadNavFilters();
-    return {
-      ...base,
-      branch: base.branch ?? gScope.branch,
-      vertical: base.vertical ?? gScope.vertical,
-      pipeline: base.pipeline ?? gScope.pipeline,
-      campaign: base.campaign ?? gScope.campaign,
-    };
-  });
+  }>(() => seedLeadFilters(search));
+  // DEF-05 — a top-bar shortcut / card link (e.g. New Leads = created today) re-navigating to the
+  // Leads list while it is ALREADY open changes the query but does not remount the screen; re-seed
+  // the filter from the new query so the shortcut takes effect. Manual chip edits never touch the
+  // URL, so they are preserved.
+  useReseedOnSearch(search, (s) => setF(seedLeadFilters(s)));
   const params = new URLSearchParams();
   if (f.branch) params.set('branch_id', String(f.branch));
   if (f.vertical) params.set('vertical_id', String(f.vertical));

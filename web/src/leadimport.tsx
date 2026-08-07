@@ -134,12 +134,15 @@ function ImportHistoryTab() {
 
   return (
     <>
-      <div className="card"><div className="card-pad" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      {/* DEF-06 — use the standard, compact .card-head (which sizes its h3 icon to 15px) instead of a
+          bare .card-pad h3: an un-sized inline <svg viewBox> was rendering at the browser default
+          (300x150), pushing the Runs table below the fold. The table is now the primary content at top. */}
+      <div className="card"><div className="card-head" style={{ gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <h3 style={{ margin: 0 }}><Ic k="clock" /> Import History</h3>
+          <h3><Ic k="clock" /> Import History</h3>
           <p className="page-sub" style={{ margin: '4px 0 0' }}>Every import run in your scope. Expand a run to see and download the rows that did not import.</p>
         </div>
-        <DateRange value={range} onChange={setRange} idPrefix="imp" style={{ marginLeft: 'auto' }} />
+        <DateRange value={range} onChange={setRange} idPrefix="imp" />
       </div></div>
 
       <div className="card">

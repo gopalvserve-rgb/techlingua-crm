@@ -157,6 +157,11 @@ describe('Import Leads screen', () => {
     render(<LeadImport />);
     fireEvent.click(screen.getByText('History'));           // switch to the History view
     expect(screen.getByText('Import History')).toBeTruthy();
+    // DEF-06 — the header sits in the compact, icon-sized .card-head (its h3 svg is 15px), NOT the
+    // old unbounded .card-pad where a bare <svg viewBox> rendered the clock at the 300x150 browser
+    // default and pushed the Runs table below the fold. The Runs table is the primary content on top.
+    expect(screen.getByText('Import History').closest('.card-head')).not.toBeNull();
+    expect(document.querySelector('table.tbl')).toBeTruthy();
     // the columns the client asked for
     for (const col of ['File', 'Branch', 'Vertical', 'Campaign', 'Rows', 'Created', 'Duplicate', 'Failed', 'Uploaded by', 'When', 'Status']) {
       expect(screen.getAllByText(col).length).toBeGreaterThan(0);

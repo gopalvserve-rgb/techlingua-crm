@@ -1,7 +1,7 @@
 /** App shell — brand, topbar (scope chips, search, theme, user), sidebar nav tree,
  *  and the per-screen page renderer. Ported 1:1 from the prototype shell. */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { APP, findScreen } from './specs';
@@ -197,10 +197,14 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
   };
 
   const Dyn = spec.dyn ? DYN[spec.dyn] : null;
+  // DEF-05 — the live query string. URL-driven filter screens (Today's Follow-ups, Leads) re-seed
+  // from it when a top-bar shortcut / card link re-navigates here while the screen is already open.
+  const loc = useLocation();
 
   return (
     <ScreenCtx.Provider value={{
       go, openLead: (id) => setLeadId(id), openAdd, refreshTick: tick, bump: () => setTick((t) => t + 1),
+      search: loc.search,
     }}>
       <div className="view">
         <div className="crumb">
