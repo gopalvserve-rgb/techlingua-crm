@@ -629,6 +629,8 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- Help & Support ---------------- */
   { id: 'help', label: 'Help & Support', icon: 'help', subs: [
+    { id: 'features', label: "What's New / Features", spec: { dyn: 'featuresPanel',
+      sub: 'Recent updates and the full list of feature modules in the CRM. Click a module to open it. This is the destination of the top-bar Features shortcut.' } },
     { id: 'tickets', label: 'Support Tickets', spec: { dyn: 'supportTickets',
       sub: 'Internal staff tickets — full lifecycle. Category (admin-managed master), priority, SLA target with overdue flagging, assignment (active users only), and the Open → In Progress → Resolved → Closed status flow with a reopen path. Comment thread per ticket. RBAC-scoped: you see your own / assigned / branch tickets per your access.' } },
     { id: 'helpcenter', label: 'Help Center', spec: {

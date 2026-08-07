@@ -33,6 +33,8 @@ export class LeadsController {
       // Dashboard card links (Aug 2026) — Conversions (won) and Unassigned filters.
       won: q.won === '1' || q.won === 'true',
       unassigned: q.unassigned === '1' || q.unassigned === 'true',
+      // Follow-up date filter (client #3) — preset + optional custom range on the next follow-up.
+      followup: (q.followup as any) || undefined, fu_from: q.fu_from || undefined, fu_to: q.fu_to || undefined,
       sort: q.sort || undefined,
       q: q.q || undefined, limit: num(q.limit), offset: num(q.offset),
     });
@@ -60,6 +62,7 @@ export class LeadsController {
       paused: q.paused === '1' || q.paused === 'true',
       won: q.won === '1' || q.won === 'true',
       unassigned: q.unassigned === '1' || q.unassigned === 'true',
+      followup: (q.followup as any) || undefined, fu_from: q.fu_from || undefined, fu_to: q.fu_to || undefined,
       q: q.q || undefined,
     });
   }
@@ -200,6 +203,8 @@ export class FollowUpsController {
       branch_id: num(q.branch_id), vertical_id: num(q.vertical_id),
       pipeline_id: num(q.pipeline_id), campaign_id: num(q.campaign_id),
       from: q.from || undefined, to: q.to || undefined,
+      // Follow-up date filter (client #3) — preset window on the DUE date + optional custom range.
+      followup: (q.followup as any) || undefined, fu_from: q.fu_from || undefined, fu_to: q.fu_to || undefined,
     }, u.id);
   }
 

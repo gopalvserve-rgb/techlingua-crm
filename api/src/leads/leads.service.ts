@@ -8,7 +8,7 @@ import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { looksLikePhoneQuery, normalizePhone, phoneQueryFragments } from '../common/phone.util';
 import { assertActiveUser } from './active-user.util';
-import { assertDateRange, SQL_TODAY, istDay } from '../common/date.util';
+import { assertDateRange, SQL_TODAY, istDay, assertFollowupPreset, followupWindowSql, FollowupPreset } from '../common/date.util';
 import { DistributionConfig } from './distribution.util';
 import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
@@ -77,6 +77,10 @@ export interface LeadFilters {
   sort?: string;
   /** UAT-R2 #26 — created-date range (YYYY-MM-DD), inclusive of both ends. */
   created_from?: string; created_to?: string;
+  /** Follow-up date filter (client #3) — the lead's "next follow-up", evaluated over the
+   *  lead's PENDING follow-ups in IST. preset + optional custom range (fu_from/fu_to). */
+  followup?: FollowupPreset;
+  fu_from?: string; fu_to?: string;
   q?: string; limit?: number; offset?: number;
 }
 
@@ -203,6 +207,20 @@ export class LeadsService {
     if (f.sla_breached) {
       where.push(`EXISTS (SELECT 1 FROM lead_sla s
                            WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now())`);
+    }
+    // Follow-up date filter (client #3): "next follow-up" is a lead attribute. We evaluate it
+    // over the lead's PENDING follow-ups (robust to a stale next_follow_up_at cache), in IST,
+    // so a preset selects exactly the same window the follow-ups list uses on scheduled_at.
+    const fup = assertFollowupPreset(f.followup);
+    if (fup) {
+      const PEND = `SELECT 1 FROM follow_up fu WHERE fu.lead_id = l.id AND fu.status = 'pending' AND fu.deleted_at IS NULL AND fu.is_active`;
+      if (fup === 'no_followup') where.push(`NOT EXISTS (${PEND})`);
+      else if (fup === 'missed') where.push(`EXISTS (${PEND} AND fu.scheduled_at < now())`);
+      else {
+        const fdr = assertDateRange(f.fu_from, f.fu_to);
+        const win = followupWindowSql(fup, 'fu.scheduled_at', params, fdr.from, fdr.to);
+        where.push(`EXISTS (${PEND} AND (${win}))`);
+      }
     }
     if (f.q) where.push(buildLeadSearch(f.q, params));
     return where.join(' AND ');

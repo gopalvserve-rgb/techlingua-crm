@@ -8,7 +8,7 @@ import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { SettingsService } from '../common/settings.service';
 import { assertActiveUser } from './active-user.util';
-import { assertDateRange, SQL_TODAY, istDay } from '../common/date.util';
+import { assertDateRange, SQL_TODAY, istDay, assertFollowupPreset, followupWindowSql, FollowupPreset } from '../common/date.util';
 
 export interface FollowUpFilters {
   lead_id?: number; owner_id?: number; status?: string;
@@ -20,6 +20,10 @@ export interface FollowUpFilters {
   branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
   /** Shared date-range control — filters by the task's DUE date (scheduled_at). */
   from?: string; to?: string;
+  /** Follow-up date filter (client #3) — a preset window on the DUE date (scheduled_at, IST),
+   *  plus an optional custom range (fu_from/fu_to) used when followup='custom'. */
+  followup?: FollowupPreset;
+  fu_from?: string; fu_to?: string;
 }
 
 export interface CreateFollowUpDto {
@@ -115,6 +119,18 @@ export class FollowUpsService {
     const dr = assertDateRange(f.from, f.to);
     if (dr.from) { params.push(dr.from); where.push(`f.scheduled_at::date >= $${params.length}::date`); }
     if (dr.to) { params.push(dr.to); where.push(`f.scheduled_at::date <= $${params.length}::date`); }
+    // Follow-up date filter (client #3) — presets on the task's DUE date (scheduled_at), IST.
+    // No Followup is meaningful only on the Leads list (a follow-up row IS a scheduled
+    // follow-up), so here it selects nothing; Missed = a pending task now in the past.
+    const fup = assertFollowupPreset(f.followup);
+    if (fup === 'no_followup') {
+      where.push('FALSE');
+    } else if (fup === 'missed') {
+      where.push(`f.status = 'pending' AND f.scheduled_at < now()`);
+    } else if (fup) {
+      const fdr = assertDateRange(f.fu_from, f.fu_to);
+      where.push(`f.status = 'pending' AND (${followupWindowSql(fup, 'f.scheduled_at', params, fdr.from, fdr.to)})`);
+    }
     params.push(Math.min(Number(f.limit) || 100, 500));
     // priority sorts within the due DATE (high > medium > low), hot leads first inside a slot
     return this.db.query(

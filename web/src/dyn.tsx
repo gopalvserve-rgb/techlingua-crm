@@ -22,6 +22,7 @@ import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
 import { DateRange, presetRange } from './daterange';
+import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
@@ -565,10 +566,16 @@ function MyTasks() {
   const [view, setView] = useState<'assigned' | 'reported'>('assigned');
   // SHARED date range on the task DUE date (scheduled_at). Default All time — never hide open tasks.
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  // Follow-up date filter (client #3): Missed / Today / Tomorrow / Next 7 / Next 30 / Custom.
+  // "No Followup" is not meaningful on a task list (every row IS a follow-up) — hidden here.
+  const [fu, setFu] = useState<FollowupValue>({});
   const rq = new URLSearchParams({ view, status: 'pending', limit: '50' });
   if (range.from) rq.set('from', range.from);
   if (range.to) rq.set('to', range.to);
-  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  if (fu.followup) rq.set('followup', fu.followup);
+  if (fu.fu_from) rq.set('fu_from', fu.fu_from);
+  if (fu.fu_to) rq.set('fu_to', fu.fu_to);
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}~${fu.followup ?? ''}~${fu.fu_from ?? ''}~${fu.fu_to ?? ''}`;
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
   const list = useFetch<any[]>(withScope(`/follow-ups?${rq.toString()}`, sp), [view, rangeKey, refreshTick, scopeKey]);
   const s = sum.data ?? {};
@@ -585,7 +592,8 @@ function MyTasks() {
           Reported by Me{s.reported_open != null ? ` (${s.reported_open})` : ''}
         </button>
       </div>
-      <div className="filters" style={{ marginBottom: 12 }}>
+      <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <FollowupFilter value={fu} onChange={setFu} allowNoFollowup={false} idPrefix="mytasks-fu" />
         <DateRange value={range} onChange={setRange} idPrefix="mytasks-dr" />
       </div>
       <Kpis items={[
@@ -603,10 +611,30 @@ function MyTasks() {
 
 function TodayFollowups() {
   const { refreshTick, bump } = useScreen();
+  // Follow-up date filter (client #3). Seed the preset from the URL so the top-bar shortcuts
+  // "Due Today" (followup=today) and "Upcoming" (followup=next7) land here pre-filtered;
+  // default to Today, matching the screen's name. "No Followup" is hidden (this list IS
+  // follow-ups). Switching the preset re-queries with the same IST windows used everywhere.
+  const [fu, setFu] = useState<FollowupValue>(() => {
+    const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+    const f = sp.get('followup');
+    if (f) return { followup: f, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined };
+    return { followup: 'today' };
+  });
+  const rq = new URLSearchParams({ limit: '100' });
+  if (fu.followup) rq.set('followup', fu.followup);
+  if (fu.fu_from) rq.set('fu_from', fu.fu_from);
+  if (fu.fu_to) rq.set('fu_to', fu.fu_to);
+  const fuKey = `${fu.followup ?? ''}~${fu.fu_from ?? ''}~${fu.fu_to ?? ''}`;
+  const fuLabel = FU_PRESETS.find((p) => p.key === fu.followup)?.label
+    ?? (fu.followup === 'custom' ? 'Custom range' : 'All follow-ups');
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
-  const list = useFetch<any[]>('/follow-ups?due=today&limit=100', [refreshTick]);
+  const list = useFetch<any[]>(`/follow-ups?${rq.toString()}`, [fuKey, refreshTick]);
   return (
     <>
+      <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <FollowupFilter value={fu} onChange={setFu} allowNoFollowup={false} idPrefix="today-fu" />
+      </div>
       <Kpis items={[
         { lab: 'Due today', val: String(sum.data?.due_today ?? '0'), ic: 'clock' },
         { lab: 'Overdue', val: String(sum.data?.overdue ?? '0'), ic: 'clock', tone: sum.data?.overdue > 0 ? 'down' : 'flat' },
@@ -616,10 +644,10 @@ function TodayFollowups() {
       {/* #14 — actionable: open the lead, mark done (confirm), overdue highlighted red. */}
       <div className="card">
         <div className="card-head">
-          <h3><Ic k="clock" />{`Today \u2014 ${new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}`}</h3>
-          <span className="more">{sum.data?.due_today ?? 0} due · {sum.data?.overdue ?? 0} overdue</span>
+          <h3><Ic k="clock" />{fuLabel}</h3>
+          <span className="more">{sum.data?.due_today ?? 0} due today · {sum.data?.overdue ?? 0} overdue</span>
         </div>
-        <FollowupRows rows={list.data ?? []} onChanged={bump} empty="No follow-ups due today" />
+        <FollowupRows rows={list.data ?? []} onChanged={bump} empty={`No follow-ups for \u201c${fuLabel}\u201d`} />
       </div>
     </>
   );
@@ -859,6 +887,7 @@ function readLeadNavFilters() {
     source: n('source_id'), status: n('status_id'), owner: n('owner_id'),
     from: sp.get('created_from') || undefined, to: sp.get('created_to') || undefined,
     temperature: sp.get('temperature') || undefined,
+    followup: sp.get('followup') || undefined, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined,
     sla: b('sla_breached'), dup: b('duplicate'), won: b('won'), unassigned: b('unassigned'),
     sort: sp.get('sort') || 'recent', q: sp.get('q') || '',
   };
@@ -881,6 +910,9 @@ function LeadsAll() {
     source?: number; status?: number; owner?: number; from?: string; to?: string;
     // Sprint 3 — the score BAND is filterable, and SLA breaches are their own filter
     temperature?: string; sla?: boolean;
+    // Follow-up date filter (client #3) — the lead's next follow-up (No Followup / Missed /
+    // Today / Tomorrow / Next 7 / Next 30 / Custom).
+    followup?: string; fu_from?: string; fu_to?: string;
     // Client change (Jul 2026) — the Duplicates filter (leads marked is_duplicate)
     dup?: boolean;
     // Aug 2026 — dashboard card links: won (Conversions) + unassigned open the list pre-filtered.
@@ -907,6 +939,9 @@ function LeadsAll() {
   if (f.from) params.set('created_from', f.from);
   if (f.to) params.set('created_to', f.to);
   if (f.temperature) params.set('temperature', f.temperature);
+  if (f.followup) params.set('followup', f.followup);
+  if (f.fu_from) params.set('fu_from', f.fu_from);
+  if (f.fu_to) params.set('fu_to', f.fu_to);
   if (f.sla) params.set('sla_breached', '1');
   if (f.dup) params.set('duplicate', '1');
   if (f.won) params.set('won', '1');
@@ -1010,6 +1045,12 @@ function LeadsAll() {
             created_to). Default = All time so the list never hides existing leads. */}
         <DateRange value={{ from: f.from, to: f.to }} idPrefix="leads-dr"
           onChange={(v) => setF((x) => ({ ...x, from: v.from, to: v.to }))} />
+        {/* Follow-up date filter (client #3): "next follow-up" as a lead attribute (No Followup /
+            Missed / Today / Tomorrow / Next 7 / Next 30 / Custom), evaluated over the lead's
+            pending follow-ups in IST — same windows as the follow-ups list. */}
+        <FollowupFilter value={{ followup: f.followup, fu_from: f.fu_from, fu_to: f.fu_to }}
+          onChange={(v) => setF((x) => ({ ...x, followup: v.followup, fu_from: v.fu_from, fu_to: v.fu_to }))}
+          idPrefix="leads-fu" />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / email…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         {/* Sprint 3 — the band is FILTERABLE (client requirement). These chips are real. */}
         <div className="fchip" data-testid="band-filter">
@@ -3315,6 +3356,66 @@ function DeletedItems() {
 
 /* ------------------------------ registry ------------------------------ */
 
+/**
+ * FEATURES / WHAT'S NEW (client #4) — a REAL in-app feature list + changelog, the destination
+ * for the top-bar "Features" shortcut. Not a dead button: it renders a genuine list of the
+ * modules the CRM ships and the most recent updates. Items that map to a screen are clickable
+ * and navigate via go() (so it also doubles as a quick launcher). A static-but-real list, per
+ * the client's ask; the authoritative changelog lives in docs/devops/01-deploy-log.md.
+ */
+const WHATS_NEW: Array<{ t: string; d: string }> = [
+  { t: 'Follow-up date filter', d: 'Filter My Tasks, Today’s Follow-ups and Leads by No Followup · Missed · Today · Tomorrow · Next 7 / 30 Days · Custom (all in IST).' },
+  { t: 'Top-bar shortcuts', d: 'Quick access to New Leads, Due Today, Upcoming follow-ups and this Features panel from anywhere.' },
+  { t: 'Global scope selector', d: 'A Branch › Vertical › Pipeline › Campaign selector in the top bar filters the whole app to one unit.' },
+  { t: 'Shared date-range picker', d: 'Today / Yesterday / This Week / This Month / Custom on every list, report and the dashboard (IST).' },
+  { t: 'Dashboard cards open filtered lists', d: 'Every KPI card is a button that opens the exact list behind its number.' },
+  { t: 'Import Leads + Import History', d: 'CSV import with a per-row preview, soft course matching, and an Import History tab with downloadable failed rows.' },
+  { t: 'Lead transfer & bulk actions', d: 'Move a lead across Branch/Vertical/Campaign; bulk transfer, reassign, pause and resume over a filtered set.' },
+];
+const FEATURE_MODULES: Array<{ t: string; d: string; mod?: string; sub?: string }> = [
+  { t: 'Leads', d: 'Capture, three list views, filters, scoring, SLA, transfer & bulk actions.', mod: 'leads', sub: 'all' },
+  { t: 'My Tasks & Follow-ups', d: 'Assigned/Reported tasks, reminders, the new follow-up date filter.', mod: 'dash', sub: 'mytasks' },
+  { t: 'Dashboard & Quick Stats', d: 'Role-aware KPIs, funnel, sparklines — all date-range aware.', mod: 'dash', sub: 'overview' },
+  { t: 'Campaigns & Masters', d: 'Branch › Vertical › Pipeline › Campaign › Source hierarchy + course masters.', mod: 'leads', sub: 'campaigns' },
+  { t: 'Analytics & Reports', d: 'Funnel, TAT, Activity, Campaign ROI + a custom Report Builder.', mod: 'analytics', sub: 'funnel' },
+  { t: 'Engagement & Journeys', d: 'Templates, bulk WhatsApp / SMS / Email and automation journeys.', mod: 'engage', sub: 'journeys' },
+  { t: 'Enrolment & Fees (lite)', d: 'Quotations, sale closure, monthly targets, counsellor performance, fee receipts.', mod: 'perf', sub: 'closure' },
+  { t: 'Administration', d: 'Users, custom roles (RBAC), integrations, audit log, API access.', mod: 'admin', sub: 'users' },
+];
+function FeaturesPanel() {
+  const { go } = useScreen();
+  return (
+    <>
+      <div className="card">
+        <div className="card-head"><h3><Ic k="bolt" />What’s New</h3><span className="more">Recent updates</span></div>
+        <div className="list">
+          {WHATS_NEW.map((f, i) => (
+            <div className="lrow" key={i}>
+              <div className="ic"><Ic k="check" /></div>
+              <div className="tx"><div className="t1">{f.t}</div><div className="t2">{f.d}</div></div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-head"><h3><Ic k="grid" />Feature Modules</h3><span className="more">Click to open</span></div>
+        <div className="list">
+          {FEATURE_MODULES.map((m, i) => (
+            <div className="lrow" key={i} role={m.mod ? 'button' : undefined} tabIndex={m.mod ? 0 : undefined}
+              style={m.mod ? { cursor: 'pointer' } : undefined}
+              onClick={() => m.mod && go(m.mod, m.sub!)}
+              onKeyDown={(e) => { if (m.mod && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(m.mod, m.sub!); } }}>
+              <div className="ic"><Ic k="grid" /></div>
+              <div className="tx"><div className="t1">{m.t}</div><div className="t2">{m.d}</div></div>
+              {m.mod ? <div className="rt"><Ic k="chev" /></div> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export const DYN: Record<string, () => JSX.Element> = {
   dashOverview: DashOverview,
   quickContact: QuickContact,
@@ -3378,6 +3479,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   supportTickets: SupportTickets,
   crossSell: CrossSell,
   sitemap: Sitemap,
+  featuresPanel: FeaturesPanel,
 };
 
 export { checkS };

@@ -13,6 +13,7 @@ import { RoleModal } from './rolemodal';
 import { toast, useRef_, Toaster } from './refdata';
 import { NotificationBell } from './notifications';
 import { ScopeSelector, useScope } from './scope';
+import { isoDay } from './daterange';
 
 
 function Logo() {
@@ -84,6 +85,29 @@ export function Shell() {
             <input placeholder="Search anything…" value={globalQ} onChange={(e) => setGlobalQ(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { go('leads', 'all'); } }} />
             <kbd>⌘K</kbd>
+          </div>
+          {/* Quick-access shortcuts (client #4). Each is a real, keyboard-accessible destination
+              via go(mod,sub,params) reusing the card-link / follow-up filter params:
+              New Leads = leads created today (IST); Due Today / Upcoming = the Today's Follow-ups
+              screen pre-set to today / next-7-days via the #3 followup filter; Features = the
+              in-app What's New / Features panel. */}
+          <div className="tb-shortcuts" role="group" aria-label="Quick shortcuts">
+            <button className="tb-shortcut" title="New Leads — created today"
+              onClick={() => go('leads', 'all', { created_from: isoDay(), created_to: isoDay() })}>
+              <Ic k="leads" /><span>New Leads</span>
+            </button>
+            <button className="tb-shortcut" title="Due Today — follow-ups due today"
+              onClick={() => go('dash', 'todayfollowups', { followup: 'today' })}>
+              <Ic k="clock" /><span>Due Today</span>
+            </button>
+            <button className="tb-shortcut" title="Upcoming — follow-ups in the next 7 days"
+              onClick={() => go('dash', 'todayfollowups', { followup: 'next7' })}>
+              <Ic k="cal" /><span>Upcoming</span>
+            </button>
+            <button className="tb-shortcut" title="What's New / Features"
+              onClick={() => go('help', 'features')}>
+              <Ic k="bolt" /><span>Features</span>
+            </button>
           </div>
           <button className="icon-btn" title="Site Map" onClick={() => go('map', 'all')}><Ic k="grid" /></button>
           <div className="theme-toggle">

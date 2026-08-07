@@ -178,3 +178,63 @@ export function assertDateRange(
   if (f && t && f > t) fail('"from" must not be after "to"');
   return { from: f ?? null, to: t ?? null };
 }
+
+/**
+ * =============================================================================
+ * FOLLOW-UP DATE FILTER (client #3, Aug 2026) — the presets the client asked for.
+ * =============================================================================
+ * No Followup · Missed · Today · Tomorrow · Next 7 Days · Next 30 Days · Custom.
+ * Every window is computed in the APP timezone (IST), exactly like every other day
+ * bucket in the app, so "Today" here is the SAME IST day the dashboard/counters use.
+ *
+ * ONE definition, reused by BOTH the follow-ups list (a follow_up row filtered by
+ * f.scheduled_at) and the Leads list (an EXISTS over the lead's PENDING follow-ups on
+ * fu.scheduled_at), so a preset means the same window on either screen.
+ *
+ *  - no_followup — the lead has NO pending follow-up (Leads list: NOT EXISTS). A follow-up
+ *                  row is itself a scheduled follow-up, so the follow-ups list never uses it.
+ *  - missed      — a PENDING follow-up whose scheduled_at is in the PAST (overdue / not done).
+ *  - today       — scheduled on IST today.
+ *  - tomorrow    — scheduled on IST today + 1.
+ *  - next7       — scheduled within today .. today + 7 (IST days, inclusive).
+ *  - next30      — scheduled within today .. today + 30 (IST days, inclusive).
+ *  - custom      — scheduled within the supplied fu_from .. fu_to (IST days).
+ */
+export const FOLLOWUP_PRESETS = [
+  'no_followup', 'missed', 'today', 'tomorrow', 'next7', 'next30', 'custom',
+] as const;
+export type FollowupPreset = (typeof FOLLOWUP_PRESETS)[number];
+
+/** Validate the `followup` query param. Empty -> undefined; an unknown value -> 400. */
+export function assertFollowupPreset(v: unknown): FollowupPreset | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (!(FOLLOWUP_PRESETS as readonly string[]).includes(String(v))) {
+    throw new BadRequestException(`invalid followup filter — expected one of: ${FOLLOWUP_PRESETS.join(', ')}`);
+  }
+  return String(v) as FollowupPreset;
+}
+
+/**
+ * The IST-day WINDOW predicate for a scheduled-date column, for the date-window presets
+ * (today/tomorrow/next7/next30/custom). Returns a SQL fragment (no leading AND) and pushes
+ * any bind params for the custom range. `no_followup`/`missed` are NOT here — the caller
+ * composes them (existence / an instant compare, not a calendar-day window).
+ */
+export function followupWindowSql(
+  preset: 'today' | 'tomorrow' | 'next7' | 'next30' | 'custom',
+  col: string, params: unknown[], from?: string | null, to?: string | null,
+): string {
+  const d = istDay(col);
+  switch (preset) {
+    case 'today': return `${d} = ${SQL_TODAY}`;
+    case 'tomorrow': return `${d} = ${SQL_TODAY} + 1`;
+    case 'next7': return `${d} BETWEEN ${SQL_TODAY} AND ${SQL_TODAY} + 7`;
+    case 'next30': return `${d} BETWEEN ${SQL_TODAY} AND ${SQL_TODAY} + 30`;
+    case 'custom': {
+      const parts: string[] = [];
+      if (from) { params.push(from); parts.push(`${d} >= $${params.length}::date`); }
+      if (to) { params.push(to); parts.push(`${d} <= $${params.length}::date`); }
+      return parts.length ? parts.join(' AND ') : 'TRUE';
+    }
+  }
+}
