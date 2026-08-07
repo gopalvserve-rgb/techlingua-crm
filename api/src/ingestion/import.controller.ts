@@ -27,8 +27,13 @@ export class ImportController {
 
   /** History (who / when / file / counts / status). */
   @Get() @RequirePermission('lead.import')
-  list(@CurrentScope() s: ResolvedScope, @Query('limit') limit?: string) {
-    return this.svc.list(s, limit ? Number(limit) : 50);
+  list(
+    @CurrentScope() s: ResolvedScope,
+    @Query('limit') limit?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.svc.list(s, { limit: limit ? Number(limit) : 50, from, to });
   }
 
   /** Starter template so a first-time user begins from a valid file. */

@@ -5,6 +5,7 @@ import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { parseCsv, rowToObject, toCsv } from './csv.util';
+import { assertDateRange } from '../common/date.util';
 import { LEAD_IMPORT_FIELDS, CUSTOM_PREFIX, applyMapping, autoMap, validateMapping } from './mapping.util';
 import { DuplicateAction, IngestPayload, IngestValidationError } from './ingestion.types';
 import { LeadIngestionService, IngestTarget } from './lead-ingestion.service';
@@ -38,6 +39,8 @@ export interface PreviewRow {
   /** the campaign's duplicacy action this row WILL get: ignore | create | merge | merge_and_reopen
    *  ('skip' = the row repeats earlier in the same file and is imported once). */
   action?: 'ignore' | 'create' | 'merge' | 'merge_and_reopen' | 'flag' | 'skip' | null;
+  /** soft note (import course fix): the row imports, but a master value could not be resolved. */
+  warning?: string;
 }
 
 @Injectable()
@@ -99,7 +102,7 @@ export class ImportService {
 
     const action = (target.duplicacy.on_duplicate ?? 'ignore') as DuplicateAction;
     const out: PreviewRow[] = [];
-    let valid = 0, dupes = 0, errors = 0;
+    let valid = 0, dupes = 0, errors = 0, warnings = 0;
     const seenKeys = new Set<string>();
     const seenPhones = new Set<string>();
 
@@ -108,7 +111,10 @@ export class ImportService {
       const payload = applyMapping(raw, mapping);
       const rowNum = i + 1;
       try {
-        const lead = this.ingestion.normalise(payload, target);
+        // Import course fix: resolve masters softly (matches inbound). An unknown Course/City/etc.
+        // does NOT fail the row — it imports and the raw value is kept on the note; we surface it
+        // as a clear per-row warning here so the user sees it BEFORE committing.
+        const lead = this.ingestion.normalise(payload, target, { softMasters: true });
         const key = this.ingestion.dedupeKey(payload, {
           channel: 'csv', campaign_id: campaignId, source_id: sourceId, actor_id: userId,
         });
@@ -142,7 +148,11 @@ export class ImportService {
         }
         seenPhones.add(lead.phone);
         valid++;
-        if (out.length < PREVIEW_ROWS) out.push({ row_num: rowNum, status: 'valid', action: null, name: lead.full_name, phone: lead.phone });
+        const warn = lead.unresolved?.length
+          ? lead.unresolved.map(([l, v]) => `${l} \u201c${v}\u201d is not in the master \u2014 the lead is imported without it (the value is kept in the note).`).join(' ')
+          : undefined;
+        if (warn) warnings++;
+        if (out.length < PREVIEW_ROWS) out.push({ row_num: rowNum, status: 'valid', action: null, name: lead.full_name, phone: lead.phone, warning: warn });
       } catch (e) {
         errors++;
         const reason = e instanceof IngestValidationError ? e.message : (e as Error).message;
@@ -151,7 +161,7 @@ export class ImportService {
     }
 
     return {
-      total: rows.length, valid, duplicates: dupes, errors,
+      total: rows.length, valid, duplicates: dupes, errors, warnings,
       duplicate_action: target.duplicacy.on_duplicate ?? 'ignore',
       duplicate_scope: target.duplicacy.check_scope ?? 'this_campaign',
       distribution_mode: target.distribution?.mode ?? 'on_demand',
@@ -209,10 +219,15 @@ export class ImportService {
     return this.resolver.buildScopeWhere(scope, BATCH_SCOPE_COLS, params);
   }
 
-  async list(scope: ResolvedScope, limit = 50) {
+  async list(scope: ResolvedScope, opts: { limit?: number; from?: unknown; to?: unknown } = {}) {
+    // DEF-DR-01/02: route the date-range through the one strict validator (bad date -> 400, not 500).
+    const { from, to } = assertDateRange(opts.from, opts.to);
     const params: unknown[] = [];
     const where = this.scopeWhere(scope, params);
-    params.push(Math.min(Number(limit) || 50, 200));
+    const extra: string[] = [];
+    if (from) { params.push(from); extra.push(`b.created_at >= $${params.length}::date`); }
+    if (to) { params.push(to); extra.push(`b.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
+    params.push(Math.min(Number(opts.limit) || 50, 200));
     return this.db.query(
       `SELECT b.*, c.name AS campaign_name, s.name AS source_name, br.name AS branch_name,
               v.name AS vertical_name, u.name AS created_by_name
@@ -222,7 +237,7 @@ export class ImportService {
          JOIN branch br  ON br.id = b.branch_id
          JOIN vertical v ON v.id = b.vertical_id
          LEFT JOIN "user" u ON u.id = b.created_by
-        WHERE (${where})
+        WHERE (${where})${extra.length ? ' AND ' + extra.join(' AND ') : ''}
         ORDER BY b.created_at DESC LIMIT $${params.length}`,
       params,
     );

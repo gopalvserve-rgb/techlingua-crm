@@ -16,6 +16,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { DateRange, DateRangeValue } from './daterange';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -29,9 +30,11 @@ interface PreviewRow {
   row_num: number; status: 'valid' | 'duplicate' | 'error';
   reason?: string; name?: string; phone?: string; duplicate_of?: number | null;
   action?: 'ignore' | 'create' | 'merge' | 'merge_and_reopen' | 'skip' | null;
+  /** import course fix: the row imports, but a master value (e.g. Course) could not be resolved. */
+  warning?: string;
 }
 interface PreviewResult {
-  total: number; valid: number; duplicates: number; errors: number;
+  total: number; valid: number; duplicates: number; errors: number; warnings?: number;
   duplicate_action: string; duplicate_scope: string; distribution_mode: string;
   rows: PreviewRow[]; truncated: boolean;
 }
@@ -87,6 +90,135 @@ async function download(path: string, fallbackName: string) {
   a.remove(); URL.revokeObjectURL(url);
 }
 
+/** Status badge for an import run. */
+function statusBadge(status: string): [string, string] {
+  if (status === 'done') return ['Completed', 'b-green'];
+  if (status === 'failed') return ['Failed', 'b-rose'];
+  if (status === 'running') return ['Running', 'b-amber'];
+  return ['Queued', 'b-gray'];
+}
+
+/**
+ * IMPORT HISTORY (client Aug 2026) — a proper, auditable, RBAC-scoped list of every import run
+ * with per-run drill-down. Columns: File · Branch · Vertical · Campaign · Rows · Created ·
+ * Duplicate · Failed · Uploaded by · When · Status. Expand a run to see the exact rows that did
+ * NOT import, with the reason each failed, and download that as a CSV to fix and re-upload. The
+ * shared DateRange control filters the list (server-side, created_at). Every row is already scoped
+ * to the user's units by the backend, so a branch/campaign user only sees their own imports.
+ */
+function ImportHistoryTab() {
+  const [range, setRange] = useState<DateRangeValue>({});
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<Record<number, Batch>>({});
+  const [loadingId, setLoadingId] = useState<number | null>(null);
+
+  const qs = new URLSearchParams({ limit: '100' });
+  if (range.from) qs.set('from', range.from);
+  if (range.to) qs.set('to', range.to);
+  const history = useFetch<Batch[]>(`/lead-imports?${qs.toString()}`, [range.from, range.to]);
+  const rows = history.data ?? [];
+
+  const toggle = async (b: Batch) => {
+    if (openId === b.id) { setOpenId(null); return; }
+    setOpenId(b.id);
+    if (!detail[b.id]) {
+      setLoadingId(b.id);
+      try { const full = await api.get<Batch>(`/lead-imports/${b.id}`); setDetail((d) => ({ ...d, [b.id]: full })); }
+      catch { toast('Could not load the import detail', true); }
+      finally { setLoadingId(null); }
+    }
+  };
+
+  const when = (iso: string) => new Date(iso).toLocaleString('en-IN',
+    { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  return (
+    <>
+      <div className="card"><div className="card-pad" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h3 style={{ margin: 0 }}><Ic k="clock" /> Import History</h3>
+          <p className="page-sub" style={{ margin: '4px 0 0' }}>Every import run in your scope. Expand a run to see and download the rows that did not import.</p>
+        </div>
+        <DateRange value={range} onChange={setRange} idPrefix="imp" style={{ marginLeft: 'auto' }} />
+      </div></div>
+
+      <div className="card">
+        <div className="card-head"><h3><Ic k="list" />Runs</h3>
+          <span className="more">{rows.length} run{rows.length === 1 ? '' : 's'}{history.loading ? ' · loading…' : ''}</span></div>
+        <div className="scroll-x">
+          <table className="tbl">
+            <thead><tr>
+              <th style={{ width: 28 }} /><th>File</th><th>Branch</th><th>Vertical</th><th>Campaign</th>
+              <th>Rows</th><th>Created</th><th>Duplicate</th><th>Failed</th><th>Uploaded by</th><th>When</th><th>Status</th>
+            </tr></thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td className="empty" colSpan={12}>No imports in this range — upload a CSV in the Import Leads tab.</td></tr>
+              ) : rows.flatMap((b) => {
+                const open = openId === b.id;
+                const d = detail[b.id];
+                const [lab, tone] = statusBadge(b.status);
+                const main = (
+                  <tr key={b.id} onClick={() => toggle(b)} style={{ cursor: 'pointer' }}>
+                    <td><span className="mono">{open ? '▾' : '▸'}</span></td>
+                    <td><span className="nm">{b.file_name}</span></td>
+                    <td>{b.branch_name ?? '—'}</td>
+                    <td>{b.vertical_name ?? '—'}</td>
+                    <td>{b.campaign_name ?? '—'}</td>
+                    <td><span className="mono">{b.total_rows}</span></td>
+                    <td><span className="mono">{b.created_count}</span></td>
+                    <td><span className="mono">{b.duplicate_count}</span></td>
+                    <td><span className="mono">{b.failed_count}</span></td>
+                    <td>{b.created_by_name ?? '—'}</td>
+                    <td>{when(b.created_at)}</td>
+                    <td><span className={`bdg ${tone}`}>{lab}</span></td>
+                  </tr>
+                );
+                if (!open) return [main];
+                const detailRow = (
+                  <tr key={`${b.id}-d`}><td colSpan={12} style={{ background: 'var(--surface-2, var(--surface-3))', padding: 14 }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                      <span className="sub">Source: <b>{d?.source_name ?? b.source_name ?? '—'}</b></span>
+                      <span className="sub" style={{ marginLeft: 12 }}>Skipped (already imported): <b>{b.skipped_count}</b></span>
+                      {b.failed_count > 0 && (
+                        <button className="btn" style={{ marginLeft: 'auto' }}
+                          onClick={(e) => { e.stopPropagation(); void download(`/lead-imports/${b.id}/errors.csv`, `${b.file_name}-errors.csv`); }}>
+                          <Ic k="export" />Download failed rows ({b.failed_count})
+                        </button>
+                      )}
+                    </div>
+                    {loadingId === b.id && !d ? (
+                      <div className="empty-note">Loading failed rows…</div>
+                    ) : b.failed_count === 0 ? (
+                      <div className="empty-note">Every row imported — no failed rows for this run.</div>
+                    ) : (
+                      <table className="tbl">
+                        <thead><tr><th style={{ width: 60 }}>Row</th><th>Reason it was not imported</th></tr></thead>
+                        <tbody>
+                          {(d?.errors ?? []).map((er) => (
+                            <tr key={er.row_num}><td><span className="mono">{er.row_num}</span></td><td>{er.reason}</td></tr>
+                          ))}
+                          {d && (d.errors?.length ?? 0) === 0 && (
+                            <tr><td colSpan={2} className="empty">Loading…</td></tr>
+                          )}
+                          {d && (d.errors?.length ?? 0) < b.failed_count && (d.errors?.length ?? 0) > 0 && (
+                            <tr><td colSpan={2} className="sub">Showing the first {d?.errors?.length} of {b.failed_count} — download the CSV for all.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    )}
+                  </td></tr>
+                );
+                return [main, detailRow];
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function LeadImport() {
   const { can } = useAuth();
   const ref = useRef_();
@@ -104,7 +236,7 @@ export default function LeadImport() {
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
 
-  const history = useFetch<Batch[]>('/lead-imports?limit=25', [tick]);
+  const [view, setView] = useState<'import' | 'history'>('import');
   const canImport = can('lead.import');
 
   /* ---------------------------- step 1: upload ---------------------------- */
@@ -208,6 +340,16 @@ export default function LeadImport() {
 
   return (
     <>
+      {/* Import Leads has two views: the upload wizard, and a full auditable History (client Aug 2026). */}
+      <div className="tabs" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button className={`fchip${view === 'import' ? ' on' : ''}`} onClick={() => setView('import')}>Import Leads</button>
+        <button className={`fchip${view === 'history' ? ' on' : ''}`} onClick={() => setView('history')}>History</button>
+      </div>
+
+      {view === 'history' && <ImportHistoryTab />}
+
+      {view === 'import' && (
+      <>
       {/* stepper */}
       <div className="card">
         <div className="card-pad">
@@ -331,6 +473,11 @@ export default function LeadImport() {
               → <b>{DUP_LABEL[preview.duplicate_action] ?? preview.duplicate_action}</b>.
               Assignment: <b>{DIST_LABEL[preview.distribution_mode] ?? preview.distribution_mode}</b>.
               Rows with errors are <b>not</b> imported — you can download them afterwards, fix and re-upload.
+              {!!preview.warnings && (
+                <> <b>{preview.warnings}</b> row{preview.warnings === 1 ? '' : 's'} reference a Course (or other master)
+                that is not configured for this Branch › Vertical — those leads still import, and the value is kept
+                on the lead note so nothing is lost.</>
+              )}
             </div>
           </div>
           <TableCard title="Row-by-row validation" icon="check"
@@ -340,11 +487,11 @@ export default function LeadImport() {
               { mono: String(r.row_num) },
               r.name || '—', r.phone || '—',
               {
-                b: r.status === 'valid' ? ['Valid', 'b-green']
+                b: r.status === 'valid' ? (r.warning ? ['Imported · note', 'b-amber'] : ['Valid', 'b-green'])
                   : r.status === 'duplicate' ? (ROW_ACTION[r.action ?? 'ignore'] ?? ['Duplicate', 'b-amber'])
                   : ['Error', 'b-rose'],
               },
-              r.reason || '—',
+              r.warning || r.reason || '—',
             ])} />
           <div className="card"><div className="card-pad" style={{ display: 'flex', gap: 8 }}>
             <button className="btn ghost" onClick={() => setStep(2)}>Back to mapping</button>
@@ -400,22 +547,8 @@ export default function LeadImport() {
         </>
       )}
 
-      {/* --------------------------- import history -------------------------- */}
-      <TableCard title="Import History" icon="clock"
-        cols={['File', 'Branch · Vertical', 'Campaign · Source', 'Rows', 'Created', 'Duplicate', 'Failed', 'By', 'When', 'Status']}
-        rows={(history.data ?? []).map((b): Cell[] => [
-          { node: <span className="nm">{b.file_name}</span> },
-          `${b.branch_name ?? '—'} · ${b.vertical_name ?? '—'}`,
-          `${b.campaign_name ?? '—'} · ${b.source_name ?? '—'}`,
-          { mono: String(b.total_rows) },
-          { mono: String(b.created_count) },
-          { mono: String(b.duplicate_count) },
-          { mono: String(b.failed_count) },
-          b.created_by_name ?? '—',
-          new Date(b.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
-          { b: b.status === 'done' ? ['Done', 'b-green'] : b.status === 'failed' ? ['Failed', 'b-rose'] : ['Running', 'b-amber'] },
-        ])}
-        empty="No imports yet — upload a CSV above" />
+      </>
+      )}
     </>
   );
 }

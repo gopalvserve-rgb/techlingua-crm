@@ -50,6 +50,8 @@ export interface NormalisedLead {
   priority: 'low' | 'med' | 'high'; temperature: 'hot' | 'warm' | 'cold' | null; score: number;
   next_follow_up_at: string | null; note: string | null;
   tag_ids: number[]; custom_fields: Record<string, unknown>; external_id: string | null;
+  /** master values that could not be resolved under softMasters (label, raw) — surfaced in the import preview. */
+  unresolved?: Array<[string, string]>;
 }
 
 const MASTER_TABLE: Record<string, string> = {
@@ -139,11 +141,18 @@ export class LeadIngestionService {
     const org = Number(camp.org_id);
     const masters: Record<string, Map<string, number>> = {};
     for (const [key, table] of Object.entries(MASTER_TABLE)) {
+      if (key === 'course') continue; // resolved Branch>Vertical-aware just below
       const rows = await this.db.query<{ id: string; name: string }>(
         `SELECT id, name FROM ${table} WHERE deleted_at IS NULL AND is_active`,
       );
       masters[key] = new Map(rows.map((r) => [String(r.name).trim().toLowerCase(), Number(r.id)]));
     }
+    // A Course belongs to a Branch > Vertical (m_course.meta.branch_id / .vertical_id — the SAME
+    // scoping the Add-Lead course dropdown uses, UAT #27). Resolve a Course value the way manual
+    // entry does: a course scoped to a DIFFERENT branch/vertical is NOT eligible for this import,
+    // and where a name exists in several places the one scoped to THIS import's branch+vertical
+    // wins. An unscoped course (no meta branch/vertical) stays eligible everywhere.
+    masters['course'] = await this.loadCourseMaster(Number(camp.branch_id), Number(camp.vertical_id));
     const stageRows = await this.db.query<{ id: string; name: string; is_default: boolean; sort_order: number }>(
       `SELECT id, name, is_default, sort_order FROM pipeline_stage
         WHERE pipeline_id = $1 AND is_active ORDER BY is_default DESC, sort_order ASC`,
@@ -166,6 +175,30 @@ export class LeadIngestionService {
       stages: new Map(stageRows.map((s) => [String(s.name).trim().toLowerCase(), Number(s.id)])),
       customKeys: new Set(cfs.map((c) => c.field_key)),
     };
+  }
+
+  /**
+   * Course master resolution, scoped to the import target's Branch > Vertical (UAT #27).
+   * A course whose meta pins it to a different branch/vertical is filtered out; among the
+   * eligible ones a better-scoped match overwrites an unscoped same-named course.
+   */
+  private async loadCourseMaster(branchId: number, verticalId: number): Promise<Map<string, number>> {
+    const rows = await this.db.query<{ id: string; name: string; branch_id: string | null; vertical_id: string | null }>(
+      `SELECT id, name,
+              NULLIF(meta->>'branch_id','')::bigint   AS branch_id,
+              NULLIF(meta->>'vertical_id','')::bigint AS vertical_id
+         FROM m_course WHERE deleted_at IS NULL AND is_active`,
+    );
+    const rank = (r: { branch_id: string | null; vertical_id: string | null }): number => {
+      const branchOk = r.branch_id == null || Number(r.branch_id) === branchId;
+      const verticalOk = r.vertical_id == null || Number(r.vertical_id) === verticalId;
+      if (!branchOk || !verticalOk) return -1; // pinned elsewhere — not a course of THIS import
+      return (r.branch_id != null ? 1 : 0) + (r.vertical_id != null ? 1 : 0);
+    };
+    const map = new Map<string, number>();
+    const eligible = rows.map((r) => ({ r, rk: rank(r) })).filter((x) => x.rk >= 0).sort((a, b) => a.rk - b.rk);
+    for (const { r } of eligible) map.set(String(r.name).trim().toLowerCase(), Number(r.id)); // ascending rank: best wins
+    return map;
   }
 
   // ---- normalisation / validation (pure over the target) -------------------
@@ -292,6 +325,7 @@ export class LeadIngestionService {
       tag_ids: [...new Set(tag_ids)],
       custom_fields: (p.custom_fields ?? {}) as Record<string, unknown>,
       external_id: p.external_id ? String(p.external_id).trim().slice(0, 120) : null,
+      unresolved: unresolved.length ? [...unresolved] : undefined,
     };
   }
 
@@ -482,7 +516,12 @@ export class LeadIngestionService {
     // 2) normalise + resolve (throws IngestValidationError -> dead-letter, no retry)
     // OBS-02: inbound integration/marketplace channels never drop a lead on an unknown
     // master value; CSV import (preview) and manual UI entry stay strict.
-    const softMasters = ctx.channel === 'webhook' || ctx.channel === 'form' || ctx.channel === 'sheet';
+    // OBS-02 / import course fix (Aug 2026): CSV bulk import is a MACHINE feed, like the inbound
+    // channels — an unknown master value (a Course/City/etc. not in the master) must NOT dead-letter
+    // the row. It resolves case-insensitively when known and is preserved on the lead note when not,
+    // exactly like Meta/Google/form/sheet. Interactive UI entry (manual/walk-in/referral) stays
+    // strict so a human typing a value gets immediate validation.
+    const softMasters = ['webhook', 'form', 'sheet', 'csv'].includes(ctx.channel);
     const lead = this.normalise(payload, target, { softMasters });
 
     // 3) duplicate check (phone + WhatsApp cross-match, campaign-configured scope — #22)

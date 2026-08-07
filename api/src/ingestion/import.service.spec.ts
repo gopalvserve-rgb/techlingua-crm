@@ -18,6 +18,7 @@ function makeDb(existingPhones: string[] = []) {
         duplicacy_config: { check_scope: 'this_campaign', on_duplicate: 'ignore' } }];
     }
     if (s.startsWith('SELECT id FROM source WHERE id')) return [{ id: 7 }];
+    if (s.startsWith("SELECT id, name, NULLIF(meta->>'branch_id'")) return [{ id: 21, name: 'IELTS', branch_id: null, vertical_id: null }];
     if (/^SELECT id, name FROM (state|city|m_course|m_qualification|m_budget|m_status|m_tag)/.test(s)) {
       return s.includes('m_course') ? [{ id: 21, name: 'IELTS' }] : [];
     }
@@ -141,6 +142,28 @@ describe('ImportService', () => {
     const again = makeDb();
     await makeSvc(again.db).enqueue({ csv: CSV, mapping: MAPPING, campaign_id: 5, source_id: 7 }, ALL_SCOPE, 1);
     expect(again.jobs.map((j) => j.dedupe_key)).toEqual(jobs.map((j) => j.dedupe_key));
+  });
+
+  it('preview() SOFT-imports an unknown course as a WARNING row, not an error (import course fix)', async () => {
+    const { db } = makeDb();
+    const csv = 'Name,Mobile,Course\nAsha,9811100055,Klingon\n';
+    const p = await makeSvc(db).preview(csv, { Name: 'full_name', Mobile: 'phone', Course: 'course' }, 5, 7, ALL_SCOPE, 1);
+    expect(p.errors).toBe(0);            // an unknown course no longer hard-errors the row
+    expect(p.valid).toBe(1);             // the lead WILL import
+    expect((p as any).warnings).toBe(1); // but it is flagged so the user sees it
+    const row = p.rows[0] as any;
+    expect(row.status).toBe('valid');
+    expect(row.warning).toMatch(/Course/);
+    expect(row.warning).toMatch(/not in the master/);
+  });
+
+  it('preview() applies a KNOWN course case-insensitively, with no warning', async () => {
+    const { db } = makeDb();
+    const csv = 'Name,Mobile,Course\nAsha,9811100056,ielts\n';   // master is "IELTS"
+    const p = await makeSvc(db).preview(csv, { Name: 'full_name', Mobile: 'phone', Course: 'course' }, 5, 7, ALL_SCOPE, 1);
+    expect(p.valid).toBe(1);
+    expect((p as any).warnings).toBe(0);
+    expect((p.rows[0] as any).warning).toBeUndefined();
   });
 
   it('template() is itself a valid, parseable CSV', async () => {

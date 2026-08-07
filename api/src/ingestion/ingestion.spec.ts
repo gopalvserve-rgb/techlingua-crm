@@ -479,7 +479,6 @@ describe('LeadIngestionService', () => {
       ['bad temperature', { full_name: 'A', phone: '9811100001', temperature: 'lukewarm' }, /Invalid temperature/],
       ['bad score', { full_name: 'A', phone: '9811100001', score: '999' }, /Invalid score/],
       ['bad date', { full_name: 'A', phone: '9811100001', next_follow_up_at: '31/31/2026' }, /Invalid date/],
-      ['unknown course', { full_name: 'A', phone: '9811100001', course: 'Klingon' }, /Unknown Course/],
       ['unknown stage', { full_name: 'A', phone: '9811100001', stage: 'Nowhere' }, /Unknown Stage/],
     ];
     it.each(cases)('rejects %s', async (_label, payload, re) => {
@@ -488,6 +487,31 @@ describe('LeadIngestionService', () => {
       await expect(svc.ingest(payload, ctx())).rejects.toThrow(IngestValidationError);
       await expect(svc.ingest(payload, ctx())).rejects.toThrow(re);
       expect(st.leads).toHaveLength(0);
+    });
+
+    // Import course fix (Aug 2026): an interactive/strict channel still hard-rejects an unknown
+    // Course, but a CSV bulk import (a machine feed like the inbound channels) must NOT drop the
+    // row — it imports and keeps the raw value on the note, exactly like OBS-02 for inbound.
+    it('a STRICT channel (manual) still rejects an unknown course', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      await expect(
+        svc.ingest({ full_name: 'A', phone: '9811100001', course: 'Klingon' },
+          ctx({ channel: 'manual', duplicate_policy: 'always_create' })),
+      ).rejects.toThrow(/Unknown Course/);
+      expect(st.leads).toHaveLength(0);
+    });
+
+    it('a CSV import SOFT-imports an unknown course (lead created, value kept on the note)', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100001', course: 'Klingon' }, ctx());
+      expect(out.status).toBe('created');
+      expect(st.leads).toHaveLength(1);
+      expect(st.leads[0].course_id).toBeNull();          // left blank — not hard-failed
+      // the raw value is preserved on the lead's create activity note so nothing is lost (OBS-02)
+      const created = st.activities.find((a) => a.type === 'create');
+      expect(String(created?.note)).toMatch(/Course: Klingon/);
     });
 
     it('accepts DD/MM/YYYY and YYYY-MM-DD follow-up dates', async () => {

@@ -124,6 +124,11 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
       return [{ id: 5, org_id: 1, branch_id: 2, vertical_id: 3, pipeline_id: 4, distribution_config: st.distribution, duplicacy_config: st.duplicacy }];
     }
     if (s.startsWith('SELECT id FROM source WHERE id')) return [{ id: 7 }];
+    if (s.startsWith("SELECT id, name, NULLIF(meta->>'branch_id'")) {
+      // scope-aware course master (loadCourseMaster) — unscoped in tests, so every course is eligible.
+      return [{ id: 21, name: 'IELTS', branch_id: null, vertical_id: null },
+              { id: 22, name: 'Spoken English', branch_id: null, vertical_id: null }];
+    }
     if (/^SELECT id, name FROM (state|city|m_course|m_qualification|m_budget|m_status|m_tag)/.test(s)) {
       if (s.includes('m_course')) return [{ id: 21, name: 'IELTS' }, { id: 22, name: 'Spoken English' }];
       if (s.includes('m_status')) return [{ id: 31, name: 'New' }];

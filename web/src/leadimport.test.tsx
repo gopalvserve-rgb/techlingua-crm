@@ -153,9 +153,14 @@ describe('Import Leads screen', () => {
     expect(screen.getAllByText('Failed').length).toBeGreaterThan(0);
   });
 
-  it('always shows the auditable Import History', async () => {
+  it('has an auditable Import History tab with the required columns', async () => {
     render(<LeadImport />);
+    fireEvent.click(screen.getByText('History'));           // switch to the History view
     expect(screen.getByText('Import History')).toBeTruthy();
-    expect(screen.getByText(/No imports yet/)).toBeTruthy();
+    // the columns the client asked for
+    for (const col of ['File', 'Branch', 'Vertical', 'Campaign', 'Rows', 'Created', 'Duplicate', 'Failed', 'Uploaded by', 'When', 'Status']) {
+      expect(screen.getAllByText(col).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByText(/No imports in this range/)).toBeTruthy();
   });
 });
