@@ -84,6 +84,16 @@ const SEND_PROVIDERS: Array<{ spec: ProviderSpec; caveat: string }> = [
     },
     caveat: 'Green means Twilio queued the message — it does NOT prove delivery. Check the handset.',
   },
+  {
+    spec: {
+      key: 'nimbus', channel: 'sms', label: 'Nimbus IT (India, DLT)', blurb: '', perVertical: false, test: 'send',
+      config: [{ key: 'user', label: 'Nimbus user / profile ID', type: 'text', required: true }],
+      secrets: [{ key: 'authkey', label: 'Auth Key', type: 'password', required: true }], setup: [],
+    },
+    caveat: 'Green means Nimbus ACCEPTED the request — it does NOT prove delivery. DLT rejections (wrong '
+      + 'Template ID, header not linked, or the sent text not matching the approved template) happen later. '
+      + 'Only an SMS arriving on the handset proves it works.',
+  },
 ];
 
 /** The EXACT live response shape from POST /settings/channels/test (QA-14 §7.2). */

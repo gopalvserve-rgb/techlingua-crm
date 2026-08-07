@@ -12,6 +12,7 @@ import {
 } from './ingestion.types';
 import { LeadMergeService } from './merge.service';
 import { JourneyService } from '../journeys/journey.service';
+import { SmsTemplateService } from '../smstemplates/sms-template.service';
 import { MERGEABLE_FIELDS } from './merge.util';
 import { toDateString } from '../common/date.util';
 
@@ -102,6 +103,14 @@ export class LeadIngestionService {
      * that journeys exist. Optional so the in-memory test double can omit it.
      */
     private readonly journeys?: JourneyService,
+    /**
+     * Client request (Aug 2026) — the Nimbus SMS creation auto-send. Hooked in the
+     * SAME one place as SLA/scoring/journeys, so a new lead from ANY channel (Meta,
+     * Google, form, Sheet, CSV, walk-in, referral, manual Add) that matches an active
+     * Branch+Vertical SMS template gets exactly ONE creation SMS. Optional so the
+     * in-memory test double can omit it.
+     */
+    private readonly smsAuto?: SmsTemplateService,
   ) {}
 
   /**
@@ -121,6 +130,9 @@ export class LeadIngestionService {
     // this lead actually has, not the zero it had a millisecond ago.
     if (outcome.status === 'created') {
       await this.journeys?.safeFire('lead_created', Number(id));
+      // The DLT SMS creation auto-send — idempotent, opt-out-honoured, degrades
+      // cleanly to a logged 'not_configured' when Nimbus has no credentials yet.
+      await this.smsAuto?.safeAutoSend('lead_created', Number(id));
     }
   }
 

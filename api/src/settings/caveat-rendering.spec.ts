@@ -43,7 +43,7 @@ const SEND_PROVIDERS = Object.values(MSG_PROVIDERS).filter((p) => p.test === 'se
 describe('every provider with a MANDATORY caveat has its RENDERING pinned', () => {
   it('there is at least one send provider — otherwise this guard is vacuous', () => {
     expect(SEND_PROVIDERS.length).toBeGreaterThan(0);
-    expect(SEND_PROVIDERS.map((p) => p.key).sort()).toEqual(['msg91', 'sms_http', 'smtp', 'twilio']);
+    expect(SEND_PROVIDERS.map((p) => p.key).sort()).toEqual(['msg91', 'nimbus', 'sms_http', 'smtp', 'twilio']);
   });
 
   it('the web caveat-rendering suite exists at all', () => {

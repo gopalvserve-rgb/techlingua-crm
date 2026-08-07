@@ -167,6 +167,32 @@ const SPECS: MsgProviderSpec[] = [
     testCaveat: 'Green means Twilio queued the message — it does NOT prove delivery. Check the handset.',
   },
 
+  {
+    key: 'nimbus',
+    channel: 'sms',
+    label: 'Nimbus IT (India, DLT)',
+    blurb: 'The client\'s Indian DLT SMS gateway (nimbusit.net). Per-template DLT Header (sender) + Template ID come from the SMS Templates screen; the user, Auth Key and DLT Entity ID live here.',
+    perVertical: false,
+    config: [
+      { key: 'user', label: 'Nimbus user / profile ID', type: 'text', required: true, hint: 'Your Nimbus IT account user id (the `user` parameter).' },
+      { key: 'entityid', label: 'DLT Entity ID', type: 'text', required: true, placeholder: '1101xxxxxxxxxxxxxxx', hint: 'Your Principal Entity ID from the DLT portal (the `entityid` parameter).' },
+      { key: 'sender_id', label: 'Default DLT Header (sender)', type: 'text', placeholder: 'BRTISC', hint: 'Fallback header when a template has none. Each SMS Template carries its OWN Header (e.g. BRTISC / INSTAI) and that wins.' },
+      { key: 'dlt_template_id', label: 'Default DLT Template ID', type: 'text', hint: 'Used only when a message has no template of its own (e.g. the OTP login SMS).' },
+      { key: 'otp_dlt_template_id', label: 'OTP DLT Template ID', type: 'text', hint: 'The DLT template registered for your login OTP text. Falls back to the default above.' },
+      { key: 'base_url', label: 'Send endpoint', type: 'text', placeholder: 'http://nimbusit.net/api/pushsms', hint: 'Leave blank to use the standard Nimbus pushsms endpoint.' },
+    ],
+    secrets: [
+      { key: 'authkey', label: 'Auth Key', type: 'password', required: true, hint: 'Your Nimbus IT authkey. Encrypted at rest, shown masked, never returned in clear.' },
+    ],
+    setup: [
+      'Get your Nimbus IT user id, Auth Key and DLT Entity ID from Nimbus / your DLT portal.',
+      'Paste the user id, Auth Key and DLT Entity ID here and Save. (Saving this ALSO switches on OTP login — the login OTP goes through Nimbus too.)',
+      'Open Engagement & Workflow › SMS Templates and add one row per lead type: pick the Branch + Vertical, paste the DLT-approved body (with its {#var#} markers), the DLT Header and the DLT Template ID.',
+      'Press Send test SMS on a template to your own number to confirm it arrives.',
+    ],
+    test: 'send',
+    testCaveat: 'Green means Nimbus ACCEPTED the request — it does NOT prove delivery. DLT rejections (wrong Template ID, header not linked, or the sent text not matching the approved template) happen later. Only an SMS arriving on the handset proves it works.',
+  },
   /* --------------------------------------------------------------- WHATSAPP */
   {
     key: 'meta_cloud',

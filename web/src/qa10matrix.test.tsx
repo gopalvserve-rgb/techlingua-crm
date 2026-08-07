@@ -44,7 +44,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { AddModal, CampaignModal, SPEC_FORMS, SAVERS, EditSpec } from './forms';
-import { JourneyModal, TemplateModal, ChannelConfigModal, BlastModal, ProviderSpec } from './sprint4';
+import { JourneyModal, TemplateModal, SmsTemplateModal, ChannelConfigModal, BlastModal, ProviderSpec } from './sprint4';
 import { RuleModal, PolicyModal, EventModal, BandModal, walkInEditSpec, referralEditSpec } from './sprint3';
 import { CollectModal, EnrolmentModal, NumberingModal, QuotationModal, TargetModal } from './sprint5';
 import {
@@ -661,6 +661,13 @@ const bespokeCases: Case[] = [
       Variables: 'a PALETTE, not a field — clicking a chip inserts {{lead.name}} into the Message Body, which IS sent. There is nothing here for the user to fill in.',
     },
     path: /^\/templates$/,
+  },
+  {
+    name: 'SMS Template (DLT / Nimbus) — Add',
+    render: () => render(<SmsTemplateModal onClose={() => undefined} onSaved={() => undefined} />),
+    // Branch + Vertical ARE data here (branch_id / vertical_id in the body — they scope the
+    // new-lead auto-send), so they are probed like any other field, NOT exempt.
+    path: /^\/sms-templates$/,
   },
   {
     name: 'Automation Journey — Add',

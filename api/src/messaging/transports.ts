@@ -251,6 +251,103 @@ export class GenericHttpSmsTransport implements Transport {
   }
 }
 
+
+/**
+ * NIMBUS IT — the client's DLT-compliant Indian SMS gateway.
+ *
+ * Send URL (GET):
+ *   http://nimbusit.net/api/pushsms?user=<user>&authkey=<authkey>&sender=<senderID>
+ *     &mobile=<mobile>&text=<urlencoded text>&entityid=<DLT Entity Id>
+ *     &templateid=<DLT Template Id>&rpt=1
+ * Unicode (non-GSM text): the same URL plus `&type=1`.
+ *
+ * The `sender` is the template's DLT HEADER (e.g. BRTISC / INSTAI) and `templateid` is
+ * that template's DLT Template ID -- both ride in on the OutboundMessage (sms_sender_id /
+ * sms_dlt_template_id), resolved by the caller from the sms_template row. The body text
+ * is sent VERBATIM (the DLT template with its {#var#} markers already filled) -- this
+ * transport never rebuilds it, because DLT rejects any deviation from the approved text.
+ */
+
+/** Non-GSM detection: anything outside the GSM-03.38-safe ASCII range forces &type=1. */
+export function isUnicodeSms(text: string): boolean {
+  return /[^\x00-\x7F]/.test(String(text ?? ''));
+}
+
+export interface NimbusParams {
+  user: string;
+  authkey: string;
+  sender: string;
+  mobile: string;
+  text: string;
+  entityid: string;
+  templateid: string;
+  unicode?: boolean;
+  baseUrl?: string;
+}
+
+/**
+ * Compose the exact pushsms GET URL. Pure and exported so a test can assert the wire
+ * format without a network call, and so the "preview the URL" diagnostic shows the client
+ * precisely what will be sent. Every value is percent-encoded (a `&` or a space in the
+ * message text must NEVER be able to forge a query parameter).
+ */
+export function composeNimbusUrl(p: NimbusParams): string {
+  const base = (p.baseUrl && String(p.baseUrl).trim()) || 'http://nimbusit.net/api/pushsms';
+  const enc = encodeURIComponent;
+  const parts = [
+    `user=${enc(p.user ?? '')}`,
+    `authkey=${enc(p.authkey ?? '')}`,
+    `sender=${enc(p.sender ?? '')}`,
+    `mobile=${enc(p.mobile ?? '')}`,
+    `text=${enc(p.text ?? '')}`,
+    `entityid=${enc(p.entityid ?? '')}`,
+    `templateid=${enc(p.templateid ?? '')}`,
+    `rpt=1`,
+  ];
+  if (p.unicode) parts.push(`type=1`);
+  return `${base}?${parts.join('&')}`;
+}
+
+export class NimbusSmsTransport implements Transport {
+  readonly key = 'nimbus';
+  constructor(private readonly http: typeof fetch = fetch) {}
+
+  async send(msg: OutboundMessage, cfg: ResolvedConfig): Promise<SendResult> {
+    const mobile = String(msg.to).replace(/^\+/, '');
+    const unicode = cfg.config.unicode === true ? true
+      : cfg.config.unicode === false ? false
+      : isUnicodeSms(msg.body);
+    const url = composeNimbusUrl({
+      user: String(cfg.config.user ?? ''),
+      authkey: String(cfg.secrets.authkey ?? ''),
+      sender: String(msg.sms_sender_id || cfg.config.sender_id || ''),
+      mobile,
+      text: String(msg.body ?? ''),
+      entityid: String(cfg.config.entityid ?? ''),
+      templateid: String(msg.sms_dlt_template_id || cfg.config.dlt_template_id || ''),
+      unicode,
+      baseUrl: cfg.config.base_url ? String(cfg.config.base_url) : undefined,
+    });
+
+    let res: Response;
+    try {
+      res = await this.http(url, { method: 'GET' });
+    } catch (e) {
+      throw new TransientSendError(`Nimbus network error: ${(e as Error).message}`);
+    }
+    const text = await res.text();
+    const body = asJson(text);
+    if (!res.ok) throw classify(res.status, `Nimbus: ${text.slice(0, 200) || res.status}`, body);
+
+    const low = text.toLowerCase();
+    if (/error|invalid|fail|denied|reject/.test(low)) {
+      throw new PermanentSendError(`Nimbus rejected the message: ${text.slice(0, 200)}`, body);
+    }
+    const id = (body as any)?.message_id ?? (body as any)?.id ?? (text.trim() || null);
+    return { provider_message_id: id ? String(id).slice(0, 160) : null, response: body };
+  }
+}
+
 /* =================================== Email =================================== */
 
 /** Injected so tests never open a socket. Matches nodemailer's createTransport shape. */
@@ -331,6 +428,7 @@ export const TRANSPORTS: Record<string, Transport> = {
   msg91: new Msg91Transport(),
   twilio: new TwilioTransport(),
   sms_http: new GenericHttpSmsTransport(),
+  nimbus: new NimbusSmsTransport(),
   smtp: new SmtpTransport(),
 };
 

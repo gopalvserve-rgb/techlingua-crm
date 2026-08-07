@@ -20,7 +20,7 @@ export interface MsgRow {
   to_addr: string; subject: string | null; body: string;
   attempts: number; run_after: Date; error: string | null; not_configured: boolean;
   provider_message_id: string | null; provider_response: Record<string, unknown>;
-  created_at: Date; sent_at: Date | null;
+  created_at: Date; sent_at: Date | null; dedupe_key?: string | null;
 }
 export interface RunRow {
   id: number; journey_id: number; lead_id: number; trigger_key: string;
@@ -153,7 +153,7 @@ export function makeSprint4Db(over: Partial<S4State> = {}) {
         branch_id: p[8] ?? null, campaign_id: p[9] ?? null, to_addr: p[10], subject: p[11] ?? null,
         body: p[12] ?? '', status: p[13], run_after: p[14], error: p[15] ?? null,
         provider: null, attempts: 0, not_configured: false, provider_message_id: null,
-        provider_response: {}, created_at: new Date(), sent_at: null,
+        provider_response: {}, created_at: new Date(), sent_at: null, dedupe_key: p[16] ?? null,
       };
       st.messages.push(row);
       return R([{ id: String(row.id) }]);

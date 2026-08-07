@@ -1,6 +1,6 @@
 import {
-  GenericHttpSmsTransport, MetaWhatsAppTransport, Msg91Transport, PermanentSendError,
-  SmtpTransport, TransientSendError, verifyMetaSignature,
+  GenericHttpSmsTransport, MetaWhatsAppTransport, Msg91Transport, NimbusSmsTransport,
+  PermanentSendError, SmtpTransport, TransientSendError, verifyMetaSignature,
 } from './transports';
 import { createHmac } from 'crypto';
 import { ResolvedConfig } from './channel-config.service';
@@ -188,3 +188,60 @@ describe('Email — SMTP', () => {
     expect(opts.secure).toBe(true);
   });
 });
+
+describe('SMS — Nimbus IT (DLT)', () => {
+  const nimbusCfg = (over: Record<string, unknown> = {}): ResolvedConfig => ({
+    id: 4, channel: 'sms', provider: 'nimbus', vertical_id: null,
+    config: { user: 'techlingua', entityid: '1101234567890', sender_id: 'BRTISC', ...over },
+    secrets: { authkey: '92wgQ8noCHyY' },
+  });
+
+  it('composes the pushsms URL: user/authkey/sender/mobile/text/entityid/templateid/rpt=1', async () => {
+    let seen = '';
+    const http = (async (u: string) => { seen = u; return res(200, '12345'); }) as unknown as typeof fetch;
+    const out = await new NimbusSmsTransport(http).send(
+      { to: '+917827878780', body: 'Dear Priya, interest in IELTS. - BCL',
+        sms_sender_id: 'BRTISC', sms_dlt_template_id: '1707160000000000001' },
+      nimbusCfg(),
+    );
+    expect(seen.startsWith('http://nimbusit.net/api/pushsms?')).toBe(true);
+    expect(seen).toContain('user=techlingua');
+    expect(seen).toContain('authkey=92wgQ8noCHyY');
+    expect(seen).toContain('sender=BRTISC');
+    expect(seen).toContain('mobile=917827878780');           // '+' stripped
+    expect(seen).toContain('entityid=1101234567890');
+    expect(seen).toContain('templateid=1707160000000000001');
+    expect(seen).toContain('rpt=1');
+    expect(seen).toContain('text=Dear%20Priya%2C%20interest%20in%20IELTS.%20-%20BCL');
+    expect(seen).not.toContain('type=1');
+    expect(out.provider_message_id).toBe('12345');
+  });
+
+  it('adds &type=1 when the text is unicode (non-GSM)', async () => {
+    let seen = '';
+    const http = (async (u: string) => { seen = u; return res(200, 'ok-1'); }) as unknown as typeof fetch;
+    await new NimbusSmsTransport(http).send({ to: '+919810000001', body: 'प्रिय, IELTS' }, nimbusCfg());
+    expect(seen).toContain('type=1');
+  });
+
+  it('the template Header wins as `sender` over the config default', async () => {
+    let seen = '';
+    const http = (async (u: string) => { seen = u; return res(200, 'ok'); }) as unknown as typeof fetch;
+    await new NimbusSmsTransport(http).send(
+      { to: '+919810000001', body: 'hi', sms_sender_id: 'INSTAI' }, nimbusCfg({ sender_id: 'BRTISC' }));
+    expect(seen).toContain('sender=INSTAI');
+  });
+
+  it('a body carrying ERROR/Invalid is a PERMANENT failure (DLT/authkey rejection)', async () => {
+    const http = (async () => res(200, 'ERROR: invalid template id')) as unknown as typeof fetch;
+    await expect(new NimbusSmsTransport(http).send({ to: '+919810000001', body: 'hi' }, nimbusCfg()))
+      .rejects.toBeInstanceOf(PermanentSendError);
+  });
+
+  it('a 5xx is TRANSIENT (retryable)', async () => {
+    const http = (async () => res(503, 'busy')) as unknown as typeof fetch;
+    await expect(new NimbusSmsTransport(http).send({ to: '+919810000001', body: 'hi' }, nimbusCfg()))
+      .rejects.toBeInstanceOf(TransientSendError);
+  });
+});
+

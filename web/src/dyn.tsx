@@ -31,7 +31,7 @@ import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
-  BulkSms, BulkWhatsApp, EmailCampaigns, Journeys, Settings, Templates,
+  BulkSms, BulkWhatsApp, EmailCampaigns, Journeys, Settings, SmsTemplates, Templates,
 } from './sprint4';
 import {
   CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure,
@@ -3471,6 +3471,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   sla: Sla,
   // Sprint 4 — engagement & automation
   templates: Templates,
+  smsTemplates: SmsTemplates,
   journeys: Journeys,
   bulkWhatsApp: BulkWhatsApp,
   bulkSms: BulkSms,

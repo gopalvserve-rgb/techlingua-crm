@@ -22,6 +22,7 @@ import { CalendarModule } from './calendar/calendar.module';
 import { CaptureModule } from './capture/capture.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { TemplatesModule } from './templates/templates.module';
+import { SmsTemplatesModule } from './smstemplates/sms-templates.module';
 import { JourneysModule } from './journeys/journeys.module';
 import { SettingsModule } from './settings/settings.module';
 import { NumberingModule } from './numbering/numbering.module';
@@ -66,6 +67,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     // Sprint 4 — engagement & automation
     MessagingModule,    // WhatsApp (Meta) · SMS (any gateway) · Email (per-vertical SMTP) + the send log/queue
     TemplatesModule,    // dynamic templates per channel, merge variables, live preview
+    SmsTemplatesModule, // DLT SMS templates (Branch+Vertical) + Nimbus auto-send on new lead
     JourneysModule,     // trigger -> conditions -> actions, idempotent, guard-railed
     SettingsModule,     // Administration › Settings: credentials (encrypted), hours, holidays, matrix, numbering
     // Sprint 5 — conversion & money-lite

@@ -1591,3 +1591,276 @@ function JsonCard({ groupKey, value, onSaved }: {
     </>
   );
 }
+
+/* ==================================================================== */
+/*  SMS TEMPLATES — DLT-compliant, Branch+Vertical scoped (Nimbus)      */
+/* ==================================================================== */
+
+export interface SmsTemplateRow {
+  id: number; header: string; name: string; body: string;
+  branch_id: number | null; branch_name?: string | null;
+  vertical_id: number | null; vertical_name?: string | null;
+  dlt_template_id: string | null; entity_id: string | null;
+  var_mapping: string[] | string | null; unicode: boolean | null;
+  trigger_event: string; is_active: boolean;
+}
+
+/**
+ * The Add/Edit SMS Template form, exactly the model in the client's screenshot:
+ * Header (the DLT sender), Template name, Template body (DLT-approved, {#var#} markers),
+ * Branch -> Vertical cascade, DLT Template ID, and an active toggle. Every field reaches
+ * the request body (qa10 differential probe).
+ */
+export function SmsTemplateModal({ initial, onClose, onSaved }: {
+  initial?: SmsTemplateRow | null; onClose: () => void; onSaved: () => void;
+}) {
+  const ref = useRef_();
+  const [header, setHeader] = useState(initial?.header ?? '');
+  const [name, setName] = useState(initial?.name ?? '');
+  const [body, setBody] = useState(initial?.body ?? '');
+  const [branchId, setBranchId] = useState<string>(initial?.branch_id ? String(initial.branch_id) : '');
+  const [verticalId, setVerticalId] = useState<string>(initial?.vertical_id ? String(initial.vertical_id) : '');
+  const [dlt, setDlt] = useState(initial?.dlt_template_id ?? '');
+  const [entityId, setEntityId] = useState(initial?.entity_id ?? '');
+  const [mapping, setMapping] = useState(
+    Array.isArray(initial?.var_mapping) ? initial!.var_mapping.join(', ')
+      : typeof initial?.var_mapping === 'string' ? initial!.var_mapping : 'name, course',
+  );
+  const [active, setActive] = useState(initial?.is_active !== false);
+  const [preview, setPreview] = useState<{ url: string; resolved_text: string; missing: string[]; configured: boolean; note: string; unicode: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Branch -> Vertical cascade: verticals belong to the chosen branch (or all when none).
+  const verticals = branchId
+    ? ref.verticals.filter((v) => String((v as { branch_id?: number }).branch_id ?? '') === branchId)
+    : ref.verticals;
+
+  const markers = (body.match(/\{#var#\}/g) ?? []).length;
+
+  const payload = () => ({
+    header, name, body,
+    branch_id: branchId ? Number(branchId) : null,
+    vertical_id: verticalId ? Number(verticalId) : null,
+    dlt_template_id: dlt || null,
+    entity_id: entityId || null,
+    var_mapping: mapping.split(',').map((s) => s.trim()).filter(Boolean),
+    trigger_event: 'lead_created',
+    is_active: active,
+  });
+
+  // Live URL preview (authkey masked) — proves exactly what the gateway will receive.
+  useEffect(() => {
+    if (!body) { setPreview(null); return; }
+    const t = setTimeout(() => {
+      api.post<typeof preview>('/sms-templates/preview', {
+        body, header, dlt_template_id: dlt,
+        var_mapping: mapping.split(',').map((s) => s.trim()).filter(Boolean),
+      }).then(setPreview).catch(() => setPreview(null));
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [body, header, dlt, mapping]);
+
+  const save = async () => {
+    setErr(''); setBusy(true);
+    try {
+      if (initial) await api.patch(`/sms-templates/${initial.id}`, payload());
+      else await api.post('/sms-templates', payload());
+      toast(initial ? 'SMS template updated' : 'SMS template created');
+      onSaved(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 860 }}>
+        <div className="ah">
+          <h3><Ic k={initial ? 'pencil' : 'plus'} />{initial ? `Edit SMS template — ${initial.name}` : 'Add SMS template'}</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld">
+              <label htmlFor="s-header">Header (DLT sender) <span className="star">*</span></label>
+              <input id="s-header" className="ainp" value={header} onChange={(e) => setHeader(e.target.value)}
+                placeholder="BRTISC" maxLength={24} />
+              <div className="fhint">The DLT-approved header, e.g. BRTISC / INSTAI. Sent as the SMS `sender`.</div>
+            </div>
+            <div className="fld">
+              <label htmlFor="s-name">Template name <span className="star">*</span></label>
+              <input id="s-name" className="ainp" value={name} onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. BCL Lead Creation II" />
+            </div>
+            <div className="fld">
+              <label htmlFor="s-branch">Branch</label>
+              <select id="s-branch" className="ainp" value={branchId}
+                onChange={(e) => { setBranchId(e.target.value); setVerticalId(''); }}>
+                <option value="">All branches</option>
+                {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="s-vertical">Vertical</label>
+              <select id="s-vertical" className="ainp" value={verticalId} onChange={(e) => setVerticalId(e.target.value)}>
+                <option value="">All verticals</option>
+                {verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+              <div className="fhint">Which lead this template applies to — its Branch + Vertical are matched on new-lead auto-send.</div>
+            </div>
+            <div className="fld" style={{ gridColumn: '1 / -1' }}>
+              <label htmlFor="s-body">Template body (DLT-approved) <span className="star">*</span></label>
+              <textarea id="s-body" className="ainp" rows={3} value={body} onChange={(e) => setBody(e.target.value)}
+                placeholder="Dear {#var#}, thank you for your interest in {#var#}. - BCL" />
+              <div className="fhint">
+                Paste the EXACT text approved on the DLT portal. Use {'{#var#}'} for each variable, in order.
+                This template has <b>{markers}</b> {'{#var#}'} marker{markers === 1 ? '' : 's'}.
+              </div>
+            </div>
+            <div className="fld">
+              <label htmlFor="s-dlt">DLT Template ID <span className="star">*</span></label>
+              <input id="s-dlt" className="ainp mono" value={dlt} onChange={(e) => setDlt(e.target.value)}
+                placeholder="1707160000000000001" />
+              <div className="fhint">The `templateid` registered on DLT for this exact body.</div>
+            </div>
+            <div className="fld">
+              <label htmlFor="s-entity">DLT Entity ID (optional)</label>
+              <input id="s-entity" className="ainp mono" value={entityId} onChange={(e) => setEntityId(e.target.value)}
+                placeholder="leave blank to use the Nimbus default" />
+            </div>
+            <div className="fld">
+              <label htmlFor="s-map">Variable order</label>
+              <input id="s-map" className="ainp" value={mapping} onChange={(e) => setMapping(e.target.value)}
+                placeholder="name, course" />
+              <div className="fhint">Comma-separated lead fields, in {'{#var#}'} order. Default: name, course.</div>
+            </div>
+            <div className="fld">
+              <label htmlFor="s-active">Status</label>
+              <select id="s-active" className="ainp" value={active ? '1' : '0'} onChange={(e) => setActive(e.target.value === '1')}>
+                <option value="1">Active</option>
+                <option value="0">Inactive</option>
+              </select>
+            </div>
+          </div>
+
+          {preview && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <div className="sub" style={{ marginBottom: 6 }}>
+                Sample resolved text (name=Test Lead, course=Sample Course):
+              </div>
+              <div style={{ marginBottom: 8 }}>{preview.resolved_text || <span className="sub">—</span>}</div>
+              {preview.missing?.length ? (
+                <div className="bdg b-amber" style={{ marginBottom: 8 }}>
+                  Will be blank: {preview.missing.join(', ')}
+                </div>
+              ) : null}
+              <div className="sub" style={{ marginBottom: 4 }}>Gateway URL preview{preview.unicode ? ' (unicode, &type=1)' : ''}:</div>
+              <div className="mono" style={{ fontSize: 11, wordBreak: 'break-all', opacity: 0.85 }}>{preview.url}</div>
+              <div className="sub" style={{ marginTop: 6 }}>{preview.note}</div>
+            </div>
+          )}
+          {err && <div className="err" style={{ marginTop: 10 }}>{err}</div>}
+        </div>
+        <div className="af">
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={() => void save()}>
+            <Ic k="check" />{initial ? 'Save changes' : 'Create template'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Send a chosen template to a typed number — the client tests to +91 7827878780. */
+function SmsTestModal({ row, onClose }: { row: SmsTemplateRow; onClose: () => void }) {
+  const [mobile, setMobile] = useState('+917827878780');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ status: string; reason?: string; resolved_text?: string } | null>(null);
+  const [err, setErr] = useState('');
+
+  const send = async () => {
+    setErr(''); setBusy(true); setResult(null);
+    try {
+      const out = await api.post<{ status: string; reason?: string; resolved_text?: string }>(`/sms-templates/${row.id}/test`, { mobile });
+      setResult(out);
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 560 }}>
+        <div className="ah">
+          <h3><Ic k="wa" />Send test SMS — {row.name}</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          <div className="fld">
+            <label htmlFor="st-mobile">Mobile number <span className="star">*</span></label>
+            <input id="st-mobile" className="ainp mono" value={mobile} onChange={(e) => setMobile(e.target.value)}
+              placeholder="+917827878780" />
+            <div className="fhint">Sends through Nimbus. Until the gateway credentials are entered in Settings, this returns a clean &quot;not configured&quot; and is logged — no crash.</div>
+          </div>
+          {result && (
+            <div className={`bdg ${result.status === 'sent' ? 'b-green' : result.status === 'skipped' ? 'b-amber' : 'b-rose'}`} style={{ marginTop: 8 }}>
+              {result.status}{result.reason ? ` — ${result.reason}` : ''}
+            </div>
+          )}
+          {result?.resolved_text && <div style={{ marginTop: 8 }} className="mono sub">{result.resolved_text}</div>}
+          {err && <div className="err" style={{ marginTop: 10 }}>{err}</div>}
+        </div>
+        <div className="af">
+          <button className="btn ghost" onClick={onClose}>Close</button>
+          <button className="btn primary" disabled={busy} onClick={() => void send()}><Ic k="wa" />Send test</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SmsTemplates() {
+  const { data, reload } = useFetch<SmsTemplateRow[]>('/sms-templates');
+  const [modal, setModal] = useState<{ open: boolean; row?: SmsTemplateRow | null }>({ open: false });
+  const [test, setTest] = useState<SmsTemplateRow | null>(null);
+  const rows = data ?? [];
+
+  const del = async (t: SmsTemplateRow) => {
+    if (!confirm(`Delete the SMS template "${t.name}"?`)) return;
+    await api.del(`/sms-templates/${t.id}`);
+    toast('SMS template deleted'); reload();
+  };
+
+  return (
+    <>
+      <div className="page-actions">
+        <button className="btn primary" onClick={() => setModal({ open: true, row: null })}>
+          <Ic k="plus" />New SMS template
+        </button>
+      </div>
+      <TableCard
+        title="SMS templates (DLT)" icon="doc"
+        cols={['Header', 'Template name', 'Branch', 'Vertical', 'DLT Template ID', 'Status', '']}
+        empty="No SMS templates yet — add one per Branch+Vertical for the new-lead auto-send."
+        rows={rows.map((t): Cell[] => [
+          { node: <b className="mono">{t.header}</b> },
+          { node: <div><b>{t.name}</b><div className="sub" style={{ maxWidth: 320, whiteSpace: 'normal' }}>{t.body}</div></div> },
+          t.branch_name ?? 'All',
+          t.vertical_name ?? 'All',
+          t.dlt_template_id ? { node: <span className="mono sub">{t.dlt_template_id}</span> } : { b: ['Not set', 'b-amber'] },
+          t.is_active ? { b: ['Active', 'b-green'] } : { b: ['Inactive', 'b-gray'] },
+          {
+            node: <RowBtns items={[
+              ['wa', 'Send test', () => setTest(t)],
+              ['pencil', 'Edit', () => setModal({ open: true, row: t })],
+              ['trash', 'Delete', () => void del(t)],
+            ]} />,
+          },
+        ])}
+      />
+      {modal.open && (
+        <SmsTemplateModal initial={modal.row} onClose={() => setModal({ open: false })} onSaved={reload} />
+      )}
+      {test && <SmsTestModal row={test} onClose={() => setTest(null)} />}
+    </>
+  );
+}
