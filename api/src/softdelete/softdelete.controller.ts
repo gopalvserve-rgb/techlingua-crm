@@ -1,8 +1,10 @@
-import { Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { SoftDeleteService } from './softdelete.service';
-import { CurrentUser, RequirePermission, ScopedEntity } from '../rbac/rbac.decorators';
+import { CurrentScope, CurrentUser, RequirePermission, ScopedEntity } from '../rbac/rbac.decorators';
+import { ResolvedScope } from '../rbac/rbac.types';
 
 type U = { id: number };
+type BulkBody = { ids?: number[] };
 
 /**
  * Uniform soft-delete surface, driven by the central registry:
@@ -110,6 +112,53 @@ export class SoftDeleteController {
   @Post('masters/:type/:id/restore') @RequirePermission('deleted.manage')
   masterRestore(@Param('type') type: string, @Param('id', ParseIntPipe) id: number) {
     return this.sd.restore(`master:${type}`, id);
+  }
+
+  // ---- BULK DELETE (client request, Aug 2026) --------------------------------
+  // One shared pattern per module: POST /<plural>/bulk-delete{,/impact} { ids: [] }.
+  // Same permission as the single delete; each id is record-scope filtered in the service
+  // (out-of-scope ids skipped, never a data oracle); soft-delete via the central registry;
+  // returns { deleted, skipped } (delete) / aggregate impact (impact). Leads have their own
+  // /leads/bulk/delete in LeadsController (mirrors the other /leads/bulk/* actions).
+
+  @Post('branches/bulk-delete/impact') @RequirePermission('branch.delete')
+  branchesBulkImpact(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkImpact('branch', b?.ids, u.id, s); }
+  @Post('branches/bulk-delete') @RequirePermission('branch.delete')
+  branchesBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('branch', b?.ids, u.id, s); }
+
+  @Post('verticals/bulk-delete/impact') @RequirePermission('vertical.delete')
+  verticalsBulkImpact(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkImpact('vertical', b?.ids, u.id, s); }
+  @Post('verticals/bulk-delete') @RequirePermission('vertical.delete')
+  verticalsBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('vertical', b?.ids, u.id, s); }
+
+  @Post('pipelines/bulk-delete/impact') @RequirePermission('pipeline.delete')
+  pipelinesBulkImpact(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkImpact('pipeline', b?.ids, u.id, s); }
+  @Post('pipelines/bulk-delete') @RequirePermission('pipeline.delete')
+  pipelinesBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('pipeline', b?.ids, u.id, s); }
+
+  @Post('campaigns/bulk-delete/impact') @RequirePermission('campaign.delete')
+  campaignsBulkImpact(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkImpact('campaign', b?.ids, u.id, s); }
+  @Post('campaigns/bulk-delete') @RequirePermission('campaign.delete')
+  campaignsBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('campaign', b?.ids, u.id, s); }
+
+  @Post('sources/bulk-delete/impact') @RequirePermission('source.delete')
+  sourcesBulkImpact(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkImpact('source', b?.ids, u.id, s); }
+  @Post('sources/bulk-delete') @RequirePermission('source.delete')
+  sourcesBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('source', b?.ids, u.id, s); }
+
+  @Post('users/bulk-delete/impact') @RequirePermission('user.delete')
+  usersBulkImpact(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkImpact('user', b?.ids, u.id, s); }
+  @Post('users/bulk-delete') @RequirePermission('user.delete')
+  usersBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('user', b?.ids, u.id, s); }
+
+  // Masters (state, city, m_* incl. courses). Type in the path -> registry key `master:<type>`.
+  @Post('masters/:type/bulk-delete/impact') @RequirePermission('master.delete')
+  masterBulkImpact(@Param('type') type: string, @Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.sd.bulkImpact(`master:${type}`, b?.ids, u.id, s);
+  }
+  @Post('masters/:type/bulk-delete') @RequirePermission('master.delete')
+  masterBulkDelete(@Param('type') type: string, @Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.sd.bulkRemove(`master:${type}`, b?.ids, u.id, s);
   }
 
   // ---- Administration > Deleted Items ----

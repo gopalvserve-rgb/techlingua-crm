@@ -2,6 +2,8 @@ import {
   BadRequestException, ConflictException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
+import { ResolvedScope } from '../rbac/rbac.types';
 import { DeletableDef, DELETE_REGISTRY, registryEntry } from './delete-registry';
 
 /**
@@ -35,7 +37,88 @@ export function deleteGuardError(entity: string, opts: {
 
 @Injectable()
 export class SoftDeleteService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly enforcer: ScopeEnforcerService,
+  ) {}
+
+  /** Cap on a single bulk-delete request (mirrors the leads bulk cap). */
+  static readonly BULK_MAX = 2000;
+
+  /** Normalise a bulk id list: unique positive ints, non-empty, capped. */
+  private normBulkIds(ids: unknown): number[] {
+    if (!Array.isArray(ids)) throw new BadRequestException('ids must be an array of record ids');
+    const out = [...new Set(ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!out.length) throw new BadRequestException('ids is required (a non-empty array of record ids)');
+    if (out.length > SoftDeleteService.BULK_MAX) {
+      throw new BadRequestException(`too many records in one bulk delete (max ${SoftDeleteService.BULK_MAX}) — narrow the selection`);
+    }
+    return out;
+  }
+
+  /** Ids of `entity` inside the caller's record scope (org-level kinds -> all when scope.all). */
+  private async inScopeIds(def: DeletableDef, ids: number[], scope: ResolvedScope, actorId: number): Promise<number[]> {
+    if (!def.scopedKind) return ids; // org-level admin entities (role, team*, support_ticket) — permission-gated only
+    const ok = await this.enforcer.filterInScope(scope, def.scopedKind, ids, actorId);
+    const set = new Set(ok);
+    return ids.filter((id) => set.has(id));
+  }
+
+  /**
+   * BULK impact preview — the aggregate association hierarchy for the IN-SCOPE selected rows,
+   * so the confirm dialog can say "Delete N leads? (X child records affected)". Out-of-scope
+   * ids are excluded from the counts and reported separately.
+   */
+  async bulkImpact(entity: string, rawIds: unknown, actorId: number, scope: ResolvedScope) {
+    const def = this.def(entity);
+    const ids = this.normBulkIds(rawIds);
+    const inScope = await this.inScopeIds(def, ids, scope, actorId);
+    const agg = new Map<string, { label: string; count: number }>();
+    let total = 0;
+    for (const id of inScope) {
+      for (const d of def.dependents) {
+        const cnt = await this.db.one<{ n: number }>(`SELECT COUNT(*)::int AS n FROM ${d.from} WHERE ${d.where}`, [id]);
+        const n = Number(cnt?.n ?? 0);
+        if (!agg.has(d.key)) agg.set(d.key, { label: d.label, count: 0 });
+        agg.get(d.key)!.count += n; total += n;
+      }
+    }
+    const impact = [...agg.entries()].map(([key, v]) => ({ key, label: v.label, count: v.count }));
+    return {
+      entity: def.key, label: def.label,
+      requested: ids.length, in_scope: inScope.length, out_of_scope: ids.length - inScope.length,
+      total_associations: total, impact,
+    };
+  }
+
+  /**
+   * BULK soft-delete — soft-deletes every IN-SCOPE selected row (reusing the per-row remove()
+   * guards), writes a per-record audit row, and reports {deleted, skipped}. Idempotent: an
+   * already-deleted row or one blocked by a guard (system role / Super Admin / self) is skipped,
+   * never fatal. Out-of-scope ids are skipped (RBAC).
+   */
+  async bulkRemove(entity: string, rawIds: unknown, actorId: number, scope: ResolvedScope) {
+    const def = this.def(entity);
+    const ids = this.normBulkIds(rawIds);
+    const inScope = new Set(await this.inScopeIds(def, ids, scope, actorId));
+    let deleted = 0;
+    const deleted_ids: number[] = [];
+    for (const id of ids) {
+      if (!inScope.has(id)) continue; // out of scope -> skipped
+      try {
+        const res = await this.remove(entity, id, actorId);
+        await this.db.query(
+          `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+           VALUES ((SELECT id FROM organisation ORDER BY id LIMIT 1), $1, $2, $3, 'delete', $4, $5)`,
+          [actorId, def.key, id, JSON.stringify({}), JSON.stringify({ deleted: true, name: res.name })],
+        );
+        deleted++; deleted_ids.push(id);
+      } catch {
+        // guard (400) or already-deleted (404) -> skip, stay idempotent
+      }
+    }
+    return { entity: def.key, label: def.label, requested: ids.length, deleted, skipped: ids.length - deleted, deleted_ids };
+  }
 
   private def(entity: string): DeletableDef {
     const def = registryEntry(entity);

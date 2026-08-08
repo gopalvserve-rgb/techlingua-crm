@@ -118,6 +118,54 @@ export class ScopeEnforcerService {
     if (r === 'miss') throw this.notFound(kind);
   }
 
+  /**
+   * Bulk record-scope filter (bulk delete, Aug 2026): the subset of `ids` (all of `kind`)
+   * that fall INSIDE the resolved scope, in ONE query. Mirrors assertInScope semantics:
+   * scope.all -> every id; org-level kinds (master/error_log) -> [] for any non-'all' grant
+   * (strict deny, same as the by-ID routes); unmapped hierarchy filter -> []. Ids absent from
+   * the result were out of scope / gone and are reported as "skipped" by the caller.
+   */
+  async filterInScope(
+    scope: ResolvedScope, kind: ScopedEntityKind, ids: number[], requesterId?: number,
+  ): Promise<number[]> {
+    const uniq = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!uniq.length) return [];
+    if (!scope || !scope.allowed) return [];
+    if (scope.all) return uniq;
+    if (kind === 'master' || kind === 'error_log') return [];
+
+    if (kind === 'user') {
+      const params: unknown[] = [];
+      const where = this.resolver.buildScopeWhere(scope, {
+        owner: 'u.id', team: 'tm.team_id', branch: 'ua.branch_id',
+        vertical: 'ua.vertical_id', pipeline: 'ua.pipeline_id', campaign: 'ua.campaign_id',
+      }, params);
+      params.push(uniq);
+      const idsIdx = params.length;
+      params.push(requesterId ?? -1);
+      const rows = await this.db.query<{ id: string }>(
+        `SELECT DISTINCT u.id FROM "user" u
+           LEFT JOIN user_assignment ua ON ua.user_id = u.id AND ua.is_active
+           LEFT JOIN team_member tm ON tm.user_id = u.id
+          WHERE u.id = ANY($${idsIdx}::bigint[]) AND u.deleted_at IS NULL AND ((${where}) OR u.id = $${params.length})`,
+        params,
+      );
+      return rows.map((r) => Number(r.id));
+    }
+
+    const def = ENTITY_SCOPE[kind];
+    const params: unknown[] = [];
+    const where = this.resolver.buildScopeWhere(scope, def.cols, params);
+    if (where === '1=0') return [];
+    params.push(uniq);
+    const alive = def.alive ? ` AND ${def.alive}` : '';
+    const rows = await this.db.query<{ id: string }>(
+      `SELECT ${def.idCol} AS id FROM ${def.from} WHERE ${def.idCol} = ANY($${params.length}::bigint[])${alive} AND (${where})`,
+      params,
+    );
+    return rows.map((r) => Number(r.id));
+  }
+
   /** Shared core: 'ok' in scope · 'miss' out of scope/nonexistent · 'unmapped' scope has no filter for this kind. */
   private async check(
     scope: ResolvedScope, kind: ScopedEntityKind, id: number, requesterId?: number,

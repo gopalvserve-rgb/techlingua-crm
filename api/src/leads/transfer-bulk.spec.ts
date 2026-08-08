@@ -32,6 +32,8 @@ function answer(sql: string, params: any[], ctx: any) {
   if (/SELECT \* FROM lead WHERE id = \$1 AND deleted_at IS NULL/.test(sql)) return ctx.before;
   if (/UPDATE lead SET branch_id/.test(sql)) return { rows: [{ id: params[params.length - 1] }] };  // transfer UPDATE RETURNING *
   if (/UPDATE lead SET paused/.test(sql)) return { rows: [{ id: params[0] }] };             // pause UPDATE RETURNING id
+  if (/UPDATE lead SET deleted_at = now\(\)/.test(sql)) return { rows: ctx.noDelete ? [] : [{ id: params[0] }] };  // bulk soft-delete RETURNING id
+  if (/SELECT COUNT\(\*\)::int FROM follow_up f WHERE f\.lead_id = ANY/.test(sql)) return { f: 3, a: 5 };  // bulkDeleteImpact
   if (/SELECT l\.id, l\.org_id, l\.branch_id, l\.owner_id, l\.paused/.test(sql)) return ctx.scoped; // scopedLeadRows
   if (/INSERT INTO lead_activity/.test(sql)) return { rows: [] };
   if (/INSERT INTO audit_log/.test(sql)) return { rows: [] };
@@ -177,5 +179,49 @@ describe('LeadsService bulk actions', () => {
     await expect(svc.bulkSetPaused([], true, 9, scope)).rejects.toThrow(/non-empty array/);
     const big = Array.from({ length: 2001 }, (_, i) => i + 1);
     await expect(svc.bulkSetPaused(big, true, 9, scope)).rejects.toThrow(/too many leads/);
+  });
+});
+
+describe('LeadsService.bulkDelete + bulkDeleteImpact', () => {
+  const scoped = [
+    { id: '101', org_id: '1', branch_id: '2', owner_id: '11', paused: false },
+    { id: '102', org_id: '1', branch_id: '2', owner_id: '11', paused: true },
+  ];
+
+  it('soft-deletes ONLY the in-scope selected leads, writes a per-record delete audit, reports skips', async () => {
+    const { svc, ctx } = make({ scoped }); // 3 requested, only 2 in scope
+    const res = await svc.bulkDelete([101, 102, 999], 9, scope);
+    expect(res).toMatchObject({ deleted: 2, skipped: 1, requested: 3 });
+    expect(res.deleted_ids.sort()).toEqual([101, 102]);
+    const dels = ctx.calls.filter((c: any) => /UPDATE lead SET deleted_at = now\(\)/.test(c.sql));
+    expect(dels).toHaveLength(2);
+    const audits = ctx.calls.filter((c: any) => /INSERT INTO audit_log/.test(c.sql) && /'delete'/.test(c.sql));
+    expect(audits).toHaveLength(2);
+  });
+
+  it('a paused lead can still be bulk-deleted', async () => {
+    const { svc } = make({ scoped: [scoped[1]] });
+    const res = await svc.bulkDelete([102], 9, scope);
+    expect(res.deleted).toBe(1);
+  });
+
+  it('is idempotent — an already-deleted lead (no row updated) is skipped, never fatal', async () => {
+    const { svc } = make({ scoped, noDelete: true });
+    const res = await svc.bulkDelete([101, 102], 9, scope);
+    expect(res.deleted).toBe(0);
+    expect(res.skipped).toBe(2);
+  });
+
+  it('impact preview aggregates child counts over the in-scope selection', async () => {
+    const { svc } = make({ scoped });
+    const rep = await svc.bulkDeleteImpact([101, 102, 999], 9, scope);
+    expect(rep).toMatchObject({ requested: 3, in_scope: 2, out_of_scope: 1, total_associations: 8 });
+    expect(rep.impact.find((i: any) => i.key === 'follow_ups')?.count).toBe(3);
+    expect(rep.impact.find((i: any) => i.key === 'activities')?.count).toBe(5);
+  });
+
+  it('empty selection -> 400', async () => {
+    const { svc } = make({ scoped: [] });
+    await expect(svc.bulkDelete([], 9, scope)).rejects.toThrow(/non-empty/);
   });
 });

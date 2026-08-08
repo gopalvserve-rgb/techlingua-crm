@@ -28,6 +28,7 @@ import LeadImport from './leadimport';
 import Channels from './channels';
 import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
+import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelete, BulkBar, downloadObjectsCsv } from './listtools';
 import { RedFlagModal } from './leadsheet';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
@@ -1056,7 +1057,7 @@ function LeadsAll() {
   const canFlag = can('lead.flag');
   const [flagLead, setFlagLead] = useState<{ id: number; name?: string; flagged?: boolean } | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume'>(null);
+  const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume' | 'delete'>(null);
   const [transferLead, setTransferLead] = useState<{ id: number; name?: string } | null>(null);
   const [selCap, setSelCap] = useState<number | null>(null);
   // changing the filter (or a refresh) clears the selection — it can no longer be trusted to
@@ -1198,13 +1199,18 @@ function LeadsAll() {
             {canAssign && <button className="btn" onClick={() => setBulk('reassign')}><Ic k="users" />Reassign</button>}
             {canEditLead && <button className="btn" onClick={() => setBulk('pause')}><Ic k="clock" />Pause</button>}
             {canEditLead && <button className="btn" onClick={() => setBulk('resume')}><Ic k="check" />Resume</button>}
+            {canDeleteLead && <button className="btn" data-testid="bulk-delete" onClick={() => setBulk('delete')}
+              style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' }}><Ic k="trash" />Delete</button>}
             <button className="btn" onClick={clearSel}>Clear</button>
           </div>
         </div>
       )}
       {/* Classic view — the traditional dense data table (default), untouched from Batch E. */}
       {view === 'classic' && (
-        <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']} sticky fill
+        <TableCard title="Leads" more={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+            <span className="sub" style={{ fontSize: 12 }}>{data.data?.total ?? 0} in scope</span>
+            <ListActions onExport={() => exportLeads(params.toString())} onRefresh={() => data.reload()} />
+          </span>} cols={[...LEAD_COLS, 'Actions']} sticky fill
           select={{
             checked: (i) => sel.has(Number(rows[i].id)),
             onToggle: (i) => toggleOne(Number(rows[i].id)),
@@ -1240,6 +1246,9 @@ function LeadsAll() {
       {bulk === 'transfer' && <BulkTransferModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {bulk === 'reassign' && <BulkReassignModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {(bulk === 'pause' || bulk === 'resume') && <BulkPauseModal ids={selectedIds} action={bulk} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
+      {bulk === 'delete' && <BulkDeleteModal entityLabel="Lead" ids={selectedIds} idKey="lead_ids"
+        impactPath="/leads/bulk/delete-impact" deletePath="/leads/bulk/delete"
+        onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {del.deleteModal}
     </>
   );
@@ -1440,7 +1449,7 @@ function Followups() {
           </select>
         </div>
       </div>
-      <TableCard fill title="Upcoming follow-ups" cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Disposition', 'Actions']}
+      <TableCard fill title="Upcoming follow-ups" more={<ListActions onExport={() => downloadObjectsCsv('follow-ups.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Disposition', 'Actions']}
         rows={rows.map((r) => [...r.row, rowActions({
           onView: () => openLead(r.leadId),
           onDelete: canDelete ? () => del.openDelete(r.id, r.name) : undefined,
@@ -1539,6 +1548,9 @@ function Sources() {
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('source.update');
   const del = useDelete('Source', '/sources', () => { list.reload(); ref.reload(); bump(); });
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('Source', '/sources/bulk-delete/impact', '/sources/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   const CAPTURE: Record<string, [string, string]> = {
     meta: ['Auto \u00b7 webhook', 'b-green'], google: ['Auto \u00b7 webhook', 'b-green'], justdial: ['Auto \u00b7 API', 'b-green'],
@@ -1548,7 +1560,8 @@ function Sources() {
   return (
     <>
       <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
-      <TableCard fill title="Connected sources" cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
+      <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard fill title="Connected sources" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((so) => {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
@@ -1568,6 +1581,7 @@ function Sources() {
             }),
           ];
         })} empty="No sources connected yet \u2014 add one per campaign" />
+      {_bd.bulkModal}
       {del.deleteModal}
       {view && (
         <DetailModal title={`Source \u2014 ${view.name}`} icon="leads" onClose={() => setView(null)}>
@@ -1634,6 +1648,9 @@ function Branches() {
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('branch.update');
   const del = useDelete('Branch', '/branches', () => { list.reload(); ref.reload(); bump(); });
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('Branch', '/branches/bulk-delete/impact', '/branches/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
 
   const nodes = [{
@@ -1657,7 +1674,8 @@ function Branches() {
         <SearchChip q={q} setQ={setQ} ph="Search branch name / code\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      <TableCard fill title="Branches" cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
+      <BulkBar count={_bdSel.count} entityLabel="Branch" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard fill title="Branches" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('branches.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((b) => [
           { node: <span className="nm">{b.name}</span> } as Cell,
@@ -1673,6 +1691,7 @@ function Branches() {
             onDelete: can('branch.delete') ? () => del.openDelete(Number(b.id), b.name) : undefined,
           }),
         ])} empty="No branches yet" />
+      {_bd.bulkModal}
       {del.deleteModal}
       {view && (
         <DetailModal title={`Branch \u2014 ${view.name}`} icon="branch" onClose={() => setView(null)}>
@@ -1759,6 +1778,9 @@ function Verticals() {
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('vertical.update');
   const del = useDelete('Vertical', '/verticals', () => { list.reload(); ref.reload(); bump(); });
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('Vertical', '/verticals/bulk-delete/impact', '/verticals/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   return (
     <>
@@ -1767,7 +1789,8 @@ function Verticals() {
         <SearchChip q={q} setQ={setQ} ph="Search vertical name / code\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      <TableCard fill title="Verticals" cols={['Vertical', 'Branch', 'Head', 'SMTP Domain', 'Status', 'Actions']}
+      <BulkBar count={_bdSel.count} entityLabel="Vertical" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard fill title="Verticals" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('verticals.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Vertical', 'Branch', 'Head', 'SMTP Domain', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((v) => [
           { node: <span className="nm">{v.name}</span> } as Cell,
@@ -1783,6 +1806,7 @@ function Verticals() {
             onDelete: can('vertical.delete') ? () => del.openDelete(Number(v.id), v.name) : undefined,
           }),
         ])} empty="No verticals yet" />
+      {_bd.bulkModal}
       {del.deleteModal}
       {view && (
         <DetailModal title={`Vertical \u2014 ${view.name}`} icon="grid" onClose={() => setView(null)}>
@@ -1951,6 +1975,9 @@ function Pipelines() {
   const [config, setConfig] = useState<any | null>(null); // stage configurator (client mockup)
   const canEdit = can('pipeline.update');
   const del = useDelete('Pipeline', '/pipelines', () => { list.reload(); ref.reload(); bump(); });
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('Pipeline', '/pipelines/bulk-delete/impact', '/pipelines/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   const [stagesBy, setStagesBy] = useState<Record<number, string>>({});
   useEffect(() => {
@@ -1978,7 +2005,8 @@ function Pipelines() {
       </div>
       {/* UAT-R2 #7 — the list reads in hierarchy order Branch \u203a Vertical \u203a Pipeline
           (columns and row order); the api sorts by branch, vertical, then pipeline name. */}
-      <TableCard fill title="Pipelines" cols={['Branch', 'Vertical', 'Pipeline', 'Stages', 'Status', 'Actions']}
+      <BulkBar count={_bdSel.count} entityLabel="Pipeline" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard fill title="Pipelines" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('pipelines.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Branch', 'Vertical', 'Pipeline', 'Stages', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((pl) => [
           String(pl.branch_name ?? '\u2014'),
@@ -1999,6 +2027,7 @@ function Pipelines() {
             extra: [{ k: 'cfg', title: 'Stages (configurator)', onClick: () => setConfig(pl) }],
           }),
         ])} empty="No pipelines yet" />
+      {_bd.bulkModal}
       {del.deleteModal}
       {view && <PipelineView pipeline={view} onClose={() => setView(null)} onChanged={after}
         onConfigure={() => { setConfig(view); setView(null); }} />}
@@ -2227,6 +2256,9 @@ function Campaigns() {
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('campaign.update');
   const del = useDelete('Campaign', '/campaigns', () => { list.reload(); ref.reload(); bump(); });
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('Campaign', '/campaigns/bulk-delete/impact', '/campaigns/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   const [counts, setCounts] = useState<Record<number, number>>({});
   useEffect(() => {
@@ -2259,7 +2291,8 @@ function Campaigns() {
         <SearchChip q={q} setQ={setQ} ph="Search campaign name\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      <TableCard fill title="Campaigns" cols={['Campaign', 'Branch', 'Vertical', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
+      <BulkBar count={_bdSel.count} entityLabel="Campaign" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard fill title="Campaigns" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('campaigns.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Campaign', 'Branch', 'Vertical', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => {
           const src = ref.sources.find((x) => Number(x.campaign_id) === Number(c.id));
@@ -2287,6 +2320,7 @@ function Campaigns() {
             }),
           ];
         })} empty="No campaigns yet \u2014 create one to start pulling leads" />
+      {_bd.bulkModal}
       {del.deleteModal}
       {view && <CampaignView campaign={view} leadCount={counts[Number(view.id)] ?? 0} onClose={() => setView(null)} onChanged={() => list.reload()} />}
       {edit && <CampaignModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
@@ -2349,11 +2383,15 @@ function Courses() {
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('master.update');
   const del = useDelete('Course', '/masters/course', () => { list.reload(); ref.reload(); bump(); });
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('Course', '/masters/course/bulk-delete/impact', '/masters/course/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   return (
     <>
       <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
-      <TableCard fill title="Course master" cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
+      <BulkBar count={_bdSel.count} entityLabel="Course" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => [
           { mono: String(c.code ?? '\u2014') } as Cell,
@@ -2372,6 +2410,7 @@ function Courses() {
             onDelete: can('master.delete') ? () => del.openDelete(Number(c.id), c.name) : undefined,
           }),
         ])} empty="No courses in the master yet" />
+      {_bd.bulkModal}
       {del.deleteModal}
       {view && (
         <DetailModal title={`Course \u2014 ${view.name}`} icon="book" onClose={() => setView(null)}>
@@ -2607,6 +2646,9 @@ function Users() {
   const canEdit = can('user.update');
   const { me } = useAuth();
   const del = useDelete('User', '/users', () => { list.reload(); ref.reload(); bump(); });
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('User', '/users/bulk-delete/impact', '/users/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
 
   // Row-action modal state (each menu item opens a REAL wired action)
@@ -2677,7 +2719,8 @@ function Users() {
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email\u2026" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="users" /><b>{rows.length}</b> users</div>
       </div>
-      <TableCard fill title="Users" cols={['User', 'Role', 'Reports to', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status', 'Actions']}
+      <BulkBar count={_bdSel.count} entityLabel="User" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard fill title="Users" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('users.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['User', 'Role', 'Reports to', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].status === 'disabled' ? 'row-inactive' : undefined)}
         rows={rows.map((u) => {
           const d = details[Number(u.id)];
@@ -2725,6 +2768,7 @@ function Users() {
             })() } as Cell,
           ];
         })} empty="No users match the current filters" />
+      {_bd.bulkModal}
       {del.deleteModal}
       {view && <UserView user={view} onClose={() => setView(null)} />}
       {pwUser && <ChangePasswordModal user={pwUser} onClose={() => setPwUser(null)} />}
@@ -2858,7 +2902,7 @@ function Roles() {
           </div>
         </div>
       </div>
-      <TableCard fill title="Roles" cols={['Role', 'Type', 'Permissions', 'Users', 'Status', 'Actions']}
+      <TableCard fill title="Roles" more={<ListActions onExport={() => downloadObjectsCsv('roles.csv', roles.data ?? [])} onRefresh={() => roles.reload()} />} cols={['Role', 'Type', 'Permissions', 'Users', 'Status', 'Actions']}
         rowClass={(i) => ((roles.data ?? [])[i]?.is_active === false ? 'row-inactive' : undefined)}
         rows={(roles.data ?? []).map((r) => [
           { node: <span className="nm">{r.name}</span> } as Cell,
@@ -2916,7 +2960,7 @@ function Audit() {
       <div className="filters" style={{ marginBottom: 12 }}>
         <DateRange value={range} onChange={setRange} idPrefix="audit-dr" />
       </div>
-      <TableCard fill title="Activity log \u2014 all users" cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
+      <TableCard fill title="Activity log \u2014 all users" more={<ListActions onExport={() => downloadObjectsCsv('audit-log.csv', logs.data ?? [])} onRefresh={() => logs.reload()} />} cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
         rows={rows.map((r) => [
           { mono: new Date(r.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), dim: true } as Cell,
           r.actor_name ?? 'System',
@@ -3266,7 +3310,10 @@ function ErrorLogs() {
         </button>
       </div>
       <TableCard fill title={grouped ? 'Error groups' : 'Error events'} icon="shield"
-        more={`${data.data?.total ?? 0} ${grouped ? 'groups' : 'events'}`}
+        more={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          <span className="sub" style={{ fontSize: 12 }}>{`${data.data?.total ?? 0} ${grouped ? 'groups' : 'events'}`}</span>
+          <ListActions onExport={() => downloadObjectsCsv('error-log.csv', data.data?.rows ?? [])} onRefresh={() => data.reload()} />
+        </span>}
         cols={cols} rows={rows.map(rowCells)}
         rowClass={(i) => errRowClass(rows[i].level, grouped ? Number(rows[i].open_count) > 0 : rows[i].status === 'open')}
         empty="No errors captured — the system is healthy"
@@ -3300,6 +3347,9 @@ function MastersAdmin() {
   const hasParent = !!types.data?.find((t) => t.type === type)?.parent;
   const after = () => { list.reload(); ref.reload(); bump(); };
   const del = useDelete(label.replace(/s$/, ''), `/masters/${type}`, after);
+  const _bdIds = rows.map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete(label.replace(/s$/, ''), `/masters/${type}/bulk-delete/impact`, `/masters/${type}/bulk-delete`, () => { list.reload(); _bdSel.clear(); });
   const cols = ['Name', 'Code', ...(hasParent ? ['Parent'] : []), 'Sort', 'Status', 'Actions'];
   return (
     <>
@@ -3312,10 +3362,14 @@ function MastersAdmin() {
         <IncInactiveChip on={inc} set={setInc} />
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> values</div>
       </div>
-      <TableCard title={`${label} master`} icon="cfg"
-        more={can('master.create')
-          ? <a className="mlink" style={{ cursor: 'pointer' }} onClick={() => setAdd(true)}>＋ Add {label.replace(/s$/, '')}</a>
-          : undefined}
+      <BulkBar count={_bdSel.count} entityLabel={label.replace(/s$/, '')} onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <TableCard title={`${label} master`} icon="cfg" select={_bdSel.tableSelect}
+        more={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          <ListActions onExport={() => downloadObjectsCsv(`${type}.csv`, list.data ?? [])} onRefresh={() => list.reload()} />
+          {can('master.create')
+            ? <a className="mlink" style={{ cursor: 'pointer' }} onClick={() => setAdd(true)}>＋ Add {label.replace(/s$/, '')}</a>
+            : null}
+        </span>}
         cols={cols}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((m) => {
@@ -3337,6 +3391,7 @@ function MastersAdmin() {
           );
           return cells;
         })} empty={`No ${label.toLowerCase()} yet`} />
+      {_bd.bulkModal}
       {del.deleteModal}
       {add && (type === 'course'
         ? <AddModal formKey="students.courses" onClose={() => setAdd(false)} onSaved={after} />

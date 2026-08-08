@@ -69,6 +69,13 @@ export class LeadsController {
   // Bulk actions — "select all matching filter": just the in-scope ids for the current
   // filters (capped), so the UI can bulk-act over the whole filtered set, not one page.
   // Declared BEFORE @Get(':id') so 'select-ids' is not swallowed by the id route.
+  /** EXPORT (client request, Aug 2026) — the CURRENT filtered + scoped Leads set (up to the bulk
+   *  cap) so the UI can download a CSV of the whole filtered result, not just the visible page. */
+  @Get('export') @RequirePermission('lead.read')
+  exportRows(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string | string[]>) {
+    return this.leads.exportRows(s, parseLeadFilters(q));
+  }
+
   @Get('select-ids') @RequirePermission('lead.read')
   selectIds(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string | string[]>) {
     return this.leads.selectIds(s, parseLeadFilters(q));
@@ -100,6 +107,20 @@ export class LeadsController {
   @Post('bulk/resume') @RequirePermission('lead.update')
   bulkResume(@Body() dto: { lead_ids?: number[] }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
     return this.leads.bulkSetPaused(dto?.lead_ids, false, u.id, s);
+  }
+
+  /** Impact preview for a BULK delete — aggregate child-record counts for the in-scope selection
+   *  ("Delete N leads? (X child records affected)"). Mirrors the single-lead /impact. */
+  @Post('bulk/delete-impact') @RequirePermission('lead.delete')
+  bulkDeleteImpact(@Body() dto: { lead_ids?: number[] }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.leads.bulkDeleteImpact(dto?.lead_ids, u.id, s);
+  }
+
+  /** Soft-delete ALL selected in-scope leads (registry soft delete -> Deleted Items, restorable).
+   *  Out-of-scope ids skipped; per-record audit; idempotent; a paused/flagged lead can be deleted. */
+  @Post('bulk/delete') @RequirePermission('lead.delete')
+  bulkDelete(@Body() dto: { lead_ids?: number[] }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
+    return this.leads.bulkDelete(dto?.lead_ids, u.id, s);
   }
 
   @Get(':id') @RequirePermission('lead.read') @ScopedEntity('lead')

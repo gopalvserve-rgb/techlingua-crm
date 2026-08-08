@@ -42,7 +42,7 @@ describe('deleteGuardError (pure)', () => {
 describe('SoftDeleteService.remove', () => {
   it('soft-deletes the ONE row: sets deleted_at + deleted_by, never touches children', async () => {
     const db = makeDb({ onQuery: (sql) => (sql.includes('UPDATE branch') ? [{ id: '3', name: 'Delhi' }] : []) });
-    const svc = new SoftDeleteService(db as any);
+    const svc = new SoftDeleteService(db as any, {} as any);
     const res = await svc.remove('branch', 3, 42);
     expect(res).toMatchObject({ ok: true, deleted: true, entity: 'branch', id: 3, name: 'Delhi' });
     const upd = db.calls.find((c) => c.sql.includes('UPDATE branch'))!;
@@ -54,13 +54,13 @@ describe('SoftDeleteService.remove', () => {
   });
 
   it('already-deleted (or missing) row -> 404', async () => {
-    const svc = new SoftDeleteService(makeDb({ onQuery: () => [] }) as any);
+    const svc = new SoftDeleteService(makeDb({ onQuery: () => [] }) as any, {} as any);
     await expect(svc.remove('campaign', 99, 1)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('system role -> 400 before any UPDATE', async () => {
     const db = makeDb({ onOne: (sql) => (sql.includes('is_system FROM role') ? { is_system: true } : null) });
-    const svc = new SoftDeleteService(db as any);
+    const svc = new SoftDeleteService(db as any, {} as any);
     await expect(svc.remove('role', 1, 42)).rejects.toBeInstanceOf(BadRequestException);
     expect(db.calls.some((c) => c.sql.includes('UPDATE role'))).toBe(false);
   });
@@ -70,22 +70,22 @@ describe('SoftDeleteService.remove', () => {
       onOne: (sql) => (sql.includes('is_system FROM role') ? { is_system: false } : null),
       onQuery: (sql) => (sql.includes('UPDATE role') ? [{ id: '20', name: 'Campus Lead' }] : []),
     });
-    await expect(new SoftDeleteService(db as any).remove('role', 20, 42)).resolves.toMatchObject({ deleted: true });
+    await expect(new SoftDeleteService(db as any, {} as any).remove('role', 20, 42)).resolves.toMatchObject({ deleted: true });
   });
 
   it('self-delete -> 400', async () => {
-    const svc = new SoftDeleteService(makeDb({}) as any);
+    const svc = new SoftDeleteService(makeDb({}) as any, {} as any);
     await expect(svc.remove('user', 42, 42)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('the Super Admin user -> 400', async () => {
     const db = makeDb({ onOne: (sql) => (sql.includes("r.name = 'Super Admin'") ? { '?column?': 1 } : null) });
-    const svc = new SoftDeleteService(db as any);
+    const svc = new SoftDeleteService(db as any, {} as any);
     await expect(svc.remove('user', 1, 42)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('unknown entity -> 400 (the organisation is not registered as deletable)', async () => {
-    const svc = new SoftDeleteService(makeDb({}) as any);
+    const svc = new SoftDeleteService(makeDb({}) as any, {} as any);
     await expect(svc.remove('organisation', 1, 42)).rejects.toBeInstanceOf(BadRequestException);
   });
 });
@@ -111,7 +111,7 @@ describe('SoftDeleteService.impact', () => {
       },
       onQuery: () => [{ nm: 'Sample A' }, { nm: 'Sample B' }],
     });
-    const rep = await new SoftDeleteService(db as any).impact('branch', 3);
+    const rep = await new SoftDeleteService(db as any, {} as any).impact('branch', 3);
     expect(rep.entity).toBe('branch');
     expect(rep.name).toBe('Delhi');
     expect(rep.deleted).toBe(false);
@@ -122,7 +122,7 @@ describe('SoftDeleteService.impact', () => {
   });
 
   it('missing row -> 404', async () => {
-    const svc = new SoftDeleteService(makeDb({}) as any);
+    const svc = new SoftDeleteService(makeDb({}) as any, {} as any);
     await expect(svc.impact('branch', 999)).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -131,7 +131,7 @@ describe('SoftDeleteService.impact', () => {
       onOne: (sql) => (sql.includes('FROM follow_up WHERE id') ? { id: '9', name: '01 Jan 2026 10:00', deleted_at: null } : { n: 0 }),
       onQuery: () => { throw new Error('sample query must not run for zero counts'); },
     });
-    const rep = await new SoftDeleteService(db as any).impact('follow_up', 9);
+    const rep = await new SoftDeleteService(db as any, {} as any).impact('follow_up', 9);
     expect(rep.total_associations).toBe(0);
   });
 });
@@ -146,7 +146,7 @@ describe('SoftDeleteService.restore', () => {
       },
       onQuery: (sql) => (sql.includes('UPDATE vertical SET deleted_at = NULL') ? [{ id: '5', name: 'TLA' }] : []),
     });
-    const res = await new SoftDeleteService(db as any).restore('vertical', 5);
+    const res = await new SoftDeleteService(db as any, {} as any).restore('vertical', 5);
     expect(res).toMatchObject({ ok: true, restored: true, id: 5, name: 'TLA' });
   });
 
@@ -158,14 +158,14 @@ describe('SoftDeleteService.restore', () => {
         return null;
       },
     });
-    const err = await new SoftDeleteService(db as any).restore('vertical', 5).catch((e) => e);
+    const err = await new SoftDeleteService(db as any, {} as any).restore('vertical', 5).catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.message).toMatch(/branch "Delhi" is deleted/i);
   });
 
   it('restoring a row that is not deleted -> 404', async () => {
     const db = makeDb({ onOne: () => ({ deleted_at: null }) });
-    await expect(new SoftDeleteService(db as any).restore('branch', 3)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(new SoftDeleteService(db as any, {} as any).restore('branch', 3)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('deleted-lead restore checks the whole 5-level path', async () => {
@@ -178,25 +178,60 @@ describe('SoftDeleteService.restore', () => {
       },
       onQuery: (sql) => (sql.includes('UPDATE lead SET deleted_at = NULL') ? [{ id: '77', name: 'Asha' }] : []),
     });
-    await new SoftDeleteService(db as any).restore('lead', 77);
+    await new SoftDeleteService(db as any, {} as any).restore('lead', 77);
     expect(seen).toHaveLength(5); // branch, vertical, pipeline, campaign, source
   });
 });
 
 describe('SoftDeleteService.deletedItems / entities', () => {
   it('entities() lists every registry entry for the Deleted Items tabs', () => {
-    const list = new SoftDeleteService(makeDb({}) as any).entities();
+    const list = new SoftDeleteService(makeDb({}) as any, {} as any).entities();
     const keys = list.map((e) => e.key);
     expect(keys).toEqual(expect.arrayContaining(['branch', 'lead', 'user', 'role', 'master:course']));
   });
 
   it('deletedItems lists only deleted rows, newest first, with deleted_by name', async () => {
     const db = makeDb({ onQuery: () => [{ id: '3', name: 'Delhi', deleted_at: 't', deleted_by: '42', deleted_by_name: 'Admin' }] });
-    const res = await new SoftDeleteService(db as any).deletedItems('branch');
+    const res = await new SoftDeleteService(db as any, {} as any).deletedItems('branch');
     expect(res.entity).toBe('branch');
     expect(res.rows).toHaveLength(1);
     const q = db.calls.find((c) => c.sql.includes('FROM branch t'))!;
     expect(q.sql).toContain('deleted_at IS NOT NULL');
     expect(q.sql).toContain('ORDER BY t.deleted_at DESC');
+  });
+});
+
+describe('SoftDeleteService.bulkRemove + bulkImpact (generic)', () => {
+  const enforcer = (ids: number[]) => ({ filterInScope: jest.fn().mockResolvedValue(ids) } as any);
+
+  it('soft-deletes every in-scope id, writes a per-record delete audit, reports skips', async () => {
+    const db = makeDb({ onQuery: (sql) => (sql.includes('UPDATE campaign') ? [{ id: '5', name: 'Meta Jul' }] : []) });
+    const svc = new SoftDeleteService(db as any, enforcer([5, 6]));
+    const res = await svc.bulkRemove('campaign', [5, 6, 7], 9, {} as any);
+    expect(res).toMatchObject({ entity: 'campaign', requested: 3, deleted: 2, skipped: 1 });
+    expect(res.deleted_ids.sort()).toEqual([5, 6]);
+    const audits = db.calls.filter((c) => c.sql.includes('INSERT INTO audit_log') && c.sql.includes("'delete'"));
+    expect(audits).toHaveLength(2);
+  });
+
+  it('out-of-scope ids are skipped (filterInScope returns the allowed subset)', async () => {
+    const db = makeDb({ onQuery: (sql) => (sql.includes('UPDATE vertical') ? [{ id: '3', name: 'BCL' }] : []) });
+    const svc = new SoftDeleteService(db as any, enforcer([3])); // only 3 in scope of [3,4]
+    const res = await svc.bulkRemove('vertical', [3, 4], 9, {} as any);
+    expect(res).toMatchObject({ deleted: 1, skipped: 1 });
+  });
+
+  it('empty selection -> 400', async () => {
+    const svc = new SoftDeleteService(makeDb({}) as any, enforcer([]));
+    await expect(svc.bulkRemove('campaign', [], 9, {} as any)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('bulkImpact aggregates dependent counts over the in-scope selection', async () => {
+    const db = makeDb({ onOne: (sql) => (sql.includes('COUNT(*)') ? { n: 4 } : null) });
+    const svc = new SoftDeleteService(db as any, enforcer([5, 6]));
+    const rep = await svc.bulkImpact('campaign', [5, 6, 7], 9, {} as any);
+    expect(rep).toMatchObject({ requested: 3, in_scope: 2, out_of_scope: 1 });
+
+    expect(rep.total_associations).toBe(32); // 4 dependents x 4 each x 2 in-scope
   });
 });

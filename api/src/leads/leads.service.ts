@@ -291,6 +291,17 @@ export class LeadsService {
     return { ids, total: total?.n ?? 0, capped: (total?.n ?? 0) > ids.length };
   }
 
+  /** Rows for the CSV export — same filters + record scope as list(), capped at BULK_MAX. */
+  async exportRows(scope: ResolvedScope, f: LeadFilters) {
+    const params: unknown[] = [];
+    const cond = this.leadFilterWhere(scope, f, params);
+    params.push(LeadsService.BULK_MAX);
+    const rows = await this.db.query(
+      `${LEAD_SELECT} WHERE ${cond} ORDER BY l.created_at DESC LIMIT $${params.length}`, params,
+    );
+    return { rows, count: rows.length, capped: rows.length >= LeadsService.BULK_MAX };
+  }
+
   async get(id: number) {
     const lead = await this.db.one(`${LEAD_SELECT} WHERE l.id = $1 AND l.deleted_at IS NULL`, [id]);
     if (!lead) throw new NotFoundException('lead not found');
@@ -696,6 +707,57 @@ export class LeadsService {
     const key = paused ? 'paused' : 'resumed';
     return { [key]: toChange.length, already: rows.length - toChange.length,
              skipped: ids.length - rows.length, requested: ids.length } as Record<string, number>;
+  }
+
+  /** Bulk DELETE preview — aggregate child-record counts (follow-ups + timeline activities)
+   *  across the IN-SCOPE selected leads, for the confirm dialog. Out-of-scope ids excluded. */
+  async bulkDeleteImpact(leadIds: unknown, actorId: number, scope: ResolvedScope) {
+    const ids = this.normIds(leadIds);
+    const rows = await this.scopedLeadRows(ids, scope);
+    const inIds = rows.map((r) => Number(r.id));
+    let followUps = 0, activities = 0;
+    if (inIds.length) {
+      const c = await this.db.one<{ f: number; a: number }>(
+        `SELECT
+           (SELECT COUNT(*)::int FROM follow_up f WHERE f.lead_id = ANY($1::bigint[]) AND f.deleted_at IS NULL) AS f,
+           (SELECT COUNT(*)::int FROM lead_activity a WHERE a.lead_id = ANY($1::bigint[])) AS a`,
+        [inIds]);
+      followUps = Number(c?.f ?? 0); activities = Number(c?.a ?? 0);
+    }
+    const impact = [
+      { key: 'follow_ups', label: 'Follow-ups', count: followUps },
+      { key: 'activities', label: 'Timeline activities', count: activities },
+    ];
+    return {
+      entity: 'lead', label: 'Lead',
+      requested: ids.length, in_scope: inIds.length, out_of_scope: ids.length - inIds.length,
+      total_associations: followUps + activities, impact,
+    };
+  }
+
+  /** Bulk soft-DELETE — every in-scope selected lead is soft-deleted (deleted_at/deleted_by ->
+   *  Deleted Items, restorable). Children are kept (registry semantics). Per-record audit row.
+   *  Idempotent (a lost race / already-deleted row is a no-op); a paused / flagged lead CAN be
+   *  deleted. Out-of-scope ids are reported as skipped. */
+  async bulkDelete(leadIds: unknown, actorId: number, scope: ResolvedScope) {
+    const ids = this.normIds(leadIds);
+    const rows = await this.scopedLeadRows(ids, scope);
+    let deleted = 0;
+    const deleted_ids: number[] = [];
+    for (const r of rows) {
+      const upd = await this.db.query<{ id: string }>(
+        `UPDATE lead SET deleted_at = now(), deleted_by = $2, updated_at = now()
+          WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+        [Number(r.id), actorId]);
+      if (!upd.length) continue; // already deleted / lost race — idempotent
+      await this.db.query(
+        `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+         VALUES ($1,$2,'lead',$3,'delete',$4,$5)`,
+        [Number(r.org_id), actorId, Number(r.id), JSON.stringify({}), JSON.stringify({ deleted: true })]);
+      deleted++; deleted_ids.push(Number(r.id));
+    }
+    return { entity: 'lead', label: 'Lead', requested: ids.length, deleted,
+             skipped: ids.length - deleted, deleted_ids };
   }
 
   async update(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
