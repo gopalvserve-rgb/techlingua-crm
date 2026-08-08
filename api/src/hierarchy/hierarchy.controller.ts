@@ -47,6 +47,11 @@ export class HierarchyController {
     return this.h.updatePipeline(id, dto, u.id, s);
   }
 
+  // ALL in-scope pipeline stages (client, Aug 2026) — feeds the Leads STAGE filter; each row
+  // carries pipeline_id so the UI can narrow the options to the selected Pipeline(s).
+  @Get('stages') @RequirePermission('pipeline.read')
+  listAllStages(@CurrentScope() s: ResolvedScope) { return this.h.listAllStages(s); }
+
   @Get('pipelines/:id/stages') @RequirePermission('pipeline.read') @ScopedEntity('pipeline')
   listStages(@Param('id', ParseIntPipe) id: number) { return this.h.listStages(id); }
 

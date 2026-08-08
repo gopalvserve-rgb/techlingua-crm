@@ -34,7 +34,7 @@ function parseLeadFilters(q: Record<string, string | string[]>) {
     // Multi-select arrays (OR within, AND across) — singular params above still work.
     branch_ids: nums(q.branch_ids), vertical_ids: nums(q.vertical_ids), pipeline_ids: nums(q.pipeline_ids),
     campaign_ids: nums(q.campaign_ids), status_ids: nums(q.status_ids), owner_ids: nums(q.owner_ids),
-    source_ids: nums(q.source_ids), bands: bandsOf(q.bands),
+    source_ids: nums(q.source_ids), stage_ids: nums(q.stage_ids), bands: bandsOf(q.bands),
     created_from: first(q.created_from) || undefined, created_to: first(q.created_to) || undefined,
     sla_breached: flag(q.sla_breached), flagged: flag(q.flagged), red_flagged: flag(q.red_flagged), duplicate: flag(q.duplicate),
     paused: flag(q.paused), won: flag(q.won), unassigned: flag(q.unassigned),

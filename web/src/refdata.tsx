@@ -16,6 +16,8 @@ export interface RefData {
   campaigns: Named[];
   /** campaign-scoped `source` rows — the "Lead Source" field on every form */
   sources: Named[];
+  /** ALL in-scope pipeline stages (id, name, pipeline_id) — feeds the Leads STAGE filter. */
+  stages: Named[];
   /** the LEAD SOURCE MASTER (m_source) — "How did you hear about us?" on the walk-in
    *  form maps here, the same master `source.master_source_id` points at. */
   masterSources: Named[];
@@ -39,7 +41,7 @@ export interface RefData {
 }
 
 const EMPTY: RefData = {
-  branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], masterSources: [],
+  branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], masterSources: [], stages: [],
   users: [], statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
   trainings: [], visitPurposes: [], walkinStatuses: [], ticketCategories: [],
   states: [], cities: [],
@@ -73,7 +75,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
     (async () => {
       const [branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
-        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories] = await Promise.all([
+        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
@@ -92,12 +94,13 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), () => api.get<Named[]>('/masters/state'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/city'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/ticket_category'), []),
+        safe(can('pipeline.read'), () => api.get<Named[]>('/stages'), []),
       ]);
       if (dead) return;
       setData({
         branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
-        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories,
+        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
         loaded: true, reload: () => setTick((t) => t + 1),
       });
     })();

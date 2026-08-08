@@ -122,7 +122,7 @@ describe('Edit Branch modal (the reported bug)', () => {
 /* --------------- the same contract across the other modules --------------- */
 
 /** Locking is legitimate ONLY for immutable hierarchy parent links / the stage set. */
-const ALLOWED_LOCKS = ['Branch', 'Vertical', 'Campaign', 'Pipeline Stages'];
+const ALLOWED_LOCKS = ['Branch', 'Vertical', 'Pipeline', 'Campaign', 'Pipeline Stages'];
 
 const CASES: Array<{ name: string; formKey: string; spec: EditSpec }> = [
   {
@@ -144,8 +144,11 @@ const CASES: Array<{ name: string; formKey: string; spec: EditSpec }> = [
   {
     name: 'Source', formKey: 'leads.sources',
     spec: {
-      title: 'Edit Source', lock: ['Campaign'], submit: vi.fn(),
-      initialVals: { 'Source Name': 'Meta Ads', Status: 'Active' },  // UAT-R2 #4 — Category + Cost removed
+      // Aug 2026: the full Branch > Vertical > Pipeline > Campaign path is prefilled + locked
+      // (derived from Campaign); Source Name + Status stay editable.
+      title: 'Edit Source', lock: ['Branch', 'Vertical', 'Pipeline', 'Campaign'], submit: vi.fn(),
+      initialVals: { Branch: 'Vikaspuri', Vertical: 'BCL', Pipeline: 'Admissions', Campaign: 'Meta Jul', 'Source Name': 'Meta Ads', Status: 'Active' },
+      initialIds: { Branch: 9, Vertical: 1, Pipeline: 10, Campaign: 5 },
     },
   },
   {

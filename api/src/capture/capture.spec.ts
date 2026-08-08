@@ -354,3 +354,38 @@ describe('DEF-S34-03 — the referral EDIT path', () => {
     }
   });
 });
+
+describe('list filters (client, Aug 2026) — Branch/Vertical/Counsellor/Purpose/Type/date range', () => {
+  const listSql = (calls: Array<{ sql: string; params: unknown[] }>, tbl: RegExp) =>
+    calls.find((c) => tbl.test(c.sql) && /ORDER BY/.test(c.sql))!;
+
+  it('walk-ins honour branch_ids / vertical_ids / counsellor_ids (IN) + status/purpose (IN)', async () => {
+    const { svc, calls } = build();
+    await svc.listWalkIns(scope({ permissionKey: 'walkin.read' }), {
+      branch_ids: [9, 10], vertical_ids: [1], counsellor_ids: [3, 4],
+      statuses: ['waiting'], purposes: ['Admission enquiry'],
+    });
+    const c = listSql(calls, /FROM walk_in/); const sql = c.sql.replace(/\s+/g, ' ');
+    expect(sql).toContain('w.branch_id IN (');
+    expect(sql).toContain('w.vertical_id IN (');
+    expect(sql).toContain('w.counsellor_id IN (');
+    expect(sql).toContain('w.status IN (');
+    expect(sql).toContain('w.purpose IN (');
+    expect(c.params).toEqual(expect.arrayContaining([9, 10, 1, 3, 4, 'waiting', 'Admission enquiry']));
+  });
+
+  it('referrals honour branch_ids / vertical_ids / assigned counsellor / referrer_types + date range', async () => {
+    const { svc, calls } = build();
+    await svc.listReferrals(scope({ permissionKey: 'referral.read' }), {
+      branch_ids: [9], vertical_ids: [1, 2], counsellor_ids: [3],
+      referrer_types: ['Parent', 'Alumni'], from: '2026-08-01', to: '2026-08-31',
+    });
+    const c = listSql(calls, /FROM referral/); const sql = c.sql.replace(/\s+/g, ' ');
+    expect(sql).toContain('r.branch_id IN (');
+    expect(sql).toContain('r.vertical_id IN (');
+    expect(sql).toContain('r.assigned_counsellor_id IN (');
+    expect(sql).toContain('r.referrer_type IN (');
+    expect(sql).toContain('r.created_at >=');
+    expect(c.params).toEqual(expect.arrayContaining([9, 1, 2, 3, 'Parent', 'Alumni']));
+  });
+});

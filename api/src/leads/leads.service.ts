@@ -66,7 +66,7 @@ export interface LeadFilters {
    *  `col IN (...)` (OR within a filter), ANDed across filters, on top of RBAC scope. The
    *  singular params above keep working (card links / back-compat) and fold into the IN. */
   branch_ids?: number[]; vertical_ids?: number[]; pipeline_ids?: number[]; campaign_ids?: number[];
-  status_ids?: number[]; owner_ids?: number[]; source_ids?: number[];
+  status_ids?: number[]; owner_ids?: number[]; source_ids?: number[]; stage_ids?: number[];
   /** Multi-select score band (Hot/Warm/Cold) — whitelisted, `l.temperature IN (...)`. */
   bands?: string[];
   /** Sprint 3 — only leads with an open SLA breach / an escalation flag. */
@@ -206,7 +206,7 @@ export class LeadsService {
     inCol('l.vertical_id', f.vertical_id, f.vertical_ids);
     inCol('l.pipeline_id', f.pipeline_id, f.pipeline_ids);
     inCol('l.campaign_id', f.campaign_id, f.campaign_ids);
-    if (f.stage_id) eq('l.stage_id', f.stage_id);
+    inCol('l.stage_id', f.stage_id, f.stage_ids);
     inCol('l.status_id', f.status_id, f.status_ids);
     inCol('l.owner_id', f.owner_id, f.owner_ids);
     inCol('l.source_id', f.source_id, f.source_ids);

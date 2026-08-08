@@ -51,6 +51,14 @@ describe('OR within a filter — a filter array becomes `col IN (...)`', () => {
     expect(c.params.slice(0, 2)).toEqual([3, 4]);
   });
 
+  it('two stage_ids -> leads in EITHER pipeline stage (IN, both bound)', async () => {
+    const { svc, listSql } = build();
+    await svc.list(ALL, { stage_ids: [11, 12] });
+    const c = listSql();
+    expect(c.sql.replace(/\s+/g, ' ')).toContain('l.stage_id IN ($1,$2)');
+    expect(c.params.slice(0, 2)).toEqual([11, 12]);
+  });
+
   it('two bands -> `l.temperature IN (...)`, whitelisted', async () => {
     const { svc, listSql } = build();
     await svc.list(ALL, { bands: ['hot', 'warm'] });

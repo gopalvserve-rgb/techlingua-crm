@@ -15,8 +15,16 @@ export class MastersController {
 
   @Get(':type')
   @RequirePermission('master.read')
-  list(@Param('type') type: string, @Query('all') all?: string) {
-    return this.masters.list(type, all === '1');
+  list(@Param('type') type: string, @Query() query: Record<string, string | string[]>) {
+    // Course master list filters (client, Aug 2026): multi-select Branch/Vertical (via meta) +
+    // name search. Harmless for other master types (no meta.branch_id/vertical_id).
+    const csv = (v?: string | string[]) => v == null ? undefined :
+      [...new Set((Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean))];
+    const all = query.all === '1' || query.all === 'true';
+    return this.masters.list(type, all, {
+      branchIds: csv(query.branch_ids), verticalIds: csv(query.vertical_ids),
+      q: typeof query.q === 'string' ? query.q : undefined,
+    });
   }
 
   @Post(':type')

@@ -5,17 +5,34 @@ import { ResolvedScope } from '../rbac/rbac.types';
 
 type U = { id: number };
 
+// Multi-select list filters (client, Aug 2026): accept CSV or repeated keys.
+const nums = (v?: string | string[]): number[] | undefined => {
+  if (v == null) return undefined;
+  const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','));
+  const out = [...new Set(parts.map((x) => Number(String(x).trim())).filter((n) => Number.isInteger(n) && n > 0))];
+  return out.length ? out : undefined;
+};
+const strs = (v?: string | string[]): string[] | undefined => {
+  if (v == null) return undefined;
+  const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
+  return parts.length ? [...new Set(parts)] : undefined;
+};
+
 /** Walk-ins — the branch desk. Assign-on-add: the counsellor is mandatory and owns the lead. */
 @Controller('walk-ins')
 export class WalkInController {
   constructor(private readonly capture: CaptureService) {}
 
   @Get() @RequirePermission('walkin.read')
-  list(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
+  list(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string | string[]>) {
     return this.capture.listWalkIns(s, {
       today: q.today === '1' || q.today === 'true',
-      status: q.status || undefined,
-      from: q.from || undefined, to: q.to || undefined,
+      status: (typeof q.status === 'string' ? q.status : undefined) || undefined,
+      from: (typeof q.from === 'string' ? q.from : undefined) || undefined,
+      to: (typeof q.to === 'string' ? q.to : undefined) || undefined,
+      // Client (Aug 2026) list filters — multi-select Branch/Vertical/Counsellor/Status + Purpose.
+      branch_ids: nums(q.branch_ids), vertical_ids: nums(q.vertical_ids),
+      counsellor_ids: nums(q.counsellor_ids), statuses: strs(q.statuses), purposes: strs(q.purposes),
       limit: Number(q.limit) || 100,
     });
   }
@@ -48,8 +65,16 @@ export class ReferralController {
   constructor(private readonly capture: CaptureService) {}
 
   @Get() @RequirePermission('referral.read')
-  list(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
-    return this.capture.listReferrals(s, { status: q.status || undefined, limit: Number(q.limit) || 100 });
+  list(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string | string[]>) {
+    return this.capture.listReferrals(s, {
+      status: (typeof q.status === 'string' ? q.status : undefined) || undefined,
+      // Client (Aug 2026) list filters — Branch/Vertical, Referrer type, Assigned counsellor, date range.
+      branch_ids: nums(q.branch_ids), vertical_ids: nums(q.vertical_ids),
+      referrer_types: strs(q.referrer_types), counsellor_ids: nums(q.counsellor_ids),
+      from: (typeof q.from === 'string' ? q.from : undefined) || undefined,
+      to: (typeof q.to === 'string' ? q.to : undefined) || undefined,
+      limit: Number(q.limit) || 100,
+    });
   }
 
   @Get('summary') @RequirePermission('referral.read')

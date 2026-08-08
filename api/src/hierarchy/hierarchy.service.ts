@@ -303,6 +303,20 @@ export class HierarchyService {
     });
   }
 
+  /** ALL pipeline stages across the caller's in-scope, active pipelines (Leads STAGE filter).
+   *  Each row carries pipeline_id + pipeline_name so the UI can filter options by Pipeline. */
+  listAllStages(scope: ResolvedScope) {
+    const params: unknown[] = [];
+    const where = this.resolver.buildScopeWhere(scope, {
+      branch: 'p.branch_id', vertical: 'p.vertical_id', pipeline: 'p.id',
+    }, params);
+    return this.db.query(
+      `SELECT st.id, st.name, st.pipeline_id, st.stage_type, st.sort_order, p.name AS pipeline_name
+         FROM pipeline_stage st JOIN pipeline p ON p.id = st.pipeline_id
+        WHERE ${where} AND p.deleted_at IS NULL AND p.is_active AND st.is_active IS NOT FALSE
+        ORDER BY p.name, st.sort_order`, params);
+  }
+
   listStages(pipelineId: number) {
     return this.db.query(
       `SELECT * FROM pipeline_stage WHERE pipeline_id = $1 ORDER BY sort_order`, [pipelineId],
@@ -620,9 +634,13 @@ export class HierarchyService {
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 's.branch_id', vertical: 's.vertical_id', pipeline: 's.pipeline_id', campaign: 's.campaign_id',
     }, params);
-    let sql = `SELECT s.*, c.name AS campaign_name, ms.name AS master_source_name
+    let sql = `SELECT s.*, c.name AS campaign_name, ms.name AS master_source_name,
+                      b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name
                  FROM source s JOIN campaign c ON c.id = s.campaign_id
                  LEFT JOIN m_source ms ON ms.id = s.master_source_id
+                 LEFT JOIN branch b ON b.id = s.branch_id
+                 LEFT JOIN vertical v ON v.id = s.vertical_id
+                 LEFT JOIN pipeline p ON p.id = s.pipeline_id
                 WHERE ${where} AND s.deleted_at IS NULL${HierarchyService.activeFilter('s', includeInactive)}`;
     if (campaignId) { params.push(campaignId); sql += ` AND s.campaign_id = $${params.length}`; }
     return this.db.query(sql + ` ORDER BY s.name`, params);

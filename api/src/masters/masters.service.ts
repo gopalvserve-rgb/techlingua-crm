@@ -49,12 +49,26 @@ export class MastersService {
     return def.table; // whitelisted — safe to interpolate
   }
 
-  list(type: string, includeInactive = false) {
+  list(type: string, includeInactive = false, filter?: { branchIds?: string[]; verticalIds?: string[]; q?: string }) {
     const t = this.table(type);
+    const parent = MASTER_TYPES[type].parent ? this.table(MASTER_TYPES[type].parent!) : t;
+    const params: unknown[] = [];
+    const where: string[] = ['m.deleted_at IS NULL'];
+    if (!includeInactive) where.push('m.is_active');
+    // name / code search + Branch/Vertical (stored in meta on the Course master; multi-select IN).
+    if (filter?.q && String(filter.q).trim()) { params.push(`%${String(filter.q).trim()}%`); where.push(`(m.name ILIKE $${params.length} OR m.code ILIKE $${params.length})`); }
+    const metaIn = (key: string, arr?: string[]) => {
+      const vals = [...new Set((arr ?? []).map((x) => String(x).trim()).filter(Boolean))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      where.push(`m.meta->>'${key}' IN (${ph.join(',')})`);
+    };
+    metaIn('branch_id', filter?.branchIds);
+    metaIn('vertical_id', filter?.verticalIds);
     return this.db.query(
-      `SELECT m.*, p.name AS parent_name FROM ${t} m LEFT JOIN ${MASTER_TYPES[type].parent ? this.table(MASTER_TYPES[type].parent!) : t} p ON p.id = m.parent_id
-        WHERE m.deleted_at IS NULL${includeInactive ? '' : ' AND m.is_active'}
-        ORDER BY m.sort_order, m.name`,
+      `SELECT m.*, p.name AS parent_name FROM ${t} m LEFT JOIN ${parent} p ON p.id = m.parent_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY m.sort_order, m.name`, params,
     );
   }
 

@@ -915,7 +915,7 @@ function QuickContact() {
  * `options` mode) — no new control — with a small label and a constrained width so several sit
  * in the filter bar.
  */
-function FilterMulti({ label, icon, value, options, onChange, testid }: {
+export function FilterMulti({ label, icon, value, options, onChange, testid }: {
   label: string; icon: string; value: number[];
   options: Array<{ id: number | string; name: string }>;
   onChange: (ids: number[]) => void; testid?: string;
@@ -951,6 +951,7 @@ function readLeadNavFilters(search?: string) {
     branches: nums('branch_ids', 'branch_id'), verticals: nums('vertical_ids', 'vertical_id'),
     pipelines: nums('pipeline_ids', 'pipeline_id'), campaigns: nums('campaign_ids', 'campaign_id'),
     sources: nums('source_ids', 'source_id'), statuses: nums('status_ids', 'status_id'),
+    stages: nums('stage_ids', 'stage_id'),
     owners: nums('owner_ids', 'owner_id'), bands: bands(),
     from: sp.get('created_from') || undefined, to: sp.get('created_to') || undefined,
     followup: sp.get('followup') || undefined, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined,
@@ -988,7 +989,7 @@ function LeadsAll() {
     // ARRAY of selections (OR within the filter). The hierarchy dropdowns still cascade
     // Branch › Vertical › Pipeline › Campaign › Source, but each level can hold many values.
     branches: number[]; verticals: number[]; pipelines: number[]; campaigns: number[];
-    sources: number[]; statuses: number[]; owners: number[]; bands: string[];
+    sources: number[]; statuses: number[]; stages: number[]; owners: number[]; bands: string[];
     from?: string; to?: string;
     // Sprint 3 — SLA breaches are their own filter.
     sla?: boolean;
@@ -1015,6 +1016,7 @@ function LeadsAll() {
   setCsv('campaign_ids', f.campaigns);
   setCsv('source_ids', f.sources);
   setCsv('status_ids', f.statuses);
+  setCsv('stage_ids', f.stages);
   setCsv('owner_ids', f.owners);
   if (f.bands.length) params.set('bands', f.bands.join(','));
   if (f.from) params.set('created_from', f.from);
@@ -1086,6 +1088,12 @@ function LeadsAll() {
   const pOpts = ref.pipelines.filter((pp) => !f.verticals.length || f.verticals.includes(Number(pp.vertical_id)));
   const cOpts = ref.campaigns.filter((c) => !f.pipelines.length || f.pipelines.includes(Number(c.pipeline_id)));
   const sOpts = ref.sources.filter((so) => !f.campaigns.length || f.campaigns.includes(Number(so.campaign_id)));
+  // Stage (client, Aug 2026): a lead's stage belongs to a pipeline, so offer only the stages
+  // of the selected Pipeline(s) (all stages when no pipeline is picked). Same-named stages
+  // across pipelines are disambiguated with the pipeline name when >1 pipeline is in view.
+  const stOpts = (ref.stages ?? [])
+    .filter((st: any) => !f.pipelines.length || f.pipelines.includes(Number(st.pipeline_id)))
+    .map((st: any) => ({ id: Number(st.id), name: f.pipelines.length === 1 ? st.name : `${st.name} \u00b7 ${st.pipeline_name}` }));
   const pruneHierarchy = (nf: typeof f): typeof f => {
     const vOk = new Set(ref.verticals.filter((v) => !nf.branches.length || nf.branches.includes(Number(v.branch_id))).map((v) => Number(v.id)));
     nf.verticals = nf.verticals.filter((id) => vOk.has(id));
@@ -1095,6 +1103,8 @@ function LeadsAll() {
     nf.campaigns = nf.campaigns.filter((id) => cOk.has(id));
     const sOk = new Set(ref.sources.filter((so) => !nf.campaigns.length || nf.campaigns.includes(Number(so.campaign_id))).map((so) => Number(so.id)));
     nf.sources = nf.sources.filter((id) => sOk.has(id));
+    const stOk = new Set(((ref.stages ?? []) as any[]).filter((st) => !nf.pipelines.length || nf.pipelines.includes(Number(st.pipeline_id))).map((st) => Number(st.id)));
+    nf.stages = nf.stages.filter((id) => stOk.has(id));
     return nf;
   };
 
@@ -1141,6 +1151,10 @@ function LeadsAll() {
           onChange={(v) => setF((x) => ({ ...x, sources: v }))} />
         <FilterMulti label="Status" icon="check" value={f.statuses} options={ref.statuses}
           onChange={(v) => setF((x) => ({ ...x, statuses: v }))} />
+        {/* Pipeline STAGE (client, Aug 2026): the stage the lead currently sits in, narrowed
+            to the selected Pipeline(s). Multi-select, ANDed with the other filters. */}
+        <FilterMulti label="Stage" icon="list" value={f.stages} options={stOpts}
+          onChange={(v) => setF((x) => ({ ...x, stages: v }))} />
         <FilterMulti label="Owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
           onChange={(v) => setF((x) => ({ ...x, owners: v }))} />
         {/* SHARED date-range control — filters the list by lead CREATED date (created_from/
@@ -1609,12 +1623,23 @@ function Sources() {
         <AddModal formKey="leads.sources" onClose={() => setEdit(null)} onSaved={after}
           edit={{
             title: `Edit Source \u2014 ${edit.name}`,
+            // Client (Aug 2026): the Edit form now opens FULLY PREFILLED. A source's Branch >
+            // Vertical > Pipeline > Campaign are DERIVED from its Campaign (server-side), so they
+            // are shown read-only; only Source Name + Status are editable.
             initialVals: {
-              'Source Name': edit.name ?? '', 'Campaign': edit.campaign_name ?? '',
+              'Branch': edit.branch_name ?? '', 'Vertical': edit.vertical_name ?? '',
+              'Pipeline': edit.pipeline_name ?? '', 'Campaign': edit.campaign_name ?? '',
+              'Source Name': edit.name ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            // only the parent link is immutable (DEF-2)
-            lock: ['Campaign'],
+            initialIds: {
+              'Branch': edit.branch_id != null ? Number(edit.branch_id) : undefined,
+              'Vertical': edit.vertical_id != null ? Number(edit.vertical_id) : undefined,
+              'Pipeline': edit.pipeline_id != null ? Number(edit.pipeline_id) : undefined,
+              'Campaign': edit.campaign_id != null ? Number(edit.campaign_id) : undefined,
+            },
+            // The hierarchy path is immutable (derived from Campaign) - locked + prefilled.
+            lock: ['Branch', 'Vertical', 'Pipeline', 'Campaign'],
             // UAT-R2 #4 — Source Category + Cost per Lead removed; backend keeps existing values.
             submit: async (vals) => {
               await api.patch(`/sources/${edit.id}`, {
@@ -2377,7 +2402,17 @@ function Courses() {
   const { can } = useAuth();
   const ref = useRef_();
   const [inc, setInc] = useState(false);
-  const list = useFetch<any[]>(`/masters/course${inc ? '?all=1' : ''}`, [refreshTick]);
+  // Course master list filters (client, Aug 2026): Branch/Vertical (cascade, multi-select) + name search.
+  const [fBranches, setFBranches] = useState<number[]>([]);
+  const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [q, setQ] = useState('');
+  const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
+  const cparams = new URLSearchParams();
+  if (inc) cparams.set('all', '1');
+  if (fBranches.length) cparams.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) cparams.set('vertical_ids', fVerticals.join(','));
+  if (q.trim()) cparams.set('q', q.trim());
+  const list = useFetch<any[]>(`/masters/course?${cparams.toString()}`, [refreshTick, cparams.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -2389,7 +2424,14 @@ function Courses() {
   const after = () => { list.reload(); ref.reload(); bump(); };
   return (
     <>
-      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <div className="filters">
+        {/* Course master filters (client, Aug 2026): Branch > Vertical cascade, name search, active/inactive. */}
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search course name / code\u2026" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <IncInactiveChip on={inc} set={setInc} />
+      </div>
       <BulkBar count={_bdSel.count} entityLabel="Course" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}

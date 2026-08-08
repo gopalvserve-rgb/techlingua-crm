@@ -117,12 +117,31 @@ export class CaptureService {
 
   /* ================================ WALK-INS ================================ */
 
-  async listWalkIns(scope: ResolvedScope, q: { today?: boolean; status?: string; from?: string; to?: string; limit?: number }) {
+  async listWalkIns(scope: ResolvedScope, q: { today?: boolean; status?: string; from?: string; to?: string; limit?: number;
+    branch_ids?: number[]; vertical_ids?: number[]; counsellor_ids?: number[]; statuses?: string[]; purposes?: string[] }) {
     const params: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, WALKIN_SCOPE_COLS, params);
     const where = [w, 'w.deleted_at IS NULL'];
     if (q.today) where.push(`(w.visited_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date`);
     if (q.status) { params.push(q.status); where.push(`w.status = $${params.length}`); }
+    // Client (Aug 2026) list filters — multi-select, OR within a filter, ANDed across, on top of scope.
+    const inCol = (col: string, arr?: number[]) => {
+      const vals = [...new Set(arr ?? [])].map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    const inTxt = (col: string, arr?: string[]) => {
+      const vals = [...new Set((arr ?? []).map((x) => String(x).trim()).filter(Boolean))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    inCol('w.branch_id', q.branch_ids);
+    inCol('w.vertical_id', q.vertical_ids);
+    inCol('w.counsellor_id', q.counsellor_ids);
+    inTxt('w.status', q.statuses);
+    inTxt('w.purpose', q.purposes);
     // Shared date range — filters by the VISIT date (visited_at). Bad date -> 400; either bound optional.
     const dr = assertDateRange(q.from, q.to);
     if (dr.from) { params.push(dr.from); where.push(`w.visited_at::date >= $${params.length}::date`); }
@@ -460,11 +479,32 @@ export class CaptureService {
 
   /* ================================ REFERRALS ================================ */
 
-  async listReferrals(scope: ResolvedScope, q: { status?: string; limit?: number }) {
+  async listReferrals(scope: ResolvedScope, q: { status?: string; limit?: number;
+    branch_ids?: number[]; vertical_ids?: number[]; referrer_types?: string[]; counsellor_ids?: number[]; from?: string; to?: string }) {
     const params: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, REFERRAL_SCOPE_COLS, params);
     const where = [w, 'r.deleted_at IS NULL'];
     if (q.status) { params.push(q.status); where.push(`r.status = $${params.length}`); }
+    // Client (Aug 2026) list filters — Branch/Vertical, Referrer type, Assigned counsellor, date range.
+    const inCol = (col: string, arr?: number[]) => {
+      const vals = [...new Set(arr ?? [])].map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    const inTxt = (col: string, arr?: string[]) => {
+      const vals = [...new Set((arr ?? []).map((x) => String(x).trim()).filter(Boolean))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    inCol('r.branch_id', q.branch_ids);
+    inCol('r.vertical_id', q.vertical_ids);
+    inCol('r.assigned_counsellor_id', q.counsellor_ids);
+    inTxt('r.referrer_type', q.referrer_types);
+    const dr = assertDateRange(q.from, q.to);
+    if (dr.from) { params.push(dr.from); where.push(`r.created_at >= $${params.length}::date`); }
+    if (dr.to) { params.push(dr.to); where.push(`r.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
     params.push(Math.min(Number(q.limit) || 100, 500));
     return this.db.query(
       // DEF-S34-03: the Edit form prefills from this row, so EVERY editable column is

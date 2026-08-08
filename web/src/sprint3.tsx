@@ -10,11 +10,11 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, HBars, Kpis, TableCard, TempBadge, renderCell } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { ConfirmModal, DetailModal, KV, Section, fmtFull, rowActions } from './rowactions';
 import { AddModal, EditSpec, need } from './forms';
 import { AddMasterModal } from './mastermodal';
-import { ScreenCtx } from './dyn';
+import { ScreenCtx, FilterMulti } from './dyn';
 import { DateRange, presetRange, WEEK_START } from './daterange';
 
 const useScreen = () => useContext(ScreenCtx);
@@ -947,10 +947,27 @@ export function WalkIns() {
   // SHARED date range on the VISIT date. Walk-ins is a reception-desk daily view, so it opens
   // on Today (like it always has); the presets/All-time reveal older visits. (docs/dev/24)
   const [range, setRange] = useState<{ from?: string; to?: string }>(() => presetRange('today'));
+  // Walk-ins list filters (client, Aug 2026): Branch/Vertical (cascade), Counsellor, Purpose,
+  // Walk-in Status (masters) + the visit-date range. Multi-select; ANDed with scope, server-side.
+  const [fBranches, setFBranches] = useState<number[]>([]);
+  const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [fCounsellors, setFCounsellors] = useState<number[]>([]);
+  const [fStatuses, setFStatuses] = useState<number[]>([]);
+  const [fPurposes, setFPurposes] = useState<number[]>([]);
+  const vOpts = ref.verticals.filter((vt: any) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
+  const statusOpts = (ref.walkinStatuses ?? []) as any[];
+  const purposeOpts = (ref.visitPurposes ?? []) as any[];
+  const codeById = new Map(statusOpts.map((o) => [Number(o.id), (o.code ?? o.name) as string]));
+  const nameById = new Map(purposeOpts.map((o) => [Number(o.id), o.name as string]));
   const rq = new URLSearchParams({ limit: '100' });
   if (range.from) rq.set('from', range.from);
   if (range.to) rq.set('to', range.to);
-  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  if (fBranches.length) rq.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) rq.set('vertical_ids', fVerticals.join(','));
+  if (fCounsellors.length) rq.set('counsellor_ids', fCounsellors.join(','));
+  if (fStatuses.length) { const c = fStatuses.map((id) => codeById.get(id)).filter(Boolean) as string[]; if (c.length) rq.set('statuses', c.join(',')); }
+  if (fPurposes.length) { const p = fPurposes.map((id) => nameById.get(id)).filter(Boolean) as string[]; if (p.length) rq.set('purposes', p.join(',')); }
+  const rangeKey = rq.toString();
   const sum = useFetch<any>('/walk-ins/summary', [refreshTick]);
   const list = useFetch<any[]>(`/walk-ins?${rq.toString()}`, [rangeKey, refreshTick]);
   const [view, setView] = useState<any | null>(null);
@@ -976,6 +993,12 @@ export function WalkIns() {
       ]} />
 
       <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt: any) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+        <FilterMulti label="Counsellor" icon="users" value={fCounsellors} options={selectableUsers(ref.users)} onChange={setFCounsellors} />
+        <FilterMulti label="Purpose" icon="bolt" value={fPurposes} options={purposeOpts} onChange={setFPurposes} />
+        <FilterMulti label="Status" icon="check" value={fStatuses} options={statusOpts} onChange={setFStatuses} />
         <DateRange value={range} onChange={setRange} idPrefix="walkins-dr" />
       </div>
 
@@ -1084,6 +1107,9 @@ export function WalkIns() {
 /*  REFERRALS                                                               */
 /* ======================================================================== */
 
+// Referral filter options (client, Aug 2026) — mirror the Add Referral form's Referrer Type list.
+const REFERRER_TYPE_OPTS = ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner']
+  .map((t, i) => ({ id: i + 1, name: t }));
 const REF_STATUS: Record<string, [string, string]> = {
   pending: ['Pending', 'b-amber'], converted: ['Converted', 'b-green'],
   rewarded: ['Rewarded', 'b-indigo'], rejected: ['Rejected', 'b-gray'],
@@ -1092,8 +1118,26 @@ const REF_STATUS: Record<string, [string, string]> = {
 export function Referrals() {
   const { openLead, refreshTick, bump, openAdd } = useScreen();
   const { can } = useAuth();
+  const ref = useRef_();
+  // Referral list filters (client, Aug 2026): Branch/Vertical (cascade), Referrer type,
+  // Assigned counsellor + capture-date range. Multi-select; ANDed with scope, server-side.
+  const [fBranches, setFBranches] = useState<number[]>([]);
+  const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [fCounsellors, setFCounsellors] = useState<number[]>([]);
+  const [fTypes, setFTypes] = useState<number[]>([]);
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const vOpts = ref.verticals.filter((vt: any) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
+  const typeById = new Map(REFERRER_TYPE_OPTS.map((o) => [o.id, o.name]));
+  const rq = new URLSearchParams({ limit: '100' });
+  if (fBranches.length) rq.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) rq.set('vertical_ids', fVerticals.join(','));
+  if (fCounsellors.length) rq.set('counsellor_ids', fCounsellors.join(','));
+  if (fTypes.length) { const t = fTypes.map((id) => typeById.get(id)).filter(Boolean) as string[]; if (t.length) rq.set('referrer_types', t.join(',')); }
+  if (range.from) rq.set('from', range.from);
+  if (range.to) rq.set('to', range.to);
+  const key = rq.toString();
   const sum = useFetch<any>('/referrals/summary', [refreshTick]);
-  const list = useFetch<any[]>('/referrals?limit=100', [refreshTick]);
+  const list = useFetch<any[]>(`/referrals?${rq.toString()}`, [key, refreshTick]);
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const rows = list.data ?? [];
@@ -1112,6 +1156,14 @@ export function Referrals() {
         { lab: 'Rewards due', val: String(sum.data?.rewards_due ?? 0), ic: 'rupee' },
       ]} />
 
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt: any) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+        <FilterMulti label="Referrer type" icon="users" value={fTypes} options={REFERRER_TYPE_OPTS} onChange={setFTypes} />
+        <FilterMulti label="Counsellor" icon="users" value={fCounsellors} options={selectableUsers(ref.users)} onChange={setFCounsellors} />
+        <DateRange value={range} onChange={setRange} idPrefix="referrals-dr" />
+      </div>
       <TableCard
         title="Referral tracker"
         icon="users"
