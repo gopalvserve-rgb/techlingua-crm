@@ -62,6 +62,13 @@ export interface LeadFilters {
   stage_id?: number; status_id?: number; owner_id?: number; source_id?: number;
   /** Sprint 3 — the Hot/Warm/Cold BAND, filterable (client requirement). */
   temperature?: string;
+  /** Multi-select filters (client, Aug 2026): each list filter accepts an ARRAY of ids —
+   *  `col IN (...)` (OR within a filter), ANDed across filters, on top of RBAC scope. The
+   *  singular params above keep working (card links / back-compat) and fold into the IN. */
+  branch_ids?: number[]; vertical_ids?: number[]; pipeline_ids?: number[]; campaign_ids?: number[];
+  status_ids?: number[]; owner_ids?: number[]; source_ids?: number[];
+  /** Multi-select score band (Hot/Warm/Cold) — whitelisted, `l.temperature IN (...)`. */
+  bands?: string[];
   /** Sprint 3 — only leads with an open SLA breach / an escalation flag. */
   sla_breached?: boolean;
   flagged?: boolean;
@@ -182,15 +189,34 @@ export class LeadsService {
   private leadFilterWhere(scope: ResolvedScope, f: LeadFilters, params: unknown[]): string {
     const where: string[] = [this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, params), 'l.deleted_at IS NULL', 'l.is_active'];
     const eq = (col: string, val: unknown) => { params.push(val); where.push(`${col} = $${params.length}`); };
-    if (f.branch_id) eq('l.branch_id', f.branch_id);
-    if (f.vertical_id) eq('l.vertical_id', f.vertical_id);
-    if (f.pipeline_id) eq('l.pipeline_id', f.pipeline_id);
-    if (f.campaign_id) eq('l.campaign_id', f.campaign_id);
+    // Multi-select filters (client, Aug 2026): each accepts an ARRAY -> `col IN (...)` (OR
+    // within a filter), ANDed across filters, all on top of the RBAC scope above. A present
+    // singular param (card links / back-compat) is folded into the same IN. Ints only.
+    const inCol = (col: string, single: number | undefined, arr: number[] | undefined) => {
+      const vals = [...new Set([...(arr ?? []), ...(single != null ? [single] : [])])]
+        .map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    inCol('l.branch_id', f.branch_id, f.branch_ids);
+    inCol('l.vertical_id', f.vertical_id, f.vertical_ids);
+    inCol('l.pipeline_id', f.pipeline_id, f.pipeline_ids);
+    inCol('l.campaign_id', f.campaign_id, f.campaign_ids);
     if (f.stage_id) eq('l.stage_id', f.stage_id);
-    if (f.status_id) eq('l.status_id', f.status_id);
-    if (f.owner_id) eq('l.owner_id', f.owner_id);
-    if (f.source_id) eq('l.source_id', f.source_id);
-    if (f.temperature) eq('l.temperature', f.temperature);
+    inCol('l.status_id', f.status_id, f.status_ids);
+    inCol('l.owner_id', f.owner_id, f.owner_ids);
+    inCol('l.source_id', f.source_id, f.source_ids);
+    // Band (Hot/Warm/Cold) is multi-select too: whitelist the 3 valid values (this reaches a
+    // WHERE, so never trusted) -> `l.temperature IN (...)`; the legacy singular ?temperature=
+    // still emits `= $` for back-compat with card links + existing tests.
+    {
+      const bands = [...new Set(f.bands ?? [])].filter((x) => x === 'hot' || x === 'warm' || x === 'cold');
+      if (bands.length) {
+        const ph = bands.map((v) => { params.push(v); return `$${params.length}`; });
+        where.push(`l.temperature IN (${ph.join(',')})`);
+      } else if (f.temperature) { eq('l.temperature', f.temperature); }
+    }
     // UAT-R2 #26 — created-date range: `to` is made inclusive by using < next day.
     // DEF-DR-02: route through the ONE strict validator so a malformed date is a 400, not a 500.
     const _dr = assertDateRange(f.created_from, f.created_to);

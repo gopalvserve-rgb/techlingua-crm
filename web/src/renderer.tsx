@@ -84,7 +84,7 @@ export interface TableSelect {
   /** toggle all visible rows */ onToggleAll: () => void;
 }
 
-export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select }: {
+export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
   /** optional per-row tint class (e.g. error-log severity highlighting) */
@@ -93,17 +93,22 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
   sticky?: boolean;
   /** Bulk actions (Jul 2026) — an optional leading checkbox column for multi-select. */
   select?: TableSelect;
+  /** Table-only scroll (client, Aug 2026): when the screen is a bounded list layout
+   *  (`.main--list`), this marks the results card as the fill-remaining-height scroll region so
+   *  the filter bar + column header stay fixed and ONLY the table body scrolls. Implies sticky. */
+  fill?: boolean;
 }) {
   const span = cols.length + (select ? 1 : 0);
+  const scrollCls = (sticky || fill) ? 'tbl-scroll' : 'scroll-x';
   return (
-    <div className="card">
+    <div className={`card${fill ? ' tbl-fill' : ''}`}>
       {title && (
         <div className="card-head">
           <h3><Ic k={icon} />{title}</h3>
           {more ? <span className="more">{more}</span> : null}
         </div>
       )}
-      <div className={sticky ? 'tbl-scroll' : 'scroll-x'}>
+      <div className={scrollCls}>
         <table className="tbl">
           <thead><tr>
             {select && (

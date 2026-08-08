@@ -905,15 +905,51 @@ function QuickContact() {
  * mount. Read straight from window.location.search (not useSearchParams) so the component still
  * renders bare in unit tests, with no Router; an empty search yields exactly the old defaults.
  */
+/**
+ * Multi-select filter control (client, Aug 2026): every Leads-list filter now accepts MULTIPLE
+ * values (OR within a filter; different filters still AND together). Reuses the SAME searchable
+ * multi-select behind the campaign agent pool / user-access picker (UserPicker in generic
+ * `options` mode) — no new control — with a small label and a constrained width so several sit
+ * in the filter bar.
+ */
+function FilterMulti({ label, icon, value, options, onChange, testid }: {
+  label: string; icon: string; value: number[];
+  options: Array<{ id: number | string; name: string }>;
+  onChange: (ids: number[]) => void; testid?: string;
+}) {
+  const opts = useMemo(() => options.map((o) => ({ id: Number(o.id), name: o.name })), [options]);
+  return (
+    <div className="fmulti" data-testid={testid ?? `fm-${label.toLowerCase()}`}>
+      <span className="fmulti-lbl"><Ic k={icon} />{label}</span>
+      <UserPicker multiple value={value} onChange={onChange} options={opts} hideBranch
+        placeholder={value.length ? '' : `All ${label.toLowerCase()}`} />
+    </div>
+  );
+}
+
 function readLeadNavFilters(search?: string) {
   const sp = new URLSearchParams(typeof search === 'string' ? search : (typeof window !== 'undefined' ? window.location.search : ''));
-  const n = (key: string) => { const v = Number(sp.get(key)); return Number.isFinite(v) && v > 0 ? v : undefined; };
   const b = (key: string) => sp.get(key) === '1' || sp.get(key) === 'true';
+  // Multi-select: read the *_ids arrays (CSV or repeated keys) AND fold in any singular id (a KPI
+  // card / top-bar shortcut still passes the singular, e.g. owner_id) — back-compat.
+  const nums = (arrKey: string, singleKey: string) => {
+    const out = new Set<number>();
+    for (const raw of sp.getAll(arrKey)) for (const p of String(raw).split(',')) { const v = Number(p.trim()); if (Number.isFinite(v) && v > 0) out.add(v); }
+    const one = Number(sp.get(singleKey)); if (Number.isFinite(one) && one > 0) out.add(one);
+    return [...out];
+  };
+  const bands = () => {
+    const out = new Set<string>();
+    for (const raw of sp.getAll('bands')) for (const p of String(raw).split(',')) { const t = p.trim(); if (t === 'hot' || t === 'warm' || t === 'cold') out.add(t); }
+    const t = sp.get('temperature'); if (t === 'hot' || t === 'warm' || t === 'cold') out.add(t);
+    return [...out];
+  };
   return {
-    branch: n('branch_id'), vertical: n('vertical_id'), pipeline: n('pipeline_id'), campaign: n('campaign_id'),
-    source: n('source_id'), status: n('status_id'), owner: n('owner_id'),
+    branches: nums('branch_ids', 'branch_id'), verticals: nums('vertical_ids', 'vertical_id'),
+    pipelines: nums('pipeline_ids', 'pipeline_id'), campaigns: nums('campaign_ids', 'campaign_id'),
+    sources: nums('source_ids', 'source_id'), statuses: nums('status_ids', 'status_id'),
+    owners: nums('owner_ids', 'owner_id'), bands: bands(),
     from: sp.get('created_from') || undefined, to: sp.get('created_to') || undefined,
-    temperature: sp.get('temperature') || undefined,
     followup: sp.get('followup') || undefined, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined,
     sla: b('sla_breached'), dup: b('duplicate'), won: b('won'), unassigned: b('unassigned'),
     sort: sp.get('sort') || 'recent', q: sp.get('q') || '',
@@ -931,31 +967,32 @@ function LeadsAll() {
   // global scope for any hierarchy level the URL does not pin. Reused on mount AND on in-app re-nav.
   const seedLeadFilters = (s?: string) => {
     const base = readLeadNavFilters(s);
+    // Global scope is the BASELINE for any hierarchy level the URL does not pin; an explicit URL
+    // filter (a KPI card link) still wins. Each level can now hold MULTIPLE selections.
     return {
       ...base,
-      branch: base.branch ?? gScope.branch,
-      vertical: base.vertical ?? gScope.vertical,
-      pipeline: base.pipeline ?? gScope.pipeline,
-      campaign: base.campaign ?? gScope.campaign,
+      branches: base.branches.length ? base.branches : (gScope.branch ? [gScope.branch] : []),
+      verticals: base.verticals.length ? base.verticals : (gScope.vertical ? [gScope.vertical] : []),
+      pipelines: base.pipelines.length ? base.pipelines : (gScope.pipeline ? [gScope.pipeline] : []),
+      campaigns: base.campaigns.length ? base.campaigns : (gScope.campaign ? [gScope.campaign] : []),
     };
   };
   const canEditLead = can('lead.update');
   const canDeleteLead = can('lead.delete');
   const ref = useRef_();
   const [f, setF] = useState<{
-    branch?: number; vertical?: number; pipeline?: number; campaign?: number;
-    // UAT-R2 #26/#14 — Source, Status, Owner and a created-date range are filterable too,
-    // and the hierarchy dropdowns follow Branch › Vertical › Pipeline › Campaign › Source.
-    source?: number; status?: number; owner?: number; from?: string; to?: string;
-    // Sprint 3 — the score BAND is filterable, and SLA breaches are their own filter
-    temperature?: string; sla?: boolean;
-    // Follow-up date filter (client #3) — the lead's next follow-up (No Followup / Missed /
-    // Today / Tomorrow / Next 7 / Next 30 / Custom).
+    // Multi-select (client, Aug 2026): each hierarchy / owner / status / band filter holds an
+    // ARRAY of selections (OR within the filter). The hierarchy dropdowns still cascade
+    // Branch › Vertical › Pipeline › Campaign › Source, but each level can hold many values.
+    branches: number[]; verticals: number[]; pipelines: number[]; campaigns: number[];
+    sources: number[]; statuses: number[]; owners: number[]; bands: string[];
+    from?: string; to?: string;
+    // Sprint 3 — SLA breaches are their own filter.
+    sla?: boolean;
+    // Follow-up date filter (client #3).
     followup?: string; fu_from?: string; fu_to?: string;
-    // Client change (Jul 2026) — the Duplicates filter (leads marked is_duplicate)
-    dup?: boolean;
-    // Aug 2026 — dashboard card links: won (Conversions) + unassigned open the list pre-filtered.
-    won?: boolean; unassigned?: boolean;
+    // Client change (Jul 2026) — Duplicates; Aug 2026 dashboard card links — won / unassigned.
+    dup?: boolean; won?: boolean; unassigned?: boolean;
     sort: string; q: string;
   }>(() => seedLeadFilters(search));
   // DEF-05 — a top-bar shortcut / card link (e.g. New Leads = created today) re-navigating to the
@@ -964,16 +1001,19 @@ function LeadsAll() {
   // URL, so they are preserved.
   useReseedOnSearch(search, (s) => setF(seedLeadFilters(s)));
   const params = new URLSearchParams();
-  if (f.branch) params.set('branch_id', String(f.branch));
-  if (f.vertical) params.set('vertical_id', String(f.vertical));
-  if (f.pipeline) params.set('pipeline_id', String(f.pipeline));
-  if (f.campaign) params.set('campaign_id', String(f.campaign));
-  if (f.source) params.set('source_id', String(f.source));
-  if (f.status) params.set('status_id', String(f.status));
-  if (f.owner) params.set('owner_id', String(f.owner));
+  // Multi-select -> CSV array params (owner_ids, status_ids, branch_ids, ...). OR within a filter,
+  // AND across filters; the API also still accepts the old singular params for card links.
+  const setCsv = (key: string, arr: number[]) => { if (arr.length) params.set(key, arr.join(',')); };
+  setCsv('branch_ids', f.branches);
+  setCsv('vertical_ids', f.verticals);
+  setCsv('pipeline_ids', f.pipelines);
+  setCsv('campaign_ids', f.campaigns);
+  setCsv('source_ids', f.sources);
+  setCsv('status_ids', f.statuses);
+  setCsv('owner_ids', f.owners);
+  if (f.bands.length) params.set('bands', f.bands.join(','));
   if (f.from) params.set('created_from', f.from);
   if (f.to) params.set('created_to', f.to);
-  if (f.temperature) params.set('temperature', f.temperature);
   if (f.followup) params.set('followup', f.followup);
   if (f.fu_from) params.set('fu_from', f.fu_from);
   if (f.fu_to) params.set('fu_to', f.fu_to);
@@ -1031,15 +1071,24 @@ function LeadsAll() {
   const selectedIds = [...sel];
   const clearSel = () => { setSel(new Set()); setSelCap(null); };
 
-  const chip = (label: string, icon: string, value: number | undefined, list: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
-    <div className="fchip" key={label}>
-      <Ic k={icon} />{label}
-      <select value={value ?? ''} onChange={(e) => set(e.target.value ? Number(e.target.value) : undefined)}>
-        <option value="">All</option>
-        {list.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-      </select>
-    </div>
-  );
+  // Multi-select cascade (client, Aug 2026): each level's options are limited to children of ANY
+  // selected parent (branches -> verticals under any selected branch, and so on). When a parent
+  // selection changes, descendant selections that fall out of scope are pruned.
+  const vOpts = ref.verticals.filter((v) => !f.branches.length || f.branches.includes(Number(v.branch_id)));
+  const pOpts = ref.pipelines.filter((pp) => !f.verticals.length || f.verticals.includes(Number(pp.vertical_id)));
+  const cOpts = ref.campaigns.filter((c) => !f.pipelines.length || f.pipelines.includes(Number(c.pipeline_id)));
+  const sOpts = ref.sources.filter((so) => !f.campaigns.length || f.campaigns.includes(Number(so.campaign_id)));
+  const pruneHierarchy = (nf: typeof f): typeof f => {
+    const vOk = new Set(ref.verticals.filter((v) => !nf.branches.length || nf.branches.includes(Number(v.branch_id))).map((v) => Number(v.id)));
+    nf.verticals = nf.verticals.filter((id) => vOk.has(id));
+    const pOk = new Set(ref.pipelines.filter((pp) => !nf.verticals.length || nf.verticals.includes(Number(pp.vertical_id))).map((pp) => Number(pp.id)));
+    nf.pipelines = nf.pipelines.filter((id) => pOk.has(id));
+    const cOk = new Set(ref.campaigns.filter((c) => !nf.pipelines.length || nf.pipelines.includes(Number(c.pipeline_id))).map((c) => Number(c.id)));
+    nf.campaigns = nf.campaigns.filter((id) => cOk.has(id));
+    const sOk = new Set(ref.sources.filter((so) => !nf.campaigns.length || nf.campaigns.includes(Number(so.campaign_id))).map((so) => Number(so.id)));
+    nf.sources = nf.sources.filter((id) => sOk.has(id));
+    return nf;
+  };
 
   const BANDS: Array<[string, string | undefined]> = [['All', undefined], ['Hot', 'hot'], ['Warm', 'warm'], ['Cold', 'cold']];
   const bandDot: Record<string, string> = { hot: 'var(--hot)', warm: 'var(--warm)', cold: 'var(--cold)' };
@@ -1047,13 +1096,16 @@ function LeadsAll() {
     <>
       {/* UAT-R2 #11 — SaaS-style quick band chips (drive the same temperature filter). */}
       <div className="qband">
-        {BANDS.map(([lab, val]) => (
-          <button key={lab} type="button"
-            className={`qb${(f.temperature ?? undefined) === val ? ` on ${val ?? ''}` : ''}`}
-            onClick={() => setF((x) => ({ ...x, temperature: val }))}>
-            {val ? <span className="d" style={{ background: bandDot[val] }} /> : null}{lab}
-          </button>
-        ))}
+        {BANDS.map(([lab, val]) => {
+          const on = val ? f.bands.includes(val) : f.bands.length === 0;
+          return (
+            <button key={lab} type="button"
+              className={`qb${on ? ` on ${val ?? ''}` : ''}`}
+              onClick={() => setF((x) => ({ ...x, bands: val ? (x.bands.includes(val) ? x.bands.filter((z) => z !== val) : [...x.bands, val]) : [] }))}>
+              {val ? <span className="d" style={{ background: bandDot[val] }} /> : null}{lab}
+            </button>
+          );
+        })}
         {/* UAT-R3b #11 — segmented view switcher (Classic / Modern / Inbox), SaaS-tenant parity. */}
         <div className="lv-seg" role="tablist" aria-label="Leads view" style={{ marginLeft: 'auto' }}>
           {([['classic', 'Classic', 'list'], ['modern', 'Modern', 'grid'], ['inbox', 'Inbox', 'mail']] as const).map(([k, lab, ic]) => (
@@ -1069,13 +1121,20 @@ function LeadsAll() {
         {/* UAT-R2 #14/#26 — filters follow Branch › Vertical › Pipeline › Campaign › Source;
             each dropdown is filtered by its parent and every descendant filter resets when a
             parent changes, so a stale (now out-of-scope) filter can never stay applied. */}
-        {chip('Branch', 'branch', f.branch, ref.branches, (v) => setF((x) => ({ ...x, branch: v, vertical: undefined, pipeline: undefined, campaign: undefined, source: undefined })))}
-        {chip('Vertical', 'grid', f.vertical, ref.verticals.filter((v) => !f.branch || Number(v.branch_id) === f.branch), (v) => setF((x) => ({ ...x, vertical: v, pipeline: undefined, campaign: undefined, source: undefined })))}
-        {chip('Pipeline', 'list', f.pipeline, ref.pipelines.filter((p) => !f.vertical || Number(p.vertical_id) === f.vertical), (v) => setF((x) => ({ ...x, pipeline: v, campaign: undefined, source: undefined })))}
-        {chip('Campaign', 'bolt', f.campaign, ref.campaigns.filter((c) => !f.pipeline || Number(c.pipeline_id) === f.pipeline), (v) => setF((x) => ({ ...x, campaign: v, source: undefined })))}
-        {chip('Source', 'leads', f.source, ref.sources.filter((so) => !f.campaign || Number(so.campaign_id) === f.campaign), (v) => setF((x) => ({ ...x, source: v })))}
-        {chip('Status', 'check', f.status, ref.statuses, (v) => setF((x) => ({ ...x, status: v })))}
-        {chip('Owner', 'users', f.owner, selectableUsers(ref.users), (v) => setF((x) => ({ ...x, owner: v })))}
+        <FilterMulti label="Branch" icon="branch" value={f.branches} options={ref.branches}
+          onChange={(v) => setF((x) => pruneHierarchy({ ...x, branches: v }))} />
+        <FilterMulti label="Vertical" icon="grid" value={f.verticals} options={vOpts}
+          onChange={(v) => setF((x) => pruneHierarchy({ ...x, verticals: v }))} />
+        <FilterMulti label="Pipeline" icon="list" value={f.pipelines} options={pOpts}
+          onChange={(v) => setF((x) => pruneHierarchy({ ...x, pipelines: v }))} />
+        <FilterMulti label="Campaign" icon="bolt" value={f.campaigns} options={cOpts}
+          onChange={(v) => setF((x) => pruneHierarchy({ ...x, campaigns: v }))} />
+        <FilterMulti label="Source" icon="leads" value={f.sources} options={sOpts}
+          onChange={(v) => setF((x) => ({ ...x, sources: v }))} />
+        <FilterMulti label="Status" icon="check" value={f.statuses} options={ref.statuses}
+          onChange={(v) => setF((x) => ({ ...x, statuses: v }))} />
+        <FilterMulti label="Owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
+          onChange={(v) => setF((x) => ({ ...x, owners: v }))} />
         {/* SHARED date-range control — filters the list by lead CREATED date (created_from/
             created_to). Default = All time so the list never hides existing leads. */}
         <DateRange value={{ from: f.from, to: f.to }} idPrefix="leads-dr"
@@ -1087,17 +1146,7 @@ function LeadsAll() {
           onChange={(v) => setF((x) => ({ ...x, followup: v.followup, fu_from: v.fu_from, fu_to: v.fu_to }))}
           idPrefix="leads-fu" />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / email…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
-        {/* Sprint 3 — the band is FILTERABLE (client requirement). These chips are real. */}
-        <div className="fchip" data-testid="band-filter">
-          <Ic k="bolt" />Band
-          <select aria-label="Filter by score band" value={f.temperature ?? ''}
-            onChange={(e) => setF((x) => ({ ...x, temperature: e.target.value || undefined }))}>
-            <option value="">All</option>
-            <option value="hot">Hot</option>
-            <option value="warm">Warm</option>
-            <option value="cold">Cold</option>
-          </select>
-        </div>
+        {/* Score BAND is multi-select via the Hot/Warm/Cold quick chips above (f.bands). */}
         {/* ...and SORTABLE. */}
         <div className="fchip" data-testid="sort-control">
           <Ic k="analytics" />Sort
@@ -1142,7 +1191,7 @@ function LeadsAll() {
       )}
       {/* Classic view — the traditional dense data table (default), untouched from Batch E. */}
       {view === 'classic' && (
-        <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']} sticky
+        <TableCard title="Leads" more={`${data.data?.total ?? 0} in scope`} cols={[...LEAD_COLS, 'Actions']} sticky fill
           select={{
             checked: (i) => sel.has(Number(rows[i].id)),
             onToggle: (i) => toggleOne(Number(rows[i].id)),
@@ -1373,7 +1422,7 @@ function Followups() {
           </select>
         </div>
       </div>
-      <TableCard title="Upcoming follow-ups" cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Disposition', 'Actions']}
+      <TableCard fill title="Upcoming follow-ups" cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Disposition', 'Actions']}
         rows={rows.map((r) => [...r.row, rowActions({
           onView: () => openLead(r.leadId),
           onDelete: canDelete ? () => del.openDelete(r.id, r.name) : undefined,
@@ -1481,7 +1530,7 @@ function Sources() {
   return (
     <>
       <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
-      <TableCard title="Connected sources" cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
+      <TableCard fill title="Connected sources" cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((so) => {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
@@ -1590,7 +1639,7 @@ function Branches() {
         <SearchChip q={q} setQ={setQ} ph="Search branch name / code\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      <TableCard title="Branches" cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
+      <TableCard fill title="Branches" cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((b) => [
           { node: <span className="nm">{b.name}</span> } as Cell,
@@ -1700,7 +1749,7 @@ function Verticals() {
         <SearchChip q={q} setQ={setQ} ph="Search vertical name / code\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      <TableCard title="Verticals" cols={['Vertical', 'Branch', 'Head', 'SMTP Domain', 'Status', 'Actions']}
+      <TableCard fill title="Verticals" cols={['Vertical', 'Branch', 'Head', 'SMTP Domain', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((v) => [
           { node: <span className="nm">{v.name}</span> } as Cell,
@@ -1911,7 +1960,7 @@ function Pipelines() {
       </div>
       {/* UAT-R2 #7 — the list reads in hierarchy order Branch \u203a Vertical \u203a Pipeline
           (columns and row order); the api sorts by branch, vertical, then pipeline name. */}
-      <TableCard title="Pipelines" cols={['Branch', 'Vertical', 'Pipeline', 'Stages', 'Status', 'Actions']}
+      <TableCard fill title="Pipelines" cols={['Branch', 'Vertical', 'Pipeline', 'Stages', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((pl) => [
           String(pl.branch_name ?? '\u2014'),
@@ -2192,7 +2241,7 @@ function Campaigns() {
         <SearchChip q={q} setQ={setQ} ph="Search campaign name\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      <TableCard title="Campaigns" cols={['Campaign', 'Branch', 'Vertical', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
+      <TableCard fill title="Campaigns" cols={['Campaign', 'Branch', 'Vertical', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => {
           const src = ref.sources.find((x) => Number(x.campaign_id) === Number(c.id));
@@ -2286,7 +2335,7 @@ function Courses() {
   return (
     <>
       <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
-      <TableCard title="Course master" cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
+      <TableCard fill title="Course master" cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => [
           { mono: String(c.code ?? '\u2014') } as Cell,
@@ -2609,7 +2658,7 @@ function Users() {
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email\u2026" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="users" /><b>{rows.length}</b> users</div>
       </div>
-      <TableCard title="Users" cols={['User', 'Role', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status', 'Actions']}
+      <TableCard fill title="Users" cols={['User', 'Role', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].status === 'disabled' ? 'row-inactive' : undefined)}
         rows={rows.map((u) => {
           const d = details[Number(u.id)];
@@ -2783,7 +2832,7 @@ function Roles() {
           </div>
         </div>
       </div>
-      <TableCard title="Roles" cols={['Role', 'Type', 'Permissions', 'Users', 'Status', 'Actions']}
+      <TableCard fill title="Roles" cols={['Role', 'Type', 'Permissions', 'Users', 'Status', 'Actions']}
         rowClass={(i) => ((roles.data ?? [])[i]?.is_active === false ? 'row-inactive' : undefined)}
         rows={(roles.data ?? []).map((r) => [
           { node: <span className="nm">{r.name}</span> } as Cell,
@@ -2841,7 +2890,7 @@ function Audit() {
       <div className="filters" style={{ marginBottom: 12 }}>
         <DateRange value={range} onChange={setRange} idPrefix="audit-dr" />
       </div>
-      <TableCard title="Activity log \u2014 all users" cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
+      <TableCard fill title="Activity log \u2014 all users" cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
         rows={rows.map((r) => [
           { mono: new Date(r.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), dim: true } as Cell,
           r.actor_name ?? 'System',
@@ -3190,7 +3239,7 @@ function ErrorLogs() {
           <Ic k={grouped ? 'grid' : 'list'} />{grouped ? 'Grouped' : 'All events'}
         </button>
       </div>
-      <TableCard title={grouped ? 'Error groups' : 'Error events'} icon="shield"
+      <TableCard fill title={grouped ? 'Error groups' : 'Error events'} icon="shield"
         more={`${data.data?.total ?? 0} ${grouped ? 'groups' : 'events'}`}
         cols={cols} rows={rows.map(rowCells)}
         rowClass={(i) => errRowClass(rows[i].level, grouped ? Number(rows[i].open_count) > 0 : rows[i].status === 'open')}

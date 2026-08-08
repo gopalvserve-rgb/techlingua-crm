@@ -69,6 +69,16 @@ export function Shell() {
 
   const roleName = (me?.assignments?.[0] as any)?.role_name ?? '';
 
+  // Table-only scroll (client, Aug 2026): on the big list screens the OUTER page must not scroll —
+  // the app header, the filter/toolbar and the table's column header stay fixed, and ONLY the
+  // table body scrolls inside a viewport-bounded container. We opt these screens into the
+  // `.main--list` layout (their results card carries `.tbl-fill`). Non-list screens (dashboards,
+  // forms, reports) keep the normal page scroll.
+  const LIST_SCROLL = new Set(['leadsAll', 'campaigns', 'users', 'audit', 'errorLogs', 'walkIns',
+    'sources', 'branches', 'verticals', 'pipelines', 'courses', 'roles', 'followups']);
+  const curDyn = (findScreen(mod, sub)?.sub.spec as any)?.dyn as string | undefined;
+  const listScroll = !!curDyn && LIST_SCROLL.has(curDyn);
+
   return (
     <div className="app">
       <div className="brand">
@@ -153,7 +163,7 @@ export function Shell() {
         </div>
       </nav>
       <div className={`scrim ${drawer ? 'open' : ''}`} onClick={() => setDrawer(false)} />
-      <main className="main" id="main">
+      <main className={`main${listScroll ? ' main--list' : ''}`} id="main">
         <Screen key={`${mod}.${sub}.${scopeKey}`} mod={mod} sub={sub} go={go} />
       </main>
       <Toaster />

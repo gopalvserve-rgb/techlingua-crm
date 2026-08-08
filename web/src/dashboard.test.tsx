@@ -204,11 +204,11 @@ describe('the lead LIST — band filterable + sortable, breach visible', () => {
     expect(screen.getByTitle('Follow-up overdue')).toBeTruthy();     // the flagged-but-not-breached one
   });
 
-  it('the band filter is REAL — it reaches the API as ?temperature=', async () => {
+  it('the band filter is REAL — the Hot/Warm/Cold multi-select reaches the API as ?bands=', async () => {
     ROUTES = { '/leads': LEADS };
     draw('leadsAll');
-    fireEvent.change(await screen.findByLabelText('Filter by score band'), { target: { value: 'hot' } });
-    await waitFor(() => expect(paths.some((p) => p.includes('temperature=hot'))).toBe(true));
+    fireEvent.click(await screen.findByRole('button', { name: 'Hot' }));
+    await waitFor(() => expect(paths.some((p) => p.includes('bands=hot'))).toBe(true));
   });
 
   it('the sort is REAL — it reaches the API as ?sort=score', async () => {

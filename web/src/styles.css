@@ -767,3 +767,31 @@ select.ainp option{background:var(--surface);color:var(--text)}
   .lv-inbox{grid-template-columns:300px 1fr}
   .lv-card .r3{gap:10px}
 }
+
+/* ============================================================================
+ * Table-only scroll (client, Aug 2026) — on list screens the OUTER page does NOT
+ * scroll: the app header, the filter/toolbar row and the table's column header stay
+ * fixed and ONLY the table body scrolls, in a viewport-bounded container. Opt-in via
+ * `.main--list` (Shell sets it for list screens) + `.tbl-fill` on the results card.
+ * Non-list screens keep normal page scroll, so dashboards/forms/reports are untouched.
+ * ==========================================================================*/
+.main.main--list{overflow:hidden;display:flex;flex-direction:column;padding-bottom:16px}
+.main.main--list>.view{flex:1;min-height:0;display:flex;flex-direction:column}
+.main.main--list>.view>.stack{flex:1;min-height:0}
+.main.main--list .card.tbl-fill{flex:1;min-height:0;display:flex;flex-direction:column}
+.main.main--list .card.tbl-fill>.tbl-scroll,
+.main.main--list .card.tbl-fill>.scroll-x{flex:1;min-height:0;max-height:none}
+/* Leads Modern + Inbox views fill the same bounded region (don't break them / the Kanban). */
+.main.main--list .lv-modern{flex:1;min-height:0;display:flex;flex-direction:column}
+.main.main--list .lv-modern>.lv-cards{flex:1;min-height:0;overflow:auto}
+.main.main--list .lv-inbox{flex:1;min-height:0;height:auto}
+
+/* Multi-select list filters (client, Aug 2026) — every filter accepts MULTIPLE values. Reuses
+ * the searchable multi-select (UserPicker generic mode) as a compact, labelled, width-bounded
+ * chip in the filter bar. */
+.fmulti{display:inline-flex;flex-direction:column;gap:3px;min-width:158px;max-width:230px}
+.fmulti>.fmulti-lbl{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;padding-left:2px}
+.fmulti>.fmulti-lbl svg{width:12px;height:12px;opacity:.7}
+.fmulti .upick-ctl{min-height:34px;padding:3px 8px}
+.fmulti .upick-chips input{min-width:56px;font-size:12px}
+@media(max-width:1280px){.fmulti{min-width:140px;max-width:200px}}

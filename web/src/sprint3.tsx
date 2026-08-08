@@ -980,6 +980,7 @@ export function WalkIns() {
       </div>
 
       <TableCard
+        fill
         title={range.from && range.from === range.to && range.to === presetRange('today').to ? "Today's walk-ins" : 'Walk-ins'}
         icon="users"
         more={can('walkin.create')

@@ -8,6 +8,40 @@ import { ResolvedScope } from '../rbac/rbac.types';
 
 type U = { id: number };
 const num = (v?: string) => (v != null && v !== '' ? Number(v) : undefined);
+const first = (v?: string | string[]) => (Array.isArray(v) ? v[0] : v);
+const flag = (v?: string | string[]) => { const x = first(v); return x === '1' || x === 'true'; };
+// Multi-select query params (client, Aug 2026): accept CSV ("1,2,3") OR repeated keys, keep
+// only positive ints, dedupe. Whitelisted band variant for the score-band filter.
+const nums = (v?: string | string[]): number[] | undefined => {
+  if (v == null) return undefined;
+  const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','));
+  const out = [...new Set(parts.map((x) => Number(String(x).trim())).filter((n) => Number.isInteger(n) && n > 0))];
+  return out.length ? out : undefined;
+};
+const bandsOf = (v?: string | string[]): string[] | undefined => {
+  if (v == null) return undefined;
+  const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','));
+  const out = [...new Set(parts.map((x) => String(x).trim().toLowerCase()).filter((b) => b === 'hot' || b === 'warm' || b === 'cold'))];
+  return out.length ? out : undefined;
+};
+// Shared parse of the Leads list/select filters so list() and selectIds() can never drift on
+// which params they honour (multi-select ids, band, hierarchy, date range, follow-up, flags).
+function parseLeadFilters(q: Record<string, string | string[]>) {
+  return {
+    branch_id: num(first(q.branch_id)), vertical_id: num(first(q.vertical_id)), pipeline_id: num(first(q.pipeline_id)),
+    campaign_id: num(first(q.campaign_id)), stage_id: num(first(q.stage_id)), status_id: num(first(q.status_id)),
+    owner_id: num(first(q.owner_id)), source_id: num(first(q.source_id)), temperature: first(q.temperature) || undefined,
+    // Multi-select arrays (OR within, AND across) — singular params above still work.
+    branch_ids: nums(q.branch_ids), vertical_ids: nums(q.vertical_ids), pipeline_ids: nums(q.pipeline_ids),
+    campaign_ids: nums(q.campaign_ids), status_ids: nums(q.status_ids), owner_ids: nums(q.owner_ids),
+    source_ids: nums(q.source_ids), bands: bandsOf(q.bands),
+    created_from: first(q.created_from) || undefined, created_to: first(q.created_to) || undefined,
+    sla_breached: flag(q.sla_breached), flagged: flag(q.flagged), duplicate: flag(q.duplicate),
+    paused: flag(q.paused), won: flag(q.won), unassigned: flag(q.unassigned),
+    followup: (first(q.followup) as any) || undefined, fu_from: first(q.fu_from) || undefined, fu_to: first(q.fu_to) || undefined,
+    q: first(q.q) || undefined,
+  };
+}
 
 @Controller('leads')
 export class LeadsController {
@@ -18,25 +52,11 @@ export class LeadsController {
   ) {}
 
   @Get() @RequirePermission('lead.read')
-  list(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
+  list(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string | string[]>) {
     return this.leads.list(s, {
-      branch_id: num(q.branch_id), vertical_id: num(q.vertical_id), pipeline_id: num(q.pipeline_id),
-      campaign_id: num(q.campaign_id), stage_id: num(q.stage_id), status_id: num(q.status_id),
-      owner_id: num(q.owner_id), source_id: num(q.source_id), temperature: q.temperature || undefined,
-      created_from: q.created_from || undefined, created_to: q.created_to || undefined,
-      // Sprint 3 — the score BAND is filterable and sortable; SLA breaches are filterable
-      sla_breached: q.sla_breached === '1' || q.sla_breached === 'true',
-      flagged: q.flagged === '1' || q.flagged === 'true',
-      duplicate: q.duplicate === '1' || q.duplicate === 'true',
-      // Bulk actions (Jul 2026) — the paused-only filter (find parked leads to resume).
-      paused: q.paused === '1' || q.paused === 'true',
-      // Dashboard card links (Aug 2026) — Conversions (won) and Unassigned filters.
-      won: q.won === '1' || q.won === 'true',
-      unassigned: q.unassigned === '1' || q.unassigned === 'true',
-      // Follow-up date filter (client #3) — preset + optional custom range on the next follow-up.
-      followup: (q.followup as any) || undefined, fu_from: q.fu_from || undefined, fu_to: q.fu_to || undefined,
-      sort: q.sort || undefined,
-      q: q.q || undefined, limit: num(q.limit), offset: num(q.offset),
+      ...parseLeadFilters(q),
+      sort: first(q.sort) || undefined,
+      limit: num(first(q.limit)), offset: num(first(q.offset)),
     });
   }
 
@@ -50,21 +70,8 @@ export class LeadsController {
   // filters (capped), so the UI can bulk-act over the whole filtered set, not one page.
   // Declared BEFORE @Get(':id') so 'select-ids' is not swallowed by the id route.
   @Get('select-ids') @RequirePermission('lead.read')
-  selectIds(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
-    return this.leads.selectIds(s, {
-      branch_id: num(q.branch_id), vertical_id: num(q.vertical_id), pipeline_id: num(q.pipeline_id),
-      campaign_id: num(q.campaign_id), stage_id: num(q.stage_id), status_id: num(q.status_id),
-      owner_id: num(q.owner_id), source_id: num(q.source_id), temperature: q.temperature || undefined,
-      created_from: q.created_from || undefined, created_to: q.created_to || undefined,
-      sla_breached: q.sla_breached === '1' || q.sla_breached === 'true',
-      flagged: q.flagged === '1' || q.flagged === 'true',
-      duplicate: q.duplicate === '1' || q.duplicate === 'true',
-      paused: q.paused === '1' || q.paused === 'true',
-      won: q.won === '1' || q.won === 'true',
-      unassigned: q.unassigned === '1' || q.unassigned === 'true',
-      followup: (q.followup as any) || undefined, fu_from: q.fu_from || undefined, fu_to: q.fu_to || undefined,
-      q: q.q || undefined,
-    });
+  selectIds(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string | string[]>) {
+    return this.leads.selectIds(s, parseLeadFilters(q));
   }
 
   // ---- BULK actions over a selected/filtered set (client request, Jul 2026) --------------

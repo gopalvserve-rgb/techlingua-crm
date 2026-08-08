@@ -95,8 +95,8 @@ describe('#11 — Leads list three views (Classic / Modern / Inbox)', () => {
     draw('leadsAll');
     fireEvent.click(await screen.findByRole('tab', { name: /Modern/ }));
     await screen.findByTestId('leads-modern');
-    fireEvent.change(screen.getByLabelText('Filter by score band'), { target: { value: 'hot' } });
-    await waitFor(() => expect(paths.some((p) => p.includes('temperature=hot'))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Hot' }));
+    await waitFor(() => expect(paths.some((p) => p.includes('bands=hot'))).toBe(true));
   });
 
   it('Inbox shows a split list; a left-click populates the right pane from /leads/:id', async () => {
