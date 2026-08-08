@@ -182,7 +182,7 @@ async function seed(c: PoolClient) {
   await grant('Organization Admin', 'ALL', 'all');
   // Branch Manager: everything inside the branch except org/role administration
   await grant('Branch Manager', [
-    'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.assign', 'lead.transfer', 'lead.export',
+    'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.flag', 'lead.assign', 'lead.transfer', 'lead.export',
     'lead.pull', 'lead.delete', 'followup.delete', // soft delete: leads/follow-ups only (migration 015)
     'followup.read', 'followup.create', 'followup.update',
     'user.read', 'team.read', 'team.create', 'team.update',
@@ -197,7 +197,7 @@ async function seed(c: PoolClient) {
   ], 'branch');
   // Vertical Manager: same shape, scoped to vertical
   await grant('Vertical Manager', [
-    'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.assign', 'lead.export', 'lead.pull',
+    'dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.flag', 'lead.assign', 'lead.export', 'lead.pull',
     'followup.read', 'followup.create', 'followup.update',
     'user.read', 'team.read', 'vertical.read', 'pipeline.read',
     'campaign.read', 'campaign.create', 'campaign.update', 'source.read', 'source.create', 'source.update',
@@ -208,7 +208,7 @@ async function seed(c: PoolClient) {
     'referral.read', 'referral.create', 'referral.update',
   ], 'vertical');
   await grant('Team Leader', [
-    'dashboard.read', 'lead.read', 'lead.update', 'lead.assign', 'lead.pull',
+    'dashboard.read', 'lead.read', 'lead.update', 'lead.flag', 'lead.assign', 'lead.pull',
     'followup.read', 'followup.create', 'followup.update', 'team.read', 'user.read', 'master.read', 'report.read',
     'notification.read', 'score.read', 'sla.read',
     'calendar.read', 'calendar.create', 'calendar.update',
@@ -216,7 +216,7 @@ async function seed(c: PoolClient) {
     'referral.read', 'referral.create', 'referral.update',
   ], 'team');
   // lead.pull = on-demand "Start Calling" hand-out (§4.1) — the agents who do the calling
-  const agentPerms = ['dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.pull',
+  const agentPerms = ['dashboard.read', 'lead.read', 'lead.create', 'lead.update', 'lead.flag', 'lead.pull',
     'followup.read', 'followup.create', 'followup.update', 'master.read',
     // Sprint 3 — an agent sees their OWN score bands, SLA clocks, calendar, walk-ins and
     // referrals (record scope 'own' below narrows every one of them to their own records).

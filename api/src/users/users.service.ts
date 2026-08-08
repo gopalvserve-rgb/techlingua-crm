@@ -5,6 +5,7 @@ import { normalizePhone } from '../common/phone.util';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
+import { assertActiveUser } from '../leads/active-user.util';
 
 export interface UserListFilters {
   q?: string;
@@ -53,6 +54,9 @@ export interface CreateUserDto {
   }>;
   /** QA-10 sweep: the Add User form offers a Status — honour it on create too. */
   status?: 'active' | 'disabled';
+  /** "Reports To" (client, Aug 2026): this user's reporting MANAGER. Nullable; the target
+   *  must be an ACTIVE user. DIFFERENT from the task-level report_to on follow_up (016). */
+  report_to_id?: number | null;
 }
 
 @Injectable()
@@ -96,7 +100,9 @@ export class UsersService {
               (SELECT pa.branch_id FROM user_assignment pa
                 WHERE pa.user_id = u.id AND pa.is_active ORDER BY pa.id LIMIT 1) AS branch_id,
               (SELECT pa.vertical_id FROM user_assignment pa
-                WHERE pa.user_id = u.id AND pa.is_active ORDER BY pa.id LIMIT 1) AS vertical_id
+                WHERE pa.user_id = u.id AND pa.is_active ORDER BY pa.id LIMIT 1) AS vertical_id,
+              u.report_to_id,
+              (SELECT m.name FROM "user" m WHERE m.id = u.report_to_id) AS report_to_name
          FROM "user" u
          LEFT JOIN user_assignment ua ON ua.user_id = u.id AND ua.is_active
          LEFT JOIN team_member tm ON tm.user_id = u.id
@@ -108,7 +114,10 @@ export class UsersService {
 
   async get(id: number) {
     const user = await this.db.one(
-      `SELECT id, name, email, phone, status, mfa_enabled, lead_assignment_enabled, created_at FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [id],
+      `SELECT u.id, u.name, u.email, u.phone, u.status, u.mfa_enabled, u.lead_assignment_enabled, u.created_at,
+              u.report_to_id, m.name AS report_to_name
+         FROM "user" u LEFT JOIN "user" m ON m.id = u.report_to_id
+        WHERE u.id = $1 AND u.deleted_at IS NULL`, [id],
     );
     if (!user) throw new NotFoundException('User not found');
     const assignments = await this.db.query(
@@ -143,6 +152,8 @@ export class UsersService {
         await this.enforcer.assertRefInScope(scope, 'team', a.team_id, actorId);
       }
     }
+    // "Reports To": the target manager must be an ACTIVE user (no-deactivated-user rule).
+    if (dto.report_to_id != null) await assertActiveUser(this.db, Number(dto.report_to_id), 'report_to_id');
     const org = await this.orgId();
     const phone = normalizePhone(dto.phone) as string;
     const dupPhone = await this.db.one(`SELECT 1 FROM "user" WHERE phone = $1`, [phone]);
@@ -160,9 +171,9 @@ export class UsersService {
 
     return this.db.tx(async (c) => {
       const u = await c.query(
-        `INSERT INTO "user" (org_id, name, email, phone, password_hash, status, created_by)
-         VALUES ($1,$2,$3,$4,$5,COALESCE($6, 'active'),$7) RETURNING id, name, email, phone, status`,
-        [org, dto.name.trim(), email, phone, hash, status, actorId],
+        `INSERT INTO "user" (org_id, name, email, phone, password_hash, status, report_to_id, created_by)
+         VALUES ($1,$2,$3,$4,$5,COALESCE($6, 'active'),$7,$8) RETURNING id, name, email, phone, status, report_to_id`,
+        [org, dto.name.trim(), email, phone, hash, status, dto.report_to_id ?? null, actorId],
       );
       const userId = u.rows[0].id;
       for (const a of dto.assignments ?? []) {
@@ -213,6 +224,16 @@ export class UsersService {
       set('status', dto.status);
     }
     if (dto.password) set('password_hash', await bcrypt.hash(dto.password, 10));
+    // "Reports To": nullable; a non-null target must be an ACTIVE user. Guard against a
+    // user reporting to themselves.
+    if (dto.report_to_id !== undefined) {
+      if (dto.report_to_id === null) { set('report_to_id', null); }
+      else {
+        if (Number(dto.report_to_id) === Number(id)) throw new BadRequestException('a user cannot report to themselves');
+        await assertActiveUser(this.db, Number(dto.report_to_id), 'report_to_id');
+        set('report_to_id', Number(dto.report_to_id));
+      }
+    }
 
     // assignment replacement is scope-checked exactly like create()
     if (dto.assignments !== undefined && scope) {

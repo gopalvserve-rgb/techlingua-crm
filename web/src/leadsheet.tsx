@@ -36,6 +36,10 @@ function activityTitle(a: Activity, sourceName?: string): { tt: string; td: stri
       tt: a.to_value?.reopened ? 'Duplicate merged & lead re-opened' : 'Duplicate merged',
       td: a.note || `Merged from ${a.to_value?.channel ?? 'another lead'}`,
     };
+    case 'red_flag': return {
+      tt: a.to_value?.action === 'cleared' ? 'Red flag cleared' : 'Red flag raised',
+      td: a.note || 'Red flag',
+    };
     default: return { tt: a.type, td: a.note || '' };
   }
 }
@@ -44,7 +48,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const { can } = useAuth();
   const ref = useRef_();
   const [lead, setLead] = useState<any>(null);
-  const [tab, setTab] = useState<'activity' | 'notes' | 'calls' | 'whatsapp'>('activity');
+  const [tab, setTab] = useState<'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp'>('activity');
   const [saved, setSaved] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [noteText, setNoteText] = useState('');
@@ -53,10 +57,16 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const [courseAdd, setCourseAdd] = useState(false);
   const [reassign, setReassign] = useState(false); // UAT-R3 #23 reassign-owner modal
   const [transfer, setTransfer] = useState(false); // Jul 2026 — transfer to another Branch/Vertical/Campaign
+  const [redFlag, setRedFlag] = useState(false);   // Aug 2026 — red-flag remark dialog
+  const [rfText, setRfText] = useState('');        // Red Flag tab — continue the conversation
+  const [rfList, setRfList] = useState<any[] | null>(null); // Red Flag conversation (GET /leads/:id/red-flags)
+  const canFlag = can('lead.flag');
   const [extra, setExtra] = useState<Record<string, Named[]>>({});
 
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
+  const loadRedFlags = () => api.get<any[]>(`/leads/${leadId}/red-flags`).then(setRfList).catch(() => setRfList([]));
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [leadId]);
+  useEffect(() => { if (tab === 'redflag') loadRedFlags(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, leadId]);
 
   if (!lead) return (
     <div className="modal-scrim">
@@ -103,6 +113,23 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
     } catch (e: any) { toast(e.message, true); }
   };
 
+  const addRedFlag = async () => {
+    if (!rfText.trim()) return;
+    try {
+      await api.post(`/leads/${lead.id}/red-flag`, { remark: rfText.trim() });
+      setRfText('');
+      toast('Red flag raised');
+      await Promise.all([load(), loadRedFlags()]); onChanged?.();
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const clearRedFlag = async () => {
+    try {
+      await api.post(`/leads/${lead.id}/red-flag/clear`, {});
+      toast('Red flag cleared');
+      await Promise.all([load(), loadRedFlags()]); onChanged?.();
+    } catch (e: any) { toast(e.message, true); }
+  };
+
   const ed = (k: string) => (edits[k] !== undefined ? edits[k] : lead[k]) as any;
   /** Master-bound select options + any value just added via ＋ Master (pre-reload). */
   const withExtra = (k: string, opts: Named[]) =>
@@ -138,6 +165,9 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
               {lead.is_flagged && !lead.sla_breached
                 ? <span className="bdg b-amber" title={lead.flag_reason || 'Flagged'}>{lead.flag_reason || 'Flagged'}</span>
                 : null}
+              {lead.is_red_flagged
+                ? <span className="bdg b-rose" title="Red flagged"><Ic k="flag" w={2} /> Red flag</span>
+                : null}
             </div>
           </div>
           <button className="x" onClick={onClose}><Ic k="x" /></button>
@@ -151,6 +181,10 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           {can('lead.assign') && <button className="qa" onClick={() => setReassign(true)}><Ic k="users" />Reassign</button>}
           {/* Jul 2026 — transfer the lead to another Branch / Vertical / Campaign (re-parents its path). */}
           {can('lead.transfer') && <button className="qa" onClick={() => setTransfer(true)}><Ic k="swap" />Transfer</button>}
+          {/* Aug 2026 — RED FLAG: type a remark; records a red-flag entry + timeline + flag state. */}
+          {canFlag && <button className="qa" onClick={() => setRedFlag(true)}
+            style={lead.is_red_flagged ? { color: 'var(--danger)' } : undefined}>
+            <Ic k="flag" />{lead.is_red_flagged ? 'Red flag' : 'Red flag'}</button>}
         </div>
         <div className="sheet-body">
           <div className="sheet-sec">
@@ -264,9 +298,9 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           <div className="sheet-sec">
             <h5>History</h5>
             <div className="seltabs">
-              {(['activity', 'notes', 'calls', 'whatsapp'] as const).map((t) => (
+              {([['activity', 'Activity'], ['notes', 'Notes'], ['redflag', 'Red Flag'], ['calls', 'Calls'], ['whatsapp', 'WhatsApp']] as const).map(([t, lbl]) => (
                 <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-                  {t[0].toUpperCase() + t.slice(1)}
+                  {t === 'redflag' && lead.is_red_flagged ? <span style={{ color: 'var(--danger)', marginRight: 4 }}>●</span> : null}{lbl}
                 </button>
               ))}
             </div>
@@ -307,6 +341,33 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                 </div>
               </>
             )}
+            {tab === 'redflag' && (
+              <>
+                {canFlag && (
+                  <div className="kv"><div className="f s2"><label>Add a red-flag remark</label>
+                    <div className="iv">
+                      <input placeholder="Why is this lead red-flagged\u2026" value={rfText}
+                        onChange={(e) => setRfText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addRedFlag(); }} />
+                      <button className="bdg b-rose" onClick={addRedFlag} style={{ cursor: 'pointer' }}>Flag</button>
+                      {lead.is_red_flagged && (
+                        <button className="bdg b-gray" onClick={clearRedFlag} style={{ cursor: 'pointer' }} title="Clear the red-flag state (keeps the history)">Clear flag</button>
+                      )}
+                    </div>
+                  </div></div>
+                )}
+                <div className="tl" style={{ marginTop: 14 }}>
+                  {((rfList ?? lead.red_flags) ?? []).length === 0 && <div className="empty-note">No red flags on this lead</div>}
+                  {((rfList ?? lead.red_flags) ?? []).map((r: any) => (
+                    <div className="tl-item" key={r.id}>
+                      <div className="tt" style={{ color: 'var(--danger)' }}><Ic k="flag" w={2} /> {r.remark}</div>
+                      <div className="td">{r.created_by_name || 'Unknown'}</div>
+                      <div className="tm">{fmtDT(r.created_at)}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
             {tab === 'calls' && <div className="empty-note">Telephony is out of scope for this CRM — calls are made from your own phone, so call logs are not recorded here.</div>}
             {tab === 'whatsapp' && <div className="empty-note">WhatsApp message history appears here once WhatsApp is connected in Settings › Channels.</div>}
           </div>
@@ -341,6 +402,11 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
         <ReassignModal lead={lead} users={ref.users}
           onClose={() => setReassign(false)}
           onDone={() => { setReassign(false); load(); onChanged?.(); }} />
+      )}
+      {redFlag && (
+        <RedFlagModal leadId={Number(lead.id)} leadName={lead.full_name} flagged={!!lead.is_red_flagged}
+          onClose={() => setRedFlag(false)}
+          onDone={() => { setRedFlag(false); setTab('redflag'); load(); onChanged?.(); }} />
       )}
     </div>
   );
@@ -408,6 +474,52 @@ function ReassignModal({ lead, users, onClose, onDone }:
         <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={submit} disabled={busy || !ownerId}><Ic k="check" />Reassign</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * RED FLAG dialog (client request, Aug 2026) — type a remark and submit. Records a red-flag
+ * entry on the lead (who, when, remark), sets the lead's red-flagged state, and writes a
+ * `red_flag` activity so it shows on the main timeline too. Shared by the lead sheet's Red
+ * Flag button and the Leads-list row action. A lead can be flagged multiple times (each is a
+ * conversation entry) — the running thread lives in the sheet's "Red Flag" tab.
+ */
+export function RedFlagModal({ leadId, leadName, flagged, onClose, onDone }:
+  { leadId: number; leadName?: string; flagged?: boolean; onClose: () => void; onDone: () => void }) {
+  const [remark, setRemark] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!remark.trim()) return toast('Type a remark for the red flag', true);
+    setBusy(true);
+    try {
+      await api.post(`/leads/${leadId}/red-flag`, { remark: remark.trim() });
+      toast('Red flag raised');
+      onDone();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim" style={{ zIndex: 300 }}>
+      <div className="add-modal" style={{ width: 440 }}>
+        <div className="ah"><h3 style={{ color: 'var(--danger)' }}><Ic k="flag" />Red flag lead</h3>
+          <button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="fld">
+            <label>Lead</label>
+            <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{leadName || `#${leadId}`}{flagged ? ' · already red-flagged' : ''}</div>
+          </div>
+          <div className="fld">
+            <label>Remark <span className="star">*</span><span className="fhint">why is this lead red-flagged</span></label>
+            <textarea className="ainp" rows={3} aria-label="Red flag remark" value={remark}
+              onChange={(e) => setRemark(e.target.value)} placeholder="Type a remark…" />
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={submit} disabled={busy || !remark.trim()}
+            style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}><Ic k="flag" />Red flag</button>
         </div>
       </div>
     </div>

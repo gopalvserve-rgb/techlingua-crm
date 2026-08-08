@@ -15,7 +15,7 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // 'pull' = the on-demand "Start Calling" hand-out (§4.1): an agent claims the next
   // batch of UNASSIGNED leads for themselves. Distinct from 'assign' (a manager giving
   // someone else's lead to a user) — see migration 021 / leads/handout.service.ts.
-  { module: 'lead', label: 'Leads', actions: ['read', 'create', 'update', 'delete', 'assign', 'transfer', 'export', 'import', 'merge', 'pull'] },
+  { module: 'lead', label: 'Leads', actions: ['read', 'create', 'update', 'delete', 'assign', 'transfer', 'export', 'import', 'merge', 'pull', 'flag'] },
   { module: 'followup', label: 'Follow-ups', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'user', label: 'Users', actions: ['read', 'create', 'update', 'deactivate', 'delete', 'import'] },
   { module: 'team', label: 'Teams', actions: ['read', 'create', 'update', 'delete'] },

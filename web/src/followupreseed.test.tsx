@@ -35,7 +35,7 @@ function Harness({ search }: { search: string }) {
   const C = DYN['todayFollowups'];
   return <ScreenCtx.Provider value={{ ...BASE_CTX, search }}><C /></ScreenCtx.Provider>;
 }
-const chip = (name: string) => screen.getByRole('button', { name, pressed: true });
+const fuVal = () => (screen.getByLabelText('Follow-up filter') as HTMLSelectElement).value;
 
 beforeEach(() => cleanup());
 afterEach(() => cleanup());
@@ -43,22 +43,21 @@ afterEach(() => cleanup());
 describe('DEF-05 — Today’s Follow-ups re-seeds when the query changes on the open screen', () => {
   it('seeds the preset from the URL on mount', async () => {
     render(<Harness search="?followup=missed" />);
-    expect(await waitFor(() => chip('Missed'))).toBeTruthy();
+    await waitFor(() => expect(fuVal()).toBe('missed'));
   });
 
   it('Missed -> Upcoming (next7): re-navigating with a new query moves the active chip', async () => {
     const { rerender } = render(<Harness search="?followup=missed" />);
-    await waitFor(() => chip('Missed'));
+    await waitFor(() => expect(fuVal()).toBe('missed'));
     // simulate the top-bar "Upcoming" shortcut firing while already on this screen
     rerender(<Harness search="?followup=next7" />);
-    expect(await waitFor(() => chip('Next 7 Days'))).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Missed' }).getAttribute('aria-pressed')).toBe('false');
+    await waitFor(() => expect(fuVal()).toBe('next7'));
   });
 
   it('then Due Today (today): a second in-app re-nav re-seeds again', async () => {
     const { rerender } = render(<Harness search="?followup=next7" />);
-    await waitFor(() => chip('Next 7 Days'));
+    await waitFor(() => expect(fuVal()).toBe('next7'));
     rerender(<Harness search="?followup=today" />);
-    expect(await waitFor(() => chip('Today'))).toBeTruthy();
+    await waitFor(() => expect(fuVal()).toBe('today'));
   });
 });

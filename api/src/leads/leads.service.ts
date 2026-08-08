@@ -72,6 +72,8 @@ export interface LeadFilters {
   /** Sprint 3 — only leads with an open SLA breach / an escalation flag. */
   sla_breached?: boolean;
   flagged?: boolean;
+  /** Red-flag filter (client, Aug 2026): only leads currently RED-flagged. */
+  red_flagged?: boolean;
   /** Client change (Jul 2026): the "Duplicates" filter — leads marked is_duplicate. */
   duplicate?: boolean;
   /** Bulk actions (Jul 2026): only leads currently PAUSED (parked out of distribution/SLA). */
@@ -131,6 +133,7 @@ const LEAD_SELECT = `
          l.next_follow_up_at, l.last_activity_at, l.is_duplicate, l.custom_fields,
          l.duplicate_of_id, l.merged_into_id,
          l.score_breakdown, l.scored_at, l.is_flagged, l.flag_reason,
+         l.is_red_flagged, l.red_flagged_at,
          l.paused, l.paused_at,
          EXISTS (SELECT 1 FROM lead_sla s
                   WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now()) AS sla_breached,
@@ -223,6 +226,7 @@ export class LeadsService {
     if (_dr.from) { params.push(_dr.from); where.push(`l.created_at >= $${params.length}::date`); }
     if (_dr.to) { params.push(_dr.to); where.push(`l.created_at < ($${params.length}::date + INTERVAL '1 day')`); }
     if (f.flagged) where.push('l.is_flagged');
+    if (f.red_flagged) where.push('l.is_red_flagged');
     if (f.duplicate) where.push('l.is_duplicate');
     // Bulk actions (Jul 2026): the paused-only filter (find parked leads to resume).
     if (f.paused) where.push('l.paused');
@@ -307,7 +311,8 @@ export class LeadsService {
         ORDER BY f.scheduled_at DESC`,
       [id],
     );
-    return { ...lead, stages, activities, follow_ups: followUps };
+    const redFlags = await this.redFlags(id);
+    return { ...lead, stages, activities, follow_ups: followUps, red_flags: redFlags };
   }
 
   activities(leadId: number) {
@@ -833,6 +838,71 @@ export class LeadsService {
     await this.sla.safe(() => this.sla.onLeadTouched(id), 'sla.onLeadTouched(note)');
     await this.scoring.safeRescore(id);
     return { ok: true };
+  }
+
+  // ---- RED FLAG (client request, Aug 2026) ---------------------------------
+  //
+  // A RED flag is a deliberate human "watch this lead" mark, DISTINCT from the amber
+  // duplicate/SLA `is_flagged` badge. Each flag is a remark by a user at a time, kept as a
+  // conversation on `lead_red_flag`; raising one sets the lead's `is_red_flagged` state and
+  // writes a `red_flag` lead_activity so it also shows on the MAIN timeline. Gated on
+  // `lead.flag` at the controller; the record itself is scope-checked by @ScopedEntity.
+
+  /** The red-flag conversation for a lead (newest first), with the author's name. */
+  redFlags(leadId: number) {
+    return this.db.query(
+      `SELECT rf.id, rf.remark, rf.created_at, rf.created_by, u.name AS created_by_name
+         FROM lead_red_flag rf LEFT JOIN "user" u ON u.id = rf.created_by
+        WHERE rf.lead_id = $1 AND rf.deleted_at IS NULL
+        ORDER BY rf.created_at DESC, rf.id DESC LIMIT 200`,
+      [leadId],
+    );
+  }
+
+  /** Add a red-flag remark: store the entry, set the flagged state, log the timeline. */
+  async addRedFlag(id: number, remark: string, actorId: number) {
+    if (!remark?.trim()) throw new BadRequestException('remark is required');
+    const lead = await this.db.one<{ org_id: string; branch_id: string }>(
+      `SELECT org_id, branch_id FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!lead) throw new NotFoundException('lead not found');
+    const text = remark.trim();
+    const entry = await this.db.tx(async (c) => {
+      const rf = await c.query(
+        `INSERT INTO lead_red_flag (lead_id, org_id, branch_id, remark, created_by)
+         VALUES ($1,$2,$3,$4,$5) RETURNING id, remark, created_at, created_by`,
+        [id, Number(lead.org_id), Number(lead.branch_id), text, actorId]);
+      // set / refresh the lead's red-flagged state (first flag stamps red_flagged_at)
+      await c.query(
+        `UPDATE lead SET is_red_flagged = TRUE,
+                red_flagged_at = COALESCE(red_flagged_at, now()), last_activity_at = now()
+          WHERE id = $1`, [id]);
+      // main-timeline entry (note carries the remark so it reads inline)
+      await c.query(
+        `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, to_value, note)
+         VALUES ($1,$2,$3,$4,'red_flag',$5,$6)`,
+        [id, Number(lead.org_id), Number(lead.branch_id), actorId,
+          JSON.stringify({ action: 'flagged' }), text]);
+      return rf.rows[0];
+    });
+    return { ok: true, is_red_flagged: true, entry };
+  }
+
+  /** Clear the red-flagged STATE (the remark thread is kept as history). */
+  async clearRedFlag(id: number, actorId: number) {
+    const lead = await this.db.one<{ org_id: string; branch_id: string; is_red_flagged: boolean }>(
+      `SELECT org_id, branch_id, is_red_flagged FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!lead) throw new NotFoundException('lead not found');
+    if (!lead.is_red_flagged) return { ok: true, is_red_flagged: false };
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE lead SET is_red_flagged = FALSE, red_flagged_at = NULL, last_activity_at = now() WHERE id = $1`, [id]);
+      await c.query(
+        `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, to_value, note)
+         VALUES ($1,$2,$3,$4,'red_flag',$5,$6)`,
+        [id, Number(lead.org_id), Number(lead.branch_id), actorId,
+          JSON.stringify({ action: 'cleared' }), 'Red flag cleared']);
+    });
+    return { ok: true, is_red_flagged: false };
   }
 
   // ---- dashboard summary (all scope-filtered) ------------------------------

@@ -28,6 +28,7 @@ import LeadImport from './leadimport';
 import Channels from './channels';
 import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
+import { RedFlagModal } from './leadsheet';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
@@ -185,6 +186,7 @@ function leadRow(l: any): Cell[] {
         {l.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA</span> : null}
         {l.is_flagged && !l.sla_breached
           ? <span className="bdg b-amber" title={l.flag_reason || 'Flagged'}>!</span> : null}
+        {l.is_red_flagged ? <span className="bdg b-rose" title="Red flagged"><Ic k="flag" w={2} /></span> : null}
       </span>) },
     l.owner_name || 'Unassigned',
     { b: [l.stage_name || '—', l.stage_type === 'won' ? 'b-green' : l.stage_type === 'lost' ? 'b-rose' : 'b-cyan'] },
@@ -951,7 +953,7 @@ function readLeadNavFilters(search?: string) {
     owners: nums('owner_ids', 'owner_id'), bands: bands(),
     from: sp.get('created_from') || undefined, to: sp.get('created_to') || undefined,
     followup: sp.get('followup') || undefined, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined,
-    sla: b('sla_breached'), dup: b('duplicate'), won: b('won'), unassigned: b('unassigned'),
+    sla: b('sla_breached'), dup: b('duplicate'), redflag: b('red_flagged'), won: b('won'), unassigned: b('unassigned'),
     sort: sp.get('sort') || 'recent', q: sp.get('q') || '',
   };
 }
@@ -993,6 +995,8 @@ function LeadsAll() {
     followup?: string; fu_from?: string; fu_to?: string;
     // Client change (Jul 2026) — Duplicates; Aug 2026 dashboard card links — won / unassigned.
     dup?: boolean; won?: boolean; unassigned?: boolean;
+    // Red flag filter (client, Aug 2026).
+    redflag?: boolean;
     sort: string; q: string;
   }>(() => seedLeadFilters(search));
   // DEF-05 — a top-bar shortcut / card link (e.g. New Leads = created today) re-navigating to the
@@ -1019,6 +1023,7 @@ function LeadsAll() {
   if (f.fu_to) params.set('fu_to', f.fu_to);
   if (f.sla) params.set('sla_breached', '1');
   if (f.dup) params.set('duplicate', '1');
+  if (f.redflag) params.set('red_flagged', '1');
   if (f.won) params.set('won', '1');
   if (f.unassigned) params.set('unassigned', '1');
   if (f.sort && f.sort !== 'recent') params.set('sort', f.sort);
@@ -1048,6 +1053,8 @@ function LeadsAll() {
   // Bulk actions (Jul 2026) — multi-select in the Classic list + a bulk-action toolbar.
   const canTransfer = can('lead.transfer');
   const canAssign = can('lead.assign');
+  const canFlag = can('lead.flag');
+  const [flagLead, setFlagLead] = useState<{ id: number; name?: string; flagged?: boolean } | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume'>(null);
   const [transferLead, setTransferLead] = useState<{ id: number; name?: string } | null>(null);
@@ -1170,6 +1177,12 @@ function LeadsAll() {
           onClick={() => setF((x) => ({ ...x, dup: !x.dup }))}>
           <Ic k="refresh" />Duplicates
         </button>
+        {/* Red flag filter (client, Aug 2026) — leads currently red-flagged. */}
+        <button className={`fchip${f.redflag ? ' on' : ''}`} data-testid="redflag-filter"
+          onClick={() => setF((x) => ({ ...x, redflag: !x.redflag }))}
+          style={f.redflag ? { color: 'var(--danger)', borderColor: 'var(--danger)' } : undefined}>
+          <Ic k="flag" />Red flagged
+        </button>
       </div>
       </div>
       {/* Bulk-action toolbar — appears when one or more leads are selected (Classic view). */}
@@ -1202,7 +1215,10 @@ function LeadsAll() {
             onView: () => openLead(Number(l.id)),
             onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
-            extra: canTransfer ? [{ k: 'swap', title: 'Transfer', onClick: () => setTransferLead({ id: Number(l.id), name: l.full_name }) }] : undefined,
+            extra: [
+              ...(canTransfer ? [{ k: 'swap', title: 'Transfer', onClick: () => setTransferLead({ id: Number(l.id), name: l.full_name }) }] : []),
+              ...(canFlag ? [{ k: 'flag', title: l.is_red_flagged ? 'Red flagged \u2014 add remark' : 'Red flag', onClick: () => setFlagLead({ id: Number(l.id), name: l.full_name, flagged: !!l.is_red_flagged }) }] : []),
+            ],
           })])}
           empty="No leads in scope yet — add a lead or connect a source"
           onRowClick={(i) => openLead(Number(rows[i].id))} />
@@ -1219,6 +1235,8 @@ function LeadsAll() {
       )}
       {transferLead && <LeadTransferModal leadId={transferLead.id} leadName={transferLead.name}
         onDone={bump} onClose={() => setTransferLead(null)} />}
+      {flagLead && <RedFlagModal leadId={flagLead.id} leadName={flagLead.name} flagged={flagLead.flagged}
+        onDone={() => { setFlagLead(null); bump(); }} onClose={() => setFlagLead(null)} />}
       {bulk === 'transfer' && <BulkTransferModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {bulk === 'reassign' && <BulkReassignModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {(bulk === 'pause' || bulk === 'resume') && <BulkPauseModal ids={selectedIds} action={bulk} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
@@ -2407,6 +2425,7 @@ function UserView({ user, onClose }: { user: any; onClose: () => void }) {
               ['Email', <span className="mono">{d.email}</span>],
               ['Phone', d.phone ? <span className="mono">{d.phone}</span> : '\u2014'],
               ['Status', renderCell(statusBadge(d.status !== 'disabled'))],
+              ['Reports to', d.report_to_name || '\u2014'],
               ['MFA', d.mfa_enabled ? 'Enabled' : 'Off'],
             ]} />
           </Section>
@@ -2658,7 +2677,7 @@ function Users() {
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email\u2026" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="users" /><b>{rows.length}</b> users</div>
       </div>
-      <TableCard fill title="Users" cols={['User', 'Role', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status', 'Actions']}
+      <TableCard fill title="Users" cols={['User', 'Role', 'Reports to', 'Scope (Branch/Vertical/Pipeline)', 'SSO', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].status === 'disabled' ? 'row-inactive' : undefined)}
         rows={rows.map((u) => {
           const d = details[Number(u.id)];
@@ -2670,6 +2689,7 @@ function Users() {
                 <div><div className="nm">{u.name}</div><div className="sub">{u.email}</div></div>
               </div>) } as Cell,
             u.role_names || (d ? '\u2014' : '\u2026'),
+            u.report_to_name || '\u2014',
             scopeBits.length ? scopeBits.join(' \u00b7 ') : a ? 'Org-wide' : '\u2014',
             '\u2014',
             toggleCell({
@@ -2748,9 +2768,13 @@ function Users() {
                 'System Role': edit.role_names ?? '',
                 'Branch Access': branchCsv,
                 'Vertical Access': vertCsv,
+                'Reports To': edit.report_to_name ?? '',
                 'Status': edit.status === 'disabled' ? 'Deactivated' : 'Active',
               },
-              initialIds: { 'System Role': roleId ? Number(roleId) : undefined },
+              initialIds: {
+                'System Role': roleId ? Number(roleId) : undefined,
+                'Reports To': edit.report_to_id == null ? undefined : Number(edit.report_to_id),
+              },
               // password is only set when the admin types a new one
               optional: ['Password / Login Method'],
               submit: async (vals, ids) => {
@@ -2764,6 +2788,8 @@ function Users() {
                   // re-inserts these, so ticking/un-ticking a branch adds/removes it; `extra`
                   // preserves the user's pipeline/campaign/team grants.
                   ...(role ? { assignments: buildUserAssignments(role, parseIdCsv(vals['Branch Access']), parseVertCsv(vals['Vertical Access']), extra) } : {}),
+                  // Reporting manager (client, Aug 2026) — null clears it.
+                  report_to_id: ids['Reports To'] ?? null,
                   status: vals['Status'] === 'Active' ? 'active' : 'disabled',
                 });
                 return 'User updated';

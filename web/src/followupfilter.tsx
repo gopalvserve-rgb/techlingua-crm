@@ -1,21 +1,25 @@
 /**
- * FOLLOW-UP DATE FILTER (client #3, Aug 2026) — the reusable preset control the client asked
- * for, built to look and behave like the shared DateRange control (daterange.tsx). Presets:
+ * FOLLOW-UP FILTER (client #3, Aug 2026) — presented as a single clean DROPDOWN, consistent
+ * with the other Leads filter controls (the Sort / Status selects live in the same `.fchip`
+ * shell). The client asked for "all dropdown like follow up related filter": ONE dropdown
+ * that lists every follow-up option, with an **All Follow-up** default that applies no
+ * follow-up filtering (shows all).
  *
- *   No Followup · Missed · Today · Tomorrow · Next 7 Days · Next 30 Days · Custom Range
+ *   All Follow-up (default) · No Followup · Missed · Today · Tomorrow · Next 7 Days ·
+ *   Next 30 Days · Custom Range
  *
- * It emits the API params the follow-ups list and the Leads list already understand:
+ * It emits the API params the follow-ups list and the Leads list already understand
+ * (unchanged from the original preset control — see api docs/dev/27):
  *   { followup?: preset, fu_from?: 'YYYY-MM-DD', fu_to?: 'YYYY-MM-DD' }
- * The window semantics are computed SERVER-SIDE in the app timezone (IST) — see
- * api/src/common/date.util.ts followupWindowSql — so a preset means exactly the same IST
- * window on every screen (My Tasks, Today's Follow-ups, Leads).
+ * Window semantics are computed SERVER-SIDE in IST (api/src/common/date.util.ts
+ * followupWindowSql), so a preset means exactly the same IST window on every screen.
  *
- *   - No Followup — no pending follow-up (a lead attribute; hidden on task lists that are,
- *                   by definition, lists of follow-ups — pass allowNoFollowup={false}).
- *   - Missed      — a pending follow-up now in the PAST (overdue / not completed).
- *   - Today       — due on IST today.       - Tomorrow  — due on IST today + 1.
- *   - Next 7 Days — due today .. today + 7.  - Next 30 Days — due today .. today + 30.
- *   - Custom Range — from/to date pickers.
+ *   - All Follow-up — no follow-up filtering at all (clears followup/fu_from/fu_to).
+ *   - No Followup   — no pending follow-up (a lead attribute; hidden on task lists that are,
+ *                     by definition, lists of follow-ups — pass allowNoFollowup={false}).
+ *   - Missed        — a pending follow-up now in the PAST (overdue / not completed).
+ *   - Today / Tomorrow / Next 7 Days / Next 30 Days — the due-date windows (IST).
+ *   - Custom Range  — reveals from/to date pickers.
  */
 import { Ic } from './icons';
 
@@ -24,7 +28,8 @@ export interface FollowupValue { followup?: string; fu_from?: string; fu_to?: st
 export type FollowupKey =
   | 'no_followup' | 'missed' | 'today' | 'tomorrow' | 'next7' | 'next30' | 'custom';
 
-/** The preset chips, in the exact order (and with the exact labels) the client specified. */
+/** The presets, in the exact order (and with the exact labels) the client specified. Custom
+ *  is offered by the dropdown below; these six are the fixed windows. */
 export const FU_PRESETS: Array<{ key: FollowupKey; label: string }> = [
   { key: 'no_followup', label: 'No Followup' },
   { key: 'missed', label: 'Missed' },
@@ -34,10 +39,15 @@ export const FU_PRESETS: Array<{ key: FollowupKey; label: string }> = [
   { key: 'next30', label: 'Next 30 Days' },
 ];
 
+/** The label the "no filter" default shows in the dropdown. */
+export const FU_ALL_LABEL = 'All Follow-up';
+
 /**
- * Controlled component. Same markup + classes as DateRange (`.daterange` + `.fchip`), so it
- * sits consistently alongside it on every screen. `allowNoFollowup` hides the "No Followup"
- * chip on the task lists (My Tasks / Today's Follow-ups) where it is not meaningful.
+ * Controlled dropdown. Same `.fchip` shell + `<select>` as the other Leads filters, so it sits
+ * consistently in the filter bar. Selecting **All Follow-up** clears the follow-up filter
+ * entirely; **Custom Range** reveals the from/to inputs. `allowNoFollowup=false` drops the
+ * "No Followup" option on the task lists (My Tasks / Today's Follow-ups) where it is not
+ * meaningful — All Follow-up + the rest remain.
  */
 export function FollowupFilter({
   value, onChange, allowNoFollowup = true, idPrefix = 'fu', style,
@@ -49,37 +59,41 @@ export function FollowupFilter({
   style?: React.CSSProperties;
 }) {
   const active = value.followup || '';
-  const pick = (key: FollowupKey) => {
-    // toggling the active preset clears the filter (back to "any follow-up")
-    if (active === key) return onChange({});
-    onChange({ followup: key });
+  const presets = FU_PRESETS.filter((p) => allowNoFollowup || p.key !== 'no_followup');
+  const select = (key: string) => {
+    if (!key) return onChange({});                         // All Follow-up -> clear the filter
+    if (key === 'custom') return onChange({ followup: 'custom', fu_from: value.fu_from, fu_to: value.fu_to });
+    onChange({ followup: key as FollowupKey });
   };
   const setCustom = (k: 'fu_from' | 'fu_to', val: string) =>
     onChange({ followup: 'custom', fu_from: value.fu_from, fu_to: value.fu_to, [k]: val || undefined });
 
   return (
-    <div className="daterange" role="group" aria-label="Follow-up date filter" style={style}>
-      {FU_PRESETS.filter((p) => allowNoFollowup || p.key !== 'no_followup').map((p) => (
-        <button
-          key={p.key} type="button"
-          className={`fchip${active === p.key ? ' on' : ''}`}
-          aria-pressed={active === p.key}
-          onClick={() => pick(p.key)}
-        >{p.label}</button>
-      ))}
-      <span className={`fchip dr-custom${active === 'custom' ? ' on' : ''}`}>
-        <Ic k="cal" />
-        <label htmlFor={`${idPrefix}-from`} className="dr-lbl">From</label>
-        <input
-          id={`${idPrefix}-from`} type="date" className="ainp dr-inp"
-          value={value.fu_from ?? ''} onChange={(e) => setCustom('fu_from', e.target.value)}
-        />
-        <label htmlFor={`${idPrefix}-to`} className="dr-lbl">To</label>
-        <input
-          id={`${idPrefix}-to`} type="date" className="ainp dr-inp"
-          value={value.fu_to ?? ''} onChange={(e) => setCustom('fu_to', e.target.value)}
-        />
-      </span>
+    <div className="fchip fu-drop" style={style} data-testid="followup-filter">
+      <Ic k="cal" />
+      <label htmlFor={`${idPrefix}-sel`} className="dr-lbl">Follow-up</label>
+      <select
+        id={`${idPrefix}-sel`} aria-label="Follow-up filter"
+        value={active} onChange={(e) => select(e.target.value)}
+      >
+        <option value="">{FU_ALL_LABEL}</option>
+        {presets.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+        <option value="custom">Custom Range</option>
+      </select>
+      {active === 'custom' && (
+        <span className="fu-custom">
+          <label htmlFor={`${idPrefix}-from`} className="dr-lbl">From</label>
+          <input
+            id={`${idPrefix}-from`} type="date" className="ainp dr-inp"
+            value={value.fu_from ?? ''} onChange={(e) => setCustom('fu_from', e.target.value)}
+          />
+          <label htmlFor={`${idPrefix}-to`} className="dr-lbl">To</label>
+          <input
+            id={`${idPrefix}-to`} type="date" className="ainp dr-inp"
+            value={value.fu_to ?? ''} onChange={(e) => setCustom('fu_to', e.target.value)}
+          />
+        </span>
+      )}
     </div>
   );
 }

@@ -246,7 +246,10 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   'admin.users': { title: 'Add User', fields: [
     F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
     F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'multipick', 0, 0, 'select branch(es)', 'branches'),
-    F('Vertical Access', 'multipick', 0, 0, 'optional', 'verticals'), F('Status', 'select', 0, ['Active', 'Deactivated'])] },
+    F('Vertical Access', 'multipick', 0, 0, 'optional', 'verticals'),
+    // Client (Aug 2026) — a USER's reporting manager (distinct from the task-level Report To).
+    F('Reports To', 'select', 0, 0, 'reporting manager \u00b7 active users', 'users'),
+    F('Status', 'select', 0, ['Active', 'Deactivated'])] },
   'fran.partners': { title: 'Add Franchise Partner', fields: [
     F('Franchise ID', 'auto', 1, 0, 'Auto-generated'), F('Legal Name', 'text', 1), F('Brand Name', 'text'), F('Owner', 'text', 1), F('Mobile', 'tel', 1), F('Email', 'email'),
     F('Branch / Territory', 'text'), F('Status', 'select', 0, ['Onboarding', 'Active', 'Inactive']), F('KYC Documents', 'file')] },
@@ -497,6 +500,8 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       password: need(vals['Password / Login Method'], 'Password is required'),
       // MULTI-BRANCH: one user_assignment per selected branch (blank branches = one org-wide row).
       assignments: ids['System Role'] ? buildUserAssignments(ids['System Role'], parseIdCsv(vals['Branch Access']), parseVertCsv(vals['Vertical Access'])) : [],
+      // Reporting manager (client, Aug 2026) — the user this person reports to.
+      report_to_id: ids['Reports To'] ?? null,
       // QA-10 sweep: Status is a live select on Add User — honour it (same mapping as Edit)
       status: vals['Status'] === 'Deactivated' ? 'disabled' : 'active',
     });
