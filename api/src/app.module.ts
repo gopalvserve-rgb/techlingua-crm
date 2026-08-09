@@ -39,6 +39,7 @@ import { CustomFieldsModule } from './customfields/custom-fields.module';
 import { StudentsModule } from './students/students.module';
 import { FinanceModule } from './finance/finance.module';
 import { AcademicsModule } from './academics/academics.module';
+import { LearningModule } from './learning/learning.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -96,6 +97,8 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     FinanceModule,
     // Phase 2 ERP Batch 1 — Academics core: batch transfer/waitlist, attendance, tests & scores, assignments
     AcademicsModule,
+    // Phase 2 ERP Batch 2 — Learning: study material, certificates, report cards + parent view
+    LearningModule,
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

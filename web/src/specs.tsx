@@ -252,23 +252,12 @@ export const APP: ModuleItem[] = [
       sub: 'A test per batch (quiz / mock / exam / other) with max & pass marks; per-student score entry with a computed percentage and letter grade. Result sheet per test; feeds report cards.' } },
     { id: 'assignments', label: 'Assignments', spec: { dyn: 'assignmentsScreen',
       sub: 'An assignment per batch (title, description, due date, attachment link, max marks) with a per-student submission tracker — assigned → submitted → graded (marks + feedback).' } },
-    { id: 'material', label: 'Study Material', spec: {
-      sub: 'Upload material (PDF / video / links) per course or batch, with access control & download tracking. Embedded videos.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Material library', ['Title', 'Type', 'Course', 'Access', 'Downloads'], 'No material uploaded yet')] } },
-    { id: 'certs', label: 'Certificates', spec: {
-      sub: 'Templates with completion criteria, auto serial numbers, verification & delivery.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Issued (MTD)', '0', 'award'), kpi('Templates', '0', 'doc'), kpi('Verifications', '0', 'shield')] },
-        { type: 'caps', title: 'Certificate engine', items: [
-          cap('Templates', 'Per course / vertical'), cap('Completion criteria', 'Attendance + score'),
-          cap('Auto serial number', 'Unique + QR verify'), cap('Auto-delivery', 'Email + WhatsApp')] },
-      ] } },
-    { id: 'progress', label: 'Academic Progress', spec: {
-      sub: 'Progress = attendance + scores + assignments. Report cards visible to parents.',
-      sprintNote: NOTE_S2,
-      blocks: [{ type: 'hbars', title: 'Student progress', rows: [], empty: 'Progress charts appear once attendance & scores exist' }] } },
+    { id: 'material', label: 'Study Material', spec: { dyn: 'studyMaterial',
+      sub: 'A study-material library — video / link / document / note items scoped to a batch, a course or a whole vertical. A published item is visible to the students it targets; an "allow parents" flag surfaces it in the parent report-card view. Filter by branch / vertical / course / type / visibility, export, choose columns, refresh, bulk-delete. RBAC material.*.' } },
+    { id: 'certs', label: 'Certificates', spec: { dyn: 'certificates',
+      sub: 'Completion / participation / merit certificates issued to a student — an auto serial number from the numbering series (CERT-), a branded PDF (the quotation/receipt PDF pipeline), and issue / reissue / revoke. Filter, export, choose columns, refresh, bulk-delete. RBAC certificate.*.' } },
+    { id: 'progress', label: 'Academic Progress', spec: { dyn: 'reportCards',
+      sub: 'Per-student, per-term report cards computed from attendance %, test scores and assignment grades (Indian grading bands; tests 50% / assignments 30% / attendance 20% over the components present). Report-card PDF; publish for a login-free PARENT VIEW (a shareable link to the card, attendance and parent-visible study material). Filter, export, choose columns, refresh, bulk-delete. RBAC reportcard.*.' } },
     { id: 'crosssell', label: 'Cross-Sell', spec: { dyn: 'crossSell',
       sub: 'CRM-level cross-sell on the contacts you have today. Converted contacts (won or enrolled) are paired with a suggested additional course from the Course master — via an admin rule map (current course → suggested course) or, failing a rule, other active courses in their vertical. Act on a suggestion: create a cross-sell follow-up, or create a new lead through the ingestion pipeline (dedup / distribution / audit), or dismiss it. Every act is logged so it is never suggested again. RBAC-scoped. (Deeper student-based cross-sell on academic progress remains Phase 2.)' } },
     { id: 'admissions', label: 'Admissions', spec: {

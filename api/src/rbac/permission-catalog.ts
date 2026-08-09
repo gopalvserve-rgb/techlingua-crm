@@ -106,4 +106,13 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'attendance', label: 'Attendance', actions: ['read', 'mark', 'manage'] },
   { module: 'test', label: 'Tests & Scores', actions: ['read', 'create', 'update', 'delete', 'grade'] },
   { module: 'coursework', label: 'Assignments (coursework)', actions: ['read', 'create', 'update', 'delete', 'grade'] },
+  // Phase 2 ERP Batch 2 (migration 048) — Learning.
+  // Study material: 'create'/'update' let staff manage the library; a student's read is via
+  // scope, not a grant. Certificates: 'issue' mints a serial + PDF, 'revoke' invalidates one
+  // (both distinct from 'delete', which removes the record). Report cards: 'create' = generate
+  // (compute + snapshot), 'read' shows/downloads; the parent view is a public tokened read,
+  // outside RBAC by design.
+  { module: 'material', label: 'Study Material', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'certificate', label: 'Certificates', actions: ['read', 'issue', 'revoke', 'delete'] },
+  { module: 'reportcard', label: 'Report Cards', actions: ['read', 'create', 'delete'] },
 ];

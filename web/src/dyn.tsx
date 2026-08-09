@@ -50,6 +50,7 @@ import { SupportTickets } from './support';
 import { CrossSell } from './crosssell';
 import { FinanceSettings } from './financesettings';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
+import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -4491,6 +4492,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   attendanceScreen: AttendanceScreen,
   testsScreen: TestsScreen,
   assignmentsScreen: AssignmentsScreen,
+  studyMaterial: StudyMaterialScreen,
+  certificates: CertificatesScreen,
+  reportCards: ReportCardsScreen,
   customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
   featuresPanel: FeaturesPanel,

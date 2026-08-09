@@ -63,6 +63,8 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   // series row exists, org-wide otherwise (the same MOST-SPECIFIC-WINS rule as everything else).
   student:    { prefix: 'STU-', reset: 'none', label: 'Student IDs' },
   enrollment: { prefix: 'EN-',  reset: 'none', label: 'Enrollment numbers' },
+  // Phase 2 ERP Batch 2 (Learning) — CERT-#### certificate serials, reset yearly.
+  certificate: { prefix: 'CERT-', reset: 'yearly', label: 'Certificates' },
 };
 
 export interface SeriesRow {
