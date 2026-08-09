@@ -248,8 +248,10 @@ export class LeaveService {
   async approve(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
     const app = await this.get(id, scope);
     if (app.status !== 'pending') throw new BadRequestException(`This leave is already ${app.status}.`);
-    // NOBODY approves their own leave (the enrolment-approval rule).
-    if (Number(app.applied_by) === Number(me.id) || (app.employee_user_id && Number(app.employee_user_id) === Number(me.id))) {
+    // NOBODY approves their OWN leave — the approver must not be the employee whose leave it is
+    // (the enrolment-approval rule). HR/admin filing ON BEHALF of a staff member and then
+    // approving is legitimate; what is refused is a person approving a leave that is theirs.
+    if (app.employee_user_id && Number(app.employee_user_id) === Number(me.id)) {
       throw new ForbiddenException('You cannot approve your own leave — a manager must approve it.');
     }
     const note = dto?.note != null && String(dto.note).trim() !== '' ? String(dto.note).trim().slice(0, 2000) : null;
@@ -310,7 +312,7 @@ export class LeaveService {
   async reject(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
     const app = await this.get(id, scope);
     if (app.status !== 'pending') throw new BadRequestException(`This leave is already ${app.status}.`);
-    if (Number(app.applied_by) === Number(me.id) || (app.employee_user_id && Number(app.employee_user_id) === Number(me.id))) {
+    if (app.employee_user_id && Number(app.employee_user_id) === Number(me.id)) {
       throw new ForbiddenException('You cannot decide your own leave — a manager must.');
     }
     const note = dto?.note != null && String(dto.note).trim() !== '' ? String(dto.note).trim().slice(0, 2000) : null;
