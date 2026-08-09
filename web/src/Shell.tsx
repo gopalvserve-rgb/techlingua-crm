@@ -101,22 +101,29 @@ export function Shell() {
               New Leads = leads created today (IST); Due Today / Upcoming = the Today's Follow-ups
               screen pre-set to today / next-7-days via the #3 followup filter; Features = the
               in-app What's New / Features panel. */}
+          {/* Icon buttons (client, Aug 2026): the four shortcuts are compact ICON buttons with a
+              hover tooltip + accessible name, not full-text buttons — saves top-bar space and
+              stays clean at ~1280px. Same navigation/filters as before; keyboard-focusable. */}
           <div className="tb-shortcuts" role="group" aria-label="Quick shortcuts">
-            <button className="tb-shortcut" title="New Leads — created today"
+            <button className="icon-btn tb-shortcut" type="button" title="New Leads — created today"
+              aria-label="New Leads — leads created today"
               onClick={() => go('leads', 'all', { created_from: isoDay(), created_to: isoDay() })}>
-              <Ic k="leads" /><span>New Leads</span>
+              <Ic k="leads" />
             </button>
-            <button className="tb-shortcut" title="Due Today — follow-ups due today"
+            <button className="icon-btn tb-shortcut" type="button" title="Due Today — follow-ups due today"
+              aria-label="Due Today — follow-ups due today"
               onClick={() => go('dash', 'todayfollowups', { followup: 'today' })}>
-              <Ic k="clock" /><span>Due Today</span>
+              <Ic k="clock" />
             </button>
-            <button className="tb-shortcut" title="Upcoming — follow-ups in the next 7 days"
+            <button className="icon-btn tb-shortcut" type="button" title="Upcoming — follow-ups in the next 7 days"
+              aria-label="Upcoming — follow-ups in the next 7 days"
               onClick={() => go('dash', 'todayfollowups', { followup: 'next7' })}>
-              <Ic k="cal" /><span>Upcoming</span>
+              <Ic k="cal" />
             </button>
-            <button className="tb-shortcut" title="What's New / Features"
+            <button className="icon-btn tb-shortcut" type="button" title="What's New / Features"
+              aria-label="What's New / Features"
               onClick={() => go('help', 'features')}>
-              <Ic k="bolt" /><span>Features</span>
+              <Ic k="bolt" />
             </button>
           </div>
           <button className="icon-btn" title="Site Map" onClick={() => go('map', 'all')}><Ic k="grid" /></button>

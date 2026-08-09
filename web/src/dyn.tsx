@@ -21,7 +21,7 @@ import { UserPicker } from './userpicker';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
-import { DateRange, presetRange } from './daterange';
+import { DateRange, presetRange, fmtDMYIST } from './daterange';
 import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
@@ -3792,6 +3792,11 @@ function StudentsList() {
   const [add, setAdd] = useState(false);
   const [edit, setEdit] = useState<any | null>(null);
   const del = useDelete('Student', '/students', () => { list.reload(); bump(); });
+  // OBS-2 — full-list treatment: bulk-select + bulk-delete (export / multi-filter / column
+  // chooser / refresh are already present), consistent with every other ERP list.
+  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdSel = useTableSelect(_bdIds);
+  const _bd = useBulkDelete('Student', '/students/bulk-delete/impact', '/students/bulk-delete', () => { list.reload(); bump(); _bdSel.clear(); });
   const after = () => { list.reload(); bump(); };
   // Edit opens on the FULL profile (the row carries only the summary columns).
   const openEdit = async (st: any) => {
@@ -3823,7 +3828,9 @@ function StudentsList() {
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / ID…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <DateRange value={range} onChange={setRange} idPrefix="stu-list-dr" style={{ marginLeft: 'auto' }} />
       </div>
+      {canDelete && <BulkBar count={_bdSel.count} entityLabel="Student" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />}
       <TableCard fill title="Student directory" icon="students"
+        select={canDelete ? _bdSel.tableSelect : undefined}
         more={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           <span className="sub" style={{ fontSize: 12 }}>{rows.length} shown</span>
           <ListActions onExport={() => downloadObjectsCsv('students.csv', rows)} onRefresh={() => list.reload()} />
@@ -3847,6 +3854,7 @@ function StudentsList() {
           }),
         ])} />
       {del.deleteModal}
+      {_bd.bulkModal}
       {view && <StudentDetailModal student={view} onClose={() => setView(null)} onEdit={canEdit ? openEdit : undefined} onChanged={after} />}
       {add && <StudentModal onClose={() => setAdd(false)} onSaved={after} />}
       {edit && <StudentModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
@@ -4205,7 +4213,7 @@ function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: 
   };
 
   const dash = (v: any) => (v == null || v === '' ? '—' : v);
-  const dmy = (v: any) => { if (!v) return '—'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return (y && m && d) ? `${d}-${m}-${y}` : s; };
+  const dmy = (v: any) => fmtDMYIST(v);
   const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
 
   const ac = prof?.academics;

@@ -51,6 +51,23 @@ export const isoDay = (d: Date = new Date()) => {
   return `${y}-${pad(m)}-${pad(day)}`;
 };
 
+/**
+ * DD-MM-YYYY of a value AS SEEN IN IST — the app's India date convention, safe for BOTH plain
+ * DATE strings ('YYYY-MM-DD') and full timestamps ('…Z'). A naive slice(0,10) prints the UTC
+ * calendar date for a timestamp (OBS-3: a transfer recorded at 02:46 IST showed the prior UTC
+ * day); routing through the app timezone fixes that while leaving date-only values unchanged.
+ */
+export const fmtDMYIST = (v?: string | null): string => {
+  if (v == null || v === '') return '—';
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) {
+    const s = String(v).slice(0, 10); const [y, m, day] = s.split('-');
+    return y && m && day ? `${day}-${m}-${y}` : String(v);
+  }
+  const { y, m, day } = tzYMD(d);
+  return `${pad(day)}-${pad(m)}-${y}`;
+};
+
 export interface DateRangeValue { from?: string; to?: string }
 
 export type PresetKey = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom';

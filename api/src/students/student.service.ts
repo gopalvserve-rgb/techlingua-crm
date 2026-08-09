@@ -582,6 +582,17 @@ export class StudentService {
       courseId, ownerId, 'active', me.id];
     for (const [c, v] of profile) { cols.push(c); vals.push(v); }
 
+    // OBS-1 (docs/qa/27): a create payload MAY carry batch_id. Previously it was silently
+    // dropped; now we HONOUR it — assigning the new student to the batch inside the same
+    // transaction, respecting the batch's branch/vertical and its capacity/waitlist (mirroring
+    // the transfer flow): a full batch queues the student on batch_waitlist instead of moving.
+    const rawBatch = dto?.batch_id;
+    const wantsBatch = rawBatch !== undefined && rawBatch !== null && String(rawBatch).trim() !== '';
+    const batchId = wantsBatch ? Number(rawBatch) : null;
+    if (wantsBatch && (!Number.isFinite(batchId) || (batchId as number) <= 0)) {
+      throw new BadRequestException('Invalid batch.');
+    }
+
     const out = await this.db.tx(async (c) => {
       const studentNo = await this.numbering.allocate('student', { branch_id: branchId, vertical_id: verticalId }, c);
       const enrollmentNo = manualEnrollment
@@ -592,7 +603,46 @@ export class StudentService {
       const ins = await c.query<{ id: string }>(
         `INSERT INTO student (${allCols.join(', ')}) VALUES (${ph}) RETURNING id`, allVals as any[],
       );
-      return { id: Number(ins.rows[0].id), student_no: studentNo, enrollment_no: enrollmentNo };
+      const studentId = Number(ins.rows[0].id);
+
+      let assignedBatchId: number | null = null;
+      let waitlisted = false;
+      let waitlistPosition: number | null = null;
+      if (batchId != null) {
+        const b = await c.query<{ id: string; capacity: string }>(
+          `SELECT id, capacity FROM batch
+            WHERE id = $1::bigint AND deleted_at IS NULL AND branch_id = $2::bigint AND vertical_id = $3::bigint`,
+          [batchId, branchId, verticalId]);
+        if (!b.rows[0]) throw new BadRequestException('That batch is not in this student\'s branch and vertical.');
+        const capacity = Number(b.rows[0].capacity ?? 0);
+        const filledR = await c.query<{ n: string }>(
+          `SELECT count(*)::int AS n FROM student WHERE batch_id = $1::bigint AND deleted_at IS NULL`, [batchId]);
+        const filled = Number(filledR.rows[0]?.n ?? 0);
+        if (capacity > 0 && filled >= capacity) {
+          // FULL — queue on the waitlist (ordered) instead of moving; batch_id stays NULL.
+          const posR = await c.query<{ n: string }>(
+            `SELECT COALESCE(max(position), 0) + 1 AS n FROM batch_waitlist
+              WHERE batch_id = $1::bigint AND status = 'waiting'`, [batchId]);
+          waitlistPosition = Number(posR.rows[0]?.n ?? 1);
+          await c.query(
+            `INSERT INTO batch_waitlist (org_id, batch_id, student_id, position, note, created_by)
+             VALUES ($1::bigint, $2::bigint, $3::bigint, $4::int, $5, $6::bigint)`,
+            [orgId, batchId, studentId, waitlistPosition, 'Assigned on student create (batch full)', me.id]);
+          waitlisted = true;
+        } else {
+          await c.query(`UPDATE student SET batch_id = $2::bigint WHERE id = $1::bigint`, [studentId, batchId]);
+          await c.query(
+            `INSERT INTO batch_transfer (org_id, student_id, from_batch_id, to_batch_id, reason, transferred_by)
+             VALUES ($1::bigint, $2::bigint, NULL, $3::bigint, $4, $5::bigint)`,
+            [orgId, studentId, batchId, 'Assigned on student create', me.id]);
+          assignedBatchId = batchId;
+        }
+      }
+
+      return {
+        id: studentId, student_no: studentNo, enrollment_no: enrollmentNo,
+        batch_id: assignedBatchId, waitlisted, waitlist_position: waitlistPosition,
+      };
     });
     return out;
   }
@@ -758,6 +808,37 @@ export class StudentService {
       [id, me.id],
     );
     return { id, deleted: true };
+  }
+
+  /* ---------------------------------------------------------- bulk delete (OBS-2) */
+
+  private idList(raw: unknown): number[] {
+    return (Array.isArray(raw) ? raw : []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+  }
+
+  private async inScopeIds(ids: number[], scope: ResolvedScope): Promise<number[]> {
+    if (!ids.length) return [];
+    const params: unknown[] = [ids];
+    const w = this.resolver.buildScopeWhere(scope, STUDENT_SCOPE_COLS, params);
+    const rows = await this.db.query<{ id: string }>(
+      `SELECT s.id FROM student s WHERE s.id = ANY($1::bigint[]) AND s.deleted_at IS NULL AND ${w}`, params);
+    return rows.map((r) => Number(r.id));
+  }
+
+  async bulkImpact(raw: unknown, scope: ResolvedScope) {
+    const req = this.idList(raw);
+    const ok = await this.inScopeIds(req, scope);
+    return {
+      entity: 'student', label: 'Student', requested: req.length, in_scope: ok.length,
+      out_of_scope: req.length - ok.length, total_associations: 0, impact: [],
+    };
+  }
+
+  async bulkRemove(raw: unknown, me: { id: number }, scope: ResolvedScope) {
+    const ok = await this.inScopeIds(this.idList(raw), scope);
+    let deleted = 0;
+    for (const id of ok) { await this.remove(id, me, scope); deleted++; }
+    return { deleted, skipped: this.idList(raw).length - deleted };
   }
 
   /* ------------------------------------------------------------------ helpers */

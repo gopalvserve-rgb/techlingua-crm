@@ -87,6 +87,20 @@ export class StudentController {
     return this.svc.create(dto, me, scope);
   }
 
+  /** Bulk soft-delete (OBS-2) — the full-list treatment every list carries. Impact preview
+   *  then delete, both scoped inside the service so out-of-scope ids are silently skipped. */
+  @Post('bulk-delete/impact')
+  @RequirePermission('student.delete')
+  bulkImpact(@Body() b: any, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.bulkImpact(b?.ids, scope);
+  }
+
+  @Post('bulk-delete')
+  @RequirePermission('student.delete')
+  bulkDelete(@Body() b: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.bulkRemove(b?.ids, me, scope);
+  }
+
   @Patch(':id')
   @RequirePermission('student.update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {

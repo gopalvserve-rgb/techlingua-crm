@@ -8,7 +8,7 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { DateRange, presetRange, matchPreset, isoDay, DR_PRESETS } from './daterange';
+import { DateRange, presetRange, matchPreset, isoDay, DR_PRESETS, fmtDMYIST } from './daterange';
 
 beforeEach(() => cleanup());
 
@@ -106,5 +106,20 @@ describe('the control — renders 5 presets and emits the right range', () => {
     render(<DateRange value={presetRange('month')} onChange={() => undefined} allowAllTime={false} />);
     expect(screen.queryByText('All time')).toBeNull();
     expect(screen.getByText('This Month')).toBeTruthy();
+  });
+});
+
+
+describe('fmtDMYIST — IST DD-MM-YYYY (OBS-3: profile tab dates)', () => {
+  it('prints the IST calendar day of a timestamp, not the UTC day', () => {
+    // 09 Aug 2026 21:16 UTC == 10 Aug 2026 02:46 IST — the exact OBS-3 mismatch (UTC 09 vs IST 10).
+    expect(fmtDMYIST('2026-08-09T21:16:00.000Z')).toBe('10-08-2026');
+  });
+  it('leaves a plain DATE string as its own calendar day', () => {
+    expect(fmtDMYIST('2026-01-02')).toBe('02-01-2026');
+  });
+  it('renders an em-dash for empty / null', () => {
+    expect(fmtDMYIST(null)).toBe('—');
+    expect(fmtDMYIST('')).toBe('—');
   });
 });

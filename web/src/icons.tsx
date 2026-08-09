@@ -66,8 +66,15 @@ export const I: Record<string, string> = {
 
 /** Inline SVG icon, mirrors the prototype's svg() helper. */
 export function Ic({ k, w = 2, className }: { k: string; w?: number; className?: string }) {
+  // Intrinsic width/height so an <Ic> used in a container that has NO `svg{width}` CSS rule
+  // still renders at a sane inline size instead of the browser default (~300x150) — the
+  // "unconstrained icon/svg" watermark bug class (DEF-06 Import History, the AI Insights
+  // "Run an analysis" heading). Any ancestor CSS `svg{width:…}` rule still overrides these,
+  // since presentation attributes lose to every stylesheet rule — so every intentionally
+  // sized icon is unaffected; only the un-ruled contexts fall back to 1em.
   return (
     <svg
+      width="1em" height="1em"
       viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={w}
       strokeLinecap="round" strokeLinejoin="round" className={className}
       dangerouslySetInnerHTML={{ __html: I[k] ?? '' }}

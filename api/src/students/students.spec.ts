@@ -294,3 +294,78 @@ describe('StudentService.profile aggregate', () => {
     await expect(svc.profile(7, scopeOwn(999))).rejects.toThrow(/not found|access/i);
   });
 });
+
+
+/**
+ * OBS-1 (docs/qa/27) — POST /students must HONOUR batch_id on create: assign the new student
+ * to the batch when it has room, or queue them on the waitlist when the batch is full. The
+ * batch must belong to the student's branch + vertical (mirrors the transfer flow).
+ */
+function makeCreate(opts: { capacity?: number; filled?: number; batchInScope?: boolean } = {}) {
+  const capacity = opts.capacity ?? 10;
+  const filled = opts.filled ?? 0;
+  const batchInScope = opts.batchInScope !== false;
+  const issued: Array<{ sql: string; params: unknown[] }> = [];
+  const db = {
+    one: async (sql: string, params: unknown[] = []) => {
+      issued.push({ sql, params });
+      if (/FROM organisation/.test(sql)) return { id: 1 };
+      if (/FROM vertical WHERE id/.test(sql)) return { id: 3 };
+      if (/FROM m_course WHERE id/.test(sql)) return { id: 100 };
+      return null;
+    },
+    query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return []; },
+    tx: async (fn: any) => fn({
+      query: async (sql: string, params: unknown[] = []) => {
+        issued.push({ sql, params });
+        if (/INSERT INTO student/.test(sql)) return { rows: [{ id: 777 }] };
+        if (/SELECT id, capacity FROM batch/.test(sql)) return { rows: batchInScope ? [{ id: 55, capacity }] : [] };
+        if (/count\(\*\)::int AS n FROM student WHERE batch_id/.test(sql)) return { rows: [{ n: filled }] };
+        if (/COALESCE\(max\(position\)/.test(sql)) return { rows: [{ n: 1 }] };
+        return { rows: [] };
+      },
+    }),
+  };
+  const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001') };
+  const svc = new StudentService(db as never, resolver as never, numbering as never);
+  return { svc, issued };
+}
+
+describe('StudentService.create — batch_id (OBS-1)', () => {
+  const dto = (over: any = {}) => ({ branch_id: 9, vertical_id: 3, full_name: 'Ravi Kumar', batch_id: 55, ...over });
+
+  it('assigns the student to the batch when there is room', async () => {
+    const { svc, issued } = makeCreate({ capacity: 10, filled: 3 });
+    const out = await svc.create(dto(), { id: 5 }, scopeAll);
+    expect(out.id).toBe(777);
+    expect(out.batch_id).toBe(55);
+    expect(out.waitlisted).toBe(false);
+    expect(has(issued, /UPDATE student SET batch_id = \$2::bigint/)).toBe(true);
+    expect(has(issued, /INSERT INTO batch_transfer/)).toBe(true);
+    expect(has(issued, /INSERT INTO batch_waitlist/)).toBe(false);
+  });
+
+  it('waitlists the student when the batch is full (capacity honoured)', async () => {
+    const { svc, issued } = makeCreate({ capacity: 2, filled: 2 });
+    const out = await svc.create(dto(), { id: 5 }, scopeAll);
+    expect(out.id).toBe(777);
+    expect(out.waitlisted).toBe(true);
+    expect(out.batch_id).toBeNull();
+    expect(out.waitlist_position).toBe(1);
+    expect(has(issued, /INSERT INTO batch_waitlist/)).toBe(true);
+    expect(has(issued, /UPDATE student SET batch_id/)).toBe(false);
+  });
+
+  it('rejects a batch outside the student\'s branch/vertical', async () => {
+    const { svc } = makeCreate({ batchInScope: false });
+    await expect(svc.create(dto(), { id: 5 }, scopeAll)).rejects.toThrow(/branch and vertical/i);
+  });
+
+  it('creates a student with no batch_id unchanged (batch stays unset)', async () => {
+    const { svc, issued } = makeCreate();
+    const out = await svc.create(dto({ batch_id: undefined }), { id: 5 }, scopeAll);
+    expect(out.id).toBe(777);
+    expect(out.batch_id).toBeNull();
+    expect(has(issued, /SELECT id, capacity FROM batch/)).toBe(false);
+  });
+});
