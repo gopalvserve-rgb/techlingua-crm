@@ -319,7 +319,9 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
 
   const branches = d?.options?.branches ?? [];
   const verticals = useMemo(() => (d?.options?.verticals ?? []).filter((v: any) => !form.branch_id || Number(v.branch_id) === Number(form.branch_id)), [d, form.branch_id]);
-  const courses = useMemo(() => (d?.options?.courses ?? []).filter((c: any) => (!form.vertical_id || Number(c.vertical_id) === Number(form.vertical_id)) && (!form.branch_id || Number(c.branch_id) === Number(form.branch_id))), [d, form.branch_id, form.vertical_id]);
+  // Public options: m_course has no branch/vertical columns (they map via a cascade), so the
+  // self-serve form offers the flat active-course list; staff confirm/adjust the course on approve.
+  const courses = useMemo(() => (d?.options?.courses ?? []), [d]);
 
   const fixed = d?.fixed ?? {};
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
@@ -368,7 +370,7 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
                 <option value="">Select</option>{verticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select></div>
             <div className="fld"><label>Course</label>
-              <select className="ainp" value={form.course_id ?? ''} onChange={(e) => set('course_id', e.target.value)} disabled={!form.vertical_id}>
+              <select className="ainp" value={form.course_id ?? ''} onChange={(e) => set('course_id', e.target.value)}>
                 <option value="">Select a course</option>{courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
           </div>

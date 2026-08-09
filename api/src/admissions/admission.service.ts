@@ -151,7 +151,7 @@ export class AdmissionService {
     if (!f || !f.is_active) throw new NotFoundException('This admission form is not available.');
     const branches = await this.db.query<any>(`SELECT id, name FROM branch WHERE deleted_at IS NULL AND is_active ORDER BY name`);
     const verticals = await this.db.query<any>(`SELECT id, name, branch_id FROM vertical WHERE deleted_at IS NULL ORDER BY name`);
-    const courses = await this.db.query<any>(`SELECT id, name, branch_id, vertical_id FROM m_course WHERE is_active ORDER BY name`);
+    const courses = await this.db.query<any>(`SELECT id, name FROM m_course WHERE is_active ORDER BY name`);
     return {
       title: f.title,
       fixed: { branch_id: f.branch_id, vertical_id: f.vertical_id, course_id: f.course_id },
