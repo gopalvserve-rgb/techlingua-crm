@@ -797,3 +797,8 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .fmulti .upick-ctl{min-height:34px;padding:3px 8px}
 .fmulti .upick-chips input{min-width:56px;font-size:12px}
 @media(max-width:1280px){.fmulti{min-width:140px;max-width:200px}}
+
+/* Sectioned modal forms (Student Admission form, Aug 2026) — a light group heading. */
+.add-modal .sec-title{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--muted);padding:14px 18px 0;margin-top:4px;border-top:1px solid var(--border)}
+.add-modal .sec-title:first-child{border-top:none;margin-top:0}

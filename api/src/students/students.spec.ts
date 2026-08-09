@@ -41,6 +41,8 @@ function make(opts: { lead?: any; existing?: any; enrolment?: any; wonStage?: an
       if (/FROM organisation/.test(sql)) return { id: 1 };
       if (/FROM lead l\s+WHERE l\.id/.test(sql)) return opts.lead === null ? null : (opts.lead ?? LEAD());
       if (/FROM student WHERE lead_id/.test(sql)) return opts.existing ?? null;
+      if (/FROM vertical WHERE id/.test(sql)) return { id: 3 };
+      if (/FROM m_course WHERE id/.test(sql)) return { id: 100 };
       if (/FROM enrolment\s+WHERE lead_id/.test(sql)) return opts.enrolment ?? null;
       return null;
     },
@@ -54,7 +56,8 @@ function make(opts: { lead?: any; existing?: any; enrolment?: any; wonStage?: an
       },
     }),
   };
-  const svc = new StudentService(db as never, resolver as never);
+  const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001') };
+  const svc = new StudentService(db as never, resolver as never, numbering as never);
   return { svc, issued };
 }
 
@@ -65,7 +68,7 @@ describe('StudentService.convert', () => {
     const { svc, issued } = make({ wonStage: { id: 77, name: 'Won' } });
     const out = await svc.convert({ lead_id: 10 }, { id: 5 }, scopeAll);
     expect(out.already).toBe(false);
-    expect((out as any).student_no).toBe('STU-00501');
+    expect((out as any).student_no).toBe('STU-0001');
     expect(has(issued, /INSERT INTO student/)).toBe(true);
     expect(has(issued, /UPDATE lead SET stage_id/)).toBe(true);           // WON
     expect(has(issued, /INSERT INTO lead_activity/)).toBe(true);          // activity
@@ -104,6 +107,72 @@ describe('StudentService.convert', () => {
     const q = issued.find((i) => /FROM student s/.test(i.sql));
     expect(q).toBeTruthy();
     expect(q!.sql).toMatch(/s\.owner_id = \$/);
+  });
+});
+
+describe('StudentService.create (direct Add — the Admission form)', () => {
+  const FULL = {
+    full_name: 'Neha Verma', branch_id: 9, vertical_id: 3, course_id: 100,
+    dob: '2001-05-04', gender: 'Female', nationality: 'Indian',
+    registration_date: '2026-08-01', admission_date: '2026-08-05',
+    phone: '9810000001', whatsapp_phone: '9810000002', alt_phone: '9810000003', email: 'neha@x.io',
+    father_name: 'Mr Verma', father_mobile: '9810000004',
+    guardian_name: 'Mrs Verma', guardian_mobile: '9810000005', guardian_email: 'g@x.io', guardian_relation: 'Mother',
+    address_line1: 'A-1', address_line2: 'Block C', landmark: 'Near park', country: 'India',
+    state_id: 1, city_id: 2, district: 'West', pincode: '110018',
+    permanent_address: 'Perm addr', current_address: 'Curr addr',
+    id_proof_type: 'Aadhaar', id_proof_number: 'X123', aadhaar: '1234 1234 1234', pan: 'abcde1234f', passport: 'P123',
+    qualification: 'B.A.', institution: 'DU', board_university: 'Delhi University', passing_year: 2022, previous_institution: 'ABC School',
+  };
+
+  it('persists the full profile, mints Student ID + Enrollment No from the numbering series', async () => {
+    const { svc, issued } = make();
+    const out = await svc.create(FULL, { id: 5 }, scopeAll);
+    expect((out as any).student_no).toBe('STU-0001');
+    expect((out as any).enrollment_no).toBe('EN-0001');
+    const ins = issued.find((i) => /INSERT INTO student/.test(i.sql))!;
+    expect(ins).toBeTruthy();
+    // every section reaches the INSERT column list
+    for (const col of ['full_name', 'dob', 'gender', 'father_name', 'guardian_relation',
+      'state_id', 'city_id', 'pincode', 'aadhaar', 'pan', 'qualification', 'passing_year',
+      'student_no', 'enrollment_no']) {
+      expect(ins.sql).toMatch(new RegExp(`\\b${col}\\b`));
+    }
+    // phones normalised to E.164; PAN upper-cased; aadhaar spaces stripped
+    expect(ins.params).toContain('+919810000001');
+    expect(ins.params).toContain('ABCDE1234F');
+    expect(ins.params).toContain('123412341234');
+  });
+
+  it('a MANUAL Enrollment No is used as-is (auto only when blank)', async () => {
+    const { svc, issued } = make();
+    await svc.create({ ...FULL, enrollment_no: 'MYENR-9' }, { id: 5 }, scopeAll);
+    const ins = issued.find((i) => /INSERT INTO student/.test(i.sql))!;
+    expect(ins.params).toContain('MYENR-9');
+  });
+
+  it('rejects a future Date of Birth and a bad Indian pincode', async () => {
+    const { svc } = make();
+    await expect(svc.create({ ...FULL, dob: '2999-01-01' }, { id: 5 }, scopeAll)).rejects.toThrow(/future/i);
+    await expect(svc.create({ ...FULL, pincode: '123' }, { id: 5 }, scopeAll)).rejects.toThrow(/pincode/i);
+  });
+
+  it('requires a name, branch and vertical', async () => {
+    const { svc } = make();
+    await expect(svc.create({ branch_id: 9, vertical_id: 3 }, { id: 5 }, scopeAll)).rejects.toThrow();
+    await expect(svc.create({ full_name: 'X' }, { id: 5 }, scopeAll)).rejects.toThrow();
+  });
+
+  it('never LOGS the sensitive ID-proof fields (aadhaar / pan / passport)', async () => {
+    const spies = ['log', 'info', 'warn', 'error', 'debug'].map((m) =>
+      jest.spyOn(console, m as any).mockImplementation(() => undefined));
+    const { svc } = make();
+    await svc.create(FULL, { id: 5 }, scopeAll);
+    const printed = spies.flatMap((sp) => sp.mock.calls.flat()).map((x) => String(x)).join(' | ');
+    for (const secret of ['123412341234', 'ABCDE1234F', 'P123']) {
+      expect(printed).not.toContain(secret);
+    }
+    spies.forEach((sp) => sp.mockRestore());
   });
 });
 

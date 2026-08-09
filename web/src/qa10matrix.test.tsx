@@ -47,7 +47,7 @@ import { AddModal, CampaignModal, SPEC_FORMS, SAVERS, EditSpec } from './forms';
 import { JourneyModal, TemplateModal, SmsTemplateModal, ChannelConfigModal, BlastModal, ProviderSpec } from './sprint4';
 import { RuleModal, PolicyModal, EventModal, BandModal, walkInEditSpec, referralEditSpec } from './sprint3';
 import { CollectModal, EnrolmentModal, NumberingModal, QuotationModal, TargetModal } from './sprint5';
-import { BatchModal } from './dyn';
+import { BatchModal, StudentModal } from './dyn';
 import {
   AnnouncementModal, ArticleModal, ChannelModal, NoteModal, ScheduleModal, ShareModal,
 } from './sprint6';
@@ -879,6 +879,21 @@ const bespokeCases: Case[] = [
     name: 'New batch  [students.batches]',
     render: () => render(<BatchModal onClose={() => undefined} onSaved={() => undefined} />),
     path: /^\/batches$/,
+  },
+
+  /* ---- Phase 2 — the full Student Admission form (Identity/Contact/Guardian/Address/ID/Education) ---- */
+  {
+    // The big one. Every rendered field must reach POST /students or be allow-listed with a
+    // reason. Student ID is auto (no control); Current Address is coupled to "Same as
+    // Permanent" (disabled while ticked), so the generic single-field probe cannot drive it —
+    // its independent persistence + the copy are proven in studentform.test.tsx instead.
+    name: 'New student  [students.all]',
+    render: () => render(<StudentModal onClose={() => undefined} onSaved={() => undefined} />),
+    allow: {
+      'Student ID': 'auto — minted by the numbering series on save; shown read-only, never typed by the user',
+      'Current Address': "coupled to the 'Same as Permanent' checkbox: while ticked, Current mirrors Permanent and the textarea is disabled, so the generic differential probe cannot change it. Its independent save AND the copy behaviour are proven directly in studentform.test.tsx",
+    },
+    path: /^\/students$/,
   },
 ];
 

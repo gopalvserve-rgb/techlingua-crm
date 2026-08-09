@@ -50,6 +50,14 @@ export class StudentController {
     return this.svc.convert(dto, me, scope);
   }
 
+  /** ADD a student directly (the Admission form) — lead-less, full profile, auto Student ID +
+   *  Enrollment No. Guarded by student.create (the same key Convert uses). */
+  @Post()
+  @RequirePermission('student.create')
+  create(@Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.create(dto, me, scope);
+  }
+
   @Patch(':id')
   @RequirePermission('student.update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {

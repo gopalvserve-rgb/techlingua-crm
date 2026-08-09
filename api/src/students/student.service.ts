@@ -1,32 +1,34 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
-import { assertDateRange } from '../common/date.util';
+import { assertDateRange, requireDateString } from '../common/date.util';
+import { normalizePhone } from '../common/phone.util';
+import { NumberingService } from '../numbering/numbering.service';
 
 /**
- * STUDENT — the PHASE-2 student profile produced by winning a lead (§5 lead→student).
+ * STUDENT — the PHASE-2 student profile. A student is born TWO ways:
+ *   (a) CONVERT a won lead (§5 lead→student) — carries the lead's name/phones/email/scope/
+ *       course/owner and links the enrolment seam; or
+ *   (b) ADD directly (the Admission form) — a lead-less student the desk types in full.
+ *
+ * Either way the profile is the SAME wide row (migration 046): Identity / Contact /
+ * Guardian / Address / ID Proofs / Education. Student ID and Enrollment No are minted from
+ * the numbering series (kinds 'student' / 'enrollment'), inside the create transaction, so a
+ * rolled-back create never burns a number (the enrolment-number rule, mirrored).
  *
  * =============================================================================
  * HOW A STUDENT RELATES TO AN ENROLMENT — the seam Sprint 5 left (029 §"THE SEAMS")
  * =============================================================================
- * Sprint 5's `enrolment` is the SALE CLOSURE and already carries everything about the
- * sale (course, fee, plan, branch, vertical, counsellor, the lead it came from) plus two
- * empty seam columns: `student_profile_id` and `batch_id`. Phase 2 FILLS them — it does
- * not copy or re-model the enrolment.
+ * Sprint 5's `enrolment` is the SALE CLOSURE and carries two empty seam columns:
+ * `student_profile_id` and `batch_id`. A CONVERT fills student_profile_id both ways.
  *
- *   normal path  : a WON lead that has an enrolment ->
- *                    student.enrolment_id  -> enrolment  (link back)
- *                    enrolment.student_profile_id -> student  (link forward)
- *   early path   : a WON lead with no enrolment yet -> student.enrolment_id = NULL.
+ * ONE LEAD -> ONE LIVE STUDENT (`uq_student_lead`), so Convert is idempotent. A directly-
+ * added student has lead_id NULL (046 dropped the NOT NULL); NULLs are distinct in the
+ * partial unique index, so any number of lead-less students coexist.
  *
- * ONE LEAD -> ONE LIVE STUDENT, enforced by the partial unique index `uq_student_lead`,
- * the mirror of `uq_enrolment_lead`. "Convert to Student" is therefore IDEMPOTENT: a
- * second press links/returns the existing student, it never makes a second one.
- *
- * WINNING THE LEAD: converting moves the lead to its pipeline's WON stage (same rule as
- * enrolment closure — "the two cannot disagree"). If the pipeline has no won stage we do
- * NOT invent one and do NOT fail (a stage taxonomy must never block conversion).
+ * SENSITIVE FIELDS (aadhaar / pan / passport) are stored as-is and NEVER logged — this
+ * service echoes them only in the row it returns to the authorised caller.
  */
 
 export const STUDENT_SCOPE_COLS: ScopeColumnMap = {
@@ -34,11 +36,16 @@ export const STUDENT_SCOPE_COLS: ScopeColumnMap = {
   vertical: 's.vertical_id', pipeline: 's.pipeline_id', campaign: 's.campaign_id',
 };
 
+/** The Guardian Relation and ID Proof and Gender option sets the form offers. Kept lax
+ *  (stored as-is) — the client may add options — but the known set documents intent. */
+const GENDERS = ['Male', 'Female', 'Other'];
+
 @Injectable()
 export class StudentService {
   constructor(
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
+    private readonly numbering: NumberingService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -56,7 +63,6 @@ export class StudentService {
     const params: unknown[] = [];
     const where = [`s.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, STUDENT_SCOPE_COLS, params)];
 
-    // Global-scope + in-panel multi-select filters (comma-separated ids), same shape leads use.
     const multi = (col: string, raw?: string) => {
       const ids = String(raw ?? '').split(',').map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
       if (!ids.length) return;
@@ -71,11 +77,11 @@ export class StudentService {
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`s.created_at >= $${params.length}::timestamptz`); }
     if (_dr.to) { params.push(_dr.to); where.push(`s.created_at < ($${params.length}::date + 1)`); }
-    if (f.q) { params.push(`%${f.q}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.phone ILIKE $${params.length} OR s.student_no ILIKE $${params.length})`); }
+    if (f.q) { params.push(`%${f.q}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.phone ILIKE $${params.length} OR s.student_no ILIKE $${params.length} OR s.enrollment_no ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 300), 1000));
 
     return this.db.query<any>(
-      `SELECT s.id, s.student_no, s.full_name, s.phone, s.email, s.status,
+      `SELECT s.id, s.student_no, s.enrollment_no, s.full_name, s.phone, s.email, s.status,
               s.branch_id, s.vertical_id, s.course_id, s.batch_id, s.owner_id,
               s.enrolment_id, s.created_at, s.lead_id,
               b.name AS branch_name, v.name AS vertical_name, c.name AS course_name,
@@ -100,7 +106,7 @@ export class StudentService {
     const row = await this.db.one<any>(
       `SELECT s.*, b.name AS branch_name, v.name AS vertical_name, c.name AS course_name,
               u.name AS owner_name, bt.name AS batch_name, e.enrolment_no, e.net_fee_minor,
-              l.full_name AS lead_name
+              l.full_name AS lead_name, st.name AS state_name, ci.name AS city_name
          FROM student s
          LEFT JOIN branch  b  ON b.id = s.branch_id
          LEFT JOIN vertical v ON v.id = s.vertical_id
@@ -109,6 +115,8 @@ export class StudentService {
          LEFT JOIN batch   bt ON bt.id = s.batch_id
          LEFT JOIN enrolment e ON e.id = s.enrolment_id
          LEFT JOIN lead l ON l.id = s.lead_id
+         LEFT JOIN state st ON st.id = s.state_id
+         LEFT JOIN city  ci ON ci.id = s.city_id
         WHERE s.id = $1::bigint AND s.deleted_at IS NULL AND ${w}`,
       params,
     );
@@ -131,8 +139,6 @@ export class StudentService {
 
   /**
    * THE STUDENT DASHBOARD — real numbers from the students/enrolments/fees that exist.
-   * Every count is RBAC-scoped (STUDENT_SCOPE_COLS) and narrowed by the same global-scope
-   * ids + date range the list uses; a metric with no data returns 0/[] (a clean empty state).
    */
   async summary(scope: ResolvedScope, f: {
     branch_id?: string; vertical_id?: string; from?: string; to?: string;
@@ -147,8 +153,6 @@ export class StudentService {
     multi('s.branch_id', f.branch_id);
     multi('s.vertical_id', f.vertical_id);
     const _dr = assertDateRange(f.from, f.to);
-    // The DATE RANGE narrows the "new students" cohort only (like the lead dashboard):
-    // total/active/by-* are all-time within scope; new_in_range honours from/to.
     let rangeFrom: string | null = null; let rangeTo: string | null = null;
     if (_dr.from) { params.push(_dr.from); rangeFrom = `$${params.length}`; }
     if (_dr.to) { params.push(_dr.to); rangeTo = `$${params.length}`; }
@@ -190,8 +194,6 @@ export class StudentService {
          LEFT JOIN m_course c ON c.id = s.course_id
         WHERE ${w} ORDER BY s.created_at DESC, s.id DESC LIMIT 8`, params);
 
-    // FEE COLLECTION summary — real money, joined via the student's linked enrolment to the
-    // LITE fee_receipt rows (Sprint 5). Only students that carry an enrolment contribute.
     const fees = await this.db.one<any>(
       `SELECT COALESCE(sum(fr.amount_minor), 0) AS collected_minor,
               count(DISTINCT fr.enrolment_id) AS paying_students
@@ -220,7 +222,168 @@ export class StudentService {
     };
   }
 
+  /* --------------------------------------------------------- profile mapping */
+
+  /**
+   * The ONE place that maps a form DTO -> student columns, shared by create and update.
+   * Returns [column, value] pairs ONLY for keys the caller actually sent (`!== undefined`),
+   * so a partial PATCH (e.g. the detail modal's `{ status }`) touches nothing else.
+   *
+   * Phones -> E.164 via the shared normaliser (leads' rule). Dates -> validated string or a
+   * clean 400. Sensitive fields (aadhaar/pan/passport) pass through untouched and unlogged.
+   */
+  private profilePairs(dto: any): Array<[string, unknown]> {
+    const out: Array<[string, unknown]> = [];
+    const has = (k: string) => dto && dto[k] !== undefined;
+    const clean = (v: unknown) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+
+    const str = (col: string, k: string, max = 400) => { if (has(k)) { const v = clean(dto[k]); out.push([col, v == null ? null : String(v).slice(0, max)]); } };
+    const phone = (col: string, k: string) => { if (has(k)) { const v = clean(dto[k]); out.push([col, v == null ? null : (normalizePhone(String(v)) ?? String(v))]); } };
+    const date = (col: string, k: string, label: string) => {
+      if (!has(k)) return;
+      const raw = dto[k];
+      if (raw == null || String(raw).trim() === '') { out.push([col, null]); return; }
+      const d = requireDateString(raw, () => { throw new BadRequestException(`${label} is not a valid date.`); });
+      out.push([col, d]);
+    };
+    const fk = (col: string, k: string) => { if (has(k)) { const n = Number(dto[k]); out.push([col, dto[k] == null || dto[k] === '' || !Number.isFinite(n) ? null : n]); } };
+
+    // Identity
+    str('full_name', 'full_name', 160);
+    date('dob', 'dob', 'Date of Birth');
+    if (has('gender')) { const g = clean(dto.gender); out.push(['gender', g && GENDERS.includes(g) ? g : (g || null)]); }
+    str('nationality', 'nationality', 64);
+    date('registration_date', 'registration_date', 'Registration Date');
+    date('admission_date', 'admission_date', 'Admission Date');
+    // Contact
+    phone('phone', 'phone');
+    phone('whatsapp_phone', 'whatsapp_phone');
+    phone('alt_phone', 'alt_phone');
+    str('email', 'email', 160);
+    // Family / Guardian
+    str('father_name', 'father_name', 160);
+    phone('father_mobile', 'father_mobile');
+    str('guardian_name', 'guardian_name', 160);
+    phone('guardian_mobile', 'guardian_mobile');
+    str('guardian_email', 'guardian_email', 160);
+    str('guardian_relation', 'guardian_relation', 24);
+    // Address
+    str('address_line1', 'address_line1', 200);
+    str('address_line2', 'address_line2', 200);
+    str('landmark', 'landmark', 160);
+    str('country', 'country', 80);
+    fk('state_id', 'state_id');
+    fk('city_id', 'city_id');
+    str('district', 'district', 120);
+    str('pincode', 'pincode', 12);
+    str('permanent_address', 'permanent_address', 4000);
+    str('current_address', 'current_address', 4000);
+    // ID Proofs (sensitive — pass through, do not transform beyond trim)
+    str('id_proof_type', 'id_proof_type', 32);
+    str('id_proof_number', 'id_proof_number', 80);
+    if (has('aadhaar')) { const v = clean(dto.aadhaar); out.push(['aadhaar', v == null ? null : String(v).replace(/\s+/g, '')]); }
+    if (has('pan')) { const v = clean(dto.pan); out.push(['pan', v == null ? null : String(v).toUpperCase()]); }
+    str('passport', 'passport', 40);
+    // Education
+    str('qualification', 'qualification', 160);
+    str('institution', 'institution', 200);
+    str('board_university', 'board_university', 200);
+    if (has('passing_year')) { const n = parseInt(String(dto.passing_year), 10); out.push(['passing_year', dto.passing_year == null || dto.passing_year === '' || !Number.isFinite(n) ? null : n]); }
+    str('previous_institution', 'previous_institution', 200);
+
+    return out;
+  }
+
+  /** Cross-field validation the column mapper cannot express on its own. HARD 400s for the
+   *  two the client named (future DOB, India pincode); aadhaar/pan are SOFT (stored as-is). */
+  private validateProfile(pairs: Array<[string, unknown]>) {
+    const get = (c: string) => pairs.find(([col]) => col === c)?.[1];
+    const dob = get('dob');
+    if (dob) {
+      const t = Date.parse(`${dob}T00:00:00Z`);
+      if (Number.isFinite(t) && t > Date.now()) throw new BadRequestException('Date of Birth cannot be in the future.');
+    }
+    const country = get('country');
+    const pincode = get('pincode');
+    const isIndia = country == null || /india/i.test(String(country));
+    if (isIndia && pincode != null && !/^\d{6}$/.test(String(pincode))) {
+      throw new BadRequestException('An Indian pincode must be exactly 6 digits.');
+    }
+    const py = get('passing_year');
+    if (py != null) {
+      const n = Number(py);
+      if (!Number.isInteger(n) || n < 1900 || n > new Date().getFullYear() + 10) {
+        throw new BadRequestException('Passing Year must be a valid year.');
+      }
+    }
+  }
+
   /* --------------------------------------------------------------- mutations */
+
+  /** Vertical must belong to the branch; course (if any) must be active. */
+  private async assertScopeHierarchy(branchId: number, verticalId: number, courseId: number | null) {
+    if (!branchId) throw new BadRequestException('Choose a branch.');
+    if (!verticalId) throw new BadRequestException('Choose a vertical.');
+    const v = await this.db.one<any>(
+      `SELECT id FROM vertical WHERE id = $1::bigint AND branch_id = $2::bigint AND deleted_at IS NULL`,
+      [verticalId, branchId],
+    );
+    if (!v) throw new BadRequestException('That vertical does not belong to the chosen branch.');
+    if (courseId) {
+      const c = await this.db.one<any>(`SELECT id FROM m_course WHERE id = $1::bigint AND is_active`, [courseId]);
+      if (!c) throw new BadRequestException('Choose an active course.');
+    }
+  }
+
+  /**
+   * ADD a student directly (the Admission form) — lead-less. Requires Branch + Vertical and a
+   * name; mints Student ID + Enrollment No from the numbering series inside the transaction
+   * (a rolled-back insert burns no number). Enrollment No may be provided (manual) — then it
+   * is used as-is; blank -> auto.
+   */
+  async create(dto: any, me: { id: number }, scope: ResolvedScope) {
+    const branchId = Number(dto?.branch_id);
+    const verticalId = Number(dto?.vertical_id);
+    const courseId = dto?.course_id ? Number(dto.course_id) : null;
+    await this.assertScopeHierarchy(branchId, verticalId, courseId);
+
+    const pairs = this.profilePairs(dto);
+    const nameFromPairs = pairs.find(([c]) => c === 'full_name')?.[1];
+    if (!nameFromPairs) throw new BadRequestException('Student Full Name is required.');
+    this.validateProfile(pairs);
+
+    const orgId = await this.orgId();
+    const ownerId = dto?.owner_id ? Number(dto.owner_id) : me.id;
+    const manualEnrollment = dto?.enrollment_no != null && String(dto.enrollment_no).trim() !== ''
+      ? String(dto.enrollment_no).trim() : null;
+
+    // Fixed columns every student carries, then the profile columns present in the DTO.
+    // The profile pairs already include full_name/phone/email etc.; strip owner-managed
+    // duplicates so we set each column exactly once.
+    const managed = new Set(['owner_id', 'branch_id', 'vertical_id', 'course_id', 'enrollment_no', 'student_no', 'status']);
+    const profile = pairs.filter(([c]) => !managed.has(c));
+
+    const cols: string[] = ['org_id', 'branch_id', 'vertical_id', 'pipeline_id', 'campaign_id',
+      'course_id', 'owner_id', 'status', 'created_by'];
+    const vals: unknown[] = [orgId, branchId, verticalId,
+      dto?.pipeline_id ? Number(dto.pipeline_id) : null, dto?.campaign_id ? Number(dto.campaign_id) : null,
+      courseId, ownerId, 'active', me.id];
+    for (const [c, v] of profile) { cols.push(c); vals.push(v); }
+
+    const out = await this.db.tx(async (c) => {
+      const studentNo = await this.numbering.allocate('student', { branch_id: branchId, vertical_id: verticalId }, c);
+      const enrollmentNo = manualEnrollment
+        ?? await this.numbering.allocate('enrollment', { branch_id: branchId, vertical_id: verticalId }, c);
+      const allCols = [...cols, 'student_no', 'enrollment_no'];
+      const allVals = [...vals, studentNo, enrollmentNo];
+      const ph = allCols.map((_, i) => `$${i + 1}`).join(', ');
+      const ins = await c.query<{ id: string }>(
+        `INSERT INTO student (${allCols.join(', ')}) VALUES (${ph}) RETURNING id`, allVals as any[],
+      );
+      return { id: Number(ins.rows[0].id), student_no: studentNo, enrollment_no: enrollmentNo };
+    });
+    return out;
+  }
 
   private async leadInScope(leadId: number, scope: ResolvedScope) {
     const params: unknown[] = [leadId];
@@ -230,7 +393,8 @@ export class StudentService {
     }, params);
     const lead = await this.db.one<any>(
       `SELECT l.id, l.org_id, l.branch_id, l.vertical_id, l.pipeline_id, l.campaign_id,
-              l.owner_id, l.team_id, l.full_name, l.phone, l.email, l.course_id, l.stage_id
+              l.owner_id, l.team_id, l.full_name, l.phone, l.email, l.alt_phone, l.whatsapp_phone,
+              l.course_id, l.stage_id
          FROM lead l
         WHERE l.id = $1::bigint AND l.deleted_at IS NULL AND ${lw}`,
       params,
@@ -243,24 +407,22 @@ export class StudentService {
    * CONVERT a lead to a student. Idempotent, RBAC-gated by the controller.
    *   1. lead must be in scope;
    *   2. if already converted -> return the existing student ({ already: true });
-   *   3. else create the student (carry name/phone/email/branch/vertical/course/owner),
-   *      linking the live enrolment if one exists (both directions);
-   *   4. WIN the lead (move to the pipeline's won stage);
-   *   5. write the lead activity. All in ONE transaction.
+   *   3. else create the student, CARRYING the lead's name/primary mobile/whatsapp/alt mobile/
+   *      email/branch/vertical/course/owner (the user completes the rest on Edit), minting
+   *      Student ID + Enrollment No, linking the live enrolment if one exists (both directions);
+   *   4. WIN the lead; 5. write the activity. All in ONE transaction.
    */
   async convert(dto: any, me: { id: number }, scope: ResolvedScope) {
     const leadId = Number(dto?.lead_id);
     if (!leadId) throw new BadRequestException('Choose the lead to convert.');
     const lead = await this.leadInScope(leadId, scope);
 
-    // Idempotency (fast path — outside the tx). The unique index is the real guarantee.
     const existing = await this.db.one<any>(
       `SELECT id, student_no, full_name, status FROM student WHERE lead_id = $1::bigint AND deleted_at IS NULL`,
       [leadId],
     );
     if (existing) return { ...existing, already: true, lead_id: leadId };
 
-    // The live enrolment for this lead, if any (the sale closure to link to).
     const enrolment = await this.db.one<any>(
       `SELECT id, course_id FROM enrolment
         WHERE lead_id = $1::bigint AND deleted_at IS NULL AND status NOT IN ('cancelled', 'rejected')
@@ -273,23 +435,25 @@ export class StudentService {
 
     try {
       const out = await this.db.tx(async (c) => {
+        const studentNo = await this.numbering.allocate('student', { branch_id: Number(lead.branch_id), vertical_id: Number(lead.vertical_id) }, c);
+        const enrollmentNo = await this.numbering.allocate('enrollment', { branch_id: Number(lead.branch_id), vertical_id: Number(lead.vertical_id) }, c);
         const ins = await c.query<{ id: string }>(
-          `INSERT INTO student (org_id, lead_id, enrolment_id, full_name, phone, email,
+          `INSERT INTO student (org_id, lead_id, enrolment_id, student_no, enrollment_no, full_name,
+                                phone, whatsapp_phone, alt_phone, email,
                                 branch_id, vertical_id, pipeline_id, campaign_id, course_id,
                                 owner_id, team_id, status, created_by)
            VALUES ($1::bigint, $2::bigint, $3::bigint, $4, $5, $6,
-                   $7::bigint, $8::bigint, $9::bigint, $10::bigint, $11::bigint,
-                   $12::bigint, $13::bigint, 'active', $14::bigint)
+                   $7, $8, $9, $10,
+                   $11::bigint, $12::bigint, $13::bigint, $14::bigint, $15::bigint,
+                   $16::bigint, $17::bigint, 'active', $18::bigint)
            RETURNING id`,
-          [orgId, leadId, enrolment?.id ?? null, lead.full_name, lead.phone ?? null, lead.email ?? null,
+          [orgId, leadId, enrolment?.id ?? null, studentNo, enrollmentNo, lead.full_name,
+            lead.phone ?? null, lead.whatsapp_phone ?? null, lead.alt_phone ?? null, lead.email ?? null,
             lead.branch_id, lead.vertical_id, lead.pipeline_id ?? null, lead.campaign_id ?? null, courseId,
             ownerId, lead.team_id ?? null, me.id],
         );
         const id = Number(ins.rows[0].id);
-        const studentNo = `STU-${String(id).padStart(5, '0')}`;
-        await c.query(`UPDATE student SET student_no = $2 WHERE id = $1::bigint`, [id, studentNo]);
 
-        // link the enrolment forward (the seam column), if there is one
         if (enrolment?.id) {
           await c.query(
             `UPDATE enrolment SET student_profile_id = $2::bigint, updated_at = now()
@@ -300,12 +464,10 @@ export class StudentService {
 
         await this.winLead(c, lead, me.id, studentNo);
         await this.activity(c, leadId, me.id, `Converted to student ${studentNo}`);
-        return { id, student_no: studentNo };
+        return { id, student_no: studentNo, enrollment_no: enrollmentNo };
       });
       return { ...out, already: false, lead_id: leadId };
     } catch (e) {
-      // uq_student_lead — a genuine double-submit that beat the fast-path read. Return the
-      // student that DID land, not a 500 (idempotency holds under a race too).
       if ((e as { code?: string })?.code === '23505' && String((e as Error).message).includes('uq_student_lead')) {
         const s = await this.db.one<any>(
           `SELECT id, student_no, full_name, status FROM student WHERE lead_id = $1::bigint AND deleted_at IS NULL`,
@@ -317,11 +479,38 @@ export class StudentService {
     }
   }
 
+  /**
+   * UPDATE — the Edit Student form. Accepts the full profile (any subset), plus status and
+   * batch assignment. Every profile column the form sends is persisted; status/batch keep
+   * their existing guards.
+   */
   async update(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
     const cur = await this.get(id, scope);
     const sets: string[] = [];
     const params: unknown[] = [];
     const set = (col: string, val: unknown) => { params.push(val); sets.push(`${col} = $${params.length}`); };
+
+    // Full profile fields (identity/contact/guardian/address/id/education).
+    const pairs = this.profilePairs(dto);
+    this.validateProfile(pairs);
+    for (const [col, val] of pairs) set(col, val);
+
+    // Enrollment No — editable (auto or manual); blank clears to NULL (index tolerates it).
+    if (dto?.enrollment_no !== undefined) {
+      const v = dto.enrollment_no == null || String(dto.enrollment_no).trim() === '' ? null : String(dto.enrollment_no).trim();
+      set('enrollment_no', v);
+    }
+
+    // Scope moves (branch/vertical/course/owner) — allowed on edit, validated as a cascade.
+    if (dto?.branch_id !== undefined || dto?.vertical_id !== undefined) {
+      const branchId = Number(dto.branch_id ?? cur.branch_id);
+      const verticalId = Number(dto.vertical_id ?? cur.vertical_id);
+      const courseId = dto?.course_id !== undefined ? (dto.course_id ? Number(dto.course_id) : null) : (cur.course_id ? Number(cur.course_id) : null);
+      await this.assertScopeHierarchy(branchId, verticalId, courseId);
+      set('branch_id', branchId); set('vertical_id', verticalId);
+    }
+    if (dto?.course_id !== undefined) set('course_id', dto.course_id ? Number(dto.course_id) : null);
+    if (dto?.owner_id !== undefined) set('owner_id', dto.owner_id ? Number(dto.owner_id) : null);
 
     if (dto?.status !== undefined) {
       const st = String(dto.status);
@@ -331,17 +520,19 @@ export class StudentService {
     if (dto?.batch_id !== undefined) {
       const bid = dto.batch_id === null || dto.batch_id === '' ? null : Number(dto.batch_id);
       if (bid != null) {
-        // a batch can only be assigned if it exists AND matches the student's branch+vertical
+        const targetBranch = sets.some((s) => s.startsWith('branch_id')) ? Number(dto.branch_id) : cur.branch_id;
+        const targetVertical = sets.some((s) => s.startsWith('vertical_id')) ? Number(dto.vertical_id) : cur.vertical_id;
         const b = await this.db.one<any>(
           `SELECT id FROM batch WHERE id = $1::bigint AND deleted_at IS NULL
              AND branch_id = $2::bigint AND vertical_id = $3::bigint`,
-          [bid, cur.branch_id, cur.vertical_id],
+          [bid, targetBranch, targetVertical],
         );
         if (!b) throw new BadRequestException('That batch is not in this student\'s branch and vertical.');
       }
       set('batch_id', bid);
     }
     if (dto?.remarks !== undefined) set('remarks', dto.remarks ?? null);
+
     if (!sets.length) return { id, unchanged: true };
     params.push(id);
     await this.db.query(`UPDATE student SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length}::bigint`, params);
@@ -349,7 +540,7 @@ export class StudentService {
   }
 
   async remove(id: number, me: { id: number }, scope: ResolvedScope) {
-    await this.get(id, scope); // scope check + existence
+    await this.get(id, scope);
     await this.db.query(
       `UPDATE student SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint AND deleted_at IS NULL`,
       [id, me.id],
@@ -359,8 +550,6 @@ export class StudentService {
 
   /* ------------------------------------------------------------------ helpers */
 
-  /** Move the lead to its pipeline's WON stage. Copy of EnrolmentService.winLead — the two
-   *  conversions must agree, and neither may invent a stage the client did not configure. */
   private async winLead(
     c: any,
     lead: { id: number; pipeline_id: number | string | null; stage_id: number | string | null },

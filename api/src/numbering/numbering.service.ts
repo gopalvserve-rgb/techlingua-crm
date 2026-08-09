@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -58,6 +58,11 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   lead:      { prefix: 'LD-', reset: 'none', label: 'Leads (not currently numbered)' },
   // Support & Tickets (migration 037) — SUP-#### staff tickets.
   support:   { prefix: 'SUP-', reset: 'none', label: 'Support tickets' },
+  // Phase 2 — Students & Academics. `student` mints the Student ID (STU-), `enrollment`
+  // the academic Enrollment No (EN-). Both allocate per branch/vertical if a more specific
+  // series row exists, org-wide otherwise (the same MOST-SPECIFIC-WINS rule as everything else).
+  student:    { prefix: 'STU-', reset: 'none', label: 'Student IDs' },
+  enrollment: { prefix: 'EN-',  reset: 'none', label: 'Enrollment numbers' },
 };
 
 export interface SeriesRow {

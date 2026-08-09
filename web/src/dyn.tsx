@@ -3762,10 +3762,25 @@ function StudentsList() {
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const canDelete = can('student.delete');
+  const canCreate = can('student.create');
+  const canEdit = can('student.update');
+  const [add, setAdd] = useState(false);
+  const [edit, setEdit] = useState<any | null>(null);
   const del = useDelete('Student', '/students', () => { list.reload(); bump(); });
+  const after = () => { list.reload(); bump(); };
+  // Edit opens on the FULL profile (the row carries only the summary columns).
+  const openEdit = async (st: any) => {
+    try { setEdit(await api.get<any>(`/students/${st.id}`)); }
+    catch { setEdit(st); }
+  };
 
   return (
     <>
+      {canCreate && (
+        <div className="page-actions">
+          <button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New student</button>
+        </div>
+      )}
       <div className="filters">
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
           onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
@@ -3802,17 +3817,279 @@ function StudentsList() {
           fmtFull(st.created_at),
           rowActions({
             onView: () => setView(st),
+            onEdit: canEdit ? () => openEdit(st) : undefined,
             onDelete: canDelete ? () => del.openDelete(Number(st.id), st.full_name) : undefined,
           }),
         ])} />
       {del.deleteModal}
-      {view && <StudentDetailModal student={view} onClose={() => setView(null)} onChanged={() => { list.reload(); bump(); }} />}
+      {view && <StudentDetailModal student={view} onClose={() => setView(null)} onEdit={canEdit ? openEdit : undefined} onChanged={after} />}
+      {add && <StudentModal onClose={() => setAdd(false)} onSaved={after} />}
+      {edit && <StudentModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
     </>
   );
 }
 
+/** GENDER / RELATION / ID-PROOF / QUALIFICATION option sets the Admission form offers. */
+const GENDER_OPTS = ['Male', 'Female', 'Other'];
+const RELATION_OPTS = ['Father', 'Mother', 'Brother', 'Sister', 'Uncle', 'Other'];
+const IDPROOF_OPTS = ['Aadhaar', 'PAN', 'Passport', 'Voter ID', 'Driving Licence', 'Other'];
+
+/**
+ * ADD / EDIT STUDENT — the full Admission form (client, Aug 2026), sectioned into
+ * Identity / Contact / Guardian / Address / ID Proofs / Education. Student ID is minted by
+ * the numbering series (read-only here); Enrollment No is auto OR manual (an editable box,
+ * blank = auto on save). Phones use the international PhoneInput; State → City cascades;
+ * "Same as Permanent" copies Permanent → Current and disables Current.
+ *
+ * Every rendered field maps to the request body (qa/09 matrix) — this is a large form, the
+ * exact phantom-field risk class, so the payload is built field-by-field from `f`.
+ */
+export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onClose?: () => void; onSaved?: () => void }) {
+  const ref = useRef_();
+  const isEdit = !!initial?.id;
+  const d10 = (v: any) => (v ? String(v).slice(0, 10) : '');
+  const [f, setF] = useState<any>(() => ({
+    enrollment_no: initial?.enrollment_no ?? '',
+    full_name: initial?.full_name ?? '',
+    dob: d10(initial?.dob), gender: initial?.gender ?? '', nationality: initial?.nationality ?? (isEdit ? '' : 'Indian'),
+    registration_date: d10(initial?.registration_date), admission_date: d10(initial?.admission_date),
+    phone: initial?.phone ?? '', whatsapp_phone: initial?.whatsapp_phone ?? '', alt_phone: initial?.alt_phone ?? '', email: initial?.email ?? '',
+    father_name: initial?.father_name ?? '', father_mobile: initial?.father_mobile ?? '',
+    guardian_name: initial?.guardian_name ?? '', guardian_mobile: initial?.guardian_mobile ?? '',
+    guardian_email: initial?.guardian_email ?? '', guardian_relation: initial?.guardian_relation ?? '',
+    address_line1: initial?.address_line1 ?? '', address_line2: initial?.address_line2 ?? '', landmark: initial?.landmark ?? '',
+    country: initial?.country ?? (isEdit ? '' : 'India'),
+    state_id: String(initial?.state_id ?? ''), city_id: String(initial?.city_id ?? ''),
+    district: initial?.district ?? '', pincode: initial?.pincode ?? '',
+    permanent_address: initial?.permanent_address ?? '', current_address: initial?.current_address ?? '',
+    id_proof_type: initial?.id_proof_type ?? '', id_proof_number: initial?.id_proof_number ?? '',
+    aadhaar: initial?.aadhaar ?? '', pan: initial?.pan ?? '', passport: initial?.passport ?? '',
+    qualification: initial?.qualification ?? '', institution: initial?.institution ?? '',
+    board_university: initial?.board_university ?? '', passing_year: initial?.passing_year ? String(initial.passing_year) : '',
+    previous_institution: initial?.previous_institution ?? '',
+    branch_id: String(initial?.branch_id ?? ''), vertical_id: String(initial?.vertical_id ?? ''),
+    course_id: String(initial?.course_id ?? ''), owner_id: String(initial?.owner_id ?? ''),
+  }));
+  // "Same as Permanent" starts on only when an existing record already mirrors them.
+  const [same, setSame] = useState<boolean>(!!initial && !!initial.permanent_address && initial.permanent_address === initial.current_address);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const up = (k: string, v: any) => setF((s: any) => ({ ...s, [k]: v }));
+
+  const vOpts = ref.verticals.filter((vt) => !f.branch_id || Number(vt.branch_id) === Number(f.branch_id));
+  const cOpts = ref.courses.filter((c: any) =>
+    (!f.branch_id || Number(c.meta?.branch_id) === Number(f.branch_id))
+    && (!f.vertical_id || Number(c.meta?.vertical_id) === Number(f.vertical_id)));
+  const cityOpts = ref.cities.filter((ci) => !f.state_id || Number(ci.parent_id) === Number(f.state_id));
+  const effectiveCurrent = same ? f.permanent_address : f.current_address;
+
+  const save = async () => {
+    setErr('');
+    if (!f.full_name.trim()) return setErr('Student Full Name is required.');
+    if (!f.branch_id) return setErr('Choose a branch.');
+    if (!f.vertical_id) return setErr('Choose a vertical.');
+    setBusy(true);
+    const num = (v: any) => (v === '' || v == null ? null : Number(v));
+    const body: any = {
+      enrollment_no: f.enrollment_no.trim() || null,
+      full_name: f.full_name.trim(),
+      dob: f.dob || null, gender: f.gender || null, nationality: f.nationality || null,
+      registration_date: f.registration_date || null, admission_date: f.admission_date || null,
+      phone: f.phone || null, whatsapp_phone: f.whatsapp_phone || null, alt_phone: f.alt_phone || null, email: f.email || null,
+      father_name: f.father_name || null, father_mobile: f.father_mobile || null,
+      guardian_name: f.guardian_name || null, guardian_mobile: f.guardian_mobile || null,
+      guardian_email: f.guardian_email || null, guardian_relation: f.guardian_relation || null,
+      address_line1: f.address_line1 || null, address_line2: f.address_line2 || null, landmark: f.landmark || null,
+      country: f.country || null, state_id: num(f.state_id), city_id: num(f.city_id),
+      district: f.district || null, pincode: f.pincode || null,
+      permanent_address: f.permanent_address || null, current_address: effectiveCurrent || null,
+      id_proof_type: f.id_proof_type || null, id_proof_number: f.id_proof_number || null,
+      aadhaar: f.aadhaar || null, pan: f.pan || null, passport: f.passport || null,
+      qualification: f.qualification || null, institution: f.institution || null,
+      board_university: f.board_university || null, passing_year: f.passing_year || null, previous_institution: f.previous_institution || null,
+      branch_id: num(f.branch_id), vertical_id: num(f.vertical_id), course_id: num(f.course_id), owner_id: num(f.owner_id),
+    };
+    try {
+      if (isEdit) await api.patch(`/students/${initial.id}`, body);
+      else await api.post('/students', body);
+      toast(isEdit ? 'Student updated' : 'Student added');
+      onSaved?.(); onClose?.();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  const Txt = (label: string, k: string, opts: { req?: boolean; type?: string; ph?: string } = {}) => (
+    <div className="fld">
+      <label htmlFor={`st-${k}`}>{label}{opts.req ? <span className="star"> *</span> : null}</label>
+      <input id={`st-${k}`} className="ainp" type={opts.type ?? 'text'} value={f[k]} placeholder={opts.ph}
+        onChange={(e) => up(k, e.target.value)} />
+    </div>
+  );
+  const Phone = (label: string, k: string) => (
+    <div className="fld">
+      <label htmlFor={`st-${k}`}>{label}</label>
+      <PhoneInput value={f[k]} onChange={(v) => up(k, v)} placeholder={label} />
+    </div>
+  );
+  const Sel = (label: string, k: string, options: string[], ph = '— Select —') => (
+    <div className="fld">
+      <label htmlFor={`st-${k}`}>{label}</label>
+      <select id={`st-${k}`} className="ainp" value={f[k]} onChange={(e) => up(k, e.target.value)}>
+        <option value="">{ph}</option>
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 760 }}>
+        <div className="ah">
+          <h3><Ic k="students" />{isEdit ? 'Edit student' : 'New student'}</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          {/* -------------------------------- Identity -------------------------------- */}
+          <div className="sec-title">Identity</div>
+          <div className="form-grid">
+            <div className="fld">
+              <label>Student ID</label>
+              <input className="ainp" value={isEdit ? (initial?.student_no ?? '') : ''} placeholder="Auto — assigned on save" readOnly disabled />
+            </div>
+            {Txt('Enrollment No.', 'enrollment_no', { ph: 'Auto if left blank' })}
+            {Txt('Student Full Name', 'full_name', { req: true, ph: 'Full name' })}
+            {Txt('Date of Birth', 'dob', { type: 'date' })}
+            {Sel('Gender', 'gender', GENDER_OPTS)}
+            {Txt('Nationality', 'nationality', { ph: 'Indian' })}
+            {Txt('Registration Date', 'registration_date', { type: 'date' })}
+            {Txt('Admission Date', 'admission_date', { type: 'date' })}
+          </div>
+          {/* --------------------- Branch / Vertical / Course / Owner ------------------ */}
+          <div className="sec-title">Placement</div>
+          <div className="form-grid">
+            <div className="fld">
+              <label htmlFor="st-branch">Branch<span className="star"> *</span></label>
+              <select id="st-branch" className="ainp" value={f.branch_id}
+                onChange={(e) => setF((s: any) => ({ ...s, branch_id: e.target.value, vertical_id: '', course_id: '' }))}>
+                <option value="">— Select branch —</option>
+                {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="st-vertical">Vertical<span className="star"> *</span></label>
+              <select id="st-vertical" className="ainp" value={f.vertical_id} disabled={!f.branch_id}
+                onChange={(e) => setF((s: any) => ({ ...s, vertical_id: e.target.value, course_id: '' }))}>
+                <option value="">{f.branch_id ? '— Select vertical —' : 'Choose a branch first'}</option>
+                {vOpts.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="st-course">Course</label>
+              <select id="st-course" className="ainp" value={f.course_id} disabled={!f.vertical_id}
+                onChange={(e) => up('course_id', e.target.value)}>
+                <option value="">{f.vertical_id ? '— Select course —' : 'Choose a vertical first'}</option>
+                {cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="st-owner">Owner</label>
+              <select id="st-owner" className="ainp" value={f.owner_id} onChange={(e) => up('owner_id', e.target.value)}>
+                <option value="">— Unassigned —</option>
+                {selectableUsers(ref.users, f.owner_id).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+          </div>
+          {/* -------------------------------- Contact --------------------------------- */}
+          <div className="sec-title">Contact</div>
+          <div className="form-grid">
+            {Phone('Primary Mobile', 'phone')}
+            {Phone('WhatsApp Number', 'whatsapp_phone')}
+            {Phone('Alternate Mobile', 'alt_phone')}
+            {Txt('Email', 'email', { type: 'email', ph: 'name@example.com' })}
+          </div>
+          {/* ---------------------------- Family / Guardian --------------------------- */}
+          <div className="sec-title">Family / Guardian</div>
+          <div className="form-grid">
+            {Txt('Father Name', 'father_name')}
+            {Phone('Father Mobile', 'father_mobile')}
+            {Txt('Guardian Name', 'guardian_name')}
+            {Phone('Guardian Mobile', 'guardian_mobile')}
+            {Txt('Guardian Email', 'guardian_email', { type: 'email' })}
+            {Sel('Guardian Relation', 'guardian_relation', RELATION_OPTS)}
+          </div>
+          {/* -------------------------------- Address --------------------------------- */}
+          <div className="sec-title">Address</div>
+          <div className="form-grid">
+            {Txt('Address Line 1', 'address_line1')}
+            {Txt('Address Line 2', 'address_line2')}
+            {Txt('Landmark', 'landmark')}
+            {Txt('Country', 'country', { ph: 'India' })}
+            <div className="fld">
+              <label htmlFor="st-state">State</label>
+              <select id="st-state" className="ainp" value={f.state_id}
+                onChange={(e) => setF((s: any) => ({ ...s, state_id: e.target.value, city_id: '' }))}>
+                <option value="">— Select state —</option>
+                {ref.states.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="st-city">City</label>
+              <select id="st-city" className="ainp" value={f.city_id} disabled={!f.state_id}
+                onChange={(e) => up('city_id', e.target.value)}>
+                <option value="">{f.state_id ? '— Select city —' : 'Choose a state first'}</option>
+                {cityOpts.map((ci) => <option key={ci.id} value={ci.id}>{ci.name}</option>)}
+              </select>
+            </div>
+            {Txt('District', 'district')}
+            {Txt('Pincode', 'pincode', { ph: '6 digits' })}
+          </div>
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr' }}>
+            <div className="fld">
+              <label htmlFor="st-perm">Permanent Address</label>
+              <textarea id="st-perm" className="ainp" rows={2} value={f.permanent_address} onChange={(e) => up('permanent_address', e.target.value)} />
+            </div>
+            <div className="fld">
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <input type="checkbox" checked={same} onChange={(e) => setSame(e.target.checked)} />
+                Same as Permanent
+              </label>
+            </div>
+            <div className="fld">
+              <label htmlFor="st-curr">Current Address</label>
+              <textarea id="st-curr" className="ainp" rows={2} value={effectiveCurrent} disabled={same}
+                onChange={(e) => up('current_address', e.target.value)} />
+            </div>
+          </div>
+          {/* -------------------------------- ID Proofs ------------------------------- */}
+          <div className="sec-title">ID Proofs</div>
+          <div className="form-grid">
+            {Sel('ID Proof Type', 'id_proof_type', IDPROOF_OPTS)}
+            {Txt('ID Proof Number', 'id_proof_number')}
+            {Txt('Aadhaar Number', 'aadhaar', { ph: '12 digits' })}
+            {Txt('PAN Number', 'pan', { ph: 'ABCDE1234F' })}
+            {Txt('Passport Number', 'passport')}
+          </div>
+          {/* -------------------------------- Education ------------------------------- */}
+          <div className="sec-title">Education</div>
+          <div className="form-grid">
+            {Txt('Highest Qualification', 'qualification')}
+            {Txt('Institution Name', 'institution')}
+            {Txt('Board/University', 'board_university')}
+            {Txt('Passing Year', 'passing_year', { type: 'number', ph: 'e.g. 2022' })}
+            {Txt('Previous Institution', 'previous_institution')}
+          </div>
+          {err && <div className="form-err" style={{ marginTop: 8 }}>{err}</div>}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : (isEdit ? 'Save student' : 'Add student')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Student detail — profile + status toggle + assign-to-batch (batches in the same branch/vertical). */
-function StudentDetailModal({ student, onClose, onChanged }: { student: any; onClose: () => void; onChanged: () => void }) {
+function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void }) {
   const { can } = useAuth();
   const canEdit = can('student.update');
   const [full, setFull] = useState<any>(student);
@@ -3839,20 +4116,74 @@ function StudentDetailModal({ student, onClose, onChanged }: { student: any; onC
     catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
   };
 
+  const dash = (v: any) => (v == null || v === '' ? '—' : v);
   return (
-    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={640}>
-      <Section title="Profile">
+    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={680}>
+      {onEdit && (
+        <div className="page-actions" style={{ marginBottom: 8 }}>
+          <button className="btn" onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>
+        </div>
+      )}
+      <Section title="Identity">
         <KV rows={[
           ['Student ID', <span className="mono">{full.student_no ?? '—'}</span>],
+          ['Enrollment No.', <span className="mono">{dash(full.enrollment_no)}</span>],
           ['Name', full.full_name],
-          ['Phone', <span className="mono">{full.phone ?? '—'}</span>],
-          ['Email', full.email ?? '—'],
+          ['Date of Birth', dash(full.dob ? String(full.dob).slice(0, 10) : '')],
+          ['Gender', dash(full.gender)],
+          ['Nationality', dash(full.nationality)],
+          ['Registration Date', dash(full.registration_date ? String(full.registration_date).slice(0, 10) : '')],
+          ['Admission Date', dash(full.admission_date ? String(full.admission_date).slice(0, 10) : '')],
+          ['Status', renderCell(studentStatusCell(full.status))],
+        ]} />
+      </Section>
+      <Section title="Placement & Contact">
+        <KV rows={[
           ['Branch', full.branch_name ?? '—'],
           ['Vertical', full.vertical_name ?? '—'],
           ['Course', full.course_name ?? '—'],
           ['Owner', full.owner_name ?? '—'],
+          ['Primary Mobile', <span className="mono">{dash(full.phone)}</span>],
+          ['WhatsApp', <span className="mono">{dash(full.whatsapp_phone)}</span>],
+          ['Alternate Mobile', <span className="mono">{dash(full.alt_phone)}</span>],
+          ['Email', dash(full.email)],
           ['Enrolment', full.enrolment_no ? <span className="mono">{full.enrolment_no}</span> : 'Not linked to an enrolment'],
-          ['Status', renderCell(studentStatusCell(full.status))],
+        ]} />
+      </Section>
+      <Section title="Family / Guardian">
+        <KV rows={[
+          ['Father Name', dash(full.father_name)],
+          ['Father Mobile', <span className="mono">{dash(full.father_mobile)}</span>],
+          ['Guardian Name', dash(full.guardian_name)],
+          ['Guardian Mobile', <span className="mono">{dash(full.guardian_mobile)}</span>],
+          ['Guardian Email', dash(full.guardian_email)],
+          ['Guardian Relation', dash(full.guardian_relation)],
+        ]} />
+      </Section>
+      <Section title="Address">
+        <KV rows={[
+          ['Address Line 1', dash(full.address_line1)],
+          ['Address Line 2', dash(full.address_line2)],
+          ['Landmark', dash(full.landmark)],
+          ['City / State', `${dash(full.city_name)} / ${dash(full.state_name)}`],
+          ['District', dash(full.district)],
+          ['Country', dash(full.country)],
+          ['Pincode', dash(full.pincode)],
+          ['Permanent Address', dash(full.permanent_address)],
+          ['Current Address', dash(full.current_address)],
+        ]} />
+      </Section>
+      <Section title="ID Proofs & Education">
+        <KV rows={[
+          ['ID Proof', `${dash(full.id_proof_type)} ${full.id_proof_number ? '· ' + full.id_proof_number : ''}`.trim()],
+          ['Aadhaar', <span className="mono">{dash(full.aadhaar)}</span>],
+          ['PAN', <span className="mono">{dash(full.pan)}</span>],
+          ['Passport', <span className="mono">{dash(full.passport)}</span>],
+          ['Qualification', dash(full.qualification)],
+          ['Institution', dash(full.institution)],
+          ['Board / University', dash(full.board_university)],
+          ['Passing Year', dash(full.passing_year)],
+          ['Previous Institution', dash(full.previous_institution)],
         ]} />
       </Section>
       {canEdit && (
