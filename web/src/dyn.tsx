@@ -190,7 +190,7 @@ function leadRow(l: any): Cell[] {
         {l.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA</span> : null}
         {l.is_flagged && !l.sla_breached
           ? <span className="bdg b-amber" title={l.flag_reason || 'Flagged'}>!</span> : null}
-        {l.is_red_flagged ? <span className="bdg b-rose" title="Red flagged"><Ic k="flag" w={2} /></span> : null}
+        {l.is_red_flagged ? <span className="bdg b-red" title="Red flagged"><Ic k="flag" w={2} /></span> : null}
       </span>) },
     l.owner_name || 'Unassigned',
     { b: [l.stage_name || '—', l.stage_type === 'won' ? 'b-green' : l.stage_type === 'lost' ? 'b-rose' : 'b-cyan'] },
@@ -1200,7 +1200,7 @@ function LeadsAll() {
         {/* Red flag filter (client, Aug 2026) — leads currently red-flagged. */}
         <button className={`fchip${f.redflag ? ' on' : ''}`} data-testid="redflag-filter"
           onClick={() => setF((x) => ({ ...x, redflag: !x.redflag }))}
-          style={f.redflag ? { color: 'var(--danger)', borderColor: 'var(--danger)' } : undefined}>
+          style={f.redflag ? { color: 'var(--red)', borderColor: 'var(--red)' } : undefined}>
           <Ic k="flag" />Red flagged
         </button>
       </div>

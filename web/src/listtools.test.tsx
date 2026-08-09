@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { objectsToCsv, downloadMatrixCsv, BulkDeleteModal } from './listtools';
+import { objectsToCsv, toDisplayRows, downloadMatrixCsv, BulkDeleteModal } from './listtools';
 import { APP } from './specs';
 
 vi.mock('./api', () => {
@@ -28,6 +28,39 @@ describe('objectsToCsv — CSV of the current (already filtered) rows', () => {
   it('quotes values containing commas/quotes/newlines', () => {
     const csv = objectsToCsv([{ a: 'x,y', b: 'he said "hi"' }]);
     expect(csv.split('\r\n')[1]).toBe('"x,y","he said ""hi"""');
+  });
+});
+
+describe('toDisplayRows — export shows VALUES, not IDs (client, Aug 2026)', () => {
+  it('drops foreign-key id columns that have a readable *_name sibling, keeps the name', () => {
+    const [row] = toDisplayRows([
+      { id: 5, name: 'Meta Ads', owner_id: 12, owner_name: 'PRIYANKA',
+        branch_id: 10, branch_name: 'Janakpuri', status_id: 1, status_name: 'New',
+        source_id: 62, source_name: 'Transferred in' },
+    ]);
+    expect(row).not.toHaveProperty('owner_id');
+    expect(row).not.toHaveProperty('branch_id');
+    expect(row).not.toHaveProperty('status_id');
+    expect(row).not.toHaveProperty('source_id');
+    expect(row).not.toHaveProperty('id');
+    expect(row.owner).toBe('PRIYANKA');
+    expect(row.branch).toBe('Janakpuri');
+    expect(row.status).toBe('New');
+    expect(row.source).toBe('Transferred in');
+    expect(row.name).toBe('Meta Ads');
+  });
+
+  it('the CSV the user downloads carries names, never the ids', () => {
+    const csv = objectsToCsv(toDisplayRows([
+      { id: 1, campaign: 'Meta Jul', owner_id: 7, owner_name: 'Asha', branch_id: 3, branch_name: 'Delhi' },
+    ]));
+    const header = csv.split('\r\n')[0];
+    const first = csv.split('\r\n')[1];
+    expect(header).not.toMatch(/(^|,)owner_id(,|$)/);
+    expect(header).not.toMatch(/(^|,)branch_id(,|$)/);
+    expect(first).toContain('Asha');
+    expect(first).toContain('Delhi');
+    expect(first).not.toMatch(/(^|,)7(,|$)/);
   });
 });
 

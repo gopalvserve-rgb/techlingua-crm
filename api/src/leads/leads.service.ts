@@ -291,7 +291,11 @@ export class LeadsService {
     return { ids, total: total?.n ?? 0, capped: (total?.n ?? 0) > ids.length };
   }
 
-  /** Rows for the CSV export — same filters + record scope as list(), capped at BULK_MAX. */
+  /** Rows for the CSV export — same filters + record scope as list(), capped at BULK_MAX.
+   *  Client (Aug 2026): the CSV must read the way the screen does — every column is a NAME /
+   *  label / formatted value, never a bare foreign-key id. We keep selecting the denormalised
+   *  *_name columns (owner_name, branch_name, status_name, …) and project each row onto an
+   *  ordered set of display columns, expanding lead.custom_fields by their admin-defined labels. */
   async exportRows(scope: ResolvedScope, f: LeadFilters) {
     const params: unknown[] = [];
     const cond = this.leadFilterWhere(scope, f, params);
@@ -299,7 +303,79 @@ export class LeadsService {
     const rows = await this.db.query(
       `${LEAD_SELECT} WHERE ${cond} ORDER BY l.created_at DESC LIMIT $${params.length}`, params,
     );
-    return { rows, count: rows.length, capped: rows.length >= LeadsService.BULK_MAX };
+    // custom-field DEFINITIONS for leads → export their VALUES under the human label.
+    const cfDefs = await this.db.query<{ field_key: string; label: string; data_type: string }>(
+      `SELECT field_key, label, data_type FROM custom_field_def
+        WHERE entity = 'lead' AND deleted_at IS NULL AND is_active
+        ORDER BY sort_order ASC, id ASC`,
+    );
+    const out = rows.map((r) => LeadsService.toExportRow(r as Record<string, unknown>, cfDefs));
+    return { rows: out, count: out.length, capped: rows.length >= LeadsService.BULK_MAX };
+  }
+
+  /** Title-case a snake/lower code for display ("hot" → "Hot", "high" → "High"). */
+  private static titleCase(v: unknown): string {
+    const s = v == null ? '' : String(v).trim();
+    if (!s) return '';
+    return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  /** Format a timestamp as IST "dd/mm/yyyy, hh:mm" (blank when empty/invalid). */
+  private static fmtDateTime(v: unknown): string {
+    if (v == null || v === '') return '';
+    const d = new Date(v as string);
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleString('en-GB', {
+      timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  }
+
+  private static yesNo(v: unknown): string { return v ? 'Yes' : 'No'; }
+
+  /** Project a raw LEAD_SELECT row → ordered, human-readable export columns (names, not ids). */
+  private static toExportRow(
+    r: Record<string, unknown>,
+    cfDefs: { field_key: string; label: string; data_type: string }[],
+  ): Record<string, string | number> {
+    const TEMP: Record<string, string> = { hot: 'Hot', warm: 'Warm', cold: 'Cold' };
+    const temp = r.temperature != null && r.temperature !== ''
+      ? (TEMP[String(r.temperature).toLowerCase()] ?? LeadsService.titleCase(r.temperature)) : '';
+    const out: Record<string, string | number> = {
+      'Name': (r.full_name as string) ?? '',
+      'Phone': (r.phone as string) ?? '',
+      'Alt Phone': (r.alt_phone as string) ?? '',
+      'WhatsApp': (r.whatsapp_phone as string) ?? '',
+      'Email': (r.email as string) ?? '',
+      'Owner': (r.owner_name as string) ?? '',
+      'Branch': (r.branch_name as string) ?? '',
+      'Vertical': (r.vertical_name as string) ?? '',
+      'Pipeline': (r.pipeline_name as string) ?? '',
+      'Campaign': (r.campaign_name as string) ?? '',
+      'Source': (r.source_name as string) ?? '',
+      'Stage': (r.stage_name as string) ?? '',
+      'Status': (r.status_name as string) ?? '',
+      'Course': (r.course_name as string) ?? '',
+      'City': (r.city_name as string) ?? '',
+      'Temperature': temp,
+      'Priority': LeadsService.titleCase(r.priority),
+      'Score': (r.score as number) ?? 0,
+      'Duplicate': LeadsService.yesNo(r.is_duplicate),
+      'Red Flagged': LeadsService.yesNo(r.is_red_flagged),
+      'Paused': LeadsService.yesNo(r.paused),
+      'Next Follow-up': LeadsService.fmtDateTime(r.next_follow_up_at),
+      'Last Activity': LeadsService.fmtDateTime(r.last_activity_at),
+      'Created At': LeadsService.fmtDateTime(r.created_at),
+      'Updated At': LeadsService.fmtDateTime(r.updated_at),
+    };
+    const cf = (r.custom_fields && typeof r.custom_fields === 'object' ? r.custom_fields : {}) as Record<string, unknown>;
+    for (const d of cfDefs) {
+      let val = cf[d.field_key];
+      if (Array.isArray(val)) val = val.join('; ');
+      else if (d.data_type === 'bool') val = val ? 'Yes' : 'No';
+      out[d.label] = val == null ? '' : String(val);
+    }
+    return out;
   }
 
   async get(id: number) {

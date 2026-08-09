@@ -171,7 +171,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                 ? <span className="bdg b-amber" title={lead.flag_reason || 'Flagged'}>{lead.flag_reason || 'Flagged'}</span>
                 : null}
               {lead.is_red_flagged
-                ? <span className="bdg b-rose" title="Red flagged"><Ic k="flag" w={2} /> Red flag</span>
+                ? <span className="bdg b-red" title="Red flagged"><Ic k="flag" w={2} /> Red flag</span>
                 : null}
             </div>
           </div>
@@ -188,7 +188,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           {can('lead.transfer') && <button className="qa" onClick={() => setTransfer(true)}><Ic k="swap" />Transfer</button>}
           {/* Aug 2026 — RED FLAG: type a remark; records a red-flag entry + timeline + flag state. */}
           {canFlag && <button className="qa" onClick={() => setRedFlag(true)}
-            style={lead.is_red_flagged ? { color: 'var(--danger)' } : undefined}>
+            style={lead.is_red_flagged ? { color: 'var(--red)' } : undefined}>
             <Ic k="flag" />{lead.is_red_flagged ? 'Red flag' : 'Red flag'}</button>}
           {/* Phase 2 — convert this lead to a STUDENT (creates the student record + marks the lead WON). */}
           {can('student.create') && <button className="qa" onClick={() => setConvert(true)}><Ic k="students" />Convert to Student</button>}
@@ -353,7 +353,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             <div className="seltabs">
               {([['activity', 'Activity'], ['notes', 'Notes'], ['redflag', 'Red Flag'], ['calls', 'Calls'], ['whatsapp', 'WhatsApp']] as const).map(([t, lbl]) => (
                 <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-                  {t === 'redflag' && lead.is_red_flagged ? <span style={{ color: 'var(--danger)', marginRight: 4 }}>●</span> : null}{lbl}
+                  {t === 'redflag' && lead.is_red_flagged ? <span style={{ color: 'var(--red)', marginRight: 4 }}>●</span> : null}{lbl}
                 </button>
               ))}
             </div>
@@ -402,7 +402,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                       <input placeholder="Why is this lead red-flagged\u2026" value={rfText}
                         onChange={(e) => setRfText(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') addRedFlag(); }} />
-                      <button className="bdg b-rose" onClick={addRedFlag} style={{ cursor: 'pointer' }}>Flag</button>
+                      <button className="bdg b-red" onClick={addRedFlag} style={{ cursor: 'pointer' }}>Flag</button>
                       {lead.is_red_flagged && (
                         <button className="bdg b-gray" onClick={clearRedFlag} style={{ cursor: 'pointer' }} title="Clear the red-flag state (keeps the history)">Clear flag</button>
                       )}
@@ -413,7 +413,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
                   {((rfList ?? lead.red_flags) ?? []).length === 0 && <div className="empty-note">No red flags on this lead</div>}
                   {((rfList ?? lead.red_flags) ?? []).map((r: any) => (
                     <div className="tl-item" key={r.id}>
-                      <div className="tt" style={{ color: 'var(--danger)' }}><Ic k="flag" w={2} /> {r.remark}</div>
+                      <div className="tt" style={{ color: 'var(--red)' }}><Ic k="flag" w={2} /> {r.remark}</div>
                       <div className="td">{r.created_by_name || 'Unknown'}</div>
                       <div className="tm">{fmtDT(r.created_at)}</div>
                     </div>
@@ -561,7 +561,7 @@ export function RedFlagModal({ leadId, leadName, flagged, onClose, onDone }:
   return (
     <div className="add-scrim" style={{ zIndex: 300 }}>
       <div className="add-modal" style={{ width: 440 }}>
-        <div className="ah"><h3 style={{ color: 'var(--danger)' }}><Ic k="flag" />Red flag lead</h3>
+        <div className="ah"><h3 style={{ color: 'var(--red)' }}><Ic k="flag" />Red flag lead</h3>
           <button className="ax" onClick={onClose}><Ic k="x" /></button></div>
         <div className="abody">
           <div className="fld">
@@ -577,7 +577,7 @@ export function RedFlagModal({ leadId, leadName, flagged, onClose, onDone }:
         <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={submit} disabled={busy || !remark.trim()}
-            style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}><Ic k="flag" />Red flag</button>
+            style={{ background: 'var(--red)', borderColor: 'var(--red)' }}><Ic k="flag" />Red flag</button>
         </div>
       </div>
     </div>

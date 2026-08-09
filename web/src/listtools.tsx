@@ -41,9 +41,49 @@ export function objectsToCsv(rows: Record<string, any>[]): string {
   return lines.join('\r\n');
 }
 
+/**
+ * DISPLAY projection for exports (client, Aug 2026 — export shows VALUES, not IDs).
+ * The list endpoints denormalise names alongside their foreign keys (owner_id + owner_name,
+ * branch_id + branch_name, status_id + status_name, …). A raw dump therefore leaks bare numeric
+ * ids into the CSV. This maps every row to what the table actually SHOWS: it drops any id column
+ * that has a readable sibling (`x_id` when `x` / `x_name` / `x_label` / `x_code` exists, and the
+ * primary `id`), plus obvious internal columns, and renames `x_name`/`x_label` → `x` so a header
+ * reads the way it does on screen. Generic: every client-side list export runs through it, so the
+ * fix applies to Campaigns, Users, Sources, Courses, Students, … without touching each call site.
+ */
+const INTERNAL_EXPORT_COLS = new Set([
+  'org_id', 'deleted_at', 'deleted_by', 'password_hash', 'webhook_token', 'config',
+  'score_breakdown', 'custom_fields',
+]);
+export function toDisplayRows(rows: Record<string, any>[]): Record<string, any>[] {
+  if (!rows || !rows.length) return rows ?? [];
+  return rows.map((r) => {
+    const keys = new Set(Object.keys(r));
+    const out: Record<string, any> = {};
+    for (const k of Object.keys(r)) {
+      const v = (r as any)[k];
+      if (Array.isArray(v) || (v && typeof v === 'object')) continue; // objectsToCsv skips these too
+      if (INTERNAL_EXPORT_COLS.has(k)) continue;
+      // a foreign-key / primary-key id whose readable value is already in the row → drop it
+      if (k === 'id' || k.endsWith('_id')) {
+        const base = k === 'id' ? '' : k.slice(0, -3);
+        const sibs = base
+          ? [base, `${base}_name`, `${base}_label`, `${base}_title`, `${base}_code`]
+          : ['name', 'full_name', 'title', 'label', 'display_name', 'code'];
+        if (sibs.some((sib) => keys.has(sib))) continue;
+      }
+      // header reads like the screen: owner_name → owner, status_label → status
+      let key = k.replace(/_(name|label)$/, '');
+      if (key !== k && (keys.has(key) || key in out)) key = k; // never clobber a real column
+      out[key] = v;
+    }
+    return out;
+  });
+}
+
 export function downloadObjectsCsv(filename: string, rows: Record<string, any>[]): void {
   if (!rows || rows.length === 0) { toast('Nothing to export - the list is empty.', true); return; }
-  triggerCsvDownload(filename, objectsToCsv(rows));
+  triggerCsvDownload(filename, objectsToCsv(toDisplayRows(rows)));
 }
 
 /** Download explicit header/row string matrices (used where a curated column set is wanted). */

@@ -164,7 +164,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   'leads.sources': { title: 'Add Lead Source', fields: [
     F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
-    F('Source Name', 'text', 1), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Source Name', 'text', 1, 0, 'editable'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'leads.pipelinemaster': { title: 'Add Pipeline', fields: [
     F('Pipeline Name', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline Code', 'text', 1, 0, 'e.g. ADM'), F('Pipeline Stages', 'table', 0, 0, 'Default stage set added — edit after create'), F('Pipeline Owner', 'select', 0, 0, 'Users', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
@@ -1044,8 +1044,8 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (edit?.lock?.includes(f.label)) {
       return (
         <div className="ainp" style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-dim)', background: 'var(--surface-3)' }}
-          title="Not editable here">
-          <span>{v || '—'}</span>
+          title="Read-only — derived from the parent record">
+          <Ic k="lock" w={2} /><span>{v || '—'}</span>
         </div>
       );
     }
@@ -1277,7 +1277,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
                 <div className={`fld ${span2 ? 'span2' : ''}`} key={f.label}>
                   <label>
                     {f.label}{f.req && !edit?.optional?.includes(f.label) ? <> <span className="star">*</span></> : null}
-                    {f.hint && !inField ? <span className="fhint">{f.hint}</span> : null}
+                    {edit?.lock?.includes(f.label) ? <span className="fhint">read-only · derived</span> : (f.hint && !inField ? <span className="fhint">{f.hint}</span> : null)}
                     {masterLink(f)}
                     {accessLinks(f)}
                   </label>
