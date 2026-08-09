@@ -30,6 +30,7 @@ import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
 import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelete, BulkBar, downloadObjectsCsv } from './listtools';
 import { RedFlagModal } from './leadsheet';
+import { CustomFieldsAdmin } from './customfields';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
@@ -3686,6 +3687,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   waChat: WaChat,
   supportTickets: SupportTickets,
   crossSell: CrossSell,
+  customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
   featuresPanel: FeaturesPanel,
 };

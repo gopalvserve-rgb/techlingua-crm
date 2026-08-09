@@ -2,6 +2,7 @@
 import { Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Block, KpiItem } from './specs';
 import { Ic, checkS } from './icons';
+import { useColumnVisibility, ColumnsButton } from './colprefs';
 
 /* A table/list cell: plain string, badge {b:[text,klass]}, mono {mono}, or raw node */
 export type Cell = string | number | { b: [string, string] } | { mono: string; dim?: boolean } | { node: ReactNode };
@@ -84,7 +85,7 @@ export interface TableSelect {
   /** toggle all visible rows */ onToggleAll: () => void;
 }
 
-export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill }: {
+export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill, listKey }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
   /** optional per-row tint class (e.g. error-log severity highlighting) */
@@ -97,15 +98,29 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
    *  (`.main--list`), this marks the results card as the fill-remaining-height scroll region so
    *  the filter bar + column header stay fixed and ONLY the table body scrolls. Implies sticky. */
   fill?: boolean;
+  /** Column-visibility chooser (client, Aug 2026): a per-user, per-list key. When set (or a `fill`
+   *  full-page listing, which auto-keys off the title) a "Columns" control appears in the header and
+   *  the user's hidden columns are remembered in localStorage. */
+  listKey?: string;
 }) {
-  const span = cols.length + (select ? 1 : 0);
+  // A real listing shows the Columns chooser: any explicit listKey, or a `fill` full-page list
+  // (auto-keyed off its title). Hooks run unconditionally; when off, every column stays visible.
+  const chooserKey = listKey ?? (fill && title ? title : undefined);
+  const chooserOn = !!chooserKey && cols.length > 1;
+  const cv = useColumnVisibility(chooserOn ? chooserKey : undefined, cols);
+  const shownIdx = chooserOn ? cv.visibleIdx : cols.map((_, i) => i);
+  const shownCols = shownIdx.map((i) => cols[i]);
+  const colsBtn = chooserOn
+    ? <ColumnsButton cols={cols} ids={cv.ids} hidden={cv.hidden} onToggle={cv.toggle} onReset={cv.reset} />
+    : null;
+  const span = shownCols.length + (select ? 1 : 0);
   const scrollCls = (sticky || fill) ? 'tbl-scroll' : 'scroll-x';
   return (
     <div className={`card${fill ? ' tbl-fill' : ''}`}>
-      {title && (
+      {(title || colsBtn) && (
         <div className="card-head">
           <h3><Ic k={icon} />{title}</h3>
-          {more ? <span className="more">{more}</span> : null}
+          {(colsBtn || more) ? <span className="more" style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>{colsBtn}{more}</span> : null}
         </div>
       )}
       <div className={scrollCls}>
@@ -117,7 +132,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
                   checked={select.allChecked} onChange={select.onToggleAll} onClick={(e) => e.stopPropagation()} />
               </th>
             )}
-            {cols.map((c, i) => <th key={i}>{c}</th>)}
+            {shownCols.map((c, i) => <th key={i}>{c}</th>)}
           </tr></thead>
           <tbody>
             {rows.length === 0 ? (
@@ -131,7 +146,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
                       checked={select.checked(ri)} onChange={() => select.onToggle(ri)} />
                   </td>
                 )}
-                {r.map((c, ci) => <td key={ci}>{renderCell(c)}</td>)}
+                {shownIdx.map((ci) => <td key={ci}>{renderCell(r[ci])}</td>)}
               </tr>
             ))}
           </tbody>

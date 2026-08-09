@@ -25,6 +25,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Persist the current user id for per-user client-side prefs (e.g. the column-visibility
+  // chooser keys off tlc.uid). Cleared on logout so a shared machine never leaks prefs.
+  useEffect(() => {
+    try {
+      if (me?.user?.id != null) localStorage.setItem('tlc.uid', String(me.user.id));
+      else localStorage.removeItem('tlc.uid');
+    } catch { /* private mode */ }
+  }, [me]);
+
   useEffect(() => {
     if (!getToken()) {
       setLoading(false);

@@ -303,6 +303,7 @@ export function SupportTickets() {
       </div>
 
       <TableCard
+        listKey="supportTickets"
         title="Support tickets" icon="help"
         cols={['Ticket #', 'Subject', 'Category', 'Priority', 'Status', 'Assignee', 'Created', 'SLA', '']}
         empty="No tickets match — raise one with “Raise a ticket”."

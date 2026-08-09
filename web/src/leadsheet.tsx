@@ -5,6 +5,7 @@ import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
 import { AddMasterModal } from './mastermodal';
 import { AddModal } from './forms';
+import { fetchLeadCfDefs, coerceCf, displayCf, CfDef } from './customfields';
 import { PhoneInput } from './phonefield';
 import { Avatar, TempBadge } from './renderer';
 import { DuplicatePanel } from './mergemodal';
@@ -62,10 +63,12 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const [rfList, setRfList] = useState<any[] | null>(null); // Red Flag conversation (GET /leads/:id/red-flags)
   const canFlag = can('lead.flag');
   const [extra, setExtra] = useState<Record<string, Named[]>>({});
+  const [cfDefs, setCfDefs] = useState<CfDef[]>([]); // lead custom-field definitions (Aug 2026)
 
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
   const loadRedFlags = () => api.get<any[]>(`/leads/${leadId}/red-flags`).then(setRfList).catch(() => setRfList([]));
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [leadId]);
+  useEffect(() => { let live = true; fetchLeadCfDefs().then((d) => { if (live) setCfDefs(d); }); return () => { live = false; }; }, []);
   useEffect(() => { if (tab === 'redflag') loadRedFlags(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, leadId]);
 
   if (!lead) return (
@@ -294,6 +297,52 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
               </div></div>
             </div>
           </div>
+          {cfDefs.length > 0 && (() => {
+            // Custom fields (client, Aug 2026): each definition renders here, prefilled from
+            // lead.custom_fields; edits merge back into the custom_fields JSONB on Save.
+            const bag = (): Record<string, unknown> => ((edits.custom_fields as any) ?? lead.custom_fields ?? {}) as Record<string, unknown>;
+            const cur = (k: string) => bag()[k];
+            const setCf = (k: string, type: CfDef['data_type'], value: unknown) => {
+              const coerced = coerceCf(type, value);
+              setEdits((x) => {
+                const base: Record<string, unknown> = { ...((x.custom_fields as any) ?? lead.custom_fields ?? {}) };
+                if (coerced === undefined) delete base[k]; else base[k] = coerced;
+                return { ...x, custom_fields: base };
+              });
+            };
+            return (
+              <div className="sheet-sec" data-testid="lead-custom-fields">
+                <h5>Custom fields</h5>
+                <div className="kv">
+                  {cfDefs.map((d) => (
+                    <div className="f" key={d.field_key}>
+                      <label>{d.label}{d.required ? <> <span className="star">*</span></> : null}</label>
+                      <div className="iv">
+                        {!canUpdate ? <span>{displayCf(d, cur(d.field_key))}</span>
+                          : d.data_type === 'bool' ? (
+                            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5 }}>
+                              <input type="checkbox" checked={cur(d.field_key) === true || cur(d.field_key) === '1' || cur(d.field_key) === 'true'}
+                                onChange={(e) => setCf(d.field_key, d.data_type, e.target.checked ? '1' : '')} /> Yes
+                            </label>
+                          ) : (d.data_type === 'select' || d.data_type === 'multiselect') ? (
+                            <select value={String(cur(d.field_key) ?? '')} onChange={(e) => setCf(d.field_key, d.data_type, e.target.value)}>
+                              <option value="">—</option>
+                              {(d.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                          ) : d.data_type === 'number' ? (
+                            <input type="number" value={String(cur(d.field_key) ?? '')} onChange={(e) => setCf(d.field_key, d.data_type, e.target.value)} />
+                          ) : d.data_type === 'date' ? (
+                            <input type="date" value={String(cur(d.field_key) ?? '')} onChange={(e) => setCf(d.field_key, d.data_type, e.target.value)} />
+                          ) : (
+                            <input type="text" value={String(cur(d.field_key) ?? '')} onChange={(e) => setCf(d.field_key, d.data_type, e.target.value)} />
+                          )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <DuplicatePanel leadId={lead.id} onChanged={() => { load(); onChanged?.(); }} />
           <div className="sheet-sec">
             <h5>History</h5>

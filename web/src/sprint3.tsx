@@ -1165,6 +1165,7 @@ export function Referrals() {
         <DateRange value={range} onChange={setRange} idPrefix="referrals-dr" />
       </div>
       <TableCard
+        listKey="referrals"
         title="Referral tracker"
         icon="users"
         more={can('referral.create')

@@ -119,6 +119,7 @@ function RulesTab({ courses }: { courses: Array<{ id: number; name: string }> })
         rule fall back to other active courses in their vertical.
       </div>
       <TableCard
+        listKey="crossSellRules"
         title="Cross-sell rules" icon="bolt"
         cols={['Current course', '', 'Suggested course', 'Status', 'Note', '']}
         empty="No rules yet — add one, or suggestions fall back to same-vertical courses."

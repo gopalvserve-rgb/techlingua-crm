@@ -12,6 +12,7 @@ import { AddMasterModal } from './mastermodal';
 import { PhoneInput } from './phonefield';
 import { toast, useRef_, Named, RefData, selectableUsers } from './refdata';
 import { findScreen } from './specs';
+import { fetchLeadCfDefs, collectCf, CfDef } from './customfields';
 
 export interface FormField {
   label: string; type?: string; req?: boolean; opts?: string[] | null; hint?: string;
@@ -30,6 +31,9 @@ export interface FormField {
   /** UAT-R2 #19 — 'today' sets a date/datetime input's `min` to the start of today
    *  (no past dates). Only 'today' is supported today. */
   min?: 'today';
+  /** Custom-field mapping (client, Aug 2026): when set, this field is a lead custom field —
+   *  its VALUE persists into lead.custom_fields under this `cfKey` (see customfields.tsx). */
+  cfKey?: string;
 }
 export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src'], self?: 0 | 1 | boolean, def?: string): FormField =>
   ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src, self: !!self, def });
@@ -325,6 +329,8 @@ type Vals = Record<string, string>;
 type Ids = Record<string, number | undefined>;
 /** Savers may return the created row so callers can auto-select it (e.g. ＋ Master → full course form). */
 type SaveResult = string | { msg: string; row?: Named };
+/** Optional side-channel so a saver can persist lead custom-field values (custom_fields JSONB). */
+export type SaveExtra = { customFields?: Record<string, unknown> };
 
 export const need = (v: string | number | undefined, msg: string) => {
   if (v === undefined || v === '' || v === null) { toast(msg, true); throw new Error(msg); }
@@ -338,7 +344,7 @@ export const need = (v: string | number | undefined, msg: string) => {
  * THE BUILD. That rule exists because this class of bug has reached the client THREE
  * times (DEF-2 Edit Branch · DEF-S2-02 campaign dates · DEF-S34-02 walk-in).
  */
-export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult>> = {
+export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) => Promise<SaveResult>> = {
   /**
    * Sprint 3 — WALK-IN. Creates a REAL lead (through the one server-side
    * LeadIngestionService) with the counsellor as its owner: "assign on add".
@@ -392,7 +398,15 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
     });
     return 'Referral captured';
   },
-  'leads.all': async (vals, ids) => {
+  'leads.all': async (vals, ids, extra) => {
+    // Legacy built-in custom slots (Training Mode / City / Course Fee) PLUS any admin-defined
+    // custom fields the Add Lead form rendered (extra.customFields, keyed by field_key). Both
+    // land in lead.custom_fields — the mapping the client asked for.
+    const legacy: Record<string, unknown> = {};
+    if (vals['Training Mode']) legacy.training_mode = vals['Training Mode'];
+    if (vals['City / Location']) legacy.city = vals['City / Location'];
+    if (vals['Course Fee']) legacy.course_fee = vals['Course Fee'];
+    const custom_fields = { ...legacy, ...(extra?.customFields ?? {}) };
     await api.post('/leads', {
       full_name: need(vals['Name'], 'Name is required'),
       phone: need(vals['Mobile Number'], 'Mobile Number is required'),
@@ -410,9 +424,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids) => Promise<SaveResult
       status_id: ids['Lead Status'],
       next_follow_up_at: vals['Next Follow-up Date'] || undefined,
       note: vals['Remarks / Notes'] || undefined,
-      custom_fields: vals['Training Mode'] || vals['City / Location'] || vals['Course Fee']
-        ? { training_mode: vals['Training Mode'] || undefined, city: vals['City / Location'] || undefined, course_fee: vals['Course Fee'] || undefined }
-        : undefined,
+      custom_fields: Object.keys(custom_fields).length ? custom_fields : undefined,
     });
     return 'Lead added';
   },
@@ -828,6 +840,24 @@ function StageTableField({ value, disabled, onChange }: {
   );
 }
 
+const LEAD_ADD_FORMS = new Set(['leads.all', 'dash.quickcontact', 'leads.pipeline']);
+/** The lead Add forms whose custom fields should render + persist into lead.custom_fields. */
+export const isLeadAddForm = (k: string) => LEAD_ADD_FORMS.has(k);
+
+/** A custom-field DEFINITION → a renderable FormField (its value maps back via `cfKey`). */
+export function cfToFormField(d: CfDef): FormField {
+  const type = d.data_type === 'bool' ? 'checkbox'
+    : d.data_type === 'number' ? 'number'
+    : d.data_type === 'date' ? 'date'
+    : (d.data_type === 'select' || d.data_type === 'multiselect') ? 'select'
+    : 'text';
+  return {
+    label: d.label, type, req: !!d.required,
+    opts: (d.data_type === 'select' || d.data_type === 'multiselect') ? (d.options ?? []) : null,
+    hint: '', cfKey: d.field_key,
+  };
+}
+
 export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   formKey: string; onClose: () => void; onSaved?: () => void;
   /** Fires with the created row (when the saver returns one) so the opener can auto-select it. */
@@ -855,6 +885,10 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   const [extras, setExtras] = useState<Record<string, Named[]>>({});
   const [roles, setRoles] = useState<Named[]>([]);
   const [busy, setBusy] = useState(false);
+  // Custom fields (client, Aug 2026): the admin-defined lead fields render on the Add Lead form
+  // and their values persist into lead.custom_fields. Add-form only; the lead Edit is the sheet.
+  const leadForm = isLeadAddForm(formKey) && !edit;
+  const [cfDefs, setCfDefs] = useState<CfDef[]>([]);
   const needsRoles = useMemo(() => spec?.fields.some((f) => f.type === 'roleselect'), [spec]);
 
   useEffect(() => {
@@ -878,6 +912,21 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       return next;
     });
   }, [formKey, uid]);
+
+  useEffect(() => {
+    if (!leadForm) { setCfDefs([]); return; }
+    let live = true;
+    fetchLeadCfDefs().then((d) => { if (live) setCfDefs(d); });
+    return () => { live = false; };
+  }, [leadForm]);
+
+  // Dynamic custom-field inputs appended to the lead form (skip any whose label collides with a
+  // standard field so a custom "Course Fee" can never shadow the built-in one).
+  const cfFields: FormField[] = useMemo(() => {
+    if (!leadForm || !spec) return [];
+    const existing = new Set(spec.fields.map((f) => f.label));
+    return cfDefs.filter((d) => !existing.has(d.label)).map(cfToFormField);
+  }, [leadForm, cfDefs, spec]);
 
   if (!spec) return null;
 
@@ -963,9 +1012,23 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       onClose();
       return;
     }
+    let extra: SaveExtra | undefined;
+    if (leadForm) {
+      const specLabels = new Set(spec.fields.map((f) => f.label));
+      const activeCf = cfDefs.filter((d) => !specLabels.has(d.label));
+      for (const d of activeCf) {
+        const raw = vals[d.label];
+        const missing = d.data_type === 'bool' ? raw !== '1' : (raw === undefined || raw === '');
+        if (d.required && missing) { toast(`${d.label} is required`, true); return; }
+      }
+      extra = { customFields: collectCf(activeCf, (key) => {
+        const def = activeCf.find((x) => x.field_key === key);
+        return def ? vals[def.label] : undefined;
+      }) };
+    }
     setBusy(true);
     try {
-      const res = await (edit ? edit.submit(vals, ids) : SAVERS[formKey](vals, ids));
+      const res = await (edit ? edit.submit(vals, ids) : SAVERS[formKey](vals, ids, extra));
       toast(typeof res === 'string' ? res : res.msg);
       if (typeof res !== 'string' && res.row) onSavedRow?.(res.row);
       onSaved?.();
@@ -1156,6 +1219,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
    *  masters open <AddMasterModal>, hierarchy fields open their full add-form;
    *  all hidden without the create permission. */
   const masterLink = (f: FormField) => {
+    if (f.cfKey) return null; // custom fields never carry a ＋ Master link
     if (!isMaster(f)) return null;
     if (edit?.lock?.includes(f.label)) return null;
     const mt = (f.src ? SRC_MASTER[f.src] : undefined) ?? (f.mopts ? MOPTS_MASTER[f.mopts] : undefined);
@@ -1204,7 +1268,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
             </div>
           )}
           <div className="form-grid">
-            {spec.fields.map((f) => {
+            {[...spec.fields, ...cfFields].map((f) => {
               const t = f.type || 'text';
               const span2 = t === 'textarea' || t === 'table';
               // 'checkbox' renders its own caption next to the box — don't print the hint twice

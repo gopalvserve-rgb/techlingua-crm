@@ -168,8 +168,8 @@ export const APP: ModuleItem[] = [
       ] } },
     { id: 'sla', label: 'SLA & TAT', spec: { dyn: 'sla',
       sub: 'First-response time per lead with escalation if missed.' } },
-    { id: 'fields', label: 'Custom Fields', spec: {
-      sub: 'Standard lead fields plus custom fields & predefined dropdown masters.',
+    { id: 'fields', label: 'Custom Fields', spec: { dyn: 'customFields',
+      sub: 'Define extra lead fields (text, number, date, yes/no, dropdown). They render on the Add / Edit Lead form and save into each lead.',
       blocks: [
         { type: 'table', title: 'Lead fields (masters linked)', cols: ['Field', 'Type', 'Mandatory', 'Master'], rows: [
           ['Name', 'Text', { b: ['Yes', 'b-rose'] }, '—'], ['Mobile Number', 'Phone', { b: ['Yes', 'b-rose'] }, '—'],
