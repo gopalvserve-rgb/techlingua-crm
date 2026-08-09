@@ -27,12 +27,12 @@ function useBatches(branchIds: number[], verticalIds: number[], dep: any[] = [])
 }
 
 /** Branch + Vertical + Batch filter row shared by all three screens. */
-function ScopeFilters({ ref, fB, setFB, fV, setFV, batchId, setBatchId, batches, extra }: any) {
-  const vOpts = ref.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
+function ScopeFilters({ rd, fB, setFB, fV, setFV, batchId, setBatchId, batches, extra }: any) {
+  const vOpts = rd.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
   return (
     <div className="filters">
-      <FilterMulti label="Branch" icon="branch" value={fB} options={ref.branches}
-        onChange={(v: number[]) => { setFB(v); setFV((cur: number[]) => cur.filter((id) => ref.verticals.some((vt: any) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); setBatchId(''); }} />
+      <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches}
+        onChange={(v: number[]) => { setFB(v); setFV((cur: number[]) => cur.filter((id) => rd.verticals.some((vt: any) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); setBatchId(''); }} />
       <FilterMulti label="Vertical" icon="grid" value={fV} options={vOpts} onChange={(v: number[]) => { setFV(v); setBatchId(''); }} />
       <label className="fchip"><Ic k="grid" />
         <select value={batchId} onChange={(e) => setBatchId(e.target.value)}
@@ -105,7 +105,7 @@ export function AttendanceScreen() {
 
   return (
     <>
-      <ScopeFilters ref={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} batchId={batchId} setBatchId={setBatchId} batches={batches.data}
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} batchId={batchId} setBatchId={setBatchId} batches={batches.data}
         extra={<>
           <label className="fchip"><Ic k="cal" /><input type="date" value={date} onChange={(e) => setDate(e.target.value)}
             style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} /></label>
@@ -197,7 +197,7 @@ export function TestsScreen() {
   return (
     <>
       {can('test.create') && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New test</button></div>}
-      <ScopeFilters ref={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} batchId={batchId} setBatchId={setBatchId} batches={batches.data}
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} batchId={batchId} setBatchId={setBatchId} batches={batches.data}
         extra={<DateRange value={range} onChange={setRange} idPrefix="test-dr" style={{ marginLeft: 'auto' }} />} />
       <TableCard fill title="Tests" icon="doc"
         more={<ListActions onExport={() => downloadObjectsCsv('tests.csv', rows)} onRefresh={after} />}
@@ -347,7 +347,7 @@ export function AssignmentsScreen() {
   return (
     <>
       {can('coursework.create') && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New assignment</button></div>}
-      <ScopeFilters ref={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} batchId={batchId} setBatchId={setBatchId} batches={batches.data}
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} batchId={batchId} setBatchId={setBatchId} batches={batches.data}
         extra={<DateRange value={range} onChange={setRange} idPrefix="cw-dr" style={{ marginLeft: 'auto' }} />} />
       <TableCard fill title="Assignments" icon="doc"
         more={<ListActions onExport={() => downloadObjectsCsv('assignments.csv', rows)} onRefresh={after} />}

@@ -47,13 +47,13 @@ function useStudents(branchIds: number[], verticalIds: number[]) {
 }
 
 /** Branch + Vertical + Course FilterMulti row shared by the three screens. */
-function ScopeFilters({ ref, fB, setFB, fV, setFV, fC, setFC, extra }: any) {
-  const vOpts = ref.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
-  const cOpts = ref.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.vertical_id))) && (!fB.length || fB.includes(Number(c.branch_id))));
+function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, extra }: any) {
+  const vOpts = rd.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
+  const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.vertical_id))) && (!fB.length || fB.includes(Number(c.branch_id))));
   return (
     <div className="filters">
-      <FilterMulti label="Branch" icon="branch" value={fB} options={ref.branches}
-        onChange={(v: number[]) => { setFB(v); setFV((cur: number[]) => cur.filter((id) => ref.verticals.some((vt: any) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
+      <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches}
+        onChange={(v: number[]) => { setFB(v); setFV((cur: number[]) => cur.filter((id) => rd.verticals.some((vt: any) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
       <FilterMulti label="Vertical" icon="grid" value={fV} options={vOpts} onChange={setFV} />
       <FilterMulti label="Course" icon="doc" value={fC} options={cOpts} onChange={setFC} />
       {extra}
@@ -101,7 +101,7 @@ export function StudyMaterialScreen() {
   return (
     <>
       {can('material.create') && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New material</button></div>}
-      <ScopeFilters ref={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
         extra={<>
           <label className="fchip"><Ic k="doc" />
             <select value={ftype} onChange={(e) => setFtype(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
@@ -285,7 +285,7 @@ export function CertificatesScreen() {
   return (
     <>
       {can('certificate.issue') && <div className="page-actions"><button className="btn primary" onClick={() => setIssue(true)}><Ic k="plus" />Issue certificate</button></div>}
-      <ScopeFilters ref={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
         extra={<>
           <label className="fchip"><Ic k="doc" />
             <select value={ftype} onChange={(e) => setFtype(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
@@ -423,7 +423,7 @@ export function ReportCardsScreen() {
   return (
     <>
       {can('reportcard.create') && <div className="page-actions"><button className="btn primary" onClick={() => setGen(true)}><Ic k="plus" />Generate report card</button></div>}
-      <ScopeFilters ref={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
         extra={<>
           <label className="fchip"><Ic k="shield" />
             <select value={fstat} onChange={(e) => setFstat(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
