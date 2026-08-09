@@ -96,4 +96,14 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // (the permitted user); 'override' applies a discount/scholarship BEYOND the cap. A
   // Counsellor holds neither manage nor override, so a Counsellor is capped.
   { module: 'finance', label: 'Finance Settings (discount/scholarship/cap)', actions: ['read', 'manage', 'override'] },
+  // Phase 2 ERP Batch 1 (migration 047) — Academics core.
+  // Attendance: 'mark' = record a session's marks (staff / self / biometric feed); 'manage'
+  // = admin corrections. Tests: 'grade' = enter/update per-student scores, distinct from
+  // 'update' (editing the test itself). Coursework (academic assignments — the module is
+  // named `coursework` because `assignment` is the RBAC user-grants module): 'grade' = mark
+  // a submission. Batch TRANSFER + WAITLIST reuse student.update (they move the student's
+  // batch assignment), so there is deliberately no new batch action.
+  { module: 'attendance', label: 'Attendance', actions: ['read', 'mark', 'manage'] },
+  { module: 'test', label: 'Tests & Scores', actions: ['read', 'create', 'update', 'delete', 'grade'] },
+  { module: 'coursework', label: 'Assignments (coursework)', actions: ['read', 'create', 'update', 'delete', 'grade'] },
 ];

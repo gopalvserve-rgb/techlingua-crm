@@ -49,6 +49,7 @@ import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 import { SupportTickets } from './support';
 import { CrossSell } from './crosssell';
 import { FinanceSettings } from './financesettings';
+import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -4243,6 +4244,7 @@ function BatchesList() {
   const canCreate = can('batch.create');
   const canEdit = can('batch.update');
   const del = useDelete('Batch', '/batches', () => { list.reload(); bump(); });
+  const [roster, setRoster] = useState<any | null>(null);
   const after = () => { list.reload(); bump(); };
 
   return (
@@ -4275,9 +4277,11 @@ function BatchesList() {
             onView: () => setEdit(b),
             onEdit: canEdit ? () => setEdit(b) : undefined,
             onDelete: can('batch.delete') ? () => del.openDelete(Number(b.id), b.name) : undefined,
+            extra: [{ k: 'grid', title: 'Roster / Transfer / Waitlist', onClick: () => setRoster(b) }],
           }),
         ])} />
       {del.deleteModal}
+      {roster && <BatchRosterModal batch={roster} onClose={() => setRoster(null)} onChanged={after} />}
       {modal && <BatchModal onClose={() => setModal(false)} onSaved={after} />}
       {edit && <BatchModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
     </>
@@ -4484,6 +4488,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   studentDashboard: StudentDashboard,
   studentsList: StudentsList,
   batchesList: BatchesList,
+  attendanceScreen: AttendanceScreen,
+  testsScreen: TestsScreen,
+  assignmentsScreen: AssignmentsScreen,
   customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
   featuresPanel: FeaturesPanel,

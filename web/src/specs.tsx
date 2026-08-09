@@ -246,21 +246,12 @@ export const APP: ModuleItem[] = [
       actions: [['plus', 'New course', 'primary']] } },
     { id: 'batches', label: 'Batches', spec: { dyn: 'batchesList',
       sub: 'A batch is bound to Branch → Vertical → Course (strict cascade). Set code, name, trainer, room, schedule, capacity and dates; a student can be assigned to a batch from the student detail.' } },
-    { id: 'attendance', label: 'Attendance', spec: {
-      sub: 'Trainer / biometric / self marking per session. Present / absent / late / leave with parent absence alerts.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Today present', '0', 'check'), kpi('Absent', '0', 'rose'), kpi('Avg attendance', '—', 'perf'), kpi('Parent alerts sent', '0', 'wa')] },
-        emptyTable('Today', ['Student', 'Status', 'Marked by', 'Time'], 'Attendance marking starts with the first batch'),
-      ] } },
-    { id: 'tests', label: 'Tests & Scores', spec: {
-      sub: 'Quiz, mock & exam types with max marks, grading scheme, score entry, result sheets & sharing.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Tests', ['Test', 'Type', 'Batch', 'Max', 'Avg', 'Top', 'Shared'], 'No tests yet')] } },
-    { id: 'assignments', label: 'Assignments', spec: {
-      sub: 'Create assignments with due dates, student upload/submission, grading & feedback.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Assignments', ['Assignment', 'Batch', 'Due', 'Submitted', 'Graded'], 'No assignments yet')] } },
+    { id: 'attendance', label: 'Attendance', spec: { dyn: 'attendanceScreen',
+      sub: 'Per-session (batch + date) marking — Present / Absent / Late / Excused, by staff or self (mode flag; a biometric device feed can post to the same endpoint). An Absent mark fires a parent-absence alert via the notifier (degrades cleanly if channels are unconfigured). Present-% summary + records list, scope- and date-aware.' } },
+    { id: 'tests', label: 'Tests & Scores', spec: { dyn: 'testsScreen',
+      sub: 'A test per batch (quiz / mock / exam / other) with max & pass marks; per-student score entry with a computed percentage and letter grade. Result sheet per test; feeds report cards.' } },
+    { id: 'assignments', label: 'Assignments', spec: { dyn: 'assignmentsScreen',
+      sub: 'An assignment per batch (title, description, due date, attachment link, max marks) with a per-student submission tracker — assigned → submitted → graded (marks + feedback).' } },
     { id: 'material', label: 'Study Material', spec: {
       sub: 'Upload material (PDF / video / links) per course or batch, with access control & download tracking. Embedded videos.',
       sprintNote: NOTE_S2,
