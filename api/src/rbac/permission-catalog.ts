@@ -119,4 +119,13 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // create/edit/delete the public form links; 'review' = approve (→ student) / reject; 'delete'
   // = bulk-delete submissions. Sibling/family linking reuses student.update + student.read.
   { module: 'admission', label: 'Admissions (Online form & review)', actions: ['read', 'manage', 'review', 'delete'] },
+  // Phase 2 ERP Batch 5 (migration 051) — Operations. Catalog + vendor are ORG-WIDE masters
+  // (read granted broadly @ 'all', writes admin/manager). Inventory / asset / procurement are
+  // BRANCH-SCOPED. inventory.manage = stock movements (receipt/issue/adjustment) + thresholds;
+  // procurement.receive = receiving a PO into inventory, distinct from update (editing the PO).
+  { module: 'catalog', label: 'Catalog (items/products/services)', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'inventory', label: 'Inventory (stock & movements)', actions: ['read', 'manage', 'delete'] },
+  { module: 'asset', label: 'Assets (equipment/furniture/IT)', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'vendor', label: 'Vendors', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'procurement', label: 'Procurement (Purchase Orders)', actions: ['read', 'create', 'update', 'receive', 'delete'] },
 ];

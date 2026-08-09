@@ -52,6 +52,7 @@ import { CrossSell } from './crosssell';
 import { FinanceSettings } from './financesettings';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
+import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { AiIntelligence, DashAiInsights } from './ai';
 
 export interface ScreenCtxT {
@@ -4561,6 +4562,11 @@ export const DYN: Record<string, () => JSX.Element> = {
   admissionsList: AdmissionsScreen,
   certificates: CertificatesScreen,
   reportCards: ReportCardsScreen,
+  catalogList: CatalogScreen,
+  inventoryList: InventoryScreen,
+  assetsList: AssetsScreen,
+  vendorsList: VendorsScreen,
+  procurementList: ProcurementScreen,
   customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
   featuresPanel: FeaturesPanel,

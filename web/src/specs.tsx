@@ -506,17 +506,18 @@ export const APP: ModuleItem[] = [
   ] },
 
   /* ---------------- Operations (P2) ---------------- */
+  /* ---------------- Operations (ERP Batch 5 — now live) ---------------- */
   { id: 'ops', label: 'Operations', icon: 'ops', phase: 'P2', subs: [
-    { id: 'catalog', label: 'Catalog', spec: p2('Catalog', 'Physical items — books, kits & merchandise sold to students.',
-      [cap('Books & kits', 'Per item', true), cap('Pricing', 'Per item / bundle', true), cap('Student-facing', 'Add to admission', true)]) },
-    { id: 'inventory', label: 'Inventory', spec: p2('Inventory', 'Stock in/out with reorder levels & per-branch stock.',
-      [cap('Stock in/out', 'Movements', true), cap('Reorder levels', 'Low-stock alerts', true), cap('Per-branch stock', 'Branch visibility', true)]) },
-    { id: 'assets', label: 'Assets', spec: p2('Assets', 'Register for computers, furniture & equipment with assignment, maintenance & depreciation.',
-      [cap('Asset register', 'Tagged', true), cap('Assignment', 'To staff / room', true), cap('Maintenance', 'Schedule', true), cap('Depreciation', 'Auto', true)]) },
-    { id: 'vendors', label: 'Vendor Management', spec: p2('Vendor Management', 'Vendor master with contacts, categories & contracts.',
-      [cap('Vendor master', 'Profiles', true), cap('Categories', 'Grouping', true), cap('Contracts', 'Stored', true)]) },
-    { id: 'procure', label: 'Procurement', spec: p2('Procurement', 'Purchase request → PO → GRN → invoice with approvals.',
-      [cap('Purchase request', 'Raise PR', true), cap('PO → GRN', 'Goods receipt', true), cap('Invoice match', '3-way', true), cap('Approvals', 'Workflow', true)]) },
+    { id: 'catalog', label: 'Catalog', spec: { dyn: 'catalogList', tag: 'p2',
+      sub: 'The org-wide master of items / products / services the institute deals in — books, kits, merchandise, service items. Item code (auto ITM-), category, unit, price (₹), GST % and HSN/SAC (India), active. Used by inventory and procurement. Full list treatment: multi-filter, export, columns, refresh, bulk-delete.' } },
+    { id: 'inventory', label: 'Inventory', spec: { dyn: 'inventoryList', tag: 'p2',
+      sub: 'Per-branch/location stock of catalog items — quantity on hand, a receipt / issue / adjustment "Stock movement" that writes a movement log, and a low-stock threshold + flag. Receiving a purchase order increments stock automatically. Branch-scoped; full list treatment + a movement log.' } },
+    { id: 'assets', label: 'Assets', spec: { dyn: 'assetsList', tag: 'p2',
+      sub: 'The equipment / furniture / IT register — asset code (auto AST-), category, branch/location, purchase date + cost (₹), status (in-use / in-repair / retired), assigned-to (user), vendor, warranty + AMC dates. Lifecycle. Full list treatment.' } },
+    { id: 'vendors', label: 'Vendor Management', spec: { dyn: 'vendorsList', tag: 'p2',
+      sub: 'The vendor master — name, GSTIN (India), category, contact, address, optional bank details, active. Used by procurement and assets. Full list treatment: multi-filter, export, columns, refresh, bulk-delete.' } },
+    { id: 'procure', label: 'Procurement', spec: { dyn: 'procurementList', tag: 'p2',
+      sub: 'Purchase orders to a vendor for catalog items — line items (qty × ₹ price, per-line discount + GST), PO number (auto PO-), draft → sent → received → closed. Receiving a PO increments inventory. Branded PO PDF (the quotation/receipt PDF pipeline). India GST throughout. Full list treatment.' } },
   ] },
 
   /* ---------------- Administration ---------------- */

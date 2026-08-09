@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment', 'admission'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -68,6 +68,12 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   // Phase 2 ERP Batch 3 — ADM-#### admission numbers, minted when a pending admission is
   // APPROVED into a student (an unapproved submission never burns a number).
   admission:  { prefix: 'ADM-', reset: 'yearly', label: 'Admissions' },
+  // Phase 2 ERP Batch 5 (Operations). PO-#### purchase orders (reset yearly), AST-#### asset
+  // tags and ITM-#### catalog item codes (both per branch/vertical if a more specific series row
+  // exists, org-wide otherwise — the same MOST-SPECIFIC-WINS rule).
+  po:         { prefix: 'PO-',  reset: 'yearly', label: 'Purchase Orders' },
+  asset:      { prefix: 'AST-', reset: 'none', label: 'Asset codes' },
+  catalog:    { prefix: 'ITM-', reset: 'none', label: 'Catalog item codes' },
 };
 
 export interface SeriesRow {
