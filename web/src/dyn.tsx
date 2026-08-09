@@ -35,7 +35,7 @@ import { CustomFieldsAdmin } from './customfields';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
-  BulkSms, BulkWhatsApp, EmailCampaigns, Journeys, Settings, SmsTemplates, Templates,
+  BulkWhatsApp, Journeys, Settings, SmsTemplates, Templates,
 } from './sprint4';
 import {
   CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure,
@@ -1631,9 +1631,12 @@ function Sources() {
         <AddModal formKey="leads.sources" onClose={() => setEdit(null)} onSaved={after}
           edit={{
             title: `Edit Source \u2014 ${edit.name}`,
-            // Client (Aug 2026): the Edit form now opens FULLY PREFILLED. A source's Branch >
-            // Vertical > Pipeline > Campaign are DERIVED from its Campaign (server-side), so they
-            // are shown read-only; only Source Name + Status are editable.
+            // Client (Aug 2026): the source's Branch > Vertical > Pipeline > Campaign are now
+            // EDITABLE as the same strict cascade as Add Source, PREFILLED with the source's
+            // current path. Choosing a new Campaign RE-PARENTS the source: the server re-derives
+            // the whole denormalised path (branch/vertical/pipeline) from the target campaign
+            // (HierarchyService.updateSource), RBAC-checking both the source and the target
+            // campaign against the actor's scope. Existing leads keep their own captured path.
             initialVals: {
               'Branch': edit.branch_name ?? '', 'Vertical': edit.vertical_name ?? '',
               'Pipeline': edit.pipeline_name ?? '', 'Campaign': edit.campaign_name ?? '',
@@ -1646,11 +1649,12 @@ function Sources() {
               'Pipeline': edit.pipeline_id != null ? Number(edit.pipeline_id) : undefined,
               'Campaign': edit.campaign_id != null ? Number(edit.campaign_id) : undefined,
             },
-            // The hierarchy path is immutable (derived from Campaign) - locked + prefilled.
-            lock: ['Branch', 'Vertical', 'Pipeline', 'Campaign'],
             // UAT-R2 #4 — Source Category + Cost per Lead removed; backend keeps existing values.
-            submit: async (vals) => {
+            // Only campaign_id is sent for the path — the source's Branch/Vertical/Pipeline are
+            // re-derived server-side from the chosen Campaign.
+            submit: async (vals, ids) => {
               await api.patch(`/sources/${edit.id}`, {
+                campaign_id: need(ids['Campaign'], 'Pick a Campaign'),
                 name: need(vals['Source Name'], 'Source name is required'),
                 is_active: vals['Status'] !== 'Inactive',
               });
@@ -4438,8 +4442,6 @@ export const DYN: Record<string, () => JSX.Element> = {
   smsTemplates: SmsTemplates,
   journeys: Journeys,
   bulkWhatsApp: BulkWhatsApp,
-  bulkSms: BulkSms,
-  emailCampaigns: EmailCampaigns,
   settings: Settings,
   financeSettings: FinanceSettings,
   // Sprint 5 — conversion & money-lite

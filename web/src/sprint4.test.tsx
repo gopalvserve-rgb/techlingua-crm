@@ -7,7 +7,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import {
-  BulkSms, BulkWhatsApp, EmailCampaigns, JourneyModal, Journeys, Settings, TemplateModal, Templates,
+  BulkWhatsApp, JourneyModal, Journeys, Settings, TemplateModal, Templates,
 } from './sprint4';
 
 /** this harness has no jest-dom — assert on the DOM directly */
@@ -521,23 +521,11 @@ describe('the engagement channel screens', () => {
     expect(screen.getByText('Not configured')).toBeTruthy();
   });
 
-  it('a CONFIGURED channel shows no "not configured" banner', async () => {
-    render(<EmailCampaigns />);
-    await screen.findByText('Email send log');
-    expect(screen.queryByTestId('not-configured')).toBeNull();
-  });
-
   it('a failed message can be RETRIED (after the client pastes the credential)', async () => {
     render(<BulkWhatsApp />);
     await screen.findByText('WhatsApp send log');
     fireEvent.click(screen.getByTitle('Retry'));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/messages/2/retry', {}));
-  });
-
-  it('SMS renders its own empty log without crashing', async () => {
-    render(<BulkSms />);
-    expect(await screen.findByText('SMS send log')).toBeTruthy();
-    expect(screen.getByText('No SMS messages sent yet.')).toBeTruthy();
   });
 
   it('the BLAST composer sends a template + audience to /messages/bulk', async () => {

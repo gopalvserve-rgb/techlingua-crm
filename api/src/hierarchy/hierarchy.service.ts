@@ -669,9 +669,67 @@ export class HierarchyService {
     return rows[0];
   }
 
-  updateSource(id: number, dto: Record<string, unknown>) {
-    return this.genericUpdate('source', id, dto,
-      ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active']);
+  /**
+   * Update a source. A source's own scalar fields (name/channel/status/…) are patched
+   * in place. **Re-parent (Aug 2026):** when the body carries a new `campaign_id`, the
+   * source is MOVED under that campaign and its full denormalised path
+   * (branch_id/vertical_id/pipeline_id/campaign_id + org_id) is RE-DERIVED from the target
+   * campaign — the exact one-transaction re-denormalisation the pipeline re-parent and lead
+   * transfer use, so no client can produce an inconsistent path.
+   *
+   * RBAC: the actor may only move a source they can see (`source` in scope — also enforced
+   * by @ScopedEntity('source') on the route) INTO a campaign they can see (`campaign` in
+   * scope). An out-of-scope target campaign is a 404, never a silent widen.
+   *
+   * Existing leads captured through this source KEEP their own captured path (a lead carries
+   * its own denormalised Branch>…>Campaign, set at ingestion, and may since have moved stage,
+   * owner or pipeline). Re-parenting the SOURCE affects the source record and FUTURE captures
+   * only — it never retroactively re-paths already-distributed leads. (Moving a lead across
+   * the hierarchy is a separate, explicit Lead Transfer with its own owner/stage/SLA handling.)
+   */
+  async updateSource(id: number, dto: Record<string, unknown>, scope?: ResolvedScope, actorId?: number) {
+    const reparent = dto.campaign_id !== undefined && dto.campaign_id !== null && String(dto.campaign_id) !== '';
+    if (!reparent) {
+      return this.genericUpdate('source', id, dto,
+        ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active']);
+    }
+    const targetCampaignId = Number(dto.campaign_id);
+    if (!Number.isInteger(targetCampaignId) || targetCampaignId <= 0) {
+      throw new BadRequestException('campaign_id must reference a valid campaign');
+    }
+    // The source must exist and be in the actor's scope (route @ScopedEntity('source') also guards).
+    const src = await this.db.one<{ id: string; campaign_id: string }>(
+      `SELECT id, campaign_id FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!src) throw new NotFoundException('source not found');
+    if (scope) await this.enforcer.assertRefInScope(scope, 'source', id, actorId);
+    // The target campaign must exist and be in the actor's scope — else 404 (no cross-scope oracle).
+    const camp = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string; pipeline_id: string }>(
+      `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND deleted_at IS NULL`,
+      [targetCampaignId]);
+    if (!camp) throw new NotFoundException('target campaign not found');
+    if (scope) await this.enforcer.assertRefInScope(scope, 'campaign', targetCampaignId, actorId);
+
+    // Re-derive the full path from the campaign, plus any other whitelisted scalar edits, in
+    // ONE UPDATE so the source can never be left with a half-moved path.
+    const sets: string[] = [
+      'org_id = $1', 'branch_id = $2', 'vertical_id = $3', 'pipeline_id = $4', 'campaign_id = $5',
+    ];
+    const params: unknown[] = [
+      Number(camp.org_id), Number(camp.branch_id), Number(camp.vertical_id), Number(camp.pipeline_id),
+      targetCampaignId,
+    ];
+    for (const key of ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active']) {
+      if (dto[key] === undefined) continue;
+      const val = typeof dto[key] === 'object' && dto[key] !== null ? JSON.stringify(dto[key]) : dto[key];
+      params.push(val);
+      sets.push(`${key} = $${params.length}`);
+    }
+    params.push(id);
+    const rows = await this.db.query(
+      `UPDATE source SET ${sets.join(', ')}, updated_at = now()
+        WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params);
+    if (!rows.length) throw new NotFoundException('source not found');
+    return rows[0];
   }
 
   // ---- shared -------------------------------------------------------------

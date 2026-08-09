@@ -919,8 +919,9 @@ export function ChannelScreen({ channel }: { channel: 'whatsapp' | 'sms' | 'emai
 }
 
 export const BulkWhatsApp = () => <ChannelScreen channel="whatsapp" />;
-export const BulkSms = () => <ChannelScreen channel="sms" />;
-export const EmailCampaigns = () => <ChannelScreen channel="email" />;
+// Bulk SMS / Email Campaigns wrappers removed (Aug 2026) — those nav entries were retired
+// (client: keep Bulk WhatsApp only). ChannelScreen stays; it still backs the WhatsApp screen
+// and the durable SMS/Email SEND LOG surfaced elsewhere (Message Log / notifications).
 
 /* ==================================================================== */
 /*  ADMINISTRATION › SETTINGS                                           */

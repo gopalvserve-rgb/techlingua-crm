@@ -104,5 +104,10 @@ export class HierarchyController {
   createSource(@Body() dto: any, @CurrentUser() u: U) { return this.h.createSource(dto, u.id); }
 
   @Patch('sources/:id') @RequirePermission('source.update') @ScopedEntity('source')
-  updateSource(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.h.updateSource(id, dto); }
+  updateSource(
+    @Param('id', ParseIntPipe) id: number, @Body() dto: any,
+    @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
+  ) {
+    return this.h.updateSource(id, dto, s, u.id);
+  }
 }
