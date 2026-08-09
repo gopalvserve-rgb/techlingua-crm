@@ -136,4 +136,9 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'employee', label: 'Employee Directory', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'hr_attendance', label: 'Staff Attendance', actions: ['read', 'mark', 'delete'] },
   { module: 'leave', label: 'Leaves (apply / approve / balances)', actions: ['read', 'create', 'approve', 'manage', 'delete'] },
+  // Phase 2 ERP Batch 7 (migration 053) — Support extras. Training Videos + Release Notes are
+  // ORG-WIDE staff content (no record scope). 'view' = every staff role reads the library / the
+  // What's-New feed; 'manage' = admins create/edit/delete the entries.
+  { module: 'training', label: 'Training Videos', actions: ['view', 'manage'] },
+  { module: 'release_note', label: 'Release Notes', actions: ['view', 'manage'] },
 ];

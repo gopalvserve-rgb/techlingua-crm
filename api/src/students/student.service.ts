@@ -183,6 +183,159 @@ export class StudentService {
     return { unlinked: true };
   }
 
+  /**
+   * THE STUDENT PROFILE AGGREGATE — the client's exact ask: "open any student -> show the
+   * complete profile in tab format, each and everything." ONE scoped read returns every
+   * section the tabbed detail view renders, each pulled from the module that owns it:
+   *   identity/contact/family/address/id/education  -> the student row (this.get, scoped)
+   *   siblings                                       -> family_group linkage (this.siblings)
+   *   academics.batch (current + transfer history + waitlist), attendance (summary + records),
+   *   tests & scores, assignments & submissions      -> the ERP Batch-1 academics tables
+   *   certificates, report cards                     -> the ERP Batch-2 learning tables
+   *   fees (enrolment + receipts + collection summary) -> the Sprint-5 fees tables
+   *
+   * The student is scope-validated FIRST (this.get throws 404 outside the caller's access);
+   * every child row belongs to that student, so it inherits the same scope — a counsellor can
+   * never open another branch's student, and therefore never see its academics or fees.
+   * Sensitive ID fields (aadhaar/pan/passport) ride along in the student row as elsewhere and
+   * are NEVER logged (the audit interceptor redacts them).
+   */
+  async profile(id: number, scope: ResolvedScope) {
+    const student = await this.get(id, scope);           // scope + existence (throws 404)
+    const sid = Number(student.id);
+    const siblings = await this.siblings(id, scope);
+
+    // --- Academics: batch history + live waitlist -----------------------------
+    const transfers = await this.db.query<any>(
+      `SELECT bt.id, bt.from_batch_id, bt.to_batch_id, bt.reason, bt.created_at,
+              fb.name AS from_batch_name, tb.name AS to_batch_name, u.name AS transferred_by_name
+         FROM batch_transfer bt
+         LEFT JOIN batch fb ON fb.id = bt.from_batch_id
+         LEFT JOIN batch tb ON tb.id = bt.to_batch_id
+         LEFT JOIN "user" u ON u.id = bt.transferred_by
+        WHERE bt.student_id = $1::bigint
+        ORDER BY bt.created_at DESC`, [sid]);
+    const waitlist = await this.db.query<any>(
+      `SELECT w.id, w.batch_id, w.status, w.position, w.created_at, b.name AS batch_name
+         FROM batch_waitlist w LEFT JOIN batch b ON b.id = w.batch_id
+        WHERE w.student_id = $1::bigint AND w.status = 'waiting'
+        ORDER BY w.position ASC`, [sid]);
+
+    // --- Attendance: summary + recent records ---------------------------------
+    const attKpi = await this.db.one<any>(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE status = 'present')::int AS present,
+              count(*) FILTER (WHERE status = 'absent')::int  AS absent,
+              count(*) FILTER (WHERE status = 'late')::int    AS late,
+              count(*) FILTER (WHERE status = 'excused')::int AS excused
+         FROM attendance WHERE student_id = $1::bigint AND deleted_at IS NULL`, [sid]);
+    const attTotal = Number(attKpi?.total ?? 0);
+    const attPresent = Number(attKpi?.present ?? 0);
+    const attendance_records = await this.db.query<any>(
+      `SELECT a.id, a.session_date, a.status, a.mode, a.remarks, b.name AS batch_name
+         FROM attendance a LEFT JOIN batch b ON b.id = a.batch_id
+        WHERE a.student_id = $1::bigint AND a.deleted_at IS NULL
+        ORDER BY a.session_date DESC LIMIT 100`, [sid]);
+
+    // --- Tests & scores -------------------------------------------------------
+    const tests = await this.db.query<any>(
+      `SELECT sc.id, t.name AS test_name, t.test_type, t.test_date, t.max_marks, t.pass_marks,
+              sc.marks_obtained, sc.grade, sc.remarks, b.name AS batch_name
+         FROM assessment_score sc
+         JOIN assessment_test t ON t.id = sc.test_id
+         LEFT JOIN batch b ON b.id = t.batch_id
+        WHERE sc.student_id = $1::bigint AND sc.deleted_at IS NULL AND t.deleted_at IS NULL
+        ORDER BY t.test_date DESC NULLS LAST, t.id DESC LIMIT 200`, [sid]);
+
+    // --- Assignments & submissions --------------------------------------------
+    const assignments = await this.db.query<any>(
+      `SELECT su.id, a.title, a.due_date, a.max_marks, su.status, su.submission_url,
+              su.submitted_at, su.marks, su.feedback, b.name AS batch_name
+         FROM coursework_submission su
+         JOIN coursework_assignment a ON a.id = su.assignment_id
+         LEFT JOIN batch b ON b.id = a.batch_id
+        WHERE su.student_id = $1::bigint AND su.deleted_at IS NULL AND a.deleted_at IS NULL
+        ORDER BY a.due_date DESC NULLS LAST, a.id DESC LIMIT 200`, [sid]);
+
+    // --- Certificates ---------------------------------------------------------
+    const certificates = await this.db.query<any>(
+      `SELECT c.id, c.serial_no, c.cert_type, c.title, c.issue_date, c.status, c.remarks,
+              co.name AS course_name, b.name AS batch_name
+         FROM certificate c
+         LEFT JOIN m_course co ON co.id = c.course_id
+         LEFT JOIN batch b ON b.id = c.batch_id
+        WHERE c.student_id = $1::bigint AND c.deleted_at IS NULL
+        ORDER BY c.issue_date DESC, c.id DESC`, [sid]);
+
+    // --- Report cards ---------------------------------------------------------
+    const report_cards = await this.db.query<any>(
+      `SELECT r.id, r.term, r.period_from, r.period_to, r.attendance_pct, r.test_avg_pct,
+              r.assignment_avg_pct, r.overall_pct, r.overall_grade, r.status, r.share_token,
+              co.name AS course_name, b.name AS batch_name
+         FROM report_card r
+         LEFT JOIN m_course co ON co.id = r.course_id
+         LEFT JOIN batch b ON b.id = r.batch_id
+        WHERE r.student_id = $1::bigint AND r.deleted_at IS NULL
+        ORDER BY r.created_at DESC, r.id DESC`, [sid]);
+
+    // --- Fees: enrolment(s) + receipts + collection summary -------------------
+    const enrolments = await this.db.query<any>(
+      `SELECT e.id, e.enrolment_no, e.status, e.net_fee_minor, e.fee_minor, e.discount_minor,
+              e.payment_plan, e.start_date, e.created_at, co.name AS course_name
+         FROM enrolment e
+         LEFT JOIN m_course co ON co.id = e.course_id
+        WHERE e.deleted_at IS NULL
+          AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
+        ORDER BY e.created_at DESC`, [sid, student.enrolment_id ? Number(student.enrolment_id) : 0]);
+    const enrolmentIds = enrolments.map((e: any) => Number(e.id));
+    let receipts: any[] = [];
+    if (enrolmentIds.length) {
+      receipts = await this.db.query<any>(
+        `SELECT fr.id, fr.receipt_no, fr.amount_minor, fr.mode, fr.reference, fr.received_at,
+                fr.note, u.name AS received_by_name
+           FROM fee_receipt fr LEFT JOIN "user" u ON u.id = fr.received_by
+          WHERE fr.enrolment_id = ANY($1::bigint[]) AND fr.deleted_at IS NULL
+          ORDER BY fr.received_at DESC`, [enrolmentIds]);
+    }
+    const netFee = enrolments.reduce((s: number, e: any) => s + Number(e.net_fee_minor ?? 0), 0);
+    const collected = receipts.reduce((s: number, r: any) => s + Number(r.amount_minor ?? 0), 0);
+
+    return {
+      student,
+      siblings,
+      academics: {
+        current_batch: student.batch_id
+          ? { id: Number(student.batch_id), name: student.batch_name ?? null }
+          : null,
+        transfers,
+        waitlist,
+        attendance: {
+          summary: {
+            total: attTotal, present: attPresent,
+            absent: Number(attKpi?.absent ?? 0), late: Number(attKpi?.late ?? 0),
+            excused: Number(attKpi?.excused ?? 0),
+            present_pct: attTotal ? Math.round((attPresent / attTotal) * 1000) / 10 : null,
+          },
+          records: attendance_records,
+        },
+        tests,
+        assignments,
+      },
+      certificates,
+      report_cards,
+      fees: {
+        enrolments,
+        receipts,
+        summary: {
+          net_fee_minor: netFee,
+          collected_minor: collected,
+          balance_minor: Math.max(netFee - collected, 0),
+          receipt_count: receipts.length,
+        },
+      },
+    };
+  }
+
   /** Has THIS lead already been converted? Drives the leadsheet button state (idempotency). */
   async byLead(leadId: number, scope: ResolvedScope) {
     const params: unknown[] = [leadId];

@@ -44,6 +44,7 @@ import { AdmissionsModule } from './admissions/admissions.module';
 import { AiModule } from './ai/ai.module';
 import { OperationsModule } from './operations/operations.module';
 import { HrModule } from './hr/hr.module';
+import { SupportExtrasModule } from './supportextras/supportextras.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -108,6 +109,8 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     // Phase 2 ERP Batch 5 — Operations: catalog, inventory, assets, vendors, procurement (PO→receive→stock)
     OperationsModule,
     HrModule,        // ERP Batch 6 — Basic HR: employee directory, staff attendance, leaves
+    // ERP Batch 7 — Support extras: Training Videos + Release Notes (org-wide staff content under Help & Support)
+    SupportExtrasModule,
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

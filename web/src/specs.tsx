@@ -592,10 +592,10 @@ export const APP: ModuleItem[] = [
       sub: 'Step-by-step guides for using the system. Available at launch.',
       sprintNote: 'Guides publish before go-live.',
       blocks: [emptyList('Guides', 'Product guides publish before go-live')] } },
-    { id: 'training', label: 'Training Videos', spec: p2('Training Videos', 'Host training videos in-app.',
-      [cap('In-app hosting', 'Embedded', true), cap('Per module', 'Organised', true)]) },
-    { id: 'releases', label: 'Release Notes', spec: p2('Release Notes', 'Publish release notes / changelog to users inside the app.',
-      [cap('Changelog', 'In-app', true), cap('Version history', 'Tracked', true)]) },
+    { id: 'training', label: 'Training Videos', spec: { dyn: 'trainingVideos',
+      sub: 'A library of training / how-to videos for staff — title, description, category, video URL (YouTube / Vimeo / MP4 / embed), thumbnail, tags, order and active flag. Staff browse and play in-app; admins manage the library. Filter by category / status / search / date, export, choose columns, refresh, bulk-delete. RBAC training.* (view vs manage).' } },
+    { id: 'releases', label: 'Release Notes', spec: { dyn: 'releaseNotes',
+      sub: 'An in-app changelog — version, release date, title, what-changed notes and category (feature / fix / improvement). Admins publish entries; every user reads them on the What\'s New panel. Filter by category / status / search / date, export, choose columns, refresh, bulk-delete. RBAC release_note.* (view vs manage).' } },
   ] },
 
   /* ---------------- Franchise (P2) ---------------- */

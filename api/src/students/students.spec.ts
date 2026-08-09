@@ -222,3 +222,75 @@ describe('Students & Batches RBAC', () => {
     expect(granted('student.delete', 'Organization Admin')).toBe(true);
   });
 });
+
+/* =============================================================================
+ * STUDENT PROFILE AGGREGATE — GET /students/:id/profile returns EVERY section the
+ * tabbed detail view renders (identity/contact/family/address/id/education + academics
+ * + certificates + report cards + fees), and stays RBAC-scoped (the student is
+ * scope-validated first, so its children inherit the same access).
+ * =========================================================================== */
+const STUDENT_ROW = {
+  id: 7, org_id: 1, student_no: 'STU-0007', enrollment_no: 'EN-0007', full_name: 'Meera Nair',
+  status: 'active', branch_id: 9, vertical_id: 3, course_id: 100, batch_id: 5, batch_name: 'Batch A',
+  enrolment_id: 55, family_group_id: null, dob: '2001-05-10', phone: '+919812345678',
+  father_name: 'Nair', aadhaar: '1234', pan: 'ABCDE', address_line1: 'MG Rd', qualification: 'B.Com',
+};
+
+function makeProfileDb() {
+  const issued: Array<{ sql: string; params: unknown[] }> = [];
+  const db: any = {
+    one: async (sql: string, params: unknown[] = []) => {
+      issued.push({ sql, params });
+      if (/FROM student s\b/.test(sql) && /WHERE s\.id/.test(sql)) return STUDENT_ROW;
+      if (/FROM attendance WHERE student_id/.test(sql)) return { total: 10, present: 8, absent: 1, late: 1, excused: 0 };
+      return null;
+    },
+    query: async (sql: string, params: unknown[] = []) => {
+      issued.push({ sql, params });
+      if (/FROM batch_transfer/.test(sql)) return [{ id: 1, to_batch_name: 'Batch A', created_at: '2026-01-02' }];
+      if (/FROM batch_waitlist/.test(sql)) return [];
+      if (/FROM attendance a\b/.test(sql)) return [{ id: 1, session_date: '2026-01-05', status: 'present', batch_name: 'Batch A' }];
+      if (/FROM assessment_score/.test(sql)) return [{ id: 1, test_name: 'Quiz 1', max_marks: 100, marks_obtained: 90, grade: 'A' }];
+      if (/FROM coursework_submission/.test(sql)) return [{ id: 1, title: 'Essay', status: 'graded', marks: 18, max_marks: 20 }];
+      if (/FROM certificate/.test(sql)) return [{ id: 1, serial_no: 'CERT-1', cert_type: 'completion', title: 'Cert', issue_date: '2026-02-01', status: 'issued' }];
+      if (/FROM report_card/.test(sql)) return [{ id: 1, term: 'Term 1', overall_pct: 88.0, overall_grade: 'A', status: 'published' }];
+      if (/FROM enrolment e\b/.test(sql)) return [{ id: 55, enrolment_no: 'ENR-55', status: 'active', net_fee_minor: 5000000, course_name: 'Spoken English' }];
+      if (/FROM fee_receipt/.test(sql)) return [{ id: 1, receipt_no: 'RC-1', amount_minor: 2000000, mode: 'upi', received_at: '2026-03-01' }];
+      return [];
+    },
+    issued,
+  };
+  const numbering = { allocate: async () => 'X' } as any;
+  return { svc: new StudentService(db as any, resolver as any, numbering), db };
+}
+
+describe('StudentService.profile aggregate', () => {
+  it('returns every profile section for an in-scope student', async () => {
+    const { svc } = makeProfileDb();
+    const p: any = await svc.profile(7, scopeAll);
+    // identity/contact/family/address/id/education all ride the student row
+    expect(p.student).toMatchObject({ student_no: 'STU-0007', full_name: 'Meera Nair', aadhaar: '1234', qualification: 'B.Com' });
+    expect(Array.isArray(p.siblings)).toBe(true);
+    // academics
+    expect(p.academics.current_batch).toMatchObject({ id: 5, name: 'Batch A' });
+    expect(p.academics.transfers).toHaveLength(1);
+    expect(p.academics.attendance.summary).toMatchObject({ total: 10, present: 8, present_pct: 80 });
+    expect(p.academics.attendance.records).toHaveLength(1);
+    expect(p.academics.tests).toHaveLength(1);
+    expect(p.academics.assignments).toHaveLength(1);
+    // learning
+    expect(p.certificates).toHaveLength(1);
+    expect(p.report_cards).toHaveLength(1);
+    // fees
+    expect(p.fees.enrolments).toHaveLength(1);
+    expect(p.fees.receipts).toHaveLength(1);
+    expect(p.fees.summary).toMatchObject({ net_fee_minor: 5000000, collected_minor: 2000000, balance_minor: 3000000, receipt_count: 1 });
+  });
+
+  it('is RBAC-scoped — an out-of-scope student throws (never leaks academics/fees)', async () => {
+    const { svc, db } = makeProfileDb();
+    // make the scoped student read return nothing (resolver 1=0 for scopeOwn + no match)
+    db.one = async (sql: string) => (/FROM student s\b/.test(sql) ? null : null);
+    await expect(svc.profile(7, scopeOwn(999))).rejects.toThrow(/not found|access/i);
+  });
+});

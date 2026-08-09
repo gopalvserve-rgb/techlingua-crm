@@ -55,6 +55,7 @@ import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './le
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
 import { AiIntelligence, DashAiInsights } from './ai';
+import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -3606,12 +3607,29 @@ const FEATURE_MODULES: Array<{ t: string; d: string; mod?: string; sub?: string 
 ];
 function FeaturesPanel() {
   const { go } = useScreen();
+  // MERGED (Batch 7): the What's New card is now backed by the release_note data (release_note.view,
+  // granted to all staff). When an admin has published release notes they drive this list; until
+  // then it falls back to the seeded static highlights so the panel is never empty.
+  const feed = useFetch<any[]>(`/release-notes/feed?limit=12`, []);
+  const notes = feed.data ?? [];
+  const catBadge: Record<string, string> = { feature: 'b-green', improvement: 'b-green', fix: 'b-amber' };
   return (
     <>
       <div className="card">
-        <div className="card-head"><h3><Ic k="bolt" />What’s New</h3><span className="more">Recent updates</span></div>
+        <div className="card-head"><h3><Ic k="bolt" />What’s New</h3><span className="more">Recent updates {notes.length ? '· Release Notes' : ''}</span></div>
         <div className="list">
-          {WHATS_NEW.map((f, i) => (
+          {notes.length ? notes.map((n) => (
+            <div className="lrow" key={n.id}>
+              <div className="ic"><Ic k="check" /></div>
+              <div className="tx">
+                <div className="t1">{n.title}
+                  {n.version ? <span className="mono" style={{ marginLeft: 6, opacity: .7 }}>{n.version}</span> : null}
+                  <span className={`badge ${catBadge[n.category] ?? 'b-gray'}`} style={{ marginLeft: 8 }}>{n.category}</span>
+                </div>
+                <div className="t2">{n.notes || ''}{n.release_date ? `  — ${String(n.release_date).slice(0, 10).split('-').reverse().join('-')}` : ''}</div>
+              </div>
+            </div>
+          )) : WHATS_NEW.map((f, i) => (
             <div className="lrow" key={i}>
               <div className="ic"><Ic k="check" /></div>
               <div className="tx"><div className="t1">{f.t}</div><div className="t2">{f.d}</div></div>
@@ -4163,124 +4181,270 @@ function SiblingsSection({ studentId, branchId, verticalId, canEdit }: { student
 function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void }) {
   const { can } = useAuth();
   const canEdit = can('student.update');
+  const [prof, setProf] = useState<any>(null);
   const [full, setFull] = useState<any>(student);
   const [batches, setBatches] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        const d = await api.get<any>(`/students/${student.id}`);
-        if (live) setFull(d);
-        if (can('batch.read')) {
-          const bl = await api.get<any[]>(`/batches?branch_id=${d.branch_id}&vertical_id=${d.vertical_id}&status=active`);
-          if (live) setBatches(bl ?? []);
-        }
-      } catch { /* keep the row data */ }
-    })();
-    return () => { live = false; };
-  }, [student.id]);
+  const [tab, setTab] = useState<string>('overview');
+
+  const loadProfile = async () => {
+    try {
+      const d = await api.get<any>(`/students/${student.id}/profile`);
+      setProf(d); setFull(d.student);
+      if (can('batch.read')) {
+        try { setBatches(await api.get<any[]>(`/batches?branch_id=${d.student.branch_id}&vertical_id=${d.student.vertical_id}&status=active`) ?? []); } catch { /* keep */ }
+      }
+    } catch { /* keep the row data */ }
+  };
+  useEffect(() => { loadProfile(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [student.id]);
 
   const patch = async (body: any, msg: string) => {
     setBusy(true);
-    try { await api.patch(`/students/${student.id}`, body); toast(msg); setFull((f: any) => ({ ...f, ...body })); onChanged(); }
+    try { await api.patch(`/students/${student.id}`, body); toast(msg); setFull((f: any) => ({ ...f, ...body })); onChanged(); loadProfile(); }
     catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
   };
 
   const dash = (v: any) => (v == null || v === '' ? '—' : v);
+  const dmy = (v: any) => { if (!v) return '—'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return (y && m && d) ? `${d}-${m}-${y}` : s; };
+  const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
+
+  const ac = prof?.academics;
+  const att = ac?.attendance;
+  const fees = prof?.fees;
+  const TABS: Array<[string, string]> = [
+    ['overview', 'Overview'], ['contact', 'Contact'], ['family', 'Family'], ['address', 'Address'],
+    ['ids', 'ID & Documents'], ['education', 'Education'], ['academics', 'Academics'],
+    ['certs', 'Certificates'], ['reportcards', 'Report Cards'], ['fees', 'Fees'],
+  ];
+
+  const Empty = ({ t }: { t: string }) => <div className="empty-note">{t}</div>;
+
   return (
-    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={680}>
-      {onEdit && (
-        <div className="page-actions" style={{ marginBottom: 8 }}>
-          <button className="btn" onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>
-        </div>
-      )}
-      <Section title="Identity">
-        <KV rows={[
-          ['Student ID', <span className="mono">{full.student_no ?? '—'}</span>],
-          ['Enrollment No.', <span className="mono">{dash(full.enrollment_no)}</span>],
-          ['Name', full.full_name],
-          ['Date of Birth', dash(full.dob ? String(full.dob).slice(0, 10) : '')],
-          ['Gender', dash(full.gender)],
-          ['Nationality', dash(full.nationality)],
-          ['Registration Date', dash(full.registration_date ? String(full.registration_date).slice(0, 10) : '')],
-          ['Admission Date', dash(full.admission_date ? String(full.admission_date).slice(0, 10) : '')],
-          ['Status', renderCell(studentStatusCell(full.status))],
-        ]} />
-      </Section>
-      <Section title="Placement & Contact">
-        <KV rows={[
-          ['Branch', full.branch_name ?? '—'],
-          ['Vertical', full.vertical_name ?? '—'],
-          ['Course', full.course_name ?? '—'],
-          ['Owner', full.owner_name ?? '—'],
-          ['Primary Mobile', <span className="mono">{dash(full.phone)}</span>],
-          ['WhatsApp', <span className="mono">{dash(full.whatsapp_phone)}</span>],
-          ['Alternate Mobile', <span className="mono">{dash(full.alt_phone)}</span>],
-          ['Email', dash(full.email)],
-          ['Enrolment', full.enrolment_no ? <span className="mono">{full.enrolment_no}</span> : 'Not linked to an enrolment'],
-        ]} />
-      </Section>
-      <Section title="Family / Guardian">
-        <KV rows={[
-          ['Father Name', dash(full.father_name)],
-          ['Father Mobile', <span className="mono">{dash(full.father_mobile)}</span>],
-          ['Guardian Name', dash(full.guardian_name)],
-          ['Guardian Mobile', <span className="mono">{dash(full.guardian_mobile)}</span>],
-          ['Guardian Email', dash(full.guardian_email)],
-          ['Guardian Relation', dash(full.guardian_relation)],
-        ]} />
-      </Section>
-      <Section title="Address">
-        <KV rows={[
-          ['Address Line 1', dash(full.address_line1)],
-          ['Address Line 2', dash(full.address_line2)],
-          ['Landmark', dash(full.landmark)],
-          ['City / State', `${dash(full.city_name)} / ${dash(full.state_name)}`],
-          ['District', dash(full.district)],
-          ['Country', dash(full.country)],
-          ['Pincode', dash(full.pincode)],
-          ['Permanent Address', dash(full.permanent_address)],
-          ['Current Address', dash(full.current_address)],
-        ]} />
-      </Section>
-      <Section title="ID Proofs & Education">
-        <KV rows={[
-          ['ID Proof', `${dash(full.id_proof_type)} ${full.id_proof_number ? '· ' + full.id_proof_number : ''}`.trim()],
-          ['Aadhaar', <span className="mono">{dash(full.aadhaar)}</span>],
-          ['PAN', <span className="mono">{dash(full.pan)}</span>],
-          ['Passport', <span className="mono">{dash(full.passport)}</span>],
-          ['Qualification', dash(full.qualification)],
-          ['Institution', dash(full.institution)],
-          ['Board / University', dash(full.board_university)],
-          ['Passing Year', dash(full.passing_year)],
-          ['Previous Institution', dash(full.previous_institution)],
-        ]} />
-      </Section>
-      <SiblingsSection studentId={Number(student.id)} branchId={full.branch_id} verticalId={full.vertical_id} canEdit={canEdit} />
-      {canEdit && (
-        <Section title="Manage">
-          <div className="form-grid">
-            <div className="fld">
-              <label htmlFor="stu-batch">Batch</label>
-              <select id="stu-batch" className="ainp" value={full.batch_id ?? ''} disabled={busy}
-                onChange={(e) => patch({ batch_id: e.target.value ? Number(e.target.value) : null }, 'Batch updated')}>
-                <option value="">— Not assigned —</option>
-                {batches.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.batch_code})</option>)}
-                {full.batch_id && !batches.some((b) => Number(b.id) === Number(full.batch_id))
-                  ? <option value={full.batch_id}>{full.batch_name}</option> : null}
-              </select>
-            </div>
-            <div className="fld">
-              <label htmlFor="stu-status">Status</label>
-              <select id="stu-status" className="ainp" value={full.status} disabled={busy}
-                onChange={(e) => patch({ status: e.target.value }, `Marked ${e.target.value}`)}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-          </div>
+    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={760}>
+      <div className="page-actions" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span className="mono sub">{full.student_no ?? '—'}</span>
+        {renderCell(studentStatusCell(full.status))}
+        <span className="sub">{[full.branch_name, full.vertical_name, full.course_name].filter(Boolean).join(' › ')}</span>
+        {onEdit && <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>}
+      </div>
+      <div className="seltabs" style={{ flexWrap: 'wrap' }}>
+        {TABS.map(([k, label]) => (
+          <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{label}</button>
+        ))}
+      </div>
+
+      {tab === 'overview' && (
+        <Section title="Identity">
+          <KV rows={[
+            ['Student ID', <span className="mono">{full.student_no ?? '—'}</span>],
+            ['Enrollment No.', <span className="mono">{dash(full.enrollment_no)}</span>],
+            ['Name', full.full_name],
+            ['Date of Birth', dmy(full.dob)],
+            ['Gender', dash(full.gender)],
+            ['Nationality', dash(full.nationality)],
+            ['Registration Date', dmy(full.registration_date)],
+            ['Admission Date', dmy(full.admission_date)],
+            ['Status', renderCell(studentStatusCell(full.status))],
+            ['Branch', dash(full.branch_name)],
+            ['Vertical', dash(full.vertical_name)],
+            ['Course', dash(full.course_name)],
+            ['Owner', dash(full.owner_name)],
+          ]} />
         </Section>
+      )}
+
+      {tab === 'contact' && (
+        <Section title="Contact">
+          <KV rows={[
+            ['Primary Mobile', <span className="mono">{dash(full.phone)}</span>],
+            ['WhatsApp', <span className="mono">{dash(full.whatsapp_phone)}</span>],
+            ['Alternate Mobile', <span className="mono">{dash(full.alt_phone)}</span>],
+            ['Email', dash(full.email)],
+          ]} />
+        </Section>
+      )}
+
+      {tab === 'family' && (
+        <>
+          <Section title="Family / Guardian">
+            <KV rows={[
+              ['Father Name', dash(full.father_name)],
+              ['Father Mobile', <span className="mono">{dash(full.father_mobile)}</span>],
+              ['Guardian Name', dash(full.guardian_name)],
+              ['Guardian Mobile', <span className="mono">{dash(full.guardian_mobile)}</span>],
+              ['Guardian Email', dash(full.guardian_email)],
+              ['Guardian Relation', dash(full.guardian_relation)],
+            ]} />
+          </Section>
+          <SiblingsSection studentId={Number(student.id)} branchId={full.branch_id} verticalId={full.vertical_id} canEdit={canEdit} />
+        </>
+      )}
+
+      {tab === 'address' && (
+        <Section title="Address">
+          <KV rows={[
+            ['Address Line 1', dash(full.address_line1)],
+            ['Address Line 2', dash(full.address_line2)],
+            ['Landmark', dash(full.landmark)],
+            ['City / State', `${dash(full.city_name)} / ${dash(full.state_name)}`],
+            ['District', dash(full.district)],
+            ['Country', dash(full.country)],
+            ['Pincode', dash(full.pincode)],
+            ['Permanent Address', dash(full.permanent_address)],
+            ['Current Address', dash(full.current_address)],
+          ]} />
+        </Section>
+      )}
+
+      {tab === 'ids' && (
+        <Section title="ID & Documents">
+          <KV rows={[
+            ['ID Proof', `${dash(full.id_proof_type)} ${full.id_proof_number ? '· ' + full.id_proof_number : ''}`.trim()],
+            ['Aadhaar', <span className="mono">{dash(full.aadhaar)}</span>],
+            ['PAN', <span className="mono">{dash(full.pan)}</span>],
+            ['Passport', <span className="mono">{dash(full.passport)}</span>],
+          ]} />
+        </Section>
+      )}
+
+      {tab === 'education' && (
+        <Section title="Education">
+          <KV rows={[
+            ['Qualification', dash(full.qualification)],
+            ['Institution', dash(full.institution)],
+            ['Board / University', dash(full.board_university)],
+            ['Passing Year', dash(full.passing_year)],
+            ['Previous Institution', dash(full.previous_institution)],
+          ]} />
+        </Section>
+      )}
+
+      {tab === 'academics' && (
+        <>
+          <Section title="Batch">
+            <KV rows={[
+              ['Current Batch', ac?.current_batch?.name ?? full.batch_name ?? 'Not assigned'],
+              ['Transfers', String(ac?.transfers?.length ?? 0)],
+              ['Waitlist (waiting)', String(ac?.waitlist?.length ?? 0)],
+            ]} />
+            {ac?.transfers?.length ? (
+              <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Reason</th></tr></thead>
+                <tbody>{ac.transfers.map((t: any) => (
+                  <tr key={t.id}><td>{dmy(t.created_at)}</td><td>{t.from_batch_name ?? '—'}</td><td>{t.to_batch_name ?? '—'}</td><td>{t.reason ?? '—'}</td></tr>
+                ))}</tbody></table>
+            ) : null}
+          </Section>
+          <Section title="Attendance">
+            <KV rows={[
+              ['Present %', att?.summary?.present_pct != null ? `${att.summary.present_pct}%` : '—'],
+              ['Present / Total', `${att?.summary?.present ?? 0} / ${att?.summary?.total ?? 0}`],
+              ['Absent · Late · Excused', `${att?.summary?.absent ?? 0} · ${att?.summary?.late ?? 0} · ${att?.summary?.excused ?? 0}`],
+            ]} />
+            {att?.records?.length ? (
+              <table className="minitbl"><thead><tr><th>Date</th><th>Batch</th><th>Status</th><th>Mode</th></tr></thead>
+                <tbody>{att.records.slice(0, 50).map((r: any) => (
+                  <tr key={r.id}><td>{dmy(r.session_date)}</td><td>{r.batch_name ?? '—'}</td><td>{r.status}</td><td>{r.mode ?? '—'}</td></tr>
+                ))}</tbody></table>
+            ) : <Empty t="No attendance records yet." />}
+          </Section>
+          <Section title="Tests & Scores">
+            {ac?.tests?.length ? (
+              <table className="minitbl"><thead><tr><th>Test</th><th>Type</th><th>Date</th><th>Score</th><th>Grade</th></tr></thead>
+                <tbody>{ac.tests.map((t: any) => (
+                  <tr key={t.id}><td>{t.test_name}</td><td>{t.test_type}</td><td>{dmy(t.test_date)}</td>
+                    <td>{t.marks_obtained != null ? `${t.marks_obtained} / ${t.max_marks}` : '—'}</td><td>{t.grade ?? '—'}</td></tr>
+                ))}</tbody></table>
+            ) : <Empty t="No test scores yet." />}
+          </Section>
+          <Section title="Assignments">
+            {ac?.assignments?.length ? (
+              <table className="minitbl"><thead><tr><th>Assignment</th><th>Due</th><th>Status</th><th>Marks</th></tr></thead>
+                <tbody>{ac.assignments.map((a: any) => (
+                  <tr key={a.id}><td>{a.title}</td><td>{dmy(a.due_date)}</td><td>{a.status}</td>
+                    <td>{a.marks != null ? `${a.marks}${a.max_marks ? ' / ' + a.max_marks : ''}` : '—'}</td></tr>
+                ))}</tbody></table>
+            ) : <Empty t="No assignments yet." />}
+          </Section>
+          {canEdit && (
+            <Section title="Manage">
+              <div className="form-grid">
+                <div className="fld">
+                  <label htmlFor="stu-batch">Batch</label>
+                  <select id="stu-batch" className="ainp" value={full.batch_id ?? ''} disabled={busy}
+                    onChange={(e) => patch({ batch_id: e.target.value ? Number(e.target.value) : null }, 'Batch updated')}>
+                    <option value="">— Not assigned —</option>
+                    {batches.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.batch_code})</option>)}
+                    {full.batch_id && !batches.some((b) => Number(b.id) === Number(full.batch_id))
+                      ? <option value={full.batch_id}>{full.batch_name}</option> : null}
+                  </select>
+                </div>
+                <div className="fld">
+                  <label htmlFor="stu-status">Status</label>
+                  <select id="stu-status" className="ainp" value={full.status} disabled={busy}
+                    onChange={(e) => patch({ status: e.target.value }, `Marked ${e.target.value}`)}>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+              </div>
+            </Section>
+          )}
+        </>
+      )}
+
+      {tab === 'certs' && (
+        <Section title="Certificates">
+          {prof?.certificates?.length ? (
+            <table className="minitbl"><thead><tr><th>Serial</th><th>Type</th><th>Title</th><th>Issued</th><th>Status</th></tr></thead>
+              <tbody>{prof.certificates.map((c: any) => (
+                <tr key={c.id}><td className="mono">{c.serial_no}</td><td>{c.cert_type}</td><td>{c.title}</td><td>{dmy(c.issue_date)}</td>
+                  <td>{renderCell({ b: [c.status, c.status === 'issued' ? 'b-green' : 'b-gray'] } as Cell)}</td></tr>
+              ))}</tbody></table>
+          ) : <Empty t="No certificates issued yet." />}
+        </Section>
+      )}
+
+      {tab === 'reportcards' && (
+        <Section title="Report Cards">
+          {prof?.report_cards?.length ? (
+            <table className="minitbl"><thead><tr><th>Term</th><th>Attendance</th><th>Tests</th><th>Overall</th><th>Grade</th><th>Status</th></tr></thead>
+              <tbody>{prof.report_cards.map((r: any) => (
+                <tr key={r.id}><td>{r.term}</td><td>{r.attendance_pct != null ? `${r.attendance_pct}%` : '—'}</td>
+                  <td>{r.test_avg_pct != null ? `${r.test_avg_pct}%` : '—'}</td><td>{r.overall_pct != null ? `${r.overall_pct}%` : '—'}</td>
+                  <td>{r.overall_grade ?? '—'}</td><td>{renderCell({ b: [r.status, r.status === 'published' ? 'b-green' : 'b-gray'] } as Cell)}</td></tr>
+              ))}</tbody></table>
+          ) : <Empty t="No report cards yet." />}
+        </Section>
+      )}
+
+      {tab === 'fees' && (
+        <>
+          <Section title="Collection Summary">
+            <KV rows={[
+              ['Net Fee', money(fees?.summary?.net_fee_minor)],
+              ['Collected', money(fees?.summary?.collected_minor)],
+              ['Balance', money(fees?.summary?.balance_minor)],
+              ['Receipts', String(fees?.summary?.receipt_count ?? 0)],
+            ]} />
+          </Section>
+          <Section title="Enrolments">
+            {fees?.enrolments?.length ? (
+              <table className="minitbl"><thead><tr><th>Enrolment</th><th>Course</th><th>Net Fee</th><th>Plan</th><th>Status</th></tr></thead>
+                <tbody>{fees.enrolments.map((e: any) => (
+                  <tr key={e.id}><td className="mono">{e.enrolment_no}</td><td>{e.course_name ?? '—'}</td><td>{money(e.net_fee_minor)}</td>
+                    <td>{e.payment_plan}</td><td>{e.status}</td></tr>
+                ))}</tbody></table>
+            ) : <Empty t="Not linked to an enrolment yet." />}
+          </Section>
+          <Section title="Fee Receipts">
+            {fees?.receipts?.length ? (
+              <table className="minitbl"><thead><tr><th>Receipt</th><th>Amount</th><th>Mode</th><th>Received</th></tr></thead>
+                <tbody>{fees.receipts.map((r: any) => (
+                  <tr key={r.id}><td className="mono">{r.receipt_no}</td><td>{money(r.amount_minor)}</td><td>{r.mode}</td><td>{dmy(r.received_at)}</td></tr>
+                ))}</tbody></table>
+            ) : <Empty t="No fee receipts yet." />}
+          </Section>
+        </>
       )}
     </DetailModal>
   );
@@ -4573,6 +4737,8 @@ export const DYN: Record<string, () => JSX.Element> = {
   hrLeaves: LeavesScreen,
   customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
+  trainingVideos: TrainingVideosScreen,
+  releaseNotes: ReleaseNotesScreen,
   featuresPanel: FeaturesPanel,
 };
 

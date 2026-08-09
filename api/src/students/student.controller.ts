@@ -41,6 +41,15 @@ export class StudentController {
     return this.svc.get(id, scope);
   }
 
+  /** THE STUDENT PROFILE AGGREGATE — one scoped read powering the tabbed detail view
+   *  (identity/contact/family/address/id/education + academics + certificates + report
+   *  cards + fees). Guarded by student.read; the SQL is scoped inside profile(). */
+  @Get(':id/profile')
+  @RequirePermission('student.read')
+  profile(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.profile(id, scope);
+  }
+
   /* -------- family / siblings (ERP Batch 3). Read via student.read; link/unlink reuse
    *          student.update, mirroring how batch transfer/waitlist reuse it. -------- */
   @Get(':id/siblings')
