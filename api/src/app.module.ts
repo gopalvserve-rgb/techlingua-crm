@@ -37,6 +37,7 @@ import { SupportModule } from './support/support.module';
 import { CrossSellModule } from './crosssell/crosssell.module';
 import { CustomFieldsModule } from './customfields/custom-fields.module';
 import { StudentsModule } from './students/students.module';
+import { FinanceModule } from './finance/finance.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -90,6 +91,8 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     CustomFieldsModule,  // client Aug 2026: DEFINE lead custom fields → render on Add/Edit lead form    // cross_sell_rule + cross_sell_attempt, crosssell.* RBAC, act via follow-up or LeadIngestionService
     // Phase 2 (CRM-level) — Students & Academics: lead->student conversion, students dir + dashboard, batches
     StudentsModule,
+    // Client request — Finance Settings: discount / scholarship / capping limit (% AND ₹), enforced at discount points
+    FinanceModule,
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

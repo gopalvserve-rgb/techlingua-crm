@@ -9,6 +9,7 @@ import { MessagingService } from '../messaging/messaging.service';
 import { computeLine, computeTotals, LineComputed, rupeesToMinor } from '../common/money.util';
 import { Letterhead, quotationPdf } from '../pdf/documents';
 import { requireDateString } from '../common/date.util';
+import { FinanceSettingsService } from '../finance/finance-settings.service';
 
 /**
  * QUOTATIONS — fee proposals with line items, discounts, tax SHOWN, a validity date,
@@ -72,7 +73,23 @@ export class QuotationService {
     private readonly numbering: NumberingService,
     private readonly templates?: TemplateService,
     private readonly messaging?: MessagingService,
+    private readonly finance?: FinanceSettingsService,
   ) {}
+
+  /**
+   * Run every line's discount through the Finance Settings cap (percent AND amount).
+   * A normal user exceeding the cap is REJECTED with a clear message; a user holding
+   * `finance.override` passes. No-op when the finance service is absent (bare unit tests).
+   */
+  private async enforceDiscountCaps(
+    verticalId: number, userId: number,
+    items: Array<{ computed: LineComputed }>,
+  ): Promise<void> {
+    if (!this.finance) return;
+    const guard = await this.finance.guardFor(verticalId, userId);
+    items.forEach((it, i) =>
+      guard.enforce('discount', it.computed.gross_minor, it.computed.discount_minor, `Line ${i + 1}`));
+  }
 
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -261,6 +278,7 @@ export class QuotationService {
     if (!leadId) throw new BadRequestException('Choose the lead this quotation is for.');
     const lead = await this.leadInScope(leadId, scope);
     const items = this.normaliseItems(dto?.items);
+    await this.enforceDiscountCaps(Number(lead.vertical_id), me.id, items);
     const totals = computeTotals(items.map((i) => i.computed));
     const orgId = await this.orgId();
     const validUntil = this.validUntil(dto?.valid_until);
@@ -296,6 +314,7 @@ export class QuotationService {
       discount_value: i.discount_type === 'percent' ? Number(i.discount_value) : Number(i.discount_minor),
       tax_pct: Number(i.tax_pct),
     })));
+    await this.enforceDiscountCaps(Number(cur.vertical_id), me.id, items);
     const totals = computeTotals(items.map((i) => i.computed));
     const validUntil = this.validUntil(dto?.valid_until ?? cur.valid_until);
 
@@ -330,6 +349,7 @@ export class QuotationService {
       discount_value: i.discount_type === 'percent' ? Number(i.discount_value) : Number(i.discount_minor),
       tax_pct: Number(i.tax_pct),
     })));
+    await this.enforceDiscountCaps(Number(cur.vertical_id), me.id, items);
     const totals = computeTotals(items.map((i) => i.computed));
     const orgId = await this.orgId();
     const validUntil = this.validUntil(dto?.valid_until ?? cur.valid_until);

@@ -48,6 +48,7 @@ import {
 import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 import { SupportTickets } from './support';
 import { CrossSell } from './crosssell';
+import { FinanceSettings } from './financesettings';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -4109,6 +4110,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   bulkSms: BulkSms,
   emailCampaigns: EmailCampaigns,
   settings: Settings,
+  financeSettings: FinanceSettings,
   // Sprint 5 — conversion & money-lite
   quotations: Quotations,
   saleClosure: SaleClosure,

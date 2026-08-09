@@ -91,4 +91,9 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // record). Batches are branch/vertical/course-scoped and managed by managers/admins.
   { module: 'student', label: 'Students', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'batch', label: 'Batches', actions: ['read', 'create', 'update', 'delete'] },
+  // Client request (migration 045) — Finance Settings: discount / scholarship / capping
+  // limit, BOTH percentage and amount. 'read' shows the screen; 'manage' CHANGES the caps
+  // (the permitted user); 'override' applies a discount/scholarship BEYOND the cap. A
+  // Counsellor holds neither manage nor override, so a Counsellor is capped.
+  { module: 'finance', label: 'Finance Settings (discount/scholarship/cap)', actions: ['read', 'manage', 'override'] },
 ];

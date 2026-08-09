@@ -618,6 +618,11 @@ export const APP: ModuleItem[] = [
       sub: 'Soft-deleted records across every module — deleted rows are hidden from lists, dropdowns & KPIs while their children stay intact. Review impact and restore (Super Admin / Org Admin).' } },
     { id: 'settings', label: 'Settings', spec: { dyn: 'settings',
       sub: 'Channels & credentials (SMTP per vertical · WhatsApp · SMS · Razorpay per vertical · AI keys — encrypted at rest), business hours, holidays, numbering series, automation guardrails and the notification matrix.' } },
+    // Client request — Finance Settings: discount / scholarship / capping limit, BOTH by
+    // percentage and by amount, org-wide or per vertical. Enforced everywhere a discount
+    // is applied (quotation line, enrolment). Only a permitted user changes the caps.
+    { id: 'finance', label: 'Finance Settings', spec: { dyn: 'financeSettings',
+      sub: 'Discount, scholarship and the hard capping limit — each configurable by percentage AND by amount (₹). Set organisation-wide or per vertical. A discount must be within both the percent cap and the amount cap; the cap is enforced on quotation lines and enrolment. Only a permitted user (finance.manage) can change these; a user with finance.override may exceed them at closure.' } },
   ] },
 
   /* ---------------- Help & Support ---------------- */

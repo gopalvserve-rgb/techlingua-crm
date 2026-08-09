@@ -7,6 +7,7 @@ import { NumberingModule } from '../numbering/numbering.module';
 import { ApprovalService } from './approval.service';
 import { EnrolmentController } from './enrolment.controller';
 import { EnrolmentService } from './enrolment.service';
+import { FinanceModule } from '../finance/finance.module';
 
 /**
  * ApprovalService reads the `enrolment_approvals` policy through SettingsService, which
@@ -23,7 +24,7 @@ import { EnrolmentService } from './enrolment.service';
  * now compiles this module for real, so it cannot regress silently.
  */
 @Module({
-  imports: [DatabaseModule, RbacModule, NotificationsModule, NumberingModule],
+  imports: [DatabaseModule, RbacModule, NotificationsModule, NumberingModule, FinanceModule],
   controllers: [EnrolmentController],
   providers: [EnrolmentService, ApprovalService, SettingsService],
   exports: [EnrolmentService, ApprovalService],

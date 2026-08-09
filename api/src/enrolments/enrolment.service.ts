@@ -6,6 +6,7 @@ import { NumberingService } from '../numbering/numbering.service';
 import { rupeesToMinor } from '../common/money.util';
 import { ApprovalService, requiredSteps } from './approval.service';
 import { requireDateString, assertDateRange } from '../common/date.util';
+import { FinanceSettingsService } from '../finance/finance-settings.service';
 
 /**
  * ENROLMENT — the SALE CLOSURE record. "Sale closure = enrolment" (§5).
@@ -53,6 +54,7 @@ export class EnrolmentService {
     private readonly resolver: ScopeResolverService,
     private readonly numbering: NumberingService,
     private readonly approvals: ApprovalService,
+    private readonly finance?: FinanceSettingsService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -182,6 +184,12 @@ export class EnrolmentService {
 
     const lead = await this.leadInScope(leadId, scope);
     const money = this.normaliseMoney(dto);
+    if (this.finance) {
+      await this.finance.assertAllowed({
+        verticalId: Number(lead.vertical_id), userId: me.id, kind: 'discount',
+        base: money.fee_minor, discount: money.discount_minor, label: 'Enrolment discount',
+      });
+    }
     const plan = String(dto?.payment_plan ?? 'full');
     if (!(PAYMENT_PLANS as readonly string[]).includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
     if (money.first_payment_minor > money.net_fee_minor) {
@@ -319,6 +327,12 @@ export class EnrolmentService {
         `${cur.lead_name} has already paid ${(Number(cur.paid_minor) / 100).toFixed(2)}. `
         + 'The net fee cannot be set below what has been collected — refunds arrive in Phase 3.',
       );
+    }
+    if (this.finance) {
+      await this.finance.assertAllowed({
+        verticalId: Number(cur.vertical_id), userId: me.id, kind: 'discount',
+        base: money.fee_minor, discount: money.discount_minor, label: 'Enrolment discount',
+      });
     }
     const plan = dto?.payment_plan ?? cur.payment_plan;
     if (!(PAYMENT_PLANS as readonly string[]).includes(String(plan))) throw new BadRequestException('Choose a valid payment plan.');
