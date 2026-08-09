@@ -6,11 +6,18 @@ import { ResetPasswordPage } from './resetpassword';
 import { RefDataProvider } from './refdata';
 import { GlobalScopeProvider } from './scope';
 import { ParentReportView } from './learning';
+import { PublicAdmissionForm } from './admissions';
 
 /** Public, login-free parent report-card view (tokenised share link). */
 function ParentReportRoute() {
   const { token } = useParams();
   return <ParentReportView token={token ?? ''} />;
+}
+
+/** Public, login-free self-serve online admission form (per-branch/vertical keyed link). */
+function AdmissionFormRoute() {
+  const { formKey } = useParams();
+  return <PublicAdmissionForm formKey={formKey ?? ''} />;
 }
 
 export default function App() {
@@ -24,6 +31,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/parent/report/:token" element={<ParentReportRoute />} />
+        <Route path="/admit/:formKey" element={<AdmissionFormRoute />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -35,6 +43,7 @@ export default function App() {
         <Routes>
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/parent/report/:token" element={<ParentReportRoute />} />
+          <Route path="/admit/:formKey" element={<AdmissionFormRoute />} />
           <Route path="/m/:mod/:sub" element={<Shell />} />
           <Route path="*" element={<Navigate to="/m/dash/overview" replace />} />
         </Routes>

@@ -260,20 +260,8 @@ export const APP: ModuleItem[] = [
       sub: 'Per-student, per-term report cards computed from attendance %, test scores and assignment grades (Indian grading bands; tests 50% / assignments 30% / attendance 20% over the components present). Report-card PDF; publish for a login-free PARENT VIEW (a shareable link to the card, attendance and parent-visible study material). Filter, export, choose columns, refresh, bulk-delete. RBAC reportcard.*.' } },
     { id: 'crosssell', label: 'Cross-Sell', spec: { dyn: 'crossSell',
       sub: 'CRM-level cross-sell on the contacts you have today. Converted contacts (won or enrolled) are paired with a suggested additional course from the Course master — via an admin rule map (current course → suggested course) or, failing a rule, other active courses in their vertical. Act on a suggestion: create a cross-sell follow-up, or create a new lead through the ingestion pipeline (dedup / distribution / audit), or dismiss it. Every act is logged so it is never suggested again. RBAC-scoped. (Deeper student-based cross-sell on academic progress remains Phase 2.)' } },
-    { id: 'admissions', label: 'Admissions', spec: {
-      sub: 'On enrolment a lead converts to a student record. Branch-set Student ID format. Online Admission Form supported.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'form', title: 'New admission', fields: [
-          { label: 'Student name', ph: 'Enter name', req: 1 }, { label: 'Mobile', ph: '+91', req: 1 },
-          { label: 'Course', ph: 'Course master', req: 1 }, { label: 'Batch', ph: 'Batch' },
-          { label: 'Branch', ph: 'Branch master', req: 1 }, { label: 'Student ID', ph: 'Auto-generated' },
-          { label: 'Parent / Guardian', ph: '' }, { label: 'Admission date', ph: 'Today' },
-          { label: 'Fee plan', ph: 'Plan master', span: 2 }] },
-        { type: 'caps', title: 'Admission options', items: [
-          cap('Lead → student auto', 'On closure'), cap('Online Admission Form', 'Public link'),
-          cap('Branch-set ID format', 'First-time setup'), cap('Sibling / family link', 'Connect records')] },
-      ] } },
+    { id: 'admissions', label: 'Admissions', spec: { dyn: 'admissionsList',
+      sub: 'The online-admission REVIEW QUEUE. A prospective student fills a public, key-authenticated form (generate & share the link via “Form links”); each submit lands here as a PENDING admission. Open a submission, edit it, APPROVE → creates the student, or reject with a reason. Filter by branch / vertical / course / status / date; export, choose columns, refresh, bulk-delete. RBAC admission.*.' } },
   ] },
 
   /* ---------------- Finance & Collections ---------------- */

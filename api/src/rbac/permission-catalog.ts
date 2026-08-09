@@ -115,4 +115,8 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'material', label: 'Study Material', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'certificate', label: 'Certificates', actions: ['read', 'issue', 'revoke', 'delete'] },
   { module: 'reportcard', label: 'Report Cards', actions: ['read', 'create', 'delete'] },
+  // ERP Batch 3 — online admission form + review queue. 'read' = see the queue; 'manage' =
+  // create/edit/delete the public form links; 'review' = approve (→ student) / reject; 'delete'
+  // = bulk-delete submissions. Sibling/family linking reuses student.update + student.read.
+  { module: 'admission', label: 'Admissions (Online form & review)', actions: ['read', 'manage', 'review', 'delete'] },
 ];

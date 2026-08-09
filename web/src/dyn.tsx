@@ -31,6 +31,7 @@ import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal
 import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelete, BulkBar, downloadObjectsCsv } from './listtools';
 import { RedFlagModal } from './leadsheet';
 import { ConvertStudentModal } from './convertstudent';
+import { AdmissionsScreen } from './admissions';
 import { CustomFieldsAdmin } from './customfields';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
@@ -4095,6 +4096,70 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
 }
 
 /** Student detail — profile + status toggle + assign-to-batch (batches in the same branch/vertical). */
+/** SIBLINGS — the family members of a student (ERP Batch 3). Discoverable from either student
+ *  via a shared family group; link by searching the directory, unlink from the group. RBAC:
+ *  read via student.read, link/unlink via student.update. */
+function SiblingsSection({ studentId, branchId, verticalId, canEdit }: { studentId: number; branchId?: number; verticalId?: number; canEdit: boolean }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [q, setQ] = useState('');
+  const [matches, setMatches] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  const load = async () => { try { setRows(await api.get<any[]>(`/students/${studentId}/siblings`)); } catch { /* keep */ } };
+  useEffect(() => { load(); }, [studentId]);
+  const search = async (term: string) => {
+    setQ(term);
+    if (term.trim().length < 2) { setMatches([]); return; }
+    try {
+      const p = new URLSearchParams(); p.set('q', term.trim()); p.set('limit', '8');
+      const r = await api.get<any[]>(`/students?${p.toString()}`);
+      const have = new Set([studentId, ...rows.map((x) => Number(x.id))]);
+      setMatches((r ?? []).filter((x: any) => !have.has(Number(x.id))));
+    } catch { setMatches([]); }
+  };
+  const link = async (sid: number) => {
+    setBusy(true);
+    try { await api.post(`/students/${studentId}/siblings`, { sibling_id: sid }); toast('Sibling linked'); setQ(''); setMatches([]); await load(); }
+    catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  const unlink = async () => {
+    setBusy(true);
+    try { await api.del(`/students/${studentId}/siblings`); toast('Removed from family group'); await load(); }
+    catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <Section title="Family / Siblings">
+      {rows.length === 0 ? <div className="empty-note">No siblings linked yet.</div> : (
+        <div>
+          {rows.map((sb) => (
+            <div className="lrow" key={sb.id}>
+              <div className="gr"><div className="t1"><b>{sb.full_name}</b> <span className="sub mono">{sb.student_no ?? ''}</span></div>
+                <div className="t2 sub">{[sb.branch_name, sb.vertical_name, sb.course_name].filter(Boolean).join(' › ') || ''}</div></div>
+            </div>
+          ))}
+          {canEdit && <div style={{ marginTop: 6 }}><button className="btn sm danger" onClick={unlink} disabled={busy}><Ic k="x" />Remove this student from the family group</button></div>}
+        </div>
+      )}
+      {canEdit && (
+        <div style={{ marginTop: 10 }}>
+          <label className="sub">Link a sibling</label>
+          <input className="ainp" placeholder="Search students by name / phone / ID…" value={q}
+            data-testid="sibling-search" onChange={(e) => search(e.target.value)} />
+          {matches.length > 0 && (
+            <div className="card" style={{ marginTop: 4, padding: 4 }}>
+              {matches.map((m) => (
+                <button key={m.id} className="subitem" style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                  onClick={() => link(Number(m.id))} disabled={busy}>
+                  <b>{m.full_name}</b> <span className="sub mono">{m.student_no ?? ''}</span> <span className="sub">{m.phone ?? ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void }) {
   const { can } = useAuth();
   const canEdit = can('student.update');
@@ -4192,6 +4257,7 @@ function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: 
           ['Previous Institution', dash(full.previous_institution)],
         ]} />
       </Section>
+      <SiblingsSection studentId={Number(student.id)} branchId={full.branch_id} verticalId={full.vertical_id} canEdit={canEdit} />
       {canEdit && (
         <Section title="Manage">
           <div className="form-grid">
@@ -4493,6 +4559,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   testsScreen: TestsScreen,
   assignmentsScreen: AssignmentsScreen,
   studyMaterial: StudyMaterialScreen,
+  admissionsList: AdmissionsScreen,
   certificates: CertificatesScreen,
   reportCards: ReportCardsScreen,
   customFields: CustomFieldsAdmin,

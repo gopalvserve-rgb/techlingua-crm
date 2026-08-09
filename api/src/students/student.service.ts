@@ -124,6 +124,65 @@ export class StudentService {
     return row;
   }
 
+  /* ------------------------------------------------------ family / siblings */
+  /**
+   * FAMILY / SIBLINGS (ERP Batch 3). Students of one family share a `family_group_id`; the
+   * siblings of a student are simply the OTHER members of that group — symmetric, so they are
+   * discoverable from either student, and ready for the Phase-3 sibling discount. Every read is
+   * scope-filtered like the directory; linking/unlinking reuses student.update.
+   */
+  async siblings(id: number, scope: ResolvedScope) {
+    const me = await this.get(id, scope);              // scope + existence
+    if (!me.family_group_id) return [];
+    const params: unknown[] = [Number(me.family_group_id), id];
+    const w = this.resolver.buildScopeWhere(scope, STUDENT_SCOPE_COLS, params);
+    return this.db.query<any>(
+      `SELECT s.id, s.full_name, s.student_no, s.status, s.phone,
+              b.name AS branch_name, v.name AS vertical_name, c.name AS course_name
+         FROM student s
+         LEFT JOIN branch  b ON b.id = s.branch_id
+         LEFT JOIN vertical v ON v.id = s.vertical_id
+         LEFT JOIN m_course c ON c.id = s.course_id
+        WHERE s.family_group_id = $1::bigint AND s.id <> $2::bigint AND s.deleted_at IS NULL AND ${w}
+        ORDER BY s.full_name`, params);
+  }
+
+  async linkSibling(id: number, siblingId: unknown, me: { id: number }, scope: ResolvedScope) {
+    const sid = Number(siblingId);
+    if (!Number.isFinite(sid) || sid <= 0) throw new BadRequestException('Choose a student to link as a sibling.');
+    const a = await this.get(id, scope);
+    const b = await this.get(sid, scope);
+    if (Number(a.id) === Number(b.id)) throw new BadRequestException('A student cannot be their own sibling.');
+    const ga = a.family_group_id ? Number(a.family_group_id) : null;
+    const gb = b.family_group_id ? Number(b.family_group_id) : null;
+    return this.db.tx(async (c) => {
+      if (ga && gb) {
+        if (ga === gb) return { linked: true, family_group_id: ga };
+        await c.query(`UPDATE student SET family_group_id = $1::bigint WHERE family_group_id = $2::bigint`, [ga, gb]);
+        return { linked: true, family_group_id: ga };
+      }
+      if (ga) { await c.query(`UPDATE student SET family_group_id = $1::bigint WHERE id = $2::bigint`, [ga, b.id]); return { linked: true, family_group_id: ga }; }
+      if (gb) { await c.query(`UPDATE student SET family_group_id = $1::bigint WHERE id = $2::bigint`, [gb, a.id]); return { linked: true, family_group_id: gb }; }
+      const orgId = await this.orgId();
+      const g = await c.query<{ id: string }>(`INSERT INTO family_group (org_id, created_by) VALUES ($1::bigint, $2::bigint) RETURNING id`, [orgId, me.id]);
+      const group = Number(g.rows[0].id);
+      await c.query(`UPDATE student SET family_group_id = $1::bigint WHERE id = ANY($2::bigint[])`, [group, [a.id, b.id]]);
+      return { linked: true, family_group_id: group };
+    });
+  }
+
+  async unlinkSibling(id: number, _me: { id: number }, scope: ResolvedScope) {
+    const a = await this.get(id, scope);
+    if (!a.family_group_id) return { unlinked: true };
+    const group = Number(a.family_group_id);
+    await this.db.tx(async (c) => {
+      await c.query(`UPDATE student SET family_group_id = NULL WHERE id = $1::bigint`, [id]);
+      const rest = await c.query<{ id: string }>(`SELECT id FROM student WHERE family_group_id = $1::bigint AND deleted_at IS NULL`, [group]);
+      if (rest.rows.length <= 1) await c.query(`UPDATE student SET family_group_id = NULL WHERE family_group_id = $1::bigint`, [group]);
+    });
+    return { unlinked: true };
+  }
+
   /** Has THIS lead already been converted? Drives the leadsheet button state (idempotency). */
   async byLead(leadId: number, scope: ResolvedScope) {
     const params: unknown[] = [leadId];

@@ -41,6 +41,26 @@ export class StudentController {
     return this.svc.get(id, scope);
   }
 
+  /* -------- family / siblings (ERP Batch 3). Read via student.read; link/unlink reuse
+   *          student.update, mirroring how batch transfer/waitlist reuse it. -------- */
+  @Get(':id/siblings')
+  @RequirePermission('student.read')
+  siblings(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.siblings(id, scope);
+  }
+
+  @Post(':id/siblings')
+  @RequirePermission('student.update')
+  linkSibling(@Param('id', ParseIntPipe) id: number, @Body() b: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.linkSibling(id, b?.sibling_id, me, scope);
+  }
+
+  @Delete(':id/siblings')
+  @RequirePermission('student.update')
+  unlinkSibling(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.unlinkSibling(id, me, scope);
+  }
+
   /** THE "Convert to Student" BUTTON — idempotent, wins the lead. Guarded by student.create,
    *  which migration 044 grants to exactly the roles that already hold enrolment.create (a
    *  desk that can close a sale can make the student it produces). */

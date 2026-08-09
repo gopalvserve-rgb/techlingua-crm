@@ -13,5 +13,6 @@ import { BatchService } from './batch.service';
   imports: [DatabaseModule, RbacModule, NumberingModule],
   controllers: [StudentController, BatchController],
   providers: [StudentService, BatchService],
+  exports: [StudentService],
 })
 export class StudentsModule {}

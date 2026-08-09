@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment', 'admission'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -65,6 +65,9 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   enrollment: { prefix: 'EN-',  reset: 'none', label: 'Enrollment numbers' },
   // Phase 2 ERP Batch 2 (Learning) — CERT-#### certificate serials, reset yearly.
   certificate: { prefix: 'CERT-', reset: 'yearly', label: 'Certificates' },
+  // Phase 2 ERP Batch 3 — ADM-#### admission numbers, minted when a pending admission is
+  // APPROVED into a student (an unapproved submission never burns a number).
+  admission:  { prefix: 'ADM-', reset: 'yearly', label: 'Admissions' },
 };
 
 export interface SeriesRow {
