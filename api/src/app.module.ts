@@ -41,6 +41,7 @@ import { FinanceModule } from './finance/finance.module';
 import { AcademicsModule } from './academics/academics.module';
 import { LearningModule } from './learning/learning.module';
 import { AdmissionsModule } from './admissions/admissions.module';
+import { AiModule } from './ai/ai.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -101,6 +102,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     // Phase 2 ERP Batch 2 — Learning: study material, certificates, report cards + parent view
     LearningModule,
     AdmissionsModule,  // ERP Batch 3 — online admission form (public intake + review→approve) + family/siblings
+    AiModule,          // ERP Batch 4 — AI Communication Intelligence (DeepSeek/Gemini) over notes/transcripts
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

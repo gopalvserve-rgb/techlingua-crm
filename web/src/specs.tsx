@@ -102,15 +102,8 @@ export const APP: ModuleItem[] = [
     { id: 'referrals', label: 'Referrals', spec: { dyn: 'referrals',
       sub: 'Students, staff & partners refer new leads — track rewards and link referrer to lead.',
       actions: [['plus', 'Add referral', 'primary']] } },
-    { id: 'aiinsights', label: 'AI Insights', spec: {
-      sub: 'Lead scoring, churn / at-risk, next-best-action & summaries — running on Gemini.',
-      sprintNote: 'Rule-based lead scoring is LIVE (Marketing › Lead Scoring). AI insights switch on once the Gemini key is configured in Settings (Phase 2).',
-      blocks: [
-        emptyList('Active insights', 'No insights yet — the AI engine connects in Phase 2'),
-        { type: 'caps', title: 'Insight types', items: [
-          cap('Lead scoring', 'Hot / Warm / Cold bands'), cap('Churn & at-risk', 'Recency + engagement'),
-          cap('Next-best-action', 'Per-lead suggestion'), cap('Conversation summaries', 'Phase 2 with call AI', true)] },
-      ] } },
+    { id: 'aiinsights', label: 'AI Insights', spec: { dyn: 'aiIntelligence',
+      sub: 'Summary · sentiment · quality on transcripts & lead notes — DeepSeek / Gemini. Degrades cleanly until a key is set.' } },
   ] },
 
   /* ---------------- Marketing & Lead Management ---------------- */
@@ -389,6 +382,8 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- Communication Intelligence (P2) ---------------- */
   { id: 'intel', label: 'Communication Intelligence', icon: 'intel', phase: 'P2', subs: [
+    { id: 'aiintel', label: 'AI Insights', spec: { dyn: 'aiIntelligence',
+      sub: 'Credential-gated AI over the text that exists — paste/upload a transcript or pick a lead, then run summary · sentiment · quality. Saved + listed with the full treatment.' } },
     { id: 'activity', label: 'Call Activity', spec: gen('Communication Intelligence', 'Call Activity') },
     { id: 'insights', label: 'Call Insights', spec: p2('Call Insights & Summaries',
       'Post-call transcription, summaries, intent & keyword tracking across English, Hindi & mixed-language calls.',

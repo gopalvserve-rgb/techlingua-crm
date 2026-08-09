@@ -131,10 +131,12 @@ describe('the dashboard renders the view the SERVER decided (not a client-side r
     expect(screen.queryByText('Open SLA breaches')).toBeNull();
   });
 
-  it('AI Insights stays an honest EMPTY SHELL — it never fakes an insight', async () => {
+  it('AI Insights stays an honest EMPTY SHELL — it never fakes an insight (real panel, no key)', async () => {
+    // ERP Batch 4 — the panel is now REAL: with no /ai/summary (no key) it shows a clean
+    // not-configured state and never invents an insight.
     ROUTES = { '/dashboard': COUNSELLOR, '/follow-ups': [], '/leads': { total: 0, rows: [] } };
     draw('dashOverview');
-    expect(await screen.findByText(/AI insights switch on once the Gemini key is configured/)).toBeTruthy();
+    expect(await screen.findByText(/AI insights switch on once a DeepSeek or Gemini key is added/)).toBeTruthy();
   });
 
   it('the dashboard asks the SERVER for its scope — it never passes a role of its own', async () => {

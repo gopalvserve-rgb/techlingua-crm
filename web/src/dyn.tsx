@@ -52,6 +52,7 @@ import { CrossSell } from './crosssell';
 import { FinanceSettings } from './financesettings';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
+import { AiIntelligence, DashAiInsights } from './ai';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -377,10 +378,7 @@ function DashOverview() {
         {/* #13(c) — the My Tasks summary card opens the full My Tasks list on click. */}
         <MyTaskCard rows={mine.data ?? []} more={`${fu?.my_open ?? 0} open`}
           onOpenList={() => go('dash', 'mytasks')} />
-        <div className="card" style={{ background: 'linear-gradient(150deg,var(--primary-soft),var(--accent-soft))' }}>
-          <div className="card-head"><h3><Ic k="intel" />AI Insights</h3><span className="bdg b-indigo">Gemini</span></div>
-          <div className="empty-note">AI insights switch on once the Gemini key is configured (Phase 2).</div>
-        </div>
+        <DashAiInsights go={go} />
       </div>
 
       {/* ---- manager-only widgets. The server does not even compute these for a
@@ -4552,6 +4550,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   waChat: WaChat,
   supportTickets: SupportTickets,
   crossSell: CrossSell,
+  aiIntelligence: AiIntelligence,
   studentDashboard: StudentDashboard,
   studentsList: StudentsList,
   batchesList: BatchesList,
