@@ -237,20 +237,15 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- Students & Academics ---------------- */
   { id: 'students', label: 'Students & Academics', icon: 'students', subs: [
-    { id: 'all', label: 'Student Management', spec: {
-      sub: 'Active students with fee & course details mapped per student.',
-      actions: [['plus', 'Add student', 'primary']], sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Active', '0', 'students'), kpi('New (MTD)', '0', 'plus'), kpi('Avg attendance', '—', 'check'), kpi('Fee defaulters', '0', 'rose')] },
-        emptyTable('Student directory', ['Student', 'ID', 'Course · Batch', 'Attendance', 'Fee status'], 'Students appear here after the first enrolment'),
-      ] } },
+    { id: 'dashboard', label: 'Student Dashboard', spec: { dyn: 'studentDashboard',
+      sub: 'Live student metrics computed from the students, enrolments and fee receipts that exist — total, active, new in the range, by branch / vertical / course, batch allocation and fees collected. Scope- and date-aware; every KPI opens its filtered list.' } },
+    { id: 'all', label: 'Student Management', spec: { dyn: 'studentsList',
+      sub: 'The student directory. A student is created by converting a won lead (Leads list › ⋮ › Convert to Student, or the lead sheet). Filter by Branch / Vertical / Course / Owner / status; export, refresh, choose columns.' } },
     { id: 'courses', label: 'Courses', spec: { dyn: 'courses',
       sub: 'Course master linked to branches & verticals — code, duration, fee, level, mode, syllabus. Bundles supported.',
       actions: [['plus', 'New course', 'primary']] } },
-    { id: 'batches', label: 'Batches', spec: {
-      sub: 'Code, course, trainer, branch, room, schedule, capacity, enrolled count. Transfer & waitlist supported.',
-      actions: [['plus', 'New batch', 'primary']], sprintNote: NOTE_S2,
-      blocks: [emptyTable('Batches', ['Batch', 'Course', 'Trainer', 'Schedule', 'Room', 'Enrolled', 'Status'], 'No batches yet')] } },
+    { id: 'batches', label: 'Batches', spec: { dyn: 'batchesList',
+      sub: 'A batch is bound to Branch → Vertical → Course (strict cascade). Set code, name, trainer, room, schedule, capacity and dates; a student can be assigned to a batch from the student detail.' } },
     { id: 'attendance', label: 'Attendance', spec: {
       sub: 'Trainer / biometric / self marking per session. Present / absent / late / leave with parent absence alerts.',
       sprintNote: NOTE_S2,

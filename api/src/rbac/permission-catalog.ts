@@ -85,4 +85,10 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // 'act' = create a follow-up / a new lead / dismiss a suggestion (a counsellor acts on
   // his own contacts). 'manage' = maintain the admin rule map (current -> suggested course).
   { module: 'crosssell', label: 'Cross-Sell', actions: ['read', 'act', 'manage'] },
+  // Phase 2 (migration 044) — Students & Academics at the CRM level.
+  // 'create' on student is what the "Convert to Student" button checks; it is granted to
+  // exactly the roles that hold enrolment.create. 'delete' is admin-only (a student is a
+  // record). Batches are branch/vertical/course-scoped and managed by managers/admins.
+  { module: 'student', label: 'Students', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'batch', label: 'Batches', actions: ['read', 'create', 'update', 'delete'] },
 ];

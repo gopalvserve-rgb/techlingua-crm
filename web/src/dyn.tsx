@@ -30,6 +30,7 @@ import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
 import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelete, BulkBar, downloadObjectsCsv } from './listtools';
 import { RedFlagModal } from './leadsheet';
+import { ConvertStudentModal } from './convertstudent';
 import { CustomFieldsAdmin } from './customfields';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
@@ -1059,6 +1060,8 @@ function LeadsAll() {
   const canAssign = can('lead.assign');
   const canFlag = can('lead.flag');
   const [flagLead, setFlagLead] = useState<{ id: number; name?: string; flagged?: boolean } | null>(null);
+  const canConvert = can('student.create');
+  const [convertLead, setConvertLead] = useState<{ id: number; name?: string } | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume' | 'delete'>(null);
   const [transferLead, setTransferLead] = useState<{ id: number; name?: string } | null>(null);
@@ -1239,6 +1242,7 @@ function LeadsAll() {
             extra: [
               ...(canTransfer ? [{ k: 'swap', title: 'Transfer', onClick: () => setTransferLead({ id: Number(l.id), name: l.full_name }) }] : []),
               ...(canFlag ? [{ k: 'flag', title: l.is_red_flagged ? 'Red flagged \u2014 add remark' : 'Red flag', onClick: () => setFlagLead({ id: Number(l.id), name: l.full_name, flagged: !!l.is_red_flagged }) }] : []),
+              ...(canConvert ? [{ k: 'students', title: 'Convert to Student', onClick: () => setConvertLead({ id: Number(l.id), name: l.full_name }) }] : []),
             ],
           })])}
           empty="No leads in scope yet — add a lead or connect a source"
@@ -1258,6 +1262,8 @@ function LeadsAll() {
         onDone={bump} onClose={() => setTransferLead(null)} />}
       {flagLead && <RedFlagModal leadId={flagLead.id} leadName={flagLead.name} flagged={flagLead.flagged}
         onDone={() => { setFlagLead(null); bump(); }} onClose={() => setFlagLead(null)} />}
+      {convertLead && <ConvertStudentModal leadId={convertLead.id} leadName={convertLead.name}
+        onDone={bump} onClose={() => setConvertLead(null)} />}
       {bulk === 'transfer' && <BulkTransferModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {bulk === 'reassign' && <BulkReassignModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {(bulk === 'pause' || bulk === 'resume') && <BulkPauseModal ids={selectedIds} action={bulk} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
@@ -3624,6 +3630,459 @@ function FeaturesPanel() {
   );
 }
 
+/* ==================================================================== */
+/*  STUDENTS & ACADEMICS (Phase 2 — CRM level)                          */
+/*  Convert a won lead -> a student; the students directory + dashboard; */
+/*  batches bound to Branch -> Vertical -> Course.                       */
+/* ==================================================================== */
+
+const STUDENT_STATUS_OPTS = [{ id: 1, name: 'Active' }, { id: 2, name: 'Inactive' }];
+const BAR_COLOURS = ['var(--primary)', 'var(--accent)', '#6366f1', '#0ea5e9', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6'];
+const studentStatusCell = (status: string): Cell => ({ b: [status === 'active' ? 'Active' : 'Inactive', status === 'active' ? 'b-green' : 'b-gray'] });
+const batchStatusCell = (status: string): Cell =>
+  ({ b: [status === 'active' ? 'Active' : status === 'completed' ? 'Completed' : 'Cancelled', status === 'active' ? 'b-green' : status === 'completed' ? 'b-indigo' : 'b-gray'] });
+
+/** THE STUDENT DASHBOARD — real numbers from students/enrolments/fees, RBAC- + scope- +
+ *  date-aware. Every KPI card opens the filtered student list (docs/dev/22 pattern). */
+function StudentDashboard() {
+  const { go } = useScreen();
+  const { params: sp, key: scopeKey } = useScope();
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const rq = new URLSearchParams();
+  if (range.from) rq.set('from', range.from);
+  if (range.to) rq.set('to', range.to);
+  const qs = rq.toString();
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  const { data, reload } = useFetch<any>(withScope('/students/summary' + (qs ? `?${qs}` : ''), sp), [scopeKey, rangeKey]);
+  const k = data?.kpis;
+  const toList = (filter?: Record<string, string | number | undefined>) => () => go('students', 'all', filter);
+
+  const barsFrom = (arr: any[]) => {
+    const max = Math.max(1, ...(arr ?? []).map((r) => Number(r.value)));
+    return (arr ?? []).map((r, i) => ({ label: r.label, val: String(r.value), pct: (Number(r.value) * 100) / max, color: BAR_COLOURS[i % BAR_COLOURS.length] }));
+  };
+
+  const kpiItems = [
+    { lab: 'Total students', val: String(k?.total ?? 0), ic: 'students',
+      onClick: toList(), navLabel: `Total students: ${k?.total ?? 0}. Open the students list` },
+    { lab: 'Active', val: String(k?.active ?? 0), ic: 'check',
+      onClick: toList({ status: 'active' }), navLabel: `Active students: ${k?.active ?? 0}. Open active students` },
+    { lab: 'Inactive', val: String(k?.inactive ?? 0), ic: 'clock',
+      onClick: toList({ status: 'inactive' }), navLabel: `Inactive students: ${k?.inactive ?? 0}. Open inactive students` },
+    { lab: range.from || range.to ? 'New (in range)' : 'New (MTD)', val: String(k?.new_in_range ?? 0), ic: 'plus',
+      onClick: toList(), navLabel: `New students: ${k?.new_in_range ?? 0}. Open the students list` },
+    { lab: 'Assigned to a batch', val: String(k?.in_batch ?? 0), ic: 'grid',
+      onClick: () => go('students', 'batches'), navLabel: `Students in a batch: ${k?.in_batch ?? 0}. Open Batches` },
+    { lab: 'Fees collected', val: data ? fmtINR(data.fees?.collected_minor ?? 0) : '—', ic: 'rupee',
+      onClick: () => go('perf', 'collection'), navLabel: 'Fees collected. Open Fee Collection' },
+  ];
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <span className="fchip on" style={{ cursor: 'default' }}><Ic k="students" />Students overview</span>
+        <DateRange value={range} onChange={setRange} idPrefix="stu-dr" style={{ marginLeft: 'auto' }} />
+      </div>
+      <Kpis cols={6} items={kpiItems} />
+      <div className="row2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <HBars title="Students by branch" rows={barsFrom(data?.by_branch)} empty="No students yet" />
+        <HBars title="Students by vertical" rows={barsFrom(data?.by_vertical)} empty="No students yet" />
+      </div>
+      <div className="row2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <HBars title="Students by course" rows={barsFrom(data?.by_course)} empty="No students yet" />
+        <TableCard title="Recent conversions" icon="students"
+          more={<ListActions onExport={() => downloadObjectsCsv('recent-students.csv', data?.recent ?? [])} onRefresh={() => reload()} />}
+          cols={['Student', 'ID', 'Course', 'Branch', 'Converted']}
+          empty="No lead has been converted to a student yet"
+          rows={(data?.recent ?? []).map((s: any): Cell[] => [
+            { node: <b className="nm">{s.full_name}</b> },
+            { mono: s.student_no ?? '—' },
+            s.course_name ?? '—',
+            s.branch_name ?? '—',
+            fmtFull(s.created_at),
+          ])} />
+      </div>
+    </>
+  );
+}
+
+/** STUDENT MANAGEMENT — the real students directory (the Phase-2 shell, made live). */
+function StudentsList() {
+  const { refreshTick, bump, search } = useScreen();
+  const { can } = useAuth();
+  const ref = useRef_();
+  const { scope: gScope, params: gsp, key: scopeKey } = useScope();
+
+  const seed = () => {
+    const spx = new URLSearchParams(typeof search === 'string' ? search : '');
+    const nums = (arrKey: string, singleKey: string) => {
+      const out = new Set<number>();
+      for (const raw of spx.getAll(arrKey)) for (const p of String(raw).split(',')) { const v = Number(p.trim()); if (Number.isFinite(v) && v > 0) out.add(v); }
+      const one = Number(spx.get(singleKey)); if (Number.isFinite(one) && one > 0) out.add(one);
+      return [...out];
+    };
+    return {
+      branches: nums('branch_ids', 'branch_id').length ? nums('branch_ids', 'branch_id') : (gScope.branch ? [gScope.branch] : []),
+      verticals: nums('vertical_ids', 'vertical_id').length ? nums('vertical_ids', 'vertical_id') : (gScope.vertical ? [gScope.vertical] : []),
+      courses: nums('course_ids', 'course_id'),
+      owners: nums('owner_ids', 'owner_id'),
+      status: spx.get('status') || '',
+      q: spx.get('q') || '',
+    };
+  };
+  const s0 = useMemo(seed, [search, scopeKey]);
+  const [fBranches, setFBranches] = useState<number[]>(s0.branches);
+  const [fVerticals, setFVerticals] = useState<number[]>(s0.verticals);
+  const [fCourses, setFCourses] = useState<number[]>(s0.courses);
+  const [fOwners, setFOwners] = useState<number[]>(s0.owners);
+  const [status, setStatus] = useState<string>(s0.status);
+  const [q, setQ] = useState<string>(s0.q);
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  useEffect(() => {
+    setFBranches(s0.branches); setFVerticals(s0.verticals); setFCourses(s0.courses);
+    setFOwners(s0.owners); setStatus(s0.status); setQ(s0.q);
+  }, [s0]);
+
+  const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
+  const cOpts = ref.courses.filter((c: any) =>
+    (!fBranches.length || fBranches.includes(Number(c.meta?.branch_id)))
+    && (!fVerticals.length || fVerticals.includes(Number(c.meta?.vertical_id))));
+
+  const params = new URLSearchParams();
+  if (fBranches.length) params.set('branch_id', fBranches.join(','));
+  if (fVerticals.length) params.set('vertical_id', fVerticals.join(','));
+  if (fCourses.length) params.set('course_id', fCourses.join(','));
+  if (fOwners.length) params.set('owner_id', fOwners.join(','));
+  if (status === 'active' || status === 'inactive') params.set('status', status);
+  if (q.trim()) params.set('q', q.trim());
+  if (range.from) params.set('from', range.from);
+  if (range.to) params.set('to', range.to);
+  const list = useFetch<any[]>(`/students?${params.toString()}`, [refreshTick, params.toString()]);
+  const rows = list.data ?? [];
+  const [view, setView] = useState<any | null>(null);
+  const canDelete = can('student.delete');
+  const del = useDelete('Student', '/students', () => { list.reload(); bump(); });
+
+  return (
+    <>
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+        <FilterMulti label="Course" icon="book" value={fCourses} options={cOpts} onChange={setFCourses} />
+        <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
+        <label className="fchip"><Ic k="check" />
+          <select value={status} onChange={(e) => setStatus(e.target.value)}
+            style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / ID…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <DateRange value={range} onChange={setRange} idPrefix="stu-list-dr" style={{ marginLeft: 'auto' }} />
+      </div>
+      <TableCard fill title="Student directory" icon="students"
+        more={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          <span className="sub" style={{ fontSize: 12 }}>{rows.length} shown</span>
+          <ListActions onExport={() => downloadObjectsCsv('students.csv', rows)} onRefresh={() => list.reload()} />
+        </span>}
+        cols={['Student', 'Phone', 'Course', 'Branch · Vertical', 'Owner', 'Batch', 'Status', 'Created', 'Actions']}
+        empty="No students yet — convert a won lead from the Leads list (⋮ → Convert to Student)."
+        onRowClick={(i) => setView(rows[i])}
+        rows={rows.map((st) => [
+          { node: <div><b className="nm">{st.full_name}</b><div className="sub mono">{st.student_no ?? '—'}</div></div> } as Cell,
+          { mono: st.phone ?? '—' } as Cell,
+          st.course_name ?? '—',
+          { node: <span>{st.branch_name ?? '—'}<div className="sub">{st.vertical_name ?? '—'}</div></span> } as Cell,
+          st.owner_name ?? '—',
+          st.batch_name ?? '—',
+          studentStatusCell(st.status),
+          fmtFull(st.created_at),
+          rowActions({
+            onView: () => setView(st),
+            onDelete: canDelete ? () => del.openDelete(Number(st.id), st.full_name) : undefined,
+          }),
+        ])} />
+      {del.deleteModal}
+      {view && <StudentDetailModal student={view} onClose={() => setView(null)} onChanged={() => { list.reload(); bump(); }} />}
+    </>
+  );
+}
+
+/** Student detail — profile + status toggle + assign-to-batch (batches in the same branch/vertical). */
+function StudentDetailModal({ student, onClose, onChanged }: { student: any; onClose: () => void; onChanged: () => void }) {
+  const { can } = useAuth();
+  const canEdit = can('student.update');
+  const [full, setFull] = useState<any>(student);
+  const [batches, setBatches] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const d = await api.get<any>(`/students/${student.id}`);
+        if (live) setFull(d);
+        if (can('batch.read')) {
+          const bl = await api.get<any[]>(`/batches?branch_id=${d.branch_id}&vertical_id=${d.vertical_id}&status=active`);
+          if (live) setBatches(bl ?? []);
+        }
+      } catch { /* keep the row data */ }
+    })();
+    return () => { live = false; };
+  }, [student.id]);
+
+  const patch = async (body: any, msg: string) => {
+    setBusy(true);
+    try { await api.patch(`/students/${student.id}`, body); toast(msg); setFull((f: any) => ({ ...f, ...body })); onChanged(); }
+    catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+
+  return (
+    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={640}>
+      <Section title="Profile">
+        <KV rows={[
+          ['Student ID', <span className="mono">{full.student_no ?? '—'}</span>],
+          ['Name', full.full_name],
+          ['Phone', <span className="mono">{full.phone ?? '—'}</span>],
+          ['Email', full.email ?? '—'],
+          ['Branch', full.branch_name ?? '—'],
+          ['Vertical', full.vertical_name ?? '—'],
+          ['Course', full.course_name ?? '—'],
+          ['Owner', full.owner_name ?? '—'],
+          ['Enrolment', full.enrolment_no ? <span className="mono">{full.enrolment_no}</span> : 'Not linked to an enrolment'],
+          ['Status', renderCell(studentStatusCell(full.status))],
+        ]} />
+      </Section>
+      {canEdit && (
+        <Section title="Manage">
+          <div className="form-grid">
+            <div className="fld">
+              <label htmlFor="stu-batch">Batch</label>
+              <select id="stu-batch" className="ainp" value={full.batch_id ?? ''} disabled={busy}
+                onChange={(e) => patch({ batch_id: e.target.value ? Number(e.target.value) : null }, 'Batch updated')}>
+                <option value="">— Not assigned —</option>
+                {batches.map((b) => <option key={b.id} value={b.id}>{b.name} ({b.batch_code})</option>)}
+                {full.batch_id && !batches.some((b) => Number(b.id) === Number(full.batch_id))
+                  ? <option value={full.batch_id}>{full.batch_name}</option> : null}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="stu-status">Status</label>
+              <select id="stu-status" className="ainp" value={full.status} disabled={busy}
+                onChange={(e) => patch({ status: e.target.value }, `Marked ${e.target.value}`)}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
+        </Section>
+      )}
+    </DetailModal>
+  );
+}
+
+/** BATCHES — a class bound to Branch -> Vertical -> Course (the module-audit fix). */
+function BatchesList() {
+  const { refreshTick, bump } = useScreen();
+  const { can } = useAuth();
+  const ref = useRef_();
+  const { scope: gScope, key: scopeKey } = useScope();
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    setFBranches(gScope.branch ? [gScope.branch] : []);
+    setFVerticals(gScope.vertical ? [gScope.vertical] : []);
+  }, [scopeKey]);
+  const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
+  const params = new URLSearchParams();
+  if (fBranches.length) params.set('branch_id', fBranches.join(','));
+  if (fVerticals.length) params.set('vertical_id', fVerticals.join(','));
+  if (q.trim()) params.set('q', q.trim());
+  const list = useFetch<any[]>(`/batches?${params.toString()}`, [refreshTick, params.toString()]);
+  const rows = list.data ?? [];
+  const [modal, setModal] = useState(false);
+  const [edit, setEdit] = useState<any | null>(null);
+  const canCreate = can('batch.create');
+  const canEdit = can('batch.update');
+  const del = useDelete('Batch', '/batches', () => { list.reload(); bump(); });
+  const after = () => { list.reload(); bump(); };
+
+  return (
+    <>
+      {canCreate && (
+        <div className="page-actions">
+          <button className="btn primary" onClick={() => setModal(true)}><Ic k="plus" />New batch</button>
+        </div>
+      )}
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search batch name / code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+      </div>
+      <TableCard fill title="Batches" icon="grid"
+        more={<ListActions onExport={() => downloadObjectsCsv('batches.csv', rows)} onRefresh={() => list.reload()} />}
+        cols={['Batch', 'Course', 'Branch · Vertical', 'Trainer', 'Schedule', 'Capacity', 'Enrolled', 'Status', 'Actions']}
+        empty="No batches yet — create one bound to a Branch → Vertical → Course."
+        rows={rows.map((b) => [
+          { node: <div><b className="nm">{b.name}</b><div className="sub mono">{b.batch_code ?? '—'}</div></div> } as Cell,
+          b.course_name ?? '—',
+          { node: <span>{b.branch_name ?? '—'}<div className="sub">{b.vertical_name ?? '—'}</div></span> } as Cell,
+          b.trainer_name ?? '—',
+          b.schedule ?? '—',
+          String(b.capacity ?? 0),
+          String(b.enrolled ?? 0),
+          batchStatusCell(b.status),
+          rowActions({
+            onView: () => setEdit(b),
+            onEdit: canEdit ? () => setEdit(b) : undefined,
+            onDelete: can('batch.delete') ? () => del.openDelete(Number(b.id), b.name) : undefined,
+          }),
+        ])} />
+      {del.deleteModal}
+      {modal && <BatchModal onClose={() => setModal(false)} onSaved={after} />}
+      {edit && <BatchModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
+    </>
+  );
+}
+
+/** ADD / EDIT BATCH — captures Branch + Vertical (strict cascade) + Course + the batch fields. */
+export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClose?: () => void; onSaved?: () => void }) {
+  const ref = useRef_();
+  const [branchId, setBranchId] = useState<string>(String(initial?.branch_id ?? ''));
+  const [verticalId, setVerticalId] = useState<string>(String(initial?.vertical_id ?? ''));
+  const [courseId, setCourseId] = useState<string>(String(initial?.course_id ?? ''));
+  const [name, setName] = useState<string>(initial?.name ?? '');
+  const [code, setCode] = useState<string>(initial?.batch_code ?? '');
+  const [trainerId, setTrainerId] = useState<string>(String(initial?.trainer_id ?? ''));
+  const [capacity, setCapacity] = useState<string>(String(initial?.capacity ?? ''));
+  const [room, setRoom] = useState<string>(initial?.room ?? '');
+  const [schedule, setSchedule] = useState<string>(initial?.schedule ?? '');
+  const [startDate, setStartDate] = useState<string>(initial?.start_date ? String(initial.start_date).slice(0, 10) : '');
+  const [endDate, setEndDate] = useState<string>(initial?.end_date ? String(initial.end_date).slice(0, 10) : '');
+  const [status, setStatus] = useState<string>(initial?.status ?? 'active');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const vOpts = ref.verticals.filter((vt) => !branchId || Number(vt.branch_id) === Number(branchId));
+  const cOpts = ref.courses.filter((c: any) =>
+    (!branchId || Number(c.meta?.branch_id) === Number(branchId))
+    && (!verticalId || Number(c.meta?.vertical_id) === Number(verticalId)));
+
+  const save = async () => {
+    setErr('');
+    if (!branchId) return setErr('Choose a branch.');
+    if (!verticalId) return setErr('Choose a vertical.');
+    if (!courseId) return setErr('Choose a course.');
+    if (!name.trim()) return setErr('Give the batch a name.');
+    setBusy(true);
+    const body: any = {
+      branch_id: Number(branchId), vertical_id: Number(verticalId), course_id: Number(courseId),
+      name: name.trim(), batch_code: code.trim() || undefined,
+      trainer_id: trainerId ? Number(trainerId) : null,
+      capacity: capacity === '' ? 0 : Number(capacity),
+      room: room || null, schedule: schedule || null,
+      start_date: startDate || null, end_date: endDate || null, status,
+    };
+    try {
+      if (initial?.id) await api.patch(`/batches/${initial.id}`, body);
+      else await api.post('/batches', body);
+      toast(initial?.id ? 'Batch updated' : 'Batch created');
+      onSaved?.(); onClose?.();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 640 }}>
+        <div className="ah">
+          <h3><Ic k="grid" />{initial?.id ? 'Edit batch' : 'New batch'}</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld">
+              <label htmlFor="b-branch">Branch <span className="star">*</span></label>
+              <select id="b-branch" className="ainp" value={branchId}
+                onChange={(e) => { setBranchId(e.target.value); setVerticalId(''); setCourseId(''); }}>
+                <option value="">— Select branch —</option>
+                {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="b-vertical">Vertical <span className="star">*</span></label>
+              <select id="b-vertical" className="ainp" value={verticalId} disabled={!branchId}
+                onChange={(e) => { setVerticalId(e.target.value); setCourseId(''); }}>
+                <option value="">{branchId ? '— Select vertical —' : 'Choose a branch first'}</option>
+                {vOpts.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="b-course">Course <span className="star">*</span></label>
+              <select id="b-course" className="ainp" value={courseId} disabled={!verticalId}
+                onChange={(e) => setCourseId(e.target.value)}>
+                <option value="">{verticalId ? '— Select course —' : 'Choose a vertical first'}</option>
+                {cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="b-name">Batch name <span className="star">*</span></label>
+              <input id="b-name" className="ainp" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. IELTS Morning A" />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-code">Batch code</label>
+              <input id="b-code" className="ainp" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Auto if blank" />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-trainer">Trainer</label>
+              <select id="b-trainer" className="ainp" value={trainerId} onChange={(e) => setTrainerId(e.target.value)}>
+                <option value="">— Unassigned —</option>
+                {selectableUsers(ref.users).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="b-cap">Capacity</label>
+              <input id="b-cap" className="ainp" type="number" min={0} value={capacity} onChange={(e) => setCapacity(e.target.value)} placeholder="0" />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-room">Room</label>
+              <input id="b-room" className="ainp" value={room} onChange={(e) => setRoom(e.target.value)} placeholder="e.g. Room 3" />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-sched">Schedule</label>
+              <input id="b-sched" className="ainp" value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="e.g. Mon-Fri 9–11am" />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-start">Start date</label>
+              <input id="b-start" className="ainp" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-end">End date</label>
+              <input id="b-end" className="ainp" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-status">Status</label>
+              <select id="b-status" className="ainp" value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+          </div>
+          {err && <div className="form-err" style={{ marginTop: 8 }}>{err}</div>}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : (initial?.id ? 'Save batch' : 'Create batch')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export const DYN: Record<string, () => JSX.Element> = {
   dashOverview: DashOverview,
   quickContact: QuickContact,
@@ -3687,6 +4146,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   waChat: WaChat,
   supportTickets: SupportTickets,
   crossSell: CrossSell,
+  studentDashboard: StudentDashboard,
+  studentsList: StudentsList,
+  batchesList: BatchesList,
   customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
   featuresPanel: FeaturesPanel,

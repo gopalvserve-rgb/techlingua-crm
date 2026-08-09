@@ -10,6 +10,7 @@ import { PhoneInput } from './phonefield';
 import { Avatar, TempBadge } from './renderer';
 import { DuplicatePanel } from './mergemodal';
 import { LeadTransferModal } from './leadtransfer';
+import { ConvertStudentModal } from './convertstudent';
 import { toast, useRef_, Named, selectableUsers } from './refdata';
 
 interface Stage { id: number; name: string; sort_order: number; stage_type: string }
@@ -59,6 +60,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const [reassign, setReassign] = useState(false); // UAT-R3 #23 reassign-owner modal
   const [transfer, setTransfer] = useState(false); // Jul 2026 — transfer to another Branch/Vertical/Campaign
   const [redFlag, setRedFlag] = useState(false);   // Aug 2026 — red-flag remark dialog
+  const [convert, setConvert] = useState(false);   // Phase 2 — convert this lead to a student
   const [rfText, setRfText] = useState('');        // Red Flag tab — continue the conversation
   const [rfList, setRfList] = useState<any[] | null>(null); // Red Flag conversation (GET /leads/:id/red-flags)
   const canFlag = can('lead.flag');
@@ -188,6 +190,8 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           {canFlag && <button className="qa" onClick={() => setRedFlag(true)}
             style={lead.is_red_flagged ? { color: 'var(--danger)' } : undefined}>
             <Ic k="flag" />{lead.is_red_flagged ? 'Red flag' : 'Red flag'}</button>}
+          {/* Phase 2 — convert this lead to a STUDENT (creates the student record + marks the lead WON). */}
+          {can('student.create') && <button className="qa" onClick={() => setConvert(true)}><Ic k="students" />Convert to Student</button>}
         </div>
         <div className="sheet-body">
           <div className="sheet-sec">
@@ -456,6 +460,11 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
         <RedFlagModal leadId={Number(lead.id)} leadName={lead.full_name} flagged={!!lead.is_red_flagged}
           onClose={() => setRedFlag(false)}
           onDone={() => { setRedFlag(false); setTab('redflag'); load(); onChanged?.(); }} />
+      )}
+      {convert && (
+        <ConvertStudentModal leadId={Number(lead.id)} leadName={lead.full_name}
+          onClose={() => setConvert(false)}
+          onDone={() => { setConvert(false); load(); onChanged?.(); }} />
       )}
     </div>
   );

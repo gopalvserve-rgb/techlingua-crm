@@ -47,6 +47,7 @@ import { AddModal, CampaignModal, SPEC_FORMS, SAVERS, EditSpec } from './forms';
 import { JourneyModal, TemplateModal, SmsTemplateModal, ChannelConfigModal, BlastModal, ProviderSpec } from './sprint4';
 import { RuleModal, PolicyModal, EventModal, BandModal, walkInEditSpec, referralEditSpec } from './sprint3';
 import { CollectModal, EnrolmentModal, NumberingModal, QuotationModal, TargetModal } from './sprint5';
+import { BatchModal } from './dyn';
 import {
   AnnouncementModal, ArticleModal, ChannelModal, NoteModal, ScheduleModal, ShareModal,
 } from './sprint6';
@@ -867,6 +868,17 @@ const bespokeCases: Case[] = [
     render: () => render(<AddModal formKey="dash.referrals" onClose={() => undefined}
       edit={referralEditSpec(REFERRAL_ROW, () => undefined) as EditSpec} />),
     path: /^\/referrals\/6$/,
+  },
+
+  /* ---- Phase 2 — Students & Academics: the Add Batch form (module-audit fix) ---- */
+  {
+    // The client's finding made a test: Add Batch MUST capture Branch + Vertical (+ Course),
+    // and every field must reach the request. Branch/Vertical/Course are REAL data on a batch
+    // (unlike a lead, whose path derives from its campaign), so none is exempt — changing any
+    // one must change the POST body, or clear a required child and refuse to submit.
+    name: 'New batch  [students.batches]',
+    render: () => render(<BatchModal onClose={() => undefined} onSaved={() => undefined} />),
+    path: /^\/batches$/,
   },
 ];
 

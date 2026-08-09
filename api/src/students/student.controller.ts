@@ -1,0 +1,64 @@
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
+import { ResolvedScope } from '../rbac/rbac.types';
+import { StudentService } from './student.service';
+
+interface Me { id: number; name: string }
+
+/**
+ * Students & Academics › Student Management (Phase 2 at the CRM level).
+ * Every route carries @RequirePermission; the SQL is scoped INSIDE StudentService so a
+ * counsellor's list can never return another branch's students.
+ *
+ * Literal routes (summary / by-lead / convert) are declared before ':id' so no numeric id
+ * can shadow them.
+ */
+@Controller('students')
+export class StudentController {
+  constructor(private readonly svc: StudentService) {}
+
+  @Get()
+  @RequirePermission('student.read')
+  list(@CurrentScope() scope: ResolvedScope, @Query() q: any) {
+    return this.svc.list(scope, q ?? {});
+  }
+
+  @Get('summary')
+  @RequirePermission('student.read')
+  summary(@CurrentScope() scope: ResolvedScope, @Query() q: any) {
+    return this.svc.summary(scope, q ?? {});
+  }
+
+  @Get('by-lead/:leadId')
+  @RequirePermission('student.read')
+  byLead(@Param('leadId', ParseIntPipe) leadId: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.byLead(leadId, scope);
+  }
+
+  @Get(':id')
+  @RequirePermission('student.read')
+  get(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.get(id, scope);
+  }
+
+  /** THE "Convert to Student" BUTTON — idempotent, wins the lead. Guarded by student.create,
+   *  which migration 044 grants to exactly the roles that already hold enrolment.create (a
+   *  desk that can close a sale can make the student it produces). */
+  @Post('convert')
+  @RequirePermission('student.create')
+  convert(@Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.convert(dto, me, scope);
+  }
+
+  @Patch(':id')
+  @RequirePermission('student.update')
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.update(id, dto, me, scope);
+  }
+
+  @Delete(':id')
+  @RequirePermission('student.delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.remove(id, me, scope);
+  }
+}
