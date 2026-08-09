@@ -9,6 +9,8 @@
 export const SENSITIVE_KEYS = [
   'password', 'password_hash', 'new_password', 'csv',
   'token', 'secret', 'authorization', 'api_key', 'apikey',
+  // Government ID proofs (student profile) — never persisted to audit_log/error_log trails.
+  'aadhaar', 'pan', 'passport', 'id_proof_number',
 ];
 
 const MAX_DEPTH = 4;

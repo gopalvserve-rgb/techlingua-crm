@@ -7,6 +7,7 @@ import { PERMISSION_KEY, IS_PUBLIC_KEY } from '../rbac/rbac.decorators';
 import { PERMISSION_CATALOG } from '../rbac/permission-catalog';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { readFileSync } from 'fs';
+import { redact } from '../common/redact';
 import { join } from 'path';
 
 /**
@@ -173,6 +174,15 @@ describe('StudentService.create (direct Add — the Admission form)', () => {
       expect(printed).not.toContain(secret);
     }
     spies.forEach((sp) => sp.mockRestore());
+  });
+
+  it('the audit/error redactor masks aadhaar / pan / passport / id_proof_number (never persisted in clear)', () => {
+    const masked = redact({ aadhaar: '123412341234', pan: 'ABCDE1234F', passport: 'P1234567', id_proof_number: 'X-9', full_name: 'Neha' }) as any;
+    expect(masked.aadhaar).toBe('[redacted]');
+    expect(masked.pan).toBe('[redacted]');
+    expect(masked.passport).toBe('[redacted]');
+    expect(masked.id_proof_number).toBe('[redacted]');
+    expect(masked.full_name).toBe('Neha');   // non-sensitive fields survive
   });
 });
 
