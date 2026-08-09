@@ -53,6 +53,7 @@ import { FinanceSettings } from './financesettings';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
+import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
 import { AiIntelligence, DashAiInsights } from './ai';
 
 export interface ScreenCtxT {
@@ -4567,6 +4568,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   assetsList: AssetsScreen,
   vendorsList: VendorsScreen,
   procurementList: ProcurementScreen,
+  hrDirectory: EmployeeDirectoryScreen,
+  hrAttendance: StaffAttendanceScreen,
+  hrLeaves: LeavesScreen,
   customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
   featuresPanel: FeaturesPanel,

@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog', 'employee'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -74,6 +74,9 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   po:         { prefix: 'PO-',  reset: 'yearly', label: 'Purchase Orders' },
   asset:      { prefix: 'AST-', reset: 'none', label: 'Asset codes' },
   catalog:    { prefix: 'ITM-', reset: 'none', label: 'Catalog item codes' },
+  // Phase 2 ERP Batch 6 (Basic HR). EMP-#### employee codes (per branch/vertical if a more
+  // specific series row exists, org-wide otherwise — the same MOST-SPECIFIC-WINS rule).
+  employee:   { prefix: 'EMP-', reset: 'none', label: 'Employee codes' },
 };
 
 export interface SeriesRow {

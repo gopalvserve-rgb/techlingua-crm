@@ -463,23 +463,12 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- HR & Workforce ---------------- */
   { id: 'hr', label: 'HR & Workforce', icon: 'hr', subs: [
-    { id: 'directory', label: 'Employee Directory', spec: {
-      sub: 'Emp ID, designation, department, branch, joining date, reporting manager, status & documents.',
-      actions: [['plus', 'Add employee', 'primary']], sprintNote: 'Basic HR lands in Phase 2.',
-      blocks: [emptyTable('Employees', ['Employee', 'Emp ID', 'Designation', 'Branch', 'Manager', 'Status'], 'Employee records land with the HR module')] } },
-    { id: 'attendance', label: 'Attendance', spec: {
-      sub: 'Web check-in, biometric or geo-attendance with shifts.',
-      sprintNote: 'Basic HR lands in Phase 2.',
-      blocks: [
-        { type: 'kpis', items: [kpi('Present today', '0', 'check'), kpi('On leave', '0', 'cal'), kpi('Late', '0', 'clock'), kpi('Avg in-time', '—', 'clock')] },
-        { type: 'caps', title: 'Attendance modes', items: [
-          cap('Web check-in', 'Browser'), cap('Biometric', 'Device integration'),
-          cap('Geo-attendance', 'Location-stamped'), cap('Shifts', 'Configurable')] },
-      ] } },
-    { id: 'leaves', label: 'Leaves', spec: {
-      sub: 'Leave types, balances, apply-approve workflow & holiday calendar.',
-      sprintNote: 'Basic HR lands in Phase 2.',
-      blocks: [emptyTable('Leave requests', ['Employee', 'Type', 'Days', 'From', 'Approver', 'Status'], 'No leave requests yet')] } },
+    { id: 'directory', label: 'Employee Directory', spec: { dyn: 'hrDirectory', tag: 'p2',
+      sub: 'The staff register — employee code (auto EMP-), name, optional login account, designation, department, branch/vertical, date of joining, employment type, contact (Indian mobile/E.164), personal, status and reporting manager. Full list treatment: filters (branch/vertical/department/designation/status), export, column chooser, refresh, bulk-delete.' } },
+    { id: 'attendance', label: 'Attendance', spec: { dyn: 'hrAttendance', tag: 'p2',
+      sub: 'Daily STAFF attendance (present / absent / half-day / leave / holiday) marked by HR/manager or self check-in, a monthly attendance sheet per branch and a per-employee summary (present days, absent, leaves). Date range via the picker. Full list treatment on the records.' } },
+    { id: 'leaves', label: 'Leaves', spec: { dyn: 'hrLeaves', tag: 'p2',
+      sub: 'Configurable leave types (Casual / Sick / Earned / Unpaid), a leave balance per employee/type/year, and the apply → approve/reject workflow: on approval the balance is deducted and the days are marked as Leave in attendance; the manager is notified on apply and the employee on the decision. Nobody can approve their own leave. Full list treatment.' } },
     { id: 'payroll', label: 'Salary', spec: {
       sub: 'Components, payslips, statutory PF / ESI / TDS.',
       sprintNote: 'Basic HR lands in Phase 2.',

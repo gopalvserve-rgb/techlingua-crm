@@ -43,6 +43,7 @@ import { LearningModule } from './learning/learning.module';
 import { AdmissionsModule } from './admissions/admissions.module';
 import { AiModule } from './ai/ai.module';
 import { OperationsModule } from './operations/operations.module';
+import { HrModule } from './hr/hr.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -106,6 +107,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     AiModule,          // ERP Batch 4 — AI Communication Intelligence (DeepSeek/Gemini) over notes/transcripts
     // Phase 2 ERP Batch 5 — Operations: catalog, inventory, assets, vendors, procurement (PO→receive→stock)
     OperationsModule,
+    HrModule,        // ERP Batch 6 — Basic HR: employee directory, staff attendance, leaves
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

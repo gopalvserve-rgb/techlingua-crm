@@ -128,4 +128,12 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'asset', label: 'Assets (equipment/furniture/IT)', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'vendor', label: 'Vendors', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'procurement', label: 'Procurement (Purchase Orders)', actions: ['read', 'create', 'update', 'receive', 'delete'] },
+  // Phase 2 ERP Batch 6 (migration 052) — Basic HR (no statutory payroll). Employee directory +
+  // staff attendance + leaves are BRANCH-SCOPED. hr_attendance.mark = daily marking (staff/self);
+  // leave.approve = a manager deciding a report's leave (distinct from leave.create = apply);
+  // leave.manage = configuring leave types & balances. leave.read/create are granted to Counsellor
+  // at 'own' so an employee can apply for and see their own leave.
+  { module: 'employee', label: 'Employee Directory', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'hr_attendance', label: 'Staff Attendance', actions: ['read', 'mark', 'delete'] },
+  { module: 'leave', label: 'Leaves (apply / approve / balances)', actions: ['read', 'create', 'approve', 'manage', 'delete'] },
 ];
