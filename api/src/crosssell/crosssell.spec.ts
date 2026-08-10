@@ -82,6 +82,17 @@ describe('CrossSellService — candidates scoping', () => {
     expect(q.sql).toContain('FROM enrolment e');
   });
 
+  it('MULTI-SELECT: two branch_ids narrow OR-within (both ids reach one IN clause)', async () => {
+    const { svc, issued } = make();
+    await svc.candidates(scopeAll, { branch_ids: '9,12', vertical_ids: '3,4' });
+    const q = issued.find((x) => /WITH cand AS/.test(x.sql))!;
+    // one IN() per dimension, holding BOTH ids -> OR within the filter, AND across filters.
+    expect(/l\.branch_id IN \(\$\d+::bigint,\$\d+::bigint\)/.test(q.sql)).toBe(true);
+    expect(/l\.vertical_id IN \(\$\d+::bigint,\$\d+::bigint\)/.test(q.sql)).toBe(true);
+    expect(q.params).toContain(9); expect(q.params).toContain(12);
+    expect(q.params).toContain(3); expect(q.params).toContain(4);
+  });
+
   it('the SQL prefers a rule and only falls back to same-vertical courses when none applies', async () => {
     const { svc, issued } = make();
     await svc.candidates(scopeAll, {});

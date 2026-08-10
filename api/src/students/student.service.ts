@@ -336,6 +336,27 @@ export class StudentService {
     };
   }
 
+  /* --------------------------------------------------------- documents ------ */
+  /** Metadata for every document on the student (NO bytes) — powers the ID & Documents tab. */
+  async listDocuments(id: number, scope: ResolvedScope) {
+    await this.get(id, scope); // scope + existence (throws 404 outside access)
+    return this.db.query<any>(
+      `SELECT id, doc_type, file_name, mime, size_bytes, created_at
+         FROM student_document
+        WHERE student_id=$1::bigint AND deleted_at IS NULL
+        ORDER BY id ASC`, [id]);
+  }
+
+  /** One document's bytes for authenticated, in-scope download (never public). */
+  async downloadDocument(id: number, docId: number, scope: ResolvedScope) {
+    await this.get(id, scope);
+    const row = await this.db.one<any>(
+      `SELECT file_name, mime, content FROM student_document
+        WHERE id=$1::bigint AND student_id=$2::bigint AND deleted_at IS NULL`, [docId, id]);
+    if (!row) throw new NotFoundException('Document not found.');
+    return { file_name: String(row.file_name), mime: String(row.mime), content: row.content as Buffer };
+  }
+
   /** Has THIS lead already been converted? Drives the leadsheet button state (idempotency). */
   async byLead(leadId: number, scope: ResolvedScope) {
     const params: unknown[] = [leadId];

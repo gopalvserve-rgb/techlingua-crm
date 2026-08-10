@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { StudentService } from './student.service';
@@ -48,6 +49,25 @@ export class StudentController {
   @RequirePermission('student.read')
   profile(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
     return this.svc.profile(id, scope);
+  }
+
+  /* -------- documents (education + KYC). List is student.read; download is student.update
+   *          (staff/admin, in scope) and never public — sensitive KYC bytes stay behind an
+   *          authenticated, scoped request. -------- */
+  @Get(':id/documents')
+  @RequirePermission('student.read')
+  documents(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.listDocuments(id, scope);
+  }
+
+  @Get(':id/documents/:docId/download')
+  @RequirePermission('student.update')
+  async downloadDocument(@Param('id', ParseIntPipe) id: number, @Param('docId', ParseIntPipe) docId: number, @CurrentScope() scope: ResolvedScope, @Res() res: Response) {
+    const { file_name, mime, content } = await this.svc.downloadDocument(id, docId, scope);
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${file_name.replace(/"/g, '')}"`);
+    res.setHeader('Content-Length', String(content.length));
+    res.end(content);
   }
 
   /* -------- family / siblings (ERP Batch 3). Read via student.read; link/unlink reuse

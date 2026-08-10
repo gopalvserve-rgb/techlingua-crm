@@ -67,6 +67,19 @@ describe('Cross-Sell — candidates', () => {
     expect(screen.getByText('Open suggestions')).toBeTruthy();
   });
 
+  it('the filter bar is ONE clean row (toolbar-surface) of real multi-select controls', async () => {
+    const { container } = render(<CrossSell />);
+    await screen.findByText('Meera K');
+    // Same container the Leads filter bar uses — a single toolbar-surface card holding a
+    // flex-wrap .filters row (so the dropdowns sit in one row, not stacked one-per-line).
+    const surface = container.querySelector('.toolbar-surface .filters');
+    expect(surface).toBeTruthy();
+    // Every dimension is a multi-select FilterMulti (.fmulti), not a single-select <select>.
+    const multis = within(surface as HTMLElement).getAllByTestId(/^fm-/);
+    const labels = multis.map((m) => m.getAttribute('data-testid'));
+    expect(labels).toEqual(expect.arrayContaining(['fm-branch', 'fm-vertical', 'fm-owner', 'fm-course']));
+  });
+
   it('a branch filter drives the candidate query string', async () => {
     render(<CrossSell />);
     await screen.findByText('Meera K');

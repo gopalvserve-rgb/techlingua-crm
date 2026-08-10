@@ -8,6 +8,7 @@ import { StudentService } from '../students/student.service';
 import { assertDateRange } from '../common/date.util';
 import { normalizePhone } from '../common/phone.util';
 import { RateLimiter } from '../ingestion/channels/rate-limit.util';
+import { parseIncomingDocuments } from '../common/document.util';
 
 /**
  * ONLINE ADMISSION FORM + REVIEW QUEUE (ERP Batch 3).
@@ -217,7 +218,19 @@ export class AdmissionService {
       [orgId, f.id, branchId, verticalId, courseId, String(data.full_name).slice(0, 160),
         data.phone ?? null, data.email ?? null, JSON.stringify(data), (meta.ip ?? '').slice(0, 64)]);
     await this.db.query(`UPDATE admission_form SET submissions = submissions + 1 WHERE id=$1::bigint`, [f.id]);
-    return { ok: true, reference: Number(row!.id) };
+
+    // ATTACHMENTS — education docs (marksheet/certificate) + KYC (photo/Aadhaar/PAN/other).
+    // Parsed + size/type/count-guarded here; the raw bytes are NEVER logged. Stored as BYTEA
+    // linked to this pending admission; they carry over to the student on approve.
+    const admissionId = Number(row!.id);
+    const docs = parseIncomingDocuments(dto?.documents);
+    for (const d of docs) {
+      await this.db.query(
+        `INSERT INTO student_document (org_id, admission_id, doc_type, file_name, mime, size_bytes, content)
+         VALUES ($1::bigint,$2::bigint,$3,$4,$5,$6,$7)`,
+        [orgId, admissionId, d.doc_type, d.file_name, d.mime, d.size_bytes, d.content]);
+    }
+    return { ok: true, reference: admissionId, documents: docs.length };
   }
 
   /* ========================================================= REVIEW QUEUE === */
@@ -277,6 +290,11 @@ export class AdmissionService {
     await this.db.query(
       `UPDATE admission SET status='approved', student_id=$2::bigint, admission_no=$3, reviewed_by=$4::bigint, reviewed_at=now(), updated_at=now()
         WHERE id=$1::bigint`, [id, student.id, admissionNo, me.id]);
+    // Carry the uploaded documents over to the new student so they show on the student
+    // profile ID & Documents tab (admission_id kept for provenance).
+    await this.db.query(
+      `UPDATE student_document SET student_id=$2::bigint WHERE admission_id=$1::bigint AND student_id IS NULL AND deleted_at IS NULL`,
+      [id, student.id]);
     return { id, approved: true, admission_no: admissionNo, student_id: student.id, student_no: student.student_no };
   }
 
@@ -294,6 +312,27 @@ export class AdmissionService {
     await this.get(id, scope);
     await this.db.query(`UPDATE admission SET deleted_at=now(), deleted_by=$2::bigint WHERE id=$1::bigint AND deleted_at IS NULL`, [id, me.id]);
     return { id, deleted: true };
+  }
+
+  /* ---- documents (education + KYC) ------------------------------------- */
+  /** Metadata for every document attached to a submission (NO bytes). Scoped via get(). */
+  async listDocuments(id: number, scope: ResolvedScope) {
+    await this.get(id, scope); // scope + existence (throws 404 outside access)
+    return this.db.query<any>(
+      `SELECT id, doc_type, file_name, mime, size_bytes, created_at
+         FROM student_document
+        WHERE admission_id=$1::bigint AND deleted_at IS NULL
+        ORDER BY id ASC`, [id]);
+  }
+
+  /** One document's bytes for authenticated, in-scope download (never public). */
+  async downloadDocument(id: number, docId: number, scope: ResolvedScope) {
+    await this.get(id, scope);
+    const row = await this.db.one<any>(
+      `SELECT file_name, mime, content FROM student_document
+        WHERE id=$1::bigint AND admission_id=$2::bigint AND deleted_at IS NULL`, [docId, id]);
+    if (!row) throw new NotFoundException('Document not found.');
+    return { file_name: String(row.file_name), mime: String(row.mime), content: row.content as Buffer };
   }
 
   /* ---- bulk delete ----------------------------------------------------- */

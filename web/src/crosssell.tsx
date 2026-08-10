@@ -167,7 +167,8 @@ function AttemptsTab() {
 
   return (
     <>
-      <div className="filters" style={{ margin: '12px 0', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
+      <div className="toolbar-surface" style={{ marginTop: 12 }}>
+      <div className="filters">
         <EnumMulti label="Action" icon="bolt" value={fAction} onChange={setFAction}
           options={[{ id: 'followup', name: 'Follow-up' }, { id: 'lead', name: 'New lead' }, { id: 'dismissed', name: 'Dismissed' }]} />
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
@@ -175,6 +176,7 @@ function AttemptsTab() {
         <FilterMulti label="Vertical" icon="grid" value={fVerticals}
           options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))} onChange={setFVerticals} />
         <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
+      </div>
       </div>
       <TableCard
         title="Cross-sell attempts" icon="list"
@@ -245,13 +247,18 @@ export function CrossSell() {
             { lab: 'Dismissed', val: String(s?.dismissed ?? 0), ic: 'x' },
           ]} />
 
-          <div className="filters" style={{ margin: '12px 0', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
+          {/* Filter bar — ONE clean row inside the shared toolbar-surface card (same container the
+              Leads filter bar uses); each control is a real multi-select (FilterMulti chips) and
+              the row wraps gracefully on narrow screens instead of stacking one-per-line. */}
+          <div className="toolbar-surface" style={{ marginTop: 12 }}>
+          <div className="filters">
             <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
               onChange={(v) => { setFBranches(v); setFVerticals([]); }} />
             <FilterMulti label="Vertical" icon="grid" value={fVerticals}
               options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))} onChange={setFVerticals} />
             <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
             <FilterMulti label="Course" icon="book" value={fCourses} options={courses} onChange={setFCourses} />
+          </div>
           </div>
 
           <TableCard

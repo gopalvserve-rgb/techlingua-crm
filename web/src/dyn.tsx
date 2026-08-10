@@ -18,6 +18,7 @@ import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, RowMenu, RowMenuItem, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
 import { UserPicker } from './userpicker';
+import { DocumentList } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
@@ -4350,14 +4351,19 @@ function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: 
       )}
 
       {tab === 'ids' && (
-        <Section title="ID & Documents">
-          <KV rows={[
-            ['ID Proof', `${dash(full.id_proof_type)} ${full.id_proof_number ? '· ' + full.id_proof_number : ''}`.trim()],
-            ['Aadhaar', <span className="mono">{dash(full.aadhaar)}</span>],
-            ['PAN', <span className="mono">{dash(full.pan)}</span>],
-            ['Passport', <span className="mono">{dash(full.passport)}</span>],
-          ]} />
-        </Section>
+        <>
+          <Section title="ID & Documents">
+            <KV rows={[
+              ['ID Proof', `${dash(full.id_proof_type)} ${full.id_proof_number ? '· ' + full.id_proof_number : ''}`.trim()],
+              ['Aadhaar', <span className="mono">{dash(full.aadhaar)}</span>],
+              ['PAN', <span className="mono">{dash(full.pan)}</span>],
+              ['Passport', <span className="mono">{dash(full.passport)}</span>],
+            ]} />
+          </Section>
+          <Section title="Uploaded documents">
+            <DocumentList basePath={`/students/${student.id}`} />
+          </Section>
+        </>
       )}
 
       {tab === 'education' && (

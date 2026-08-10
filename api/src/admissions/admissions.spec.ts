@@ -152,3 +152,71 @@ describe('Approve → student', () => {
     expect(inserts.some((i) => /UPDATE admission SET status='approved'/.test(i.sql))).toBe(true);
   });
 });
+
+describe('Admission document attachments (education + KYC)', () => {
+  const b64 = (s: string) => Buffer.from(s).toString('base64');
+
+  function makeDocDb(admissionRow?: any) {
+    const queries: any[] = [];
+    const db: any = {
+      async one(sql: string, params: any[] = []) {
+        if (/FROM organisation/.test(sql)) return { id: '1' };
+        if (/FROM admission_form WHERE form_key/.test(sql)) return { id: 7, is_active: true, branch_id: 1, vertical_id: 2, course_id: 3 };
+        if (/FROM vertical WHERE id=/.test(sql)) return { id: params[0] };
+        if (/FROM m_course WHERE id=/.test(sql)) return { id: params[0] };
+        if (/INSERT INTO admission \(/.test(sql)) return { id: '99' };
+        if (/FROM admission a/.test(sql)) return admissionRow ?? { id: 99, status: 'pending', branch_id: 1, vertical_id: 2, course_id: 3, data: { full_name: 'Riya' } };
+        if (/SELECT file_name, mime, content FROM student_document/.test(sql)) return { file_name: 'me.png', mime: 'image/png', content: Buffer.from('hello') };
+        return null;
+      },
+      async query(sql: string, params: any[] = []) { queries.push({ sql, params }); return []; },
+      async tx(fn: any) { return fn({ query: async () => ({ rows: [{ id: '1' }] }) }); },
+    };
+    const resolver: any = { buildScopeWhere: () => 'TRUE' };
+    const numbering: any = { allocate: async () => 'ADM-0007' };
+    const students: any = { create: async () => ({ id: 55, student_no: 'STU-0009' }) };
+    const svc = new AdmissionService(db, resolver, numbering, students);
+    return { svc, queries };
+  }
+
+  it('a public submit STORES each attached document as a student_document row (bytes never logged)', async () => {
+    const { svc, queries } = makeDocDb();
+    const out: any = await svc.submitPublic('k', {
+      full_name: 'Riya Sharma', phone: '9812345678', branch_id: 1, vertical_id: 2, course_id: 3,
+      documents: [
+        { doc_type: 'photo', file_name: 'me.png', mime: 'image/png', content: b64('hello-png') },
+        { doc_type: 'aadhaar', file_name: 'aadhaar.pdf', mime: 'application/pdf', content: b64('%PDF-1.4') },
+      ],
+    }, { ip: '5.5.5.9' });
+    expect(out.documents).toBe(2);
+    const docInserts = queries.filter((q) => /INSERT INTO student_document/.test(q.sql));
+    expect(docInserts).toHaveLength(2);
+    // linked to the created admission, storing a Buffer (bytea), type + size captured.
+    expect(docInserts[0].params[1]).toBe(99);              // admission_id
+    expect(Buffer.isBuffer(docInserts[0].params[6])).toBe(true);
+  });
+
+  it('rejects a submit whose attachment is a disallowed type', async () => {
+    const { svc } = makeDocDb();
+    await expect(svc.submitPublic('k', {
+      full_name: 'A', phone: '9812345678', branch_id: 1, vertical_id: 2,
+      documents: [{ doc_type: 'other', file_name: 'x.exe', mime: 'application/x-msdownload', content: b64('MZ') }],
+    }, { ip: '5.5.5.8' })).rejects.toThrow(/PDF, JPG or PNG/);
+  });
+
+  it('approve CARRIES documents over to the new student (student_id set from admission_id)', async () => {
+    const { svc, queries } = makeDocDb();
+    await svc.approve(99, { id: 3 }, {} as any);
+    const carry = queries.find((q) => /UPDATE student_document SET student_id=/.test(q.sql));
+    expect(carry).toBeTruthy();
+    expect(carry.params).toEqual([99, 55]);
+  });
+
+  it('download returns the bytes + filename for an in-scope reviewer', async () => {
+    const { svc } = makeDocDb();
+    const d = await svc.downloadDocument(99, 12, {} as any);
+    expect(d.file_name).toBe('me.png');
+    expect(d.mime).toBe('image/png');
+    expect(d.content.toString()).toBe('hello');
+  });
+});

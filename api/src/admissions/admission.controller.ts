@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { AdmissionService } from './admission.service';
@@ -45,6 +46,21 @@ export class AdmissionController {
   /* ---- one submission ---- */
   @Get(':id') @RequirePermission('admission.read')
   get(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) { return this.svc.get(id, scope); }
+
+  /* ---- documents (education + KYC): list is read-scoped; download is review-only
+   *       (staff/admin, in scope) and never public — sensitive KYC bytes never leave
+   *       an authenticated, scoped request. ---- */
+  @Get(':id/documents') @RequirePermission('admission.read')
+  documents(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) { return this.svc.listDocuments(id, scope); }
+
+  @Get(':id/documents/:docId/download') @RequirePermission('admission.review')
+  async downloadDocument(@Param('id', ParseIntPipe) id: number, @Param('docId', ParseIntPipe) docId: number, @CurrentScope() scope: ResolvedScope, @Res() res: Response) {
+    const { file_name, mime, content } = await this.svc.downloadDocument(id, docId, scope);
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${file_name.replace(/"/g, '')}"`);
+    res.setHeader('Content-Length', String(content.length));
+    res.end(content);
+  }
 
   @Patch(':id') @RequirePermission('admission.review')
   update(@Param('id', ParseIntPipe) id: number, @Body() b: any, @CurrentScope() scope: ResolvedScope) { return this.svc.update(id, b, scope); }

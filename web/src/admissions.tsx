@@ -20,11 +20,13 @@ import { rowActions, ConfirmModal, DetailModal, Section, KV } from './rowactions
 import { DateRange } from './daterange';
 import { useScope } from './scope';
 import { FilterMulti } from './dyn';
+import { DOC_ACCEPT, DOC_MAX_FILES, SINGLE_DOCS, docError, fileToDoc, DocumentList } from './documents';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 
 const STATUS_CELL = (s: string): Cell =>
   ({ b: [s === 'approved' ? 'Approved' : s === 'rejected' ? 'Rejected' : 'Pending',
        s === 'approved' ? 'b-green' : s === 'rejected' ? 'b-rose' : 'b-amber'] });
+
 
 /** Branch + Vertical + Course FilterMulti row (local copy of the learning-screen filter). */
 function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, extra }: any) {
@@ -190,6 +192,9 @@ function AdmissionDetail({ id, onClose, onChanged, rd }: { id: number; onClose: 
           ['Board / University', dash(data.board_university)], ['Passing Year', dash(data.passing_year)],
         ]} />
       </Section>
+      <Section title="Uploaded documents">
+        <DocumentList basePath={`/admissions/${id}`} />
+      </Section>
       {reject && <ConfirmModal title="Reject admission?" body={
         <div><p>This submission will be marked rejected. An optional reason is shown to reviewers.</p>
           <input className="ainp" placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
@@ -313,6 +318,7 @@ const SECTIONS: Array<{ title: string; fields: Array<[string, string, string?]> 
 export function PublicAdmissionForm({ formKey }: { formKey: string }) {
   const info = useFetch<any>(`/public/admission/${formKey}`, [formKey]);
   const [form, setForm] = useState<any>({ _hp: '' });
+  const [docs, setDocs] = useState<Record<string, File[]>>({});
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
   const d = info.data;
@@ -325,6 +331,12 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
 
   const fixed = d?.fixed ?? {};
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+  // Attachments — validate each file (PDF/JPG/PNG, 5 MB) before it is accepted.
+  const pickDoc = (doc_type: string, multiple: boolean) => (e: any) => {
+    const files: File[] = Array.from(e.target.files ?? []);
+    for (const f of files) { const err = docError(f); if (err) { toast(err, true); e.target.value = ''; return; } }
+    setDocs((prev) => ({ ...prev, [doc_type]: multiple ? [...(prev[doc_type] ?? []), ...files] : files }));
+  };
 
   if (info.loading) return <div className="notice" style={{ margin: 40 }}><Ic k="clock" /><div>Loading…</div></div>;
   if (!d) return <div className="notice" style={{ margin: 40 }}><Ic k="shield" /><div>This admission form is not available.</div></div>;
@@ -344,6 +356,10 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
       if (fixed.branch_id) body.branch_id = fixed.branch_id;
       if (fixed.vertical_id) body.vertical_id = fixed.vertical_id;
       if (fixed.course_id) body.course_id = fixed.course_id;
+      const chosen: Array<{ f: File; t: string }> = [];
+      for (const [t, arr] of Object.entries(docs)) for (const f of arr) chosen.push({ f, t });
+      if (chosen.length > DOC_MAX_FILES) { toast(`Please attach at most ${DOC_MAX_FILES} files.`, true); setBusy(false); return; }
+      if (chosen.length) body.documents = await Promise.all(chosen.map((x) => fileToDoc(x.f, x.t)));
       const r = await api.post<any>(`/public/admission/${formKey}`, body);
       setDone(r.reference ?? 0);
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
@@ -387,6 +403,23 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
             </div>
           </div>
         ))}
+
+        <div style={{ marginTop: 8 }}>
+          <h3 style={{ margin: '10px 0 4px' }}>Documents</h3>
+          <div className="page-sub" style={{ marginBottom: 4 }}>Upload PDF, JPG or PNG files (max 5 MB each). Education documents (marksheet / certificate) and KYC (photo, Aadhaar, PAN).</div>
+          <div className="form-grid">
+            {SINGLE_DOCS.map(([k, label]) => (
+              <div className="fld" key={k}><label>{label}</label>
+                <input className="ainp" type="file" accept={DOC_ACCEPT} data-testid={`doc-${k}`} onChange={pickDoc(k, false)} />
+                {docs[k]?.length ? <div className="sub">{docs[k][0].name}</div> : null}
+              </div>
+            ))}
+            <div className="fld"><label>Other documents (you can add several)</label>
+              <input className="ainp" type="file" accept={DOC_ACCEPT} multiple data-testid="doc-other" onChange={pickDoc('other', true)} />
+              {docs.other?.length ? <div className="sub">{docs.other.map((f) => f.name).join(', ')}</div> : null}
+            </div>
+          </div>
+        </div>
 
         <div style={{ marginTop: 16 }}>
           <button className="btn primary" onClick={submit} disabled={busy}><Ic k="check" />Submit application</button>
