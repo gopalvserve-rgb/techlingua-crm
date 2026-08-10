@@ -55,6 +55,7 @@ import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } fr
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { InvoicesScreen, FinanceDashboard } from './invoices';
+import { PaymentPlansScreen, FeeDuesScreen } from './paymentplans';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
@@ -4746,6 +4747,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   // Phase 3 Batch 1 — GST tax invoices + finance dashboard
   invoicesList: InvoicesScreen,
   financeDashboard: FinanceDashboard,
+  // Phase 3 Batch 2 — payment plans + fee dues & ageing + auto reminders
+  paymentPlans: PaymentPlansScreen,
+  feeDues: FeeDuesScreen,
   // Sprint 5 — conversion & money-lite
   quotations: Quotations,
   saleClosure: SaleClosure,

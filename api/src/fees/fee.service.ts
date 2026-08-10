@@ -7,6 +7,7 @@ import { formatINR, rupeesToMinor } from '../common/money.util';
 import { Letterhead, receiptPdf } from '../pdf/documents';
 import { paidAsAtMinor } from './as-at';
 import { assertDateRange } from '../common/date.util';
+import { PlanService } from '../paymentplans/plan.service';
 
 /**
  * LITE FEE — a collection entry and a receipt. That is the WHOLE Phase-1 scope
@@ -55,6 +56,10 @@ export class FeeService {
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
     private readonly numbering: NumberingService,
+    // Phase 3 Batch 2: apply/reverse a receipt against the installment schedule inside the
+    // SAME transaction as the receipt. Optional so the unit tests can build FeeService
+    // without the plans graph (they never touch a plan).
+    private readonly plans?: PlanService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -318,6 +323,11 @@ export class FeeService {
            FROM lead l WHERE l.id = $1::bigint`,
         [e.lead_id, `Fee received ${formatINR(amount_minor)} (${MODE_LABELS[mode]}) — receipt ${receiptNo}`, me.id],
       );
+      // Phase 3: apply this receipt to the enrolment's installment schedule (oldest-due
+      // first, or a chosen installment). A no-op when there is no active plan.
+      if (this.plans) {
+        await this.plans.applyReceipt(c, Number(r.rows[0].id), enrolmentId, amount_minor, dto?.installment_id ? Number(dto.installment_id) : null);
+      }
       return {
         id: Number(r.rows[0].id), receipt_no: receiptNo,
         paid_minor: paid + amount_minor,
@@ -336,6 +346,9 @@ export class FeeService {
     const r = await this.get(id, scope);
     await this.db.tx(async (c) => {
       await c.query(`UPDATE fee_receipt SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint`, [id, me.id]);
+      // Phase 3: unwind this receipt's installment allocations so the schedule reflects
+      // the (now soft-deleted) receipt — paid_minor drops back, statuses recompute.
+      if (this.plans) await this.plans.reverseReceipt(c, id);
       await c.query(
         `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
          SELECT l.id, l.org_id, l.branch_id, 'note', $2, $3::bigint

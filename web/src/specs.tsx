@@ -268,22 +268,10 @@ export const APP: ModuleItem[] = [
     // Phase 3 and the screen says so on its face rather than implying otherwise.
     { id: 'collection', label: 'Fee Collection', spec: { dyn: 'feeCollection',
       sub: 'Cash, UPI, Card, Cheque, Online (recorded by hand). Partial payments. Auto receipts + PDF. Razorpay capture is Phase 3.' } },
-    { id: 'dues', label: 'Fee Dues', spec: {
-      sub: 'Dues per student / installment, ageing buckets, automatic reminders (SMS/WhatsApp/email) & escalation.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Total dues', '—', 'rupee'), kpi('Defaulters', '0', 'rose'), kpi('Reminders sent', '0', 'wa'), kpi('Overdue >30d', '—', 'clock')] },
-        { type: 'hbars', title: 'Dues ageing', rows: [], empty: 'Ageing buckets appear with the first dues' },
-      ] } },
-    { id: 'plans', label: 'Payment Plans', spec: {
-      sub: 'Installment plans — down payment, EMI schedule, late-fee rules. Branch / vertical / course-wise.',
-      blocks: [
-        { type: 'table', title: 'Plan templates', cols: ['Plan', 'Down payment', 'Installments', 'Schedule', 'Late fee'], rows: [
-          ['Full Payment', '100%', '—', '—', '—'],
-          ['3 EMI', '40%', '3', 'Monthly', 'Configurable'],
-          ['6 EMI', '25%', '6', 'Monthly', 'Configurable'],
-          ['Custom', 'Configurable', 'Custom', 'Custom dates', 'Configurable']] },
-      ] } },
+    { id: 'plans', label: 'Payment Plans', spec: { dyn: 'paymentPlans',
+      sub: 'Installment plans on an enrolment — Full / Installment / EMI / Custom. Generates a due-dated schedule that sums EXACTLY to the net fee (₹ paise). Collections apply oldest-due first, updating each installment\'s paid / outstanding / status. Full list treatment.' } },
+    { id: 'dues', label: 'Fee Dues', spec: { dyn: 'feeDues',
+      sub: 'Outstanding per student / enrolment / installment with ageing buckets (Not due / 0–30 / 31–60 / 61–90 / 90+ days) computed in IST. Filter by ageing / branch / vertical / course / owner, export, refresh. Automatic due reminders (WhatsApp / SMS / Email) with configurable offsets — idempotent, degrade cleanly.' } },
     { id: 'scholar', label: 'Scholarships', spec: {
       sub: 'Percentage or fixed. Approval workflow at manager level. Scholarship reason mandatory.',
       sprintNote: NOTE_S2,

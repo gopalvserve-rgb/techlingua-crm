@@ -362,6 +362,9 @@ export function FinanceDashboard() {
   const rangeKey = `${qs.toString()}`;
   const { data } = useFetch<any>(`/finance/dashboard?${qs.toString()}`, [rangeKey]);
   const k = data?.kpis;
+  // Phase 3 Batch 2 — the dues/ageing feeds this dashboard from the Fee Dues service (IST buckets).
+  const dues = useFetch<any>(`/fee-dues/summary?${(function(){const p=new URLSearchParams();if((gScope.branches??[]).length)p.set('branch_ids',gScope.branches.join(','));if((gScope.verticals??[]).length)p.set('vertical_ids',gScope.verticals.join(','));return p.toString();})()}`, [rangeKey]);
+  const du = dues.data;
 
   const MODE_LABELS: Record<string, string> = { cash: 'Cash', upi: 'UPI', card: 'Card', cheque: 'Cheque', online: 'Online' };
   const modeTotal = (data?.by_mode ?? []).reduce((a: number, m: any) => a + m.total_minor, 0);
@@ -405,6 +408,17 @@ export function FinanceDashboard() {
           { node: <b className="mono">{r.receipt_no}</b> }, r.lead_name, { mono: r.enrolment_no },
           { mono: fmtINR(r.amount_minor) }, { b: [String(r.mode).toUpperCase(), 'b-indigo'] }, dt(r.received_at), r.branch_name,
         ])} />
+      {du ? (
+        <div className="split2">
+          <HBars title="Dues ageing (IST)"
+            rows={(du.by_bucket ?? []).map((b: any) => ({
+              label: `${b.label} — ${b.n}`, val: fmtINR(b.total_minor),
+              pct: du.outstanding_minor > 0 ? Math.round((b.total_minor * 100) / du.outstanding_minor) : 0,
+              color: b.bucket === 'not_due' ? 'var(--indigo)' : (b.bucket === 'b_61_90' || b.bucket === 'b_90_plus') ? 'var(--rose)' : 'var(--amber)',
+            }))} empty="No outstanding dues" />
+          <HBars title="Dues by branch" rows={hbar(du.by_branch ?? [], 'var(--rose)')} empty="No dues" />
+        </div>
+      ) : null}
       <TableCard title="Top dues" icon="clock"
         cols={['Enrolment', 'Student', 'Course', 'Net fee', 'Paid', 'Balance']}
         empty="No outstanding dues"
