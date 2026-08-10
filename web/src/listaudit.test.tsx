@@ -13,12 +13,10 @@
  * control.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 
-const SRC = dirname(fileURLToPath(import.meta.url));
-
+// Load every module source as a raw string via Vite (no node:fs — keeps the production
+// `tsc --noEmit` build green, since it typechecks test files too).
+const RAW = (import.meta as unknown as { glob: (p: string, o: object) => Record<string, string> }).glob('./*.tsx', { query: '?raw', import: 'default', eager: true });
 // The five controls and the source tokens that prove each is wired.
 const TOKENS = {
   multiFilter: /FilterMulti|EnumMulti|ScopeFilters|useBatches/,
@@ -44,8 +42,11 @@ function sliceComponent(src: string, name: string): string | null {
   return src.slice(m.index);
 }
 
-const fileCache: Record<string, string> = {};
-const read = (f: string) => (fileCache[f] ??= readFileSync(join(SRC, f), 'utf8'));
+const read = (f: string): string => {
+  const src = RAW[`./${f}`];
+  if (src == null) throw new Error(`source not found for ${f}`);
+  return src;
+};
 
 // Capability profiles — the controls each list is EXPECTED to render. A list where a control is
 // genuinely N/A (a top-level list with no parent to filter by; a derived/log list you cannot
