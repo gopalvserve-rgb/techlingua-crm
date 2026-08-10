@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { MessagingModule } from '../messaging/messaging.module';
+import { NotificationEventsModule } from '../notificationevents/notification-events.module';
 import { TransferController } from './transfer.controller';
 import { TransferService } from './transfer.service';
 import { AttendanceController } from './attendance.controller';
@@ -16,7 +17,7 @@ import { CourseworkService } from './coursework.service';
  * absence alerts via MessagingModule), tests & scores, and assignments (coursework).
  */
 @Module({
-  imports: [DatabaseModule, RbacModule, MessagingModule],
+  imports: [DatabaseModule, RbacModule, MessagingModule, NotificationEventsModule],
   controllers: [TransferController, AttendanceController, AssessmentController, CourseworkController],
   providers: [TransferService, AttendanceService, AssessmentService, CourseworkService],
 })

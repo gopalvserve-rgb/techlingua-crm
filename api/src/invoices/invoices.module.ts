@@ -3,6 +3,7 @@ import { DatabaseModule } from '../database/database.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { NumberingModule } from '../numbering/numbering.module';
 import { FinanceModule } from '../finance/finance.module';
+import { NotificationEventsModule } from '../notificationevents/notification-events.module';
 import { InvoiceService } from './invoice.service';
 import { InvoiceController } from './invoice.controller';
 
@@ -12,7 +13,7 @@ import { InvoiceController } from './invoice.controller';
  * branded PDF, RBAC invoice.* + scope.
  */
 @Module({
-  imports: [DatabaseModule, RbacModule, NumberingModule, FinanceModule],
+  imports: [DatabaseModule, RbacModule, NumberingModule, FinanceModule, NotificationEventsModule],
   controllers: [InvoiceController],
   providers: [InvoiceService],
   exports: [InvoiceService],

@@ -25,6 +25,8 @@ export interface FireContext {
   /** distinguishes repeatable event-instances (e.g. an installment's due date) for idempotency */
   dedupe?: string | null;
   actor_id?: number | null;
+  /** extra merge fields the mapped template may reference ({{amount}}, {{invoice_no}}, {{receipt_no}}, {{due_date}}, {{batch_name}}, {{certificate_no}}, ...). Shallow-merged over the lead's own variable bag at render time. */
+  vars?: Record<string, unknown> | null;
 }
 
 interface EventRow {
@@ -219,7 +221,7 @@ export class NotificationEventService {
         );
         if (dup) { results.push({ channel, status: 'duplicate', message_id: Number(dup.id) }); skipped++; continue; }
 
-        const msg = await this.templates.build({ lead_id: leadId, template_id: Number(templateId) });
+        const msg = await this.templates.build({ lead_id: leadId, template_id: Number(templateId), extra_vars: ctx.vars ?? undefined });
         const out = await this.messaging.queue({ ...msg, dedupe_key: dedupeKey, actor_id: ctx.actor_id ?? null, guarded: true });
         results.push({ channel, status: out.status, message_id: out.id, reason: out.reason });
         if (out.status === 'skipped') skipped++; else sent++;

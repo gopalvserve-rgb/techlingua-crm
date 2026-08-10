@@ -159,6 +159,18 @@ export const VARIABLE_CATALOG: Array<{ key: string; label: string; sample: strin
   { key: 'org', label: 'Organisation', sample: 'Tech Lingua LLP' },
   { key: 'today', label: "Today's date", sample: '14/07/2026' },
   { key: 'next_follow_up', label: 'Next follow-up', sample: '16/07/2026 11:00' },
+  // Notification-event merge fields — populated by the event trigger site (fees / academics /
+  // certificates). Blank on non-event sends, so they render empty in a normal broadcast.
+  { key: 'amount', label: 'Amount (event)', sample: '₹10,000.00' },
+  { key: 'balance', label: 'Balance due (event)', sample: '₹35,000.00' },
+  { key: 'invoice_no', label: 'Invoice number (event)', sample: 'INV/26-27/0001' },
+  { key: 'receipt_no', label: 'Receipt number (event)', sample: 'RCP/26-27/0007' },
+  { key: 'enrolment_no', label: 'Enrolment number (event)', sample: 'ENR/26-27/0042' },
+  { key: 'due_date', label: 'Installment due date (event)', sample: '15-09-2026' },
+  { key: 'refund_amount', label: 'Refund amount (event)', sample: '₹5,000.00' },
+  { key: 'refund_no', label: 'Refund voucher no (event)', sample: 'REF/26-27/0003' },
+  { key: 'batch_name', label: 'Batch name (event)', sample: 'IELTS Morning A' },
+  { key: 'certificate_no', label: 'Certificate serial (event)', sample: 'CERT/26-27/0011' },
 ];
 
 /** The sample lead the live preview uses when the client has not picked a real one. */
@@ -168,4 +180,10 @@ export const SAMPLE_VARS: TemplateVars = {
   branch: 'Vikaspuri', vertical: 'BCL', pipeline: 'Admissions',
   campaign: 'Meta July', source: 'Meta Ads', stage: 'Contacted',
   org: 'Tech Lingua LLP', today: '14/07/2026', next_follow_up: '16/07/2026 11:00',
+  // Notification-event merge fields — sample values so the live preview renders and the
+  // "catalogue cannot lie" test (every catalog key resolves) stays green.
+  amount: '₹10,000.00', balance: '₹35,000.00', invoice_no: 'INV/26-27/0001',
+  receipt_no: 'RCP/26-27/0007', enrolment_no: 'ENR/26-27/0042', due_date: '15-09-2026',
+  refund_amount: '₹5,000.00', refund_no: 'REF/26-27/0003', batch_name: 'IELTS Morning A',
+  certificate_no: 'CERT/26-27/0011',
 };

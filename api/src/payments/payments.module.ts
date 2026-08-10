@@ -4,6 +4,7 @@ import { RbacModule } from '../rbac/rbac.module';
 import { MessagingModule } from '../messaging/messaging.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { FeesModule } from '../fees/fees.module';
+import { NotificationEventsModule } from '../notificationevents/notification-events.module';
 import { PaymentService } from './payment.service';
 import { PaymentController } from './payment.controller';
 import { RazorpayWebhookController } from './razorpay-webhook.controller';
@@ -14,7 +15,7 @@ import { RazorpayWebhookController } from './razorpay-webhook.controller';
  * (the per-vertical encrypted Razorpay key) and NotifierService (payment success/failed).
  */
 @Module({
-  imports: [DatabaseModule, RbacModule, MessagingModule, NotificationsModule, FeesModule],
+  imports: [DatabaseModule, RbacModule, MessagingModule, NotificationsModule, FeesModule, NotificationEventsModule],
   controllers: [PaymentController, RazorpayWebhookController],
   providers: [PaymentService],
   exports: [PaymentService],

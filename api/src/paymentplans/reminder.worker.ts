@@ -3,6 +3,7 @@ import { DatabaseService } from '../database/database.service';
 import { SettingsService } from '../common/settings.service';
 import { MessagingService } from '../messaging/messaging.service';
 import { formatINR } from '../common/money.util';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 
 /**
  * THE FEE-REMINDER SWEEP — Phase 3 Batch 2.
@@ -63,6 +64,10 @@ export class FeeReminderWorker implements OnModuleInit, OnModuleDestroy {
     private readonly db: DatabaseService,
     private readonly settings: SettingsService,
     private readonly messaging: MessagingService,
+    /** Notification Events — each sweep stage IS a catalog event (installment_due_soon /
+     *  installment_due_today / payment_overdue). Fires the mapped template in addition to the
+     *  ad-hoc reminder line. Optional so tests can build the worker without it. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   onModuleInit() {
@@ -182,7 +187,22 @@ export class FeeReminderWorker implements OnModuleInit, OnModuleDestroy {
         }
         return true;
       });
-      if (ok) fired++;
+      if (ok) {
+        fired++;
+        // Notification Events — fire the mapped catalog event for this stage (exactly once
+        // per installment+key, same claim guarantee). Renders ₹ + due-date merge fields.
+        const eventKey = spec.stage === 'due_soon' ? 'installment_due_soon'
+          : spec.stage === 'due_today' ? 'installment_due_today' : 'payment_overdue';
+        const dueDMY = new Date(String(r.due_date)).toLocaleDateString('en-GB').replace(/\//g, '-');
+        await this.notifEvents?.safeFire(eventKey, {
+          lead_id: Number(r.lead_id), vertical_id: Number(r.vertical_id),
+          dedupe: `inst:${r.installment_id}:${spec.key}`,
+          vars: {
+            amount: formatINR(Number(r.outstanding_minor)),
+            due_date: dueDMY, enrolment_no: r.enrolment_no, seq_no: r.seq_no,
+          },
+        });
+      }
     }
     if (fired) this.log.log(`fee reminders (${spec.key}) sent: ${fired}`);
     return fired;

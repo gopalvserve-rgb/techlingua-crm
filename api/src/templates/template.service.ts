@@ -240,6 +240,12 @@ export class TemplateService {
       const v = await this.varsForLead(Number(dto.lead_id));
       lead = v._lead; vars = v;
     }
+    // Event-driven sends (Notification Events) pass a bag of business merge fields the mapped
+    // template may reference ({{amount}}, {{invoice_no}}, {{receipt_no}}, {{due_date}}, ...).
+    // Shallow-merge them over the lead's own variable bag; unknown tokens still render empty.
+    if (dto?.extra_vars && typeof dto.extra_vars === 'object') {
+      vars = { ...vars, ...(dto.extra_vars as Record<string, unknown>) };
+    }
 
     const tpl = dto?.template_id ? await this.get(Number(dto.template_id)) : null;
     const ch = (tpl?.channel ?? channel) as MsgChannel;

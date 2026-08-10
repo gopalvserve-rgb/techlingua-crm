@@ -5,10 +5,11 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { NumberingService } from '../numbering/numbering.service';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
-import { rupeesToMinor, amountInWordsINR } from '../common/money.util';
+import { rupeesToMinor, amountInWordsINR, formatINR } from '../common/money.util';
 import { computeGstLine, computeGstTotals, supplyTypeFor, GstLineComputed } from './gst.util';
 import { Letterhead, invoicePdf } from '../pdf/documents';
 import { assertDateRange } from '../common/date.util';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 
 /**
  * GST TAX INVOICES — Finance & Collections › Invoices (Phase 3 Batch 1).
@@ -48,6 +49,8 @@ export class InvoiceService {
     private readonly resolver: ScopeResolverService,
     private readonly numbering: NumberingService,
     private readonly finance?: FinanceSettingsService,
+    /** Notification Events — fires fee_invoice_generated when a GST invoice is issued. Optional. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -287,7 +290,7 @@ export class InvoiceService {
     const gi = await this.get(id, scope);
     if (gi.status !== 'draft') throw new BadRequestException(`${gi.invoice_no || 'This invoice'} is already ${gi.status}.`);
     if (!gi.seller_gstin) throw new BadRequestException('Set the branch GSTIN before issuing a tax invoice (Administration › Branches › Edit).');
-    return this.db.tx(async (c) => {
+    const out = await this.db.tx(async (c) => {
       const invoiceNo = await this.numbering.allocate('invoice', { branch_id: Number(gi.branch_id), vertical_id: Number(gi.vertical_id) }, c);
       await c.query(
         `UPDATE gst_invoice SET invoice_no = $2::varchar, status = 'issued', invoice_date = CURRENT_DATE,
@@ -297,6 +300,15 @@ export class InvoiceService {
       );
       return { id, invoice_no: invoiceNo, status: 'issued' };
     });
+    // Notification Events — a GST tax invoice was issued to the buyer (student/lead). Best-effort.
+    await this.notifEvents?.safeFire('fee_invoice_generated', {
+      student_id: gi.student_id ? Number(gi.student_id) : null,
+      lead_id: gi.lead_id ? Number(gi.lead_id) : null,
+      vertical_id: Number(gi.vertical_id),
+      dedupe: `inv:${id}`,
+      vars: { invoice_no: out.invoice_no, amount: formatINR(Number(gi.total_minor)), enrolment_no: gi.enrolment_no ?? null },
+    });
+    return out;
   }
 
   async markPaid(id: number, me: { id: number }, scope: ResolvedScope) {

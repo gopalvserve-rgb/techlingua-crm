@@ -8,6 +8,7 @@ import { Letterhead, receiptPdf } from '../pdf/documents';
 import { paidAsAtMinor } from './as-at';
 import { assertDateRange } from '../common/date.util';
 import { PlanService } from '../paymentplans/plan.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 
 /**
  * LITE FEE — a collection entry and a receipt. That is the WHOLE Phase-1 scope
@@ -68,6 +69,8 @@ export class FeeService {
     // SAME transaction as the receipt. Optional so the unit tests can build FeeService
     // without the plans graph (they never touch a plan).
     private readonly plans?: PlanService,
+    /** Notification Events — fires receipt_generated / payment_successful / fee_fully_paid. Optional. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -291,7 +294,7 @@ export class FeeService {
     }
     const orgId = await this.orgId();
 
-    return this.db.tx(async (c) => {
+    const out = await this.db.tx(async (c) => {
       // THE LOCK. Everything after this is serialised per enrolment.
       const lk = await c.query<any>(
         `SELECT e.id, e.enrolment_no, e.net_fee_minor, e.branch_id, e.vertical_id, e.lead_id, e.status,
@@ -347,11 +350,37 @@ export class FeeService {
       return {
         id: Number(r.rows[0].id), receipt_no: receiptNo,
         lead_id: Number(e.lead_id),
+        vertical_id: Number(e.vertical_id),
+        enrolment_no: e.enrolment_no,
+        amount_minor,
         paid_minor: paid + amount_minor,
         balance_minor: balance - amount_minor,
         fully_paid: balance - amount_minor === 0,
       };
     });
+    // Notification Events (best-effort, post-commit, never throws into the money path).
+    // A fee collection = a receipt AND a successful payment; a receipt whose balance hits
+    // zero also completes the fee. Each mapped+enabled template renders with ₹ merge fields.
+    if (this.notifEvents) {
+      const evVars = {
+        amount: formatINR(out.amount_minor),
+        balance: formatINR(out.balance_minor),
+        receipt_no: out.receipt_no,
+        enrolment_no: out.enrolment_no,
+      };
+      await this.notifEvents.safeFire('receipt_generated', {
+        lead_id: out.lead_id, vertical_id: out.vertical_id, dedupe: `receipt:${out.id}`, vars: evVars,
+      });
+      await this.notifEvents.safeFire('payment_successful', {
+        lead_id: out.lead_id, vertical_id: out.vertical_id, dedupe: `receipt:${out.id}`, vars: evVars,
+      });
+      if (out.fully_paid) {
+        await this.notifEvents.safeFire('fee_fully_paid', {
+          lead_id: out.lead_id, vertical_id: out.vertical_id, dedupe: `fullpaid:${enrolmentId}`, vars: evVars,
+        });
+      }
+    }
+    return out;
   }
 
   /**

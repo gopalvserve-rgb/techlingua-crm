@@ -668,6 +668,16 @@ export class StudentService {
         batch_id: assignedBatchId, waitlisted, waitlist_position: waitlistPosition,
       };
     });
+    // Notification Events — a student record was created directly (admission desk). Best-effort.
+    await this.notifEvents?.safeFire('student_welcome', {
+      student_id: Number(out.id), vertical_id: verticalId, dedupe: `welcome:${out.id}`,
+      vars: { student_no: out.student_no, enrollment_no: out.enrollment_no },
+    });
+    if (out.batch_id) {
+      await this.notifEvents?.safeFire('batch_assigned', {
+        student_id: Number(out.id), vertical_id: verticalId, dedupe: `batch:${out.id}:${out.batch_id}`,
+      });
+    }
     return out;
   }
 
@@ -755,6 +765,11 @@ export class StudentService {
       // Notification Events — the lead just became a student (with its enrolment).
       await this.notifEvents?.safeFire('lead_converted', { lead_id: leadId });
       await this.notifEvents?.safeFire('enrollment_created', { lead_id: leadId, vertical_id: Number(lead.vertical_id) });
+      // The lead now exists as a student — welcome them (student-facing).
+      await this.notifEvents?.safeFire('student_welcome', {
+        student_id: Number(out.id), vertical_id: Number(lead.vertical_id), dedupe: `welcome:${out.id}`,
+        vars: { student_no: out.student_no, enrollment_no: out.enrollment_no },
+      });
       return { ...out, already: false, lead_id: leadId };
     } catch (e) {
       if ((e as { code?: string })?.code === '23505' && String((e as Error).message).includes('uq_student_lead')) {

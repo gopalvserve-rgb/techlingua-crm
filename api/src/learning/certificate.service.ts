@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { NumberingService } from '../numbering/numbering.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { assertDateRange, requireDateString } from '../common/date.util';
 import { Letterhead, certificatePdf, CertificateDoc } from '../pdf/documents';
@@ -22,6 +23,8 @@ export class CertificateService {
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
     private readonly numbering: NumberingService,
+    /** Notification Events — fires certificate_generated + certificate_issued. Optional. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -113,7 +116,7 @@ export class CertificateService {
     if (!title) throw new BadRequestException('Give the certificate a title.');
     const type = TYPES.includes(String(dto?.cert_type)) ? String(dto.cert_type) : 'completion';
     const orgId = await this.orgId();
-    return this.db.tx(async (c) => {
+    const out = await this.db.tx(async (c) => {
       const serial = await this.numbering.allocate('certificate', { branch_id: Number(s.branch_id), vertical_id: Number(s.vertical_id) }, c);
       const ins = await c.query(
         `INSERT INTO certificate (org_id, student_id, branch_id, vertical_id, course_id, batch_id, serial_no,
@@ -125,12 +128,19 @@ export class CertificateService {
           type, title, this.day(dto?.issue_date), dto?.remarks ?? null, me.id]);
       return { id: Number(ins.rows[0].id), serial_no: serial };
     });
+    // Notification Events — a certificate is created AND issued in one step here. Best-effort.
+    const certVars = { certificate_no: out.serial_no, title, cert_type: type };
+    await this.notifEvents?.safeFire('certificate_generated', {
+      student_id: studentId, vertical_id: Number(s.vertical_id), dedupe: `cert:${out.id}:${out.serial_no}`, vars: certVars });
+    await this.notifEvents?.safeFire('certificate_issued', {
+      student_id: studentId, vertical_id: Number(s.vertical_id), dedupe: `cert:${out.id}:${out.serial_no}`, vars: certVars });
+    return out;
   }
 
   /** Reissue = a fresh serial + issue date on the same record (e.g. corrected name). */
   async reissue(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
     const cur = await this.get(id, scope);
-    return this.db.tx(async (c) => {
+    const out = await this.db.tx(async (c) => {
       const serial = await this.numbering.allocate('certificate', { branch_id: Number(cur.branch_id), vertical_id: Number(cur.vertical_id) }, c);
       await c.query(
         `UPDATE certificate SET serial_no = $2, status = 'issued', revoked_at = NULL, revoked_by = NULL, revoke_reason = NULL,
@@ -140,6 +150,13 @@ export class CertificateService {
         [id, serial, this.day(dto?.issue_date), dto?.title ? String(dto.title).trim() : null, dto?.remarks ?? null, me.id]);
       return { id, serial_no: serial, reissued: true };
     });
+    // Notification Events — a reissue is a fresh serial (regenerated + re-issued). Best-effort.
+    const rVars = { certificate_no: out.serial_no, title: cur.title };
+    await this.notifEvents?.safeFire('certificate_generated', {
+      student_id: Number(cur.student_id), vertical_id: Number(cur.vertical_id), dedupe: `cert:${id}:${out.serial_no}`, vars: rVars });
+    await this.notifEvents?.safeFire('certificate_issued', {
+      student_id: Number(cur.student_id), vertical_id: Number(cur.vertical_id), dedupe: `cert:${id}:${out.serial_no}`, vars: rVars });
+    return out;
   }
 
   async revoke(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {

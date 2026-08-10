@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 
 /**
  * BATCH TRANSFER + WAITLIST (Phase 2 ERP Batch 1).
@@ -26,7 +27,12 @@ export const STUDENT_SCOPE_COLS: ScopeColumnMap = {
 
 @Injectable()
 export class TransferService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly resolver: ScopeResolverService,
+    /** Notification Events — fires batch_assigned (first placement) / batch_changed (a move). Optional. */
+    private readonly notifEvents?: NotificationEventService,
+  ) {}
 
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -117,7 +123,7 @@ export class TransferService {
 
     const orgId = await this.orgId();
     const fromBatchId = student.batch_id ? Number(student.batch_id) : null;
-    return this.db.tx(async (c) => {
+    const out = await this.db.tx(async (c) => {
       await c.query(
         `UPDATE student SET batch_id = $2::bigint, branch_id = $3::bigint, vertical_id = $4::bigint,
                             course_id = COALESCE($5::bigint, course_id), updated_at = now()
@@ -134,6 +140,13 @@ export class TransferService {
         [toBatchId, studentId, me.id]);
       return { id: studentId, moved: true, waitlisted: false, from_batch_id: fromBatchId, to_batch_id: toBatchId };
     });
+    // Notification Events — first placement fires batch_assigned; a move fires batch_changed.
+    await this.notifEvents?.safeFire(fromBatchId ? 'batch_changed' : 'batch_assigned', {
+      student_id: studentId, vertical_id: Number(target.vertical_id),
+      dedupe: `batch:${studentId}:${toBatchId}`,
+      vars: { batch_name: target.name, course: target.course_name },
+    });
+    return out;
   }
 
   /** Add a student to a batch's waitlist (ordered). */

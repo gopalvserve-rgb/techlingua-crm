@@ -10,6 +10,7 @@ import { formatINR, rupeesToMinor } from '../common/money.util';
 import { assertDateRange } from '../common/date.util';
 import { FeeService } from '../fees/fee.service';
 import { NotifierService } from '../notifications/notifier.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 
 /** injectable HTTP so the tests never hit the real Razorpay API. */
 export type HttpFn = (url: string, init?: any) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
@@ -56,6 +57,8 @@ export class PaymentService {
     private readonly configs: ChannelConfigService,
     private readonly fees: FeeService,
     private readonly notifier: NotifierService,
+    /** Notification Events — fires payment_failed on a failed capture. Optional. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -401,6 +404,13 @@ export class PaymentService {
     );
     if (!claim.length) return { http: 200, body: { received: true, idempotent: true } };
     await this.notifyFailed(p, reason).catch(() => undefined);
+    // Notification Events — tell the student their online payment failed. Best-effort.
+    await this.notifEvents?.safeFire('payment_failed', {
+      lead_id: p.lead_id ? Number(p.lead_id) : null,
+      vertical_id: p.vertical_id ? Number(p.vertical_id) : null,
+      dedupe: `payfail:${p.id}`,
+      vars: { amount: formatINR(Number(p.amount_minor)), reason },
+    });
     return { http: 200, body: { received: true, failed: true, payment_id: Number(p.id) } };
   }
 

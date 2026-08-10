@@ -3,6 +3,7 @@ import { DatabaseModule } from '../database/database.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { NumberingModule } from '../numbering/numbering.module';
+import { NotificationEventsModule } from '../notificationevents/notification-events.module';
 import { SettingsService } from '../common/settings.service';
 import { RefundService } from './refund.service';
 import { RefundController } from './refund.controller';
@@ -15,7 +16,7 @@ import { RefundController } from './refund.controller';
  * collection everywhere (revenue view, finance dashboard, collection reports).
  */
 @Module({
-  imports: [DatabaseModule, RbacModule, NotificationsModule, NumberingModule],
+  imports: [DatabaseModule, RbacModule, NotificationsModule, NumberingModule, NotificationEventsModule],
   controllers: [RefundController],
   providers: [RefundService, SettingsService],
   exports: [RefundService],

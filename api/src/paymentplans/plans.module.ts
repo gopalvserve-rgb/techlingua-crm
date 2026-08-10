@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { MessagingModule } from '../messaging/messaging.module';
+import { NotificationEventsModule } from '../notificationevents/notification-events.module';
 import { PlanService } from './plan.service';
 import { PlanController } from './plan.controller';
 import { DuesService } from './dues.service';
@@ -18,7 +19,7 @@ import { FeeReminderConfigController } from './config.controller';
  * settings store; it degrades cleanly when a channel is unconfigured.
  */
 @Module({
-  imports: [DatabaseModule, RbacModule, MessagingModule],
+  imports: [DatabaseModule, RbacModule, MessagingModule, NotificationEventsModule],
   controllers: [PlanController, DuesController, FeeReminderConfigController],
   providers: [PlanService, DuesService, FeeReminderWorker],
   exports: [PlanService],

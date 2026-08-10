@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { NumberingModule } from '../numbering/numbering.module';
+import { NotificationEventsModule } from '../notificationevents/notification-events.module';
 import { MaterialController } from './material.controller';
 import { MaterialService } from './material.service';
 import { CertificateController } from './certificate.controller';
@@ -16,7 +17,7 @@ import { PublicLearningController } from './public-learning.controller';
  * from attendance + scores + assignments, PDF, tokenised parent view).
  */
 @Module({
-  imports: [DatabaseModule, RbacModule, NumberingModule],
+  imports: [DatabaseModule, RbacModule, NumberingModule, NotificationEventsModule],
   controllers: [MaterialController, CertificateController, ReportCardController, PublicLearningController],
   providers: [MaterialService, CertificateService, ReportCardService],
 })

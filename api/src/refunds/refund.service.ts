@@ -5,6 +5,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { SettingsService } from '../common/settings.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { NotifierService } from '../notifications/notifier.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { formatINR, rupeesToMinor } from '../common/money.util';
 import { assertDateRange } from '../common/date.util';
 import { Letterhead, refundVoucherPdf } from '../pdf/documents';
@@ -76,6 +77,8 @@ export class RefundService {
     private readonly settings: SettingsService,
     private readonly numbering: NumberingService,
     private readonly notifier?: NotifierService,
+    /** Notification Events — fires refund_initiated / refund_completed. Optional. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -292,6 +295,11 @@ export class RefundService {
       [e.lead_id, `Refund requested ${formatINR(amount_minor)} (${MODE_LABELS[mode]}) — ${reason}`, me.id],
     );
     await this.notifyApprovers(e.enrolment_no, Number(e.branch_id), Number(e.lead_id), amount_minor, requiresHigh, policy);
+    // Notification Events — a refund was requested for this student. Best-effort.
+    await this.notifEvents?.safeFire('refund_initiated', {
+      lead_id: Number(e.lead_id), vertical_id: Number(e.vertical_id), dedupe: `refund:${id}`,
+      vars: { refund_amount: formatINR(amount_minor), enrolment_no: e.enrolment_no, reason },
+    });
     return { id, status: 'pending', requires_high: requiresHigh, amount_minor };
   }
 
@@ -387,6 +395,11 @@ export class RefundService {
       return { refund_no: refundNo, net_collected_minor: collected - approved - amount };
     });
     await this.notifyOutcome({ ...rf, refund_no: out.refund_no }, true);
+    // Notification Events — the refund is approved/completed for this student. Best-effort.
+    await this.notifEvents?.safeFire('refund_completed', {
+      lead_id: Number(rf.lead_id), vertical_id: Number(rf.vertical_id), dedupe: `refund:${id}`,
+      vars: { refund_amount: formatINR(Number(rf.amount_minor)), refund_no: out.refund_no, enrolment_no: rf.enrolment_no },
+    });
     return { id, status: 'approved', refund_no: out.refund_no, net_collected_minor: out.net_collected_minor };
   }
 

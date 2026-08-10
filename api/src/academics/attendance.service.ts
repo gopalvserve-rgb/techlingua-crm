@@ -4,6 +4,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { assertDateRange, requireDateString } from '../common/date.util';
 import { MessagingService } from '../messaging/messaging.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 
 /**
  * ATTENDANCE — per-session (batch + date) marking.
@@ -29,6 +30,8 @@ export class AttendanceService {
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
     @Optional() private readonly messaging?: MessagingService,
+    /** Notification Events — fires student_absent per absent student. Optional. */
+    @Optional() private readonly notifEvents?: NotificationEventService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -113,6 +116,11 @@ export class AttendanceService {
             [batchId, sid, date]);
         }
       } catch { /* a notification never fails the marking */ }
+      // Notification Events — student marked absent (once per student per session date).
+      await this.notifEvents?.safeFire('student_absent', {
+        student_id: sid, vertical_id: Number(b.vertical_id), dedupe: `absent:${sid}:${date}`,
+        vars: { batch_name: b.name, date },
+      });
     }
     return { marked, absent: absentStudents.length, parent_notified: notified };
   }
