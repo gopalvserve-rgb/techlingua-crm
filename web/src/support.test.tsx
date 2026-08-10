@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { SupportTickets } from './support';
 
 /**
@@ -75,8 +75,8 @@ describe('Support Tickets — list', () => {
   it('a status filter drives the query string', async () => {
     render(<SupportTickets />);
     await screen.findByText('SUP-0001');
-    const statusSel = screen.getByDisplayValue('All statuses') as HTMLSelectElement;
-    fireEvent.change(statusSel, { target: { value: 'open' } });
+    // Status is now a multi-select (EnumMulti) — click the "Open" chip to add it to the filter.
+    fireEvent.click(within(screen.getByTestId('fm-status')).getByRole('button', { name: 'Open' }));
     await waitFor(() => expect(lastGet).toContain('status=open'));
   });
 });

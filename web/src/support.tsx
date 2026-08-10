@@ -15,6 +15,8 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
+import { FilterMulti, EnumMulti } from './dyn';
+import { ListActions, downloadObjectsCsv } from './listtools';
 import { AddModal, EditSpec, need } from './forms';
 
 const PRIORITY_ORDER = ['low', 'medium', 'high', 'urgent'] as const;
@@ -240,12 +242,22 @@ function TicketDetail({ id, onClose, onChanged }: { id: number; onClose: () => v
 export function SupportTickets() {
   const { can } = useAuth();
   const ref = useRef_();
-  const [f, setF] = useState<Record<string, string>>({ status: '', priority: '', category: '', assignee_id: '', q: '', overdue: '' });
+  const [fq, setFq] = useState('');
+  const [overdue, setOverdue] = useState(false);
+  const [fStatus, setFStatus] = useState<string[]>([]);
+  const [fPriority, setFPriority] = useState<string[]>([]);
+  const [fCategory, setFCategory] = useState<string[]>([]);
+  const [fAssignees, setFAssignees] = useState<number[]>([]);
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries(f)) if (v) p.set(k, v);
+    if (fq) p.set('q', fq);
+    if (overdue) p.set('overdue', '1');
+    if (fStatus.length) p.set('status', fStatus.join(','));
+    if (fPriority.length) p.set('priority', fPriority.join(','));
+    if (fCategory.length) p.set('category', fCategory.join(','));
+    if (fAssignees.length) p.set('assignee_ids', fAssignees.join(','));
     return p.toString();
-  }, [f]);
+  }, [fq, overdue, fStatus, fPriority, fCategory, fAssignees]);
   const { data, reload } = useFetch<any[]>(`/support-tickets${qs ? `?${qs}` : ''}`, [qs]);
   const summary = useFetch<any>('/support-tickets/summary');
   const [add, setAdd] = useState(false);
@@ -255,7 +267,6 @@ export function SupportTickets() {
   const s = summary.data;
 
   const bump = () => { reload(); summary.reload(); };
-  const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
 
   const del = async (t: any) => {
     if (!window.confirm(`Delete ticket ${t.ticket_no}? It moves to Deleted Items and can be restored.`)) return;
@@ -278,26 +289,17 @@ export function SupportTickets() {
         { lab: 'Overdue (SLA)', val: String(s?.overdue ?? 0), ic: 'bolt' },
       ]} />
 
-      <div className="filters" style={{ margin: '12px 0', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+      <div className="filters" style={{ margin: '12px 0', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
         <input className="ainp" style={{ width: 200 }} placeholder="Search subject / #…"
-          value={f.q} onChange={(e) => set('q', e.target.value)} />
-        <select className="ainp" value={f.status} onChange={(e) => set('status', e.target.value)}>
-          <option value="">All statuses</option>
-          {Object.entries(STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
-        <select className="ainp" value={f.priority} onChange={(e) => set('priority', e.target.value)}>
-          <option value="">All priorities</option>
-          {PRIORITY_ORDER.map((p) => <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>)}
-        </select>
-        <select className="ainp" value={f.category} onChange={(e) => set('category', e.target.value)}>
-          <option value="">All categories</option>
-          {ref.ticketCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
-        </select>
-        <select className="ainp" value={f.assignee_id} onChange={(e) => set('assignee_id', e.target.value)}>
-          <option value="">Any assignee</option>
-          {ref.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-        </select>
-        <button className={`fchip${f.overdue === '1' ? ' on' : ''}`} onClick={() => set('overdue', f.overdue === '1' ? '' : '1')}>
+          value={fq} onChange={(e) => setFq(e.target.value)} />
+        <EnumMulti label="Status" icon="check" value={fStatus} onChange={setFStatus}
+          options={Object.entries(STATUS_LABEL).map(([k, l]) => ({ id: k, name: String(l) }))} />
+        <EnumMulti label="Priority" icon="bolt" value={fPriority} onChange={setFPriority}
+          options={PRIORITY_ORDER.map((p) => ({ id: p, name: p[0].toUpperCase() + p.slice(1) }))} />
+        <EnumMulti label="Category" icon="grid" value={fCategory} onChange={setFCategory}
+          options={ref.ticketCategories.map((c) => ({ id: c.name, name: c.name }))} />
+        <FilterMulti label="Assignee" icon="users" value={fAssignees} options={selectableUsers(ref.users)} onChange={setFAssignees} />
+        <button className={`fchip${overdue ? ' on' : ''}`} onClick={() => setOverdue((o) => !o)}>
           Overdue only
         </button>
       </div>
@@ -305,6 +307,7 @@ export function SupportTickets() {
       <TableCard
         listKey="supportTickets"
         title="Support tickets" icon="help"
+        more={<ListActions onExport={() => downloadObjectsCsv('support-tickets.csv', rows)} onRefresh={reload} />}
         cols={['Ticket #', 'Subject', 'Category', 'Priority', 'Status', 'Assignee', 'Created', 'SLA', '']}
         empty="No tickets match — raise one with “Raise a ticket”."
         onRowClick={(i) => setDetail(rows[i].id)}

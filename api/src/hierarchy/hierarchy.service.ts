@@ -11,6 +11,10 @@ import { requireDateString } from '../common/date.util';
  * On create, each child copies its parent's ancestor chain (full-path denormalisation)
  * so no client can produce an inconsistent path.
  */
+/** Multi-select hierarchy filter ids (client, Aug 2026): OR within a level, AND across
+ *  levels, ANDed on top of RBAC scope. Singular params stay for back-compat. */
+export interface HierIds { branchIds?: number[]; verticalIds?: number[]; pipelineIds?: number[]; campaignIds?: number[]; }
+
 export interface BranchDto {
   name: string;
   code: string;
@@ -102,6 +106,17 @@ export class HierarchyService {
   }
 
   // UAT-R3 #19 — Branch list filters: free-text search on name/code (status via include_inactive).
+  /** Multi-select filter (client, Aug 2026): fold a singular id + an ids[] into one
+   *  `col IN (...)` (OR within the filter), ANDed onto the scoped WHERE. Ints > 0 only.
+   *  Returns null when nothing is selected so the caller can skip the AND. */
+  private inCol(col: string, single: number | undefined, arr: number[] | undefined, params: unknown[]): string | null {
+    const vals = [...new Set([...(arr ?? []), ...(single != null ? [single] : [])])]
+      .map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (!vals.length) return null;
+    const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+    return `${col} IN (${ph.join(',')})`;
+  }
+
   listBranches(scope: ResolvedScope, includeInactive = false, q?: string) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, { branch: 'b.id' }, params);
@@ -141,7 +156,7 @@ export class HierarchyService {
   // ---- verticals ----------------------------------------------------------
 
   // UAT-R3 #19 — Vertical list filters: by Branch (existing) + free-text search on name/code.
-  listVerticals(scope: ResolvedScope, branchId?: number, includeInactive = false, q?: string) {
+  listVerticals(scope: ResolvedScope, branchId?: number, includeInactive = false, q?: string, opts?: HierIds) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, params);
     let sql = `SELECT v.*, b.name AS branch_name, hu.name AS head_name,
@@ -149,7 +164,7 @@ export class HierarchyService {
                  FROM vertical v JOIN branch b ON b.id = v.branch_id
                       LEFT JOIN "user" hu ON hu.id = v.head_user_id
                 WHERE ${where} AND v.deleted_at IS NULL${HierarchyService.activeFilter('v', includeInactive)}`;
-    if (branchId) { params.push(branchId); sql += ` AND v.branch_id = $${params.length}`; }
+    { const c = this.inCol('v.branch_id', branchId, opts?.branchIds, params); if (c) sql += ` AND ${c}`; }
     if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND (v.name ILIKE $${params.length} OR v.code ILIKE $${params.length})`; }
     return this.db.query(sql + ` ORDER BY v.name`, params);
   }
@@ -180,7 +195,7 @@ export class HierarchyService {
   // ---- pipelines + stages -------------------------------------------------
 
   // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); vertical filter existed.
-  listPipelines(scope: ResolvedScope, verticalId?: number, includeInactive = false, branchId?: number, q?: string) {
+  listPipelines(scope: ResolvedScope, verticalId?: number, includeInactive = false, branchId?: number, q?: string, opts?: HierIds) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 'p.branch_id', vertical: 'p.vertical_id', pipeline: 'p.id',
@@ -189,8 +204,8 @@ export class HierarchyService {
                  FROM pipeline p JOIN vertical v ON v.id = p.vertical_id JOIN branch b ON b.id = p.branch_id
                       LEFT JOIN "user" ou ON ou.id = p.owner_user_id
                 WHERE ${where} AND p.deleted_at IS NULL${HierarchyService.activeFilter('p', includeInactive)}`;
-    if (branchId) { params.push(branchId); sql += ` AND p.branch_id = $${params.length}`; }
-    if (verticalId) { params.push(verticalId); sql += ` AND p.vertical_id = $${params.length}`; }
+    { const c = this.inCol('p.branch_id', branchId, opts?.branchIds, params); if (c) sql += ` AND ${c}`; }
+    { const c = this.inCol('p.vertical_id', verticalId, opts?.verticalIds, params); if (c) sql += ` AND ${c}`; }
     if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND (p.name ILIKE $${params.length} OR p.code ILIKE $${params.length})`; }
     // UAT-R2 #7 — list in hierarchy order Branch \u203a Vertical \u203a Pipeline.
     return this.db.query(sql + ` ORDER BY b.name, v.name, p.name`, params);
@@ -475,7 +490,7 @@ export class HierarchyService {
   // ---- campaigns ----------------------------------------------------------
 
   // UAT-R3 #19 — Campaign list filters follow Branch \u2192 Vertical \u2192 Pipeline (+ search, status).
-  listCampaigns(scope: ResolvedScope, pipelineId?: number, includeInactive = false, branchId?: number, verticalId?: number, q?: string) {
+  listCampaigns(scope: ResolvedScope, pipelineId?: number, includeInactive = false, branchId?: number, verticalId?: number, q?: string, opts?: HierIds) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 'c.branch_id', vertical: 'c.vertical_id', pipeline: 'c.pipeline_id', campaign: 'c.id',
@@ -489,9 +504,9 @@ export class HierarchyService {
                  FROM campaign c JOIN pipeline p ON p.id = c.pipeline_id
                  JOIN vertical v ON v.id = c.vertical_id JOIN branch b ON b.id = c.branch_id
                 WHERE ${where} AND c.deleted_at IS NULL${HierarchyService.activeFilter('c', includeInactive)}`;
-    if (branchId) { params.push(branchId); sql += ` AND c.branch_id = $${params.length}`; }
-    if (verticalId) { params.push(verticalId); sql += ` AND c.vertical_id = $${params.length}`; }
-    if (pipelineId) { params.push(pipelineId); sql += ` AND c.pipeline_id = $${params.length}`; }
+    { const c = this.inCol('c.branch_id', branchId, opts?.branchIds, params); if (c) sql += ` AND ${c}`; }
+    { const c = this.inCol('c.vertical_id', verticalId, opts?.verticalIds, params); if (c) sql += ` AND ${c}`; }
+    { const c = this.inCol('c.pipeline_id', pipelineId, opts?.pipelineIds, params); if (c) sql += ` AND ${c}`; }
     if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND c.name ILIKE $${params.length}`; }
     return this.db.query(sql + ` ORDER BY c.name`, params);
   }
@@ -629,7 +644,7 @@ export class HierarchyService {
 
   // ---- sources ------------------------------------------------------------
 
-  listSources(scope: ResolvedScope, campaignId?: number, includeInactive = false) {
+  listSources(scope: ResolvedScope, campaignId?: number, includeInactive = false, opts?: HierIds) {
     const params: unknown[] = [];
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 's.branch_id', vertical: 's.vertical_id', pipeline: 's.pipeline_id', campaign: 's.campaign_id',
@@ -642,7 +657,10 @@ export class HierarchyService {
                  LEFT JOIN vertical v ON v.id = s.vertical_id
                  LEFT JOIN pipeline p ON p.id = s.pipeline_id
                 WHERE ${where} AND s.deleted_at IS NULL${HierarchyService.activeFilter('s', includeInactive)}`;
-    if (campaignId) { params.push(campaignId); sql += ` AND s.campaign_id = $${params.length}`; }
+    { const c = this.inCol('s.branch_id', undefined, opts?.branchIds, params); if (c) sql += ` AND ${c}`; }
+    { const c = this.inCol('s.vertical_id', undefined, opts?.verticalIds, params); if (c) sql += ` AND ${c}`; }
+    { const c = this.inCol('s.pipeline_id', undefined, opts?.pipelineIds, params); if (c) sql += ` AND ${c}`; }
+    { const c = this.inCol('s.campaign_id', campaignId, opts?.campaignIds, params); if (c) sql += ` AND ${c}`; }
     return this.db.query(sql + ` ORDER BY s.name`, params);
   }
 

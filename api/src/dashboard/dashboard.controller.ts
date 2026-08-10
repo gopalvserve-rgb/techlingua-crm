@@ -36,7 +36,16 @@ export class DashboardController {
  * (a bad value is simply dropped); the SERVICE ANDs it on top of the RBAC scope, so it can
  * only ever narrow within what the caller may already see — it can never widen it.
  */
-function scopeFilter(q: Record<string, string>): DashScopeFilter {
-  const n = (v?: string) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : undefined; };
-  return { branch_id: n(q.branch_id), vertical_id: n(q.vertical_id), pipeline_id: n(q.pipeline_id), campaign_id: n(q.campaign_id) };
+function scopeFilter(q: Record<string, string | string[]>): DashScopeFilter {
+  const n = (v?: string | string[]) => { const x = Number(Array.isArray(v) ? v[0] : v); return Number.isFinite(x) && x > 0 ? x : undefined; };
+  const many = (v?: string | string[]): number[] | undefined => {
+    if (v == null) return undefined;
+    const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','));
+    const out = [...new Set(parts.map((x) => Number(String(x).trim())).filter((k) => Number.isInteger(k) && k > 0))];
+    return out.length ? out : undefined;
+  };
+  return {
+    branch_id: n(q.branch_id), vertical_id: n(q.vertical_id), pipeline_id: n(q.pipeline_id), campaign_id: n(q.campaign_id),
+    branch_ids: many(q.branch_ids), vertical_ids: many(q.vertical_ids), pipeline_ids: many(q.pipeline_ids), campaign_ids: many(q.campaign_ids),
+  };
 }

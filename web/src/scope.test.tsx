@@ -1,19 +1,20 @@
 /**
- * GLOBAL SCOPE SELECTOR (top bar) — the client's ask: "a global scope selector
- * (Branch › Vertical › Pipeline › Campaign) that filters the whole app, driven by real data
- * and respecting the user's access."
+ * GLOBAL SCOPE SELECTOR (top bar) — now MULTI-SELECT per level (client, Aug 2026): pick several
+ * Branches / Verticals / Pipelines / Campaigns.
  *
- * These tests assert the four things that make it safe and useful:
- *   1. it CASCADES — a child level only offers units under the chosen parent;
- *   2. changing a parent RESETS its descendants (no stale child can survive);
- *   3. the selection is exposed as branch_id/vertical_id/... (the SAME ids the lists honour),
- *      and CLEAR resets it to the whole scope;
- *   4. RBAC — a persisted scope that is not in the RBAC-limited RefData is PRUNED on load, so
- *      the selector can never claim a unit the user isn't allowed to see.
+ * These tests assert what makes it safe and useful:
+ *   1. it emits the *_ids ARRAYS the lists honour (CSV), plus the singular *_id when EXACTLY one
+ *      unit is picked at a level (back-compat);
+ *   2. it CASCADES across the multiple selections — a child under ANY selected parent survives;
+ *      narrowing a parent PRUNES orphaned children (no stale cross-branch child);
+ *   3. CLEAR resets to the whole scope;
+ *   4. RBAC — a persisted scope not in the RBAC-limited RefData (or whose parent no longer matches)
+ *      is PRUNED on load, and the old single-value shape is migrated — the selector can never claim
+ *      a unit the user isn't allowed to see.
  */
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { GlobalScopeProvider, ScopeSelector, useScope } from './scope';
+import { render, screen, cleanup, act, waitFor } from '@testing-library/react';
+import { GlobalScopeProvider, useScope, ScopeLevel } from './scope';
 
 const REF = {
   branches: [{ id: 9, name: 'Vikaspuri' }, { id: 10, name: 'Rohini' }],
@@ -28,97 +29,106 @@ vi.mock('./refdata', async (importOriginal) => {
   return { ...actual, useRef_: () => REF, toast: vi.fn() };
 });
 
-/** Reads the live scope params so a test can assert what would be sent to the API. */
-function ScopeProbe() {
-  const { params, active, key } = useScope();
-  return <div data-testid="probe" data-params={JSON.stringify(params)} data-active={String(active)} data-key={key} />;
+// Capture the live scope API so tests can drive set()/clear() directly and read the params.
+let ctl: { set: (l: ScopeLevel, ids: number[]) => void; clear: () => void };
+function Probe() {
+  const s = useScope();
+  ctl = { set: s.set, clear: s.clear };
+  return <div data-testid="probe" data-params={JSON.stringify(s.params)} data-active={String(s.active)}
+    data-branches={s.scope.branches.join(',')} data-verticals={s.scope.verticals.join(',')} />;
 }
-
-const draw = () => render(
-  <GlobalScopeProvider>
-    <ScopeSelector />
-    <ScopeProbe />
-  </GlobalScopeProvider>,
-);
-
-const sel = (label: string) => screen.getByLabelText(label) as HTMLSelectElement;
-const optionValues = (label: string) => Array.from(sel(label).options).map((o) => o.value);
-const probeParams = () => JSON.parse(screen.getByTestId('probe').getAttribute('data-params') || '{}');
+const draw = () => render(<GlobalScopeProvider><Probe /></GlobalScopeProvider>);
+const params = () => JSON.parse(screen.getByTestId('probe').getAttribute('data-params') || '{}');
+const attr = (k: string) => screen.getByTestId('probe').getAttribute(k) || '';
+const set = (l: ScopeLevel, ids: number[]) => act(() => ctl.set(l, ids));
 
 beforeEach(() => { cleanup(); localStorage.clear(); });
 
-describe('cascade + reset', () => {
-  it('a child only offers units under the chosen parent', () => {
+describe('multi-select params', () => {
+  it('MULTIPLE branches emit branch_ids CSV and NO singular branch_id', () => {
     draw();
-    // no branch chosen yet → Vertical offers ALL verticals (All + both)
-    expect(optionValues('Vertical')).toEqual(['', '1', '2']);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    // now Vertical is limited to branch 9's verticals (BCL only)
-    expect(optionValues('Vertical')).toEqual(['', '1']);
-    expect(screen.queryByRole('option', { name: 'IELTS' })).toBeNull();
+    set('branch', [9, 10]);
+    expect(params()).toEqual({ branch_ids: '9,10' });
+    expect(attr('data-active')).toBe('true');
   });
 
-  it('choosing the full chain sets branch_id/vertical_id/pipeline_id/campaign_id', () => {
+  it('EXACTLY ONE unit emits both the array and the back-compat singular', () => {
     draw();
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    fireEvent.change(sel('Pipeline'), { target: { value: '4' } });
-    fireEvent.change(sel('Campaign'), { target: { value: '5' } });
-    expect(probeParams()).toEqual({ branch_id: '9', vertical_id: '1', pipeline_id: '4', campaign_id: '5' });
-    expect(screen.getByTestId('probe').getAttribute('data-active')).toBe('true');
+    set('branch', [9]);
+    expect(params()).toEqual({ branch_ids: '9', branch_id: '9' });
   });
 
-  it('changing a parent RESETS every descendant', () => {
+  it('a full single chain emits every level (array + singular)', () => {
     draw();
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    fireEvent.change(sel('Pipeline'), { target: { value: '4' } });
-    expect(probeParams()).toEqual({ branch_id: '9', vertical_id: '1', pipeline_id: '4' });
-    // switch Branch → Vertical + Pipeline must clear
-    fireEvent.change(sel('Branch'), { target: { value: '10' } });
-    expect(probeParams()).toEqual({ branch_id: '10' });
-    expect(sel('Vertical').value).toBe('');
-    expect(sel('Pipeline').value).toBe('');
+    set('branch', [9]); set('vertical', [1]); set('pipeline', [4]); set('campaign', [5]);
+    expect(params()).toEqual({
+      branch_ids: '9', branch_id: '9', vertical_ids: '1', vertical_id: '1',
+      pipeline_ids: '4', pipeline_id: '4', campaign_ids: '5', campaign_id: '5',
+    });
+  });
+});
+
+describe('cascade across multiple selections', () => {
+  it('a child under ANY selected parent survives', () => {
+    draw();
+    set('branch', [9, 10]);
+    set('vertical', [1, 2]); // 1∈9, 2∈10 — both allowed
+    expect(attr('data-verticals')).toBe('1,2');
+  });
+
+  it('narrowing a parent PRUNES orphaned children', () => {
+    draw();
+    set('branch', [9, 10]); set('vertical', [1, 2]);
+    set('branch', [9]);      // vertical 2 (branch 10) is now orphaned
+    expect(attr('data-verticals')).toBe('1');
+    expect(params()).toEqual({ branch_ids: '9', branch_id: '9', vertical_ids: '1', vertical_id: '1' });
+  });
+
+  it('changing a parent clears deeper descendants', () => {
+    draw();
+    set('branch', [9]); set('vertical', [1]); set('pipeline', [4]);
+    set('branch', [10]);
+    expect(params()).toEqual({ branch_ids: '10', branch_id: '10' });
   });
 });
 
 describe('clear', () => {
-  it('the Clear affordance resets to the whole scope', () => {
+  it('resets to the whole scope', () => {
     draw();
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    expect(probeParams()).toEqual({ branch_id: '9' });
-    fireEvent.click(screen.getByLabelText('Clear scope'));
-    expect(probeParams()).toEqual({});
-    expect(screen.getByTestId('probe').getAttribute('data-active')).toBe('false');
+    set('branch', [9, 10]);
+    act(() => ctl.clear());
+    expect(params()).toEqual({});
+    expect(attr('data-active')).toBe('false');
   });
 });
 
 describe('persistence + RBAC', () => {
-  it('a valid selection is restored from localStorage', () => {
+  it('migrates the legacy single-value shape and restores it', () => {
     localStorage.setItem('tl_global_scope', JSON.stringify({ branch: 9, vertical: 1 }));
     draw();
-    expect(sel('Branch').value).toBe('9');
-    expect(sel('Vertical').value).toBe('1');
+    expect(attr('data-branches')).toBe('9');
+    expect(params()).toMatchObject({ branch_id: '9', vertical_id: '1' });
   });
 
-  it('RBAC: an out-of-scope id in a persisted scope is pruned on load', async () => {
-    // branch 999 is not something this user can see — it must not survive (no widening).
-    localStorage.setItem('tl_global_scope', JSON.stringify({ branch: 999, vertical: 1 }));
+  it('restores a multi-select selection from localStorage', () => {
+    localStorage.setItem('tl_global_scope', JSON.stringify({ branches: [9, 10], verticals: [1, 2] }));
     draw();
-    await waitFor(() => expect(sel('Branch').value).toBe(''));
-    // every surviving level is genuinely inside the user's RBAC-limited RefData; the
-    // out-of-scope branch is gone, so it can never be sent to the API.
-    const p = probeParams();
-    expect(p.branch_id).toBeUndefined();
-    expect(Object.values(p)).not.toContain('999');
+    expect(attr('data-branches')).toBe('9,10');
+    expect(params()).toMatchObject({ branch_ids: '9,10', vertical_ids: '1,2' });
+  });
+
+  it('RBAC: an out-of-scope id is pruned on load', async () => {
+    localStorage.setItem('tl_global_scope', JSON.stringify({ branches: [999] }));
+    draw();
+    await waitFor(() => expect(attr('data-branches')).toBe(''));
+    expect(params().branch_ids).toBeUndefined();
   });
 
   it('RBAC: a child whose parent does not match is pruned (no cross-branch scope)', async () => {
-    // vertical 2 belongs to branch 10, not branch 9 → the pair is inconsistent, so vertical drops
-    localStorage.setItem('tl_global_scope', JSON.stringify({ branch: 9, vertical: 2 }));
+    localStorage.setItem('tl_global_scope', JSON.stringify({ branches: [9], verticals: [2] }));
     draw();
-    await waitFor(() => expect(sel('Vertical').value).toBe(''));
-    expect(sel('Branch').value).toBe('9');
-    expect(probeParams()).toEqual({ branch_id: '9' });
+    await waitFor(() => expect(attr('data-verticals')).toBe(''));
+    expect(attr('data-branches')).toBe('9');
+    expect(params()).toEqual({ branch_ids: '9', branch_id: '9' });
   });
 });

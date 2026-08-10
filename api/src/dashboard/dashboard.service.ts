@@ -58,6 +58,8 @@ const isManagerView = (v: DashboardView) => v === 'branch' || v === 'vertical' |
 /** Optional global-scope narrow carried from the top-bar selector. */
 export interface DashScopeFilter {
   branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
+  // Multi-select (client, Aug 2026): the top-bar may pick several units at a level -> IN (...).
+  branch_ids?: number[]; vertical_ids?: number[]; pipeline_ids?: number[]; campaign_ids?: number[];
 }
 
 @Injectable()
@@ -79,11 +81,16 @@ export class DashboardService {
     f: DashScopeFilter, params: unknown[],
   ): string {
     const parts: string[] = [];
-    const add = (col: string, val: number | undefined) => {
-      if (val && Number.isFinite(val) && val > 0) { params.push(val); parts.push(`${col} = $${params.length}`); }
+    // Fold a singular id + an ids[] into one `col IN (...)` (OR within the level, AND across).
+    const add = (col: string, single: number | undefined, arr: number[] | undefined) => {
+      const vals = [...new Set([...(arr ?? []), ...(single != null ? [single] : [])])]
+        .map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      parts.push(`${col} IN (${ph.join(',')})`);
     };
-    add(cols.branch, f.branch_id); add(cols.vertical, f.vertical_id);
-    add(cols.pipeline, f.pipeline_id); add(cols.campaign, f.campaign_id);
+    add(cols.branch, f.branch_id, f.branch_ids); add(cols.vertical, f.vertical_id, f.vertical_ids);
+    add(cols.pipeline, f.pipeline_id, f.pipeline_ids); add(cols.campaign, f.campaign_id, f.campaign_ids);
     return parts.length ? ' AND ' + parts.join(' AND ') : '';
   }
 
@@ -141,7 +148,7 @@ export class DashboardService {
     // When the user picks a preset, narrow the lead cohort by CREATED date (consistent with the
     // Leads list's created_from/created_to). Absent = all-time (unchanged default behaviour).
     const ar = this.appliedRange(q.from, q.to);
-    const gf: DashScopeFilter = { branch_id: q.branch_id, vertical_id: q.vertical_id, pipeline_id: q.pipeline_id, campaign_id: q.campaign_id };
+    const gf: DashScopeFilter = q;
     const L = { branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' };
 
     const p: unknown[] = [];
@@ -295,7 +302,7 @@ export class DashboardService {
    */
   async quickStats(scope: ResolvedScope, q: { from?: string; to?: string } & DashScopeFilter) {
     const { from, to } = this.range(q.from, q.to);
-    const gf: DashScopeFilter = { branch_id: q.branch_id, vertical_id: q.vertical_id, pipeline_id: q.pipeline_id, campaign_id: q.campaign_id };
+    const gf: DashScopeFilter = q;
     const L = { branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' };
     const p: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p);

@@ -46,8 +46,8 @@ export function AdmissionsScreen() {
   const ref = useRef_();
   const { scope: gScope } = useScope();
   const { can } = useAuth();
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
-  const [fV, setFV] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [fC, setFC] = useState<number[]>([]);
   const [fStatus, setFStatus] = useState('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});

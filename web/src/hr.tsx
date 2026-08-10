@@ -46,8 +46,8 @@ export function EmployeeDirectoryScreen() {
   const rd = useRef_();
   const { scope: gScope } = useScope();
   const [tick, setTick] = useState(0);
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
-  const [fV, setFV] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [fDept, setFDept] = useState<number[]>([]);
   const [fDesig, setFDesig] = useState<number[]>([]);
   const [fStatus, setFStatus] = useState<number[]>([]);
@@ -199,8 +199,8 @@ export function StaffAttendanceScreen() {
   const { can } = useAuth();
   const rd = useRef_();
   const { scope: gScope } = useScope();
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
-  const [fV, setFV] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [date, setDate] = useState<string>(isoToday());
   const [mode, setMode] = useState<'staff' | 'self'>('staff');
   const [month, setMonth] = useState<string>(thisMonth());
@@ -323,7 +323,7 @@ export function LeavesScreen() {
   const rd = useRef_();
   const { scope: gScope } = useScope();
   const [tick, setTick] = useState(0);
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fStatus, setFStatus] = useState<number[]>([]);
   const [fType, setFType] = useState<number[]>([]);
   const [apply, setApply] = useState(false);

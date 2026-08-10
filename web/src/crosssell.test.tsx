@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { CrossSell } from './crosssell';
 
 /**
@@ -70,9 +70,11 @@ describe('Cross-Sell — candidates', () => {
   it('a branch filter drives the candidate query string', async () => {
     render(<CrossSell />);
     await screen.findByText('Meera K');
-    const sel = screen.getByDisplayValue('All branches') as HTMLSelectElement;
-    fireEvent.change(sel, { target: { value: '9' } });
-    await waitFor(() => expect(lastGet).toContain('branch_id=9'));
+    // Branch is now a multi-select (FilterMulti/UserPicker): open the Branch picker and pick one.
+    const box = screen.getByTestId('fm-branch');
+    fireEvent.focus(within(box).getByRole('combobox'));
+    fireEvent.mouseDown(await within(box).findByRole('option', { name: /Vikaspuri/ }));
+    await waitFor(() => expect(lastGet).toContain('branch_ids=9'));
   });
 });
 

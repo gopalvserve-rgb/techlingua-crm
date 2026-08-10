@@ -41,7 +41,7 @@ describe('#19 — hierarchy list endpoints honour the new filter params', () => 
     const db = mkDb();
     await svc(db).listPipelines(scope, undefined, false, 20, 'adm');
     const q = db.calls.find((c) => /FROM pipeline p/.test(c.sql))!;
-    expect(q.sql).toMatch(/p\.branch_id = \$/);
+    expect(q.sql).toMatch(/p\.branch_id IN \(/);
     expect(q.sql).toMatch(/p\.name ILIKE/);
     expect(q.params).toEqual(expect.arrayContaining([20, '%adm%']));
   });
@@ -50,10 +50,41 @@ describe('#19 — hierarchy list endpoints honour the new filter params', () => 
     const db = mkDb();
     await svc(db).listCampaigns(scope, undefined, false, 20, 5, 'meta');
     const q = db.calls.find((c) => /FROM campaign c/.test(c.sql))!;
-    expect(q.sql).toMatch(/c\.branch_id = \$/);
-    expect(q.sql).toMatch(/c\.vertical_id = \$/);
+    expect(q.sql).toMatch(/c\.branch_id IN \(/);
+    expect(q.sql).toMatch(/c\.vertical_id IN \(/);
     expect(q.sql).toMatch(/c\.name ILIKE/);
     expect(q.params).toEqual(expect.arrayContaining([20, 5, '%meta%']));
+  });
+
+  it('listCampaigns honours branch_ids/vertical_ids/pipeline_ids ARRAYS (multi-select)', async () => {
+    const db = mkDb();
+    await svc(db).listCampaigns(scope, undefined, false, undefined, undefined, undefined,
+      { branchIds: [20, 21], verticalIds: [5], pipelineIds: [7, 8] });
+    const q = db.calls.find((c) => /FROM campaign c/.test(c.sql))!;
+    // OR within a filter -> IN (...) with one placeholder per id; ANDed across filters.
+    expect(q.sql).toMatch(/c\.branch_id IN \(\$\d+,\$\d+\)/);
+    expect(q.sql).toMatch(/c\.vertical_id IN \(\$\d+\)/);
+    expect(q.sql).toMatch(/c\.pipeline_id IN \(\$\d+,\$\d+\)/);
+    expect(q.params).toEqual(expect.arrayContaining([20, 21, 5, 7, 8]));
+  });
+
+  it('listCampaigns folds a singular id + the array into ONE IN (back-compat)', async () => {
+    const db = mkDb();
+    await svc(db).listCampaigns(scope, undefined, false, 20, undefined, undefined, { branchIds: [21] });
+    const q = db.calls.find((c) => /FROM campaign c/.test(c.sql))!;
+    expect(q.sql).toMatch(/c\.branch_id IN \(\$\d+,\$\d+\)/);
+    expect(q.params).toEqual(expect.arrayContaining([20, 21]));
+  });
+
+  it('listVerticals + listPipelines honour branch_ids/vertical_ids arrays', async () => {
+    const dbV = mkDb();
+    await svc(dbV).listVerticals(scope, undefined, false, undefined, { branchIds: [1, 2] });
+    expect(dbV.calls.find((c) => /FROM vertical v/.test(c.sql))!.sql).toMatch(/v\.branch_id IN \(\$\d+,\$\d+\)/);
+    const dbP = mkDb();
+    await svc(dbP).listPipelines(scope, undefined, false, undefined, undefined, { branchIds: [1], verticalIds: [5, 6] });
+    const p = dbP.calls.find((c) => /FROM pipeline p/.test(c.sql))!;
+    expect(p.sql).toMatch(/p\.vertical_id IN \(\$\d+,\$\d+\)/);
+    expect(p.params).toEqual(expect.arrayContaining([1, 5, 6]));
   });
 
   it('listBranches searches name/code on ?q', async () => {

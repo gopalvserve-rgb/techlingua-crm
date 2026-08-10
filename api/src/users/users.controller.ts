@@ -14,11 +14,20 @@ export class UsersController {
     @CurrentScope() scope: ResolvedScope, @CurrentUser() user: { id: number },
     @Query('q') q?: string, @Query('role_id') roleId?: string,
     @Query('branch_id') branchId?: string, @Query('status') status?: string,
+    @Query('role_ids') roleIds?: string | string[], @Query('branch_ids') branchIds?: string | string[],
   ) {
+    const nums = (v?: string | string[]): number[] | undefined => {
+      if (v == null) return undefined;
+      const out = [...new Set((Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','))
+        .map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n > 0))];
+      return out.length ? out : undefined;
+    };
     return this.users.list(scope, user.id, {
       q,
       role_id: roleId ? Number(roleId) : undefined,
       branch_id: branchId ? Number(branchId) : undefined,
+      role_ids: nums(roleIds),
+      branch_ids: nums(branchIds),
       status: status as 'active' | 'disabled' | undefined,
     });
   }

@@ -1,152 +1,200 @@
 /**
  * GLOBAL SCOPE (Aug 2026, client) — a top-bar Branch › Vertical › Pipeline › Campaign selector
- * that filters the WHOLE app to the chosen unit.
+ * that filters the WHOLE app to the chosen units.
  *
- * HOW IT FOLDS IN. The selection is nothing more than the same four filter ids the list
- * screens already honour (branch_id / vertical_id / pipeline_id / campaign_id). The Shell folds
- * them into every `go()` URL as a BASELINE, and the data screens seed their existing hierarchy
- * filters from it — so we reuse the tested filtering + RBAC path instead of inventing a parallel
- * one. A screen's own in-panel filter then NARROWS FURTHER within the global scope.
+ * MULTI-SELECT (client, Aug 2026). Each level is now a CHECKBOX multi-select: pick several
+ * Branches, several Verticals, etc. The strict cascade holds across the multiple selections —
+ * the Vertical picker shows verticals under ANY selected Branch, Pipeline under ANY selected
+ * Vertical, and so on; changing a parent prunes any now-orphaned child.
  *
- * RBAC. The options come from RefData, which the API already limits to the user's scope (a user
- * who can only see Branch X never receives another branch). A stored selection is re-validated
- * against RefData on every load, so a scope that is no longer in reach is dropped. And the
- * backend ANDs these ids on top of its own ScopeResolver, so the selector can only ever narrow
- * within what the caller may see — it can NEVER widen it (a hand-crafted out-of-scope id simply
- * returns nothing).
+ * HOW IT FOLDS IN. The selection is nothing more than the same *_ids arrays the list screens
+ * already honour (branch_ids / vertical_ids / pipeline_ids / campaign_ids). The Shell folds them
+ * into every `go()` URL as a BASELINE, and the data screens seed their existing multi-select
+ * hierarchy filters from it — so we reuse the tested filtering + RBAC path instead of inventing a
+ * parallel one. A screen's own in-panel filter then NARROWS FURTHER within the global scope.
+ * For back-compat, when EXACTLY ONE unit is picked at a level we also emit the singular *_id.
+ *
+ * RBAC. The options come from RefData, which the API already limits to the user's scope. A stored
+ * selection is re-validated against RefData on every load, so a scope that is no longer in reach is
+ * dropped. The backend ANDs these ids on top of its own ScopeResolver, so the selector can only
+ * ever narrow within what the caller may see — it can NEVER widen it.
  */
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 import { useRef_, Named } from './refdata';
 import { Ic } from './icons';
+import { UserPicker } from './userpicker';
 
 export type ScopeLevel = 'branch' | 'vertical' | 'pipeline' | 'campaign';
 
 export interface GlobalScope {
+  /** Multi-select arrays (client, Aug 2026) — the source of truth. */
+  branches: number[]; verticals: number[]; pipelines: number[]; campaigns: number[];
+  /** Back-compat single ids: defined ONLY when exactly one unit is picked at that level, so the
+   *  many screens that seed a single value keep working unchanged in the common single case. */
   branch?: number; vertical?: number; pipeline?: number; campaign?: number;
 }
 
 interface ScopeCtx {
   scope: GlobalScope;
-  /** Set one level; RESETS every descendant so a stale child can never survive. */
-  set: (level: ScopeLevel, id?: number) => void;
+  /** Set one level to an array of ids; prunes every descendant that loses its parent. */
+  set: (level: ScopeLevel, ids: number[]) => void;
   clear: () => void;
-  /** { branch_id, vertical_id, ... } as strings — folded into list URLs / API queries. */
+  /** { branch_ids, vertical_ids, ... } (CSV) + singular *_id when exactly one — folded into URLs / API queries. */
   params: Record<string, string>;
   /** stable string identity of the current scope (drives remount + fetch deps). */
   key: string;
   active: boolean;
 }
 
-const EMPTY: ScopeCtx = { scope: {}, set: () => undefined, clear: () => undefined, params: {}, key: '', active: false };
+const EMPTY: ScopeCtx = {
+  scope: { branches: [], verticals: [], pipelines: [], campaigns: [] },
+  set: () => undefined, clear: () => undefined, params: {}, key: '', active: false,
+};
 const Ctx = createContext<ScopeCtx>(EMPTY);
 export const useScope = () => useContext(Ctx);
 
 const LS_KEY = 'tl_global_scope';
 
-const readLS = (): GlobalScope => {
+type Raw = { branches: number[]; verticals: number[]; pipelines: number[]; campaigns: number[] };
+
+const posInts = (v: unknown): number[] => {
+  const arr = Array.isArray(v) ? v : (v != null ? [v] : []);
+  return [...new Set(arr.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))];
+};
+
+const readLS = (): Raw => {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return {};
+    if (!raw) return { branches: [], verticals: [], pipelines: [], campaigns: [] };
     const o = JSON.parse(raw);
-    const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : undefined; };
-    return { branch: n(o.branch), vertical: n(o.vertical), pipeline: n(o.pipeline), campaign: n(o.campaign) };
-  } catch { return {}; }
+    // Accept the new arrays AND migrate the old single-value shape ({ branch, vertical, ... }).
+    return {
+      branches: posInts(o.branches ?? o.branch),
+      verticals: posInts(o.verticals ?? o.vertical),
+      pipelines: posInts(o.pipelines ?? o.pipeline),
+      campaigns: posInts(o.campaigns ?? o.campaign),
+    };
+  } catch { return { branches: [], verticals: [], pipelines: [], campaigns: [] }; }
 };
+
+/** Strict cascade prune: keep only children under a SELECTED parent (an empty parent set means
+ *  "not narrowed at that level", so all otherwise-valid children survive). No-op until RefData
+ *  has loaded (so we never wipe a stored scope before the option lists exist). */
+function normalize(sc: Raw, ref: ReturnType<typeof useRef_>): Raw {
+  if (!ref.loaded) return sc;
+  const vById = new Map(ref.verticals.map((v) => [Number(v.id), v] as const));
+  const pById = new Map(ref.pipelines.map((p) => [Number(p.id), p] as const));
+  const cById = new Map(ref.campaigns.map((c) => [Number(c.id), c] as const));
+  // Resolve a child's ancestor id at each level (branch/vertical/pipeline) from RefData.
+  const vBranch = (id: number) => Number((vById.get(id) as any)?.branch_id);
+  const pVert = (id: number) => Number((pById.get(id) as any)?.vertical_id);
+  const pBranch = (id: number) => vBranch(pVert(id));
+  const cPipe = (id: number) => Number((cById.get(id) as any)?.pipeline_id);
+  const cVert = (id: number) => pVert(cPipe(id));
+  const cBranch = (id: number) => pBranch(cPipe(id));
+  const branches = sc.branches.filter((id) => ref.branches.some((b) => Number(b.id) === id));
+  // A child survives only if, at the NEAREST non-empty ancestor level, its ancestor is selected.
+  // (An empty ancestor level that was PRUNED to empty still gates via the next level up — so
+  //  narrowing Branch drops Verticals AND the Pipelines/Campaigns underneath them.)
+  const verticals = sc.verticals.filter((id) => vById.has(id) && (!branches.length || branches.includes(vBranch(id))));
+  const pipelines = sc.pipelines.filter((id) => pById.has(id)
+    && (verticals.length ? verticals.includes(pVert(id)) : (!branches.length || branches.includes(pBranch(id)))));
+  const campaigns = sc.campaigns.filter((id) => cById.has(id)
+    && (pipelines.length ? pipelines.includes(cPipe(id))
+      : verticals.length ? verticals.includes(cVert(id))
+        : (!branches.length || branches.includes(cBranch(id)))));
+  return { branches, verticals, pipelines, campaigns };
+}
+
+const sameRaw = (a: Raw, b: Raw) => (['branches', 'verticals', 'pipelines', 'campaigns'] as const)
+  .every((k) => a[k].length === b[k].length && a[k].every((v, i) => v === b[k][i]));
 
 export function GlobalScopeProvider({ children }: { children: ReactNode }) {
   const ref = useRef_();
-  const [scope, setScope] = useState<GlobalScope>(() => readLS());
+  const [raw, setRaw] = useState<Raw>(() => readLS());
 
   // Re-validate the persisted scope against the RBAC-limited RefData once it has loaded.
-  // Any level pointing at a unit the user cannot see (or whose parent no longer matches) is
-  // pruned, cascading downward — the selector never claims a scope the user isn't allowed.
   useEffect(() => {
     if (!ref.loaded) return;
-    setScope((prev) => {
-      const next: GlobalScope = { ...prev };
-      const inList = (list: Named[], id?: number) => id != null && list.some((o) => Number(o.id) === Number(id));
-      const childOk = (list: Named[], id: number | undefined, fk: string, parent?: number) =>
-        id != null && list.some((o) => Number(o.id) === Number(id) && (parent == null || Number((o as any)[fk]) === Number(parent)));
-      if (!inList(ref.branches, next.branch)) next.branch = undefined;
-      if (!childOk(ref.verticals, next.vertical, 'branch_id', next.branch)) next.vertical = undefined;
-      if (!childOk(ref.pipelines, next.pipeline, 'vertical_id', next.vertical)) next.pipeline = undefined;
-      if (!childOk(ref.campaigns, next.campaign, 'pipeline_id', next.pipeline)) next.campaign = undefined;
-      // avoid a needless state churn if nothing changed
-      if (next.branch === prev.branch && next.vertical === prev.vertical
-        && next.pipeline === prev.pipeline && next.campaign === prev.campaign) return prev;
-      return next;
-    });
+    setRaw((prev) => { const next = normalize(prev, ref); return sameRaw(prev, next) ? prev : next; });
   }, [ref.loaded, ref.branches, ref.verticals, ref.pipelines, ref.campaigns]);
 
   useEffect(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(scope)); } catch { /* jsdom */ }
-  }, [scope]);
+    try { localStorage.setItem(LS_KEY, JSON.stringify(raw)); } catch { /* jsdom */ }
+  }, [raw]);
 
   const value = useMemo<ScopeCtx>(() => {
-    const set = (level: ScopeLevel, id?: number) => setScope((prev) => {
-      // strict cascade: setting a level clears every level below it
-      const order: ScopeLevel[] = ['branch', 'vertical', 'pipeline', 'campaign'];
-      const i = order.indexOf(level);
-      const next: GlobalScope = { ...prev, [level]: id };
-      for (const lower of order.slice(i + 1)) (next as any)[lower] = undefined;
-      return next;
+    const set = (level: ScopeLevel, ids: number[]) => setRaw((prev) => {
+      const key = ({ branch: 'branches', vertical: 'verticals', pipeline: 'pipelines', campaign: 'campaigns' } as const)[level];
+      return normalize({ ...prev, [key]: posInts(ids) }, ref);
     });
+    const one = (a: number[]) => (a.length === 1 ? a[0] : undefined);
+    const scope: GlobalScope = {
+      branches: raw.branches, verticals: raw.verticals, pipelines: raw.pipelines, campaigns: raw.campaigns,
+      branch: one(raw.branches), vertical: one(raw.verticals), pipeline: one(raw.pipelines), campaign: one(raw.campaigns),
+    };
     const params: Record<string, string> = {};
-    if (scope.branch) params.branch_id = String(scope.branch);
-    if (scope.vertical) params.vertical_id = String(scope.vertical);
-    if (scope.pipeline) params.pipeline_id = String(scope.pipeline);
-    if (scope.campaign) params.campaign_id = String(scope.campaign);
-    const key = `${scope.branch ?? ''}-${scope.vertical ?? ''}-${scope.pipeline ?? ''}-${scope.campaign ?? ''}`;
-    return { scope, set, clear: () => setScope({}), params, key, active: Object.keys(params).length > 0 };
-  }, [scope]);
+    const put = (idsKey: string, oneKey: string, arr: number[]) => {
+      if (!arr.length) return;
+      params[idsKey] = arr.join(',');
+      if (arr.length === 1) params[oneKey] = String(arr[0]); // back-compat singular
+    };
+    put('branch_ids', 'branch_id', raw.branches);
+    put('vertical_ids', 'vertical_id', raw.verticals);
+    put('pipeline_ids', 'pipeline_id', raw.pipelines);
+    put('campaign_ids', 'campaign_id', raw.campaigns);
+    const key = ['branches', 'verticals', 'pipelines', 'campaigns']
+      .map((k) => (raw as any)[k].join('.')).join('-');
+    return { scope, set, clear: () => setRaw({ branches: [], verticals: [], pipelines: [], campaigns: [] }), params, key, active: Object.keys(params).length > 0 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [raw, ref.loaded]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 /* --------------------------- the top-bar selector UI --------------------------- */
 
-/** One cascading level, rendered as a scope chip whose value is a native <select>. */
+/** One cascading level, a scope chip wrapping a searchable checkbox multi-select (UserPicker in
+ *  generic-options mode — the same control the list filter bars use). */
 function Level({ lv, value, list, onChange }: {
-  lv: string; value?: number; list: Named[]; onChange: (id?: number) => void;
+  lv: string; value: number[]; list: Named[]; onChange: (ids: number[]) => void;
 }) {
+  const opts = useMemo(() => list.map((o) => ({ id: Number(o.id), name: o.name })), [list]);
   return (
-    <label className={`scope-chip scope-pick${value ? ' on' : ''}`} title={`Filter by ${lv}`}>
+    <label className={`scope-chip scope-pick${value.length ? ' on' : ''}`} title={`Filter by ${lv}`}>
       <span className="lv">{lv}</span>
-      <span className="vl">
-        <select aria-label={lv} value={value ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : undefined)}>
-          <option value="">All</option>
-          {list.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </select>
-        <Ic k="chevd" />
+      <span className="vl scope-multi">
+        <UserPicker multiple value={value} onChange={onChange} options={opts} hideBranch
+          placeholder={value.length ? `${value.length} selected` : 'All'} />
       </span>
     </label>
   );
 }
 
 /**
- * The BRANCH › VERTICAL › PIPELINE › CAMPAIGN selector shown in the top bar. Each level is
- * limited to its parent's choice; every child list is filtered live from RefData, so new
- * branches / verticals appear the moment they are created.
+ * The BRANCH › VERTICAL › PIPELINE › CAMPAIGN multi-select selector shown in the top bar. Each
+ * level is limited to its parents' choices (under ANY selected parent); every child list is
+ * filtered live from RefData, so new branches / verticals appear the moment they are created.
  */
 export function ScopeSelector() {
   const ref = useRef_();
   const { scope, set, clear, active } = useScope();
 
-  const verticals = ref.verticals.filter((v) => !scope.branch || Number(v.branch_id) === scope.branch);
-  const pipelines = ref.pipelines.filter((p) => !scope.vertical || Number(p.vertical_id) === scope.vertical);
-  const campaigns = ref.campaigns.filter((c) => !scope.pipeline || Number(c.pipeline_id) === scope.pipeline);
+  const verticals = ref.verticals.filter((v) => !scope.branches.length || scope.branches.includes(Number((v as any).branch_id)));
+  const pipelines = ref.pipelines.filter((p) => !scope.verticals.length || scope.verticals.includes(Number((p as any).vertical_id)));
+  const campaigns = ref.campaigns.filter((c) => !scope.pipelines.length || scope.pipelines.includes(Number((c as any).pipeline_id)));
 
   return (
     <div className="scope" role="group" aria-label="Global scope">
       <span className="scope-chip org"><span className="lv">Org</span><span className="vl">Tech Lingua LLP</span></span>
       <span className="scope-sep"><Ic k="chev" /></span>
-      <Level lv="Branch" value={scope.branch} list={ref.branches} onChange={(id) => set('branch', id)} />
+      <Level lv="Branch" value={scope.branches} list={ref.branches} onChange={(ids) => set('branch', ids)} />
       <span className="scope-sep"><Ic k="chev" /></span>
-      <Level lv="Vertical" value={scope.vertical} list={verticals} onChange={(id) => set('vertical', id)} />
+      <Level lv="Vertical" value={scope.verticals} list={verticals} onChange={(ids) => set('vertical', ids)} />
       <span className="scope-sep"><Ic k="chev" /></span>
-      <Level lv="Pipeline" value={scope.pipeline} list={pipelines} onChange={(id) => set('pipeline', id)} />
+      <Level lv="Pipeline" value={scope.pipelines} list={pipelines} onChange={(ids) => set('pipeline', ids)} />
       <span className="scope-sep"><Ic k="chev" /></span>
-      <Level lv="Campaign" value={scope.campaign} list={campaigns} onChange={(id) => set('campaign', id)} />
+      <Level lv="Campaign" value={scope.campaigns} list={campaigns} onChange={(ids) => set('campaign', ids)} />
       {active && (
         <button className="scope-clear" title="Clear scope — show everything I can see" aria-label="Clear scope" onClick={clear}>
           <Ic k="x" /> Clear

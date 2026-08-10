@@ -937,6 +937,34 @@ export function FilterMulti({ label, icon, value, options, onChange, testid }: {
   );
 }
 
+/**
+ * Multi-select for STRING-valued filters (status, type, sentiment, category, priority, action…)
+ * (client, Aug 2026). FilterMulti/UserPicker are numeric-id only, so enum filters use this small
+ * inline checkbox-chip control: click to toggle each value (OR within the filter; different
+ * filters still AND). Renders with the SAME `.fmulti` wrapper so the list-audit test + styling
+ * treat it as a multi-select filter control.
+ */
+export function EnumMulti({ label, icon, value, options, onChange, testid }: {
+  label: string; icon: string; value: string[];
+  options: Array<{ id: string; name: string }>;
+  onChange: (vals: string[]) => void; testid?: string;
+}) {
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="fmulti fmulti-enum" data-testid={testid ?? `fm-${label.toLowerCase()}`}>
+      <span className="fmulti-lbl"><Ic k={icon} />{label}</span>
+      <div className="enum-chips" role="group" aria-label={label}>
+        {options.map((o) => (
+          <button key={o.id} type="button" aria-pressed={value.includes(o.id)}
+            className={`enum-chip${value.includes(o.id) ? ' on' : ''}`} onClick={() => toggle(o.id)}>
+            {o.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function readLeadNavFilters(search?: string) {
   const sp = new URLSearchParams(typeof search === 'string' ? search : (typeof window !== 'undefined' ? window.location.search : ''));
   const b = (key: string) => sp.get(key) === '1' || sp.get(key) === 'true';
@@ -982,10 +1010,10 @@ function LeadsAll() {
     // filter (a KPI card link) still wins. Each level can now hold MULTIPLE selections.
     return {
       ...base,
-      branches: base.branches.length ? base.branches : (gScope.branch ? [gScope.branch] : []),
-      verticals: base.verticals.length ? base.verticals : (gScope.vertical ? [gScope.vertical] : []),
-      pipelines: base.pipelines.length ? base.pipelines : (gScope.pipeline ? [gScope.pipeline] : []),
-      campaigns: base.campaigns.length ? base.campaigns : (gScope.campaign ? [gScope.campaign] : []),
+      branches: base.branches.length ? base.branches : (gScope.branches),
+      verticals: base.verticals.length ? base.verticals : (gScope.verticals),
+      pipelines: base.pipelines.length ? base.pipelines : (gScope.pipelines),
+      campaigns: base.campaigns.length ? base.campaigns : (gScope.campaigns),
     };
   };
   const canEditLead = can('lead.update');
@@ -1566,9 +1594,21 @@ function Sources() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
-  const { params: sp, key: scopeKey } = useScope();
+  const { scope: gScope, params: sp, key: scopeKey } = useScope();
   const [inc, setInc] = useState(false);
-  const list = useFetch<any[]>(withScope(`/sources${inc ? '?include_inactive=1' : ''}`, sp), [refreshTick, scopeKey]);
+  // In-panel multi-select filters (client, Aug 2026) — Branch › Vertical › Pipeline › Campaign,
+  // seeded from the global scope, ANDed on top of it + RBAC.
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
+  const [fPipelines, setFPipelines] = useState<number[]>(gScope.pipelines);
+  const [fCampaigns, setFCampaigns] = useState<number[]>(gScope.campaigns);
+  const sqs = new URLSearchParams();
+  if (inc) sqs.set('include_inactive', '1');
+  if (fBranches.length) sqs.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) sqs.set('vertical_ids', fVerticals.join(','));
+  if (fPipelines.length) sqs.set('pipeline_ids', fPipelines.join(','));
+  if (fCampaigns.length) sqs.set('campaign_ids', fCampaigns.join(','));
+  const list = useFetch<any[]>(withScope(`/sources${sqs.toString() ? `?${sqs}` : ''}`, sp), [refreshTick, scopeKey, sqs.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -1585,7 +1625,19 @@ function Sources() {
   };
   return (
     <>
-      <div className="filters"><IncInactiveChip on={inc} set={setInc} /></div>
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals([]); setFPipelines([]); setFCampaigns([]); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+          options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))}
+          onChange={(v) => { setFVerticals(v); setFPipelines([]); setFCampaigns([]); }} />
+        <FilterMulti label="Pipeline" icon="list" value={fPipelines}
+          options={ref.pipelines.filter((p) => !fVerticals.length || fVerticals.includes(Number(p.vertical_id)))}
+          onChange={(v) => { setFPipelines(v); setFCampaigns([]); }} />
+        <FilterMulti label="Campaign" icon="bolt" value={fCampaigns}
+          options={ref.campaigns.filter((c) => !fPipelines.length || fPipelines.includes(Number(c.pipeline_id)))} onChange={setFCampaigns} />
+        <IncInactiveChip on={inc} set={setInc} />
+      </div>
       <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard fill title="Connected sources" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
@@ -1808,10 +1860,10 @@ function Verticals() {
   const [inc, setInc] = useState(false);
   // UAT-R3 #19 — Vertical list filters: by Branch (+ search, status). Seeded by the global scope.
   const [q, setQ] = useState('');
-  const [fBranch, setFBranch] = useState<number | undefined>(gScope.branch);
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
   const vparams = new URLSearchParams();
   if (inc) vparams.set('include_inactive', '1');
-  if (fBranch) vparams.set('branch_id', String(fBranch));
+  if (fBranches.length) vparams.set('branch_ids', fBranches.join(','));
   if (q.trim()) vparams.set('q', q.trim());
   const list = useFetch<any[]>(`/verticals${vparams.toString() ? `?${vparams}` : ''}`, [refreshTick, vparams.toString()]);
   const rows = list.data ?? [];
@@ -1826,7 +1878,7 @@ function Verticals() {
   return (
     <>
       <div className="filters">
-        <HChip label="Branch" icon="branch" value={fBranch} list={ref.branches} onChange={setFBranch} />
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches} onChange={setFBranches} />
         <SearchChip q={q} setQ={setQ} ph="Search vertical name / code\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
@@ -2002,12 +2054,12 @@ function Pipelines() {
   const [inc, setInc] = useState(false);
   // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); seeded by the global scope.
   const [q, setQ] = useState('');
-  const [fBranch, setFBranch] = useState<number | undefined>(gScope.branch);
-  const [fVertical, setFVertical] = useState<number | undefined>(gScope.vertical);
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
   const pparams = new URLSearchParams();
   if (inc) pparams.set('include_inactive', '1');
-  if (fBranch) pparams.set('branch_id', String(fBranch));
-  if (fVertical) pparams.set('vertical_id', String(fVertical));
+  if (fBranches.length) pparams.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) pparams.set('vertical_ids', fVerticals.join(','));
   if (q.trim()) pparams.set('q', q.trim());
   const list = useFetch<any[]>(`/pipelines${pparams.toString() ? `?${pparams}` : ''}`, [refreshTick, pparams.toString()]);
   const rows = list.data ?? [];
@@ -2037,10 +2089,10 @@ function Pipelines() {
   return (
     <>
       <div className="filters">
-        <HChip label="Branch" icon="branch" value={fBranch} list={ref.branches}
-          onChange={(v) => { setFBranch(v); setFVertical(undefined); }} />
-        <HChip label="Vertical" icon="grid" value={fVertical} disabled={!fBranch}
-          list={ref.verticals.filter((v) => !fBranch || Number(v.branch_id) === fBranch)} onChange={setFVertical} />
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals([]); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+          options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))} onChange={setFVerticals} />
         <SearchChip q={q} setQ={setQ} ph="Search pipeline name / code\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
@@ -2282,14 +2334,14 @@ function Campaigns() {
   // each child resets when its parent changes and the API honours the params.
   const { scope: gScope } = useScope();
   const [q, setQ] = useState('');
-  const [fBranch, setFBranch] = useState<number | undefined>(gScope.branch);
-  const [fVertical, setFVertical] = useState<number | undefined>(gScope.vertical);
-  const [fPipeline, setFPipeline] = useState<number | undefined>(gScope.pipeline);
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
+  const [fPipelines, setFPipelines] = useState<number[]>(gScope.pipelines);
   const cparams = new URLSearchParams();
   if (inc) cparams.set('include_inactive', '1');
-  if (fBranch) cparams.set('branch_id', String(fBranch));
-  if (fVertical) cparams.set('vertical_id', String(fVertical));
-  if (fPipeline) cparams.set('pipeline_id', String(fPipeline));
+  if (fBranches.length) cparams.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) cparams.set('vertical_ids', fVerticals.join(','));
+  if (fPipelines.length) cparams.set('pipeline_ids', fPipelines.join(','));
   if (q.trim()) cparams.set('q', q.trim());
   const list = useFetch<any[]>(`/campaigns${cparams.toString() ? `?${cparams}` : ''}`, [refreshTick, cparams.toString()]);
   const rows = list.data ?? [];
@@ -2322,13 +2374,13 @@ function Campaigns() {
         { lab: 'Best conv%', val: '\u2014', ic: 'target' },
       ]} />
       <div className="filters">
-        <HChip label="Branch" icon="branch" value={fBranch} list={ref.branches}
-          onChange={(v) => { setFBranch(v); setFVertical(undefined); setFPipeline(undefined); }} />
-        <HChip label="Vertical" icon="grid" value={fVertical} disabled={!fBranch}
-          list={ref.verticals.filter((v) => !fBranch || Number(v.branch_id) === fBranch)}
-          onChange={(v) => { setFVertical(v); setFPipeline(undefined); }} />
-        <HChip label="Pipeline" icon="list" value={fPipeline} disabled={!fVertical}
-          list={ref.pipelines.filter((p) => !fVertical || Number(p.vertical_id) === fVertical)} onChange={setFPipeline} />
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals([]); setFPipelines([]); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+          options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))}
+          onChange={(v) => { setFVerticals(v); setFPipelines([]); }} />
+        <FilterMulti label="Pipeline" icon="list" value={fPipelines}
+          options={ref.pipelines.filter((p) => !fVerticals.length || fVerticals.includes(Number(p.vertical_id)))} onChange={setFPipelines} />
         <SearchChip q={q} setQ={setQ} ph="Search campaign name\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
@@ -2690,14 +2742,17 @@ function Users() {
   const { can } = useAuth();
   const ref = useRef_();
   const roles = useFetch<any[]>(can('role.read') ? '/roles' : null, []);
-  const [f, setF] = useState<{ role?: number; branch?: number; status?: string; q: string }>({ q: '' });
+  const [fRoles, setFRoles] = useState<number[]>([]);
+  const [fUserBranches, setFUserBranches] = useState<number[]>([]);
+  const [fStatus, setFStatus] = useState<string | undefined>(undefined);
+  const [fq, setFq] = useState('');
   const params = new URLSearchParams();
-  if (f.role) params.set('role_id', String(f.role));
-  if (f.branch) params.set('branch_id', String(f.branch));
-  if (f.status) params.set('status', f.status);
-  if (f.q.trim()) params.set('q', f.q.trim());
+  if (fRoles.length) params.set('role_ids', fRoles.join(','));
+  if (fUserBranches.length) params.set('branch_ids', fUserBranches.join(','));
+  if (fStatus) params.set('status', fStatus);
+  if (fq.trim()) params.set('q', fq.trim());
   const qs = params.toString();
-  const list = useFetch<any[]>(`/users${qs ? `?${qs}` : ''}`, [refreshTick]);
+  const list = useFetch<any[]>(`/users${qs ? `?${qs}` : ''}`, [refreshTick, qs]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
@@ -2754,27 +2809,17 @@ function Users() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [list.data, refreshTick]);
 
-  const chip = (label: string, icon: string, value: number | undefined, opts: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
-    <div className="fchip" key={label}>
-      <Ic k={icon} />{label}
-      <select value={value ?? ''} onChange={(e) => set(e.target.value ? Number(e.target.value) : undefined)}>
-        <option value="">All</option>
-        {opts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-      </select>
-    </div>
-  );
-
   return (
     <>
       <div className="filters">
-        {chip('Role', 'shield', f.role, roles.data ?? [], (v) => setF((x) => ({ ...x, role: v })))}
-        {chip('Branch', 'branch', f.branch, ref.branches, (v) => setF((x) => ({ ...x, branch: v })))}
+        <FilterMulti label="Role" icon="shield" value={fRoles} options={roles.data ?? []} onChange={setFRoles} />
+        <FilterMulti label="Branch" icon="branch" value={fUserBranches} options={ref.branches} onChange={setFUserBranches} />
         <div className="fchip"><Ic k="users" />Status
-          <select value={f.status ?? ''} onChange={(e) => setF((x) => ({ ...x, status: e.target.value || undefined }))}>
+          <select value={fStatus ?? ''} onChange={(e) => setFStatus(e.target.value || undefined)}>
             <option value="">All</option><option value="active">Active</option><option value="disabled">Inactive</option>
           </select>
         </div>
-        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email\u2026" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email\u2026" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="users" /><b>{rows.length}</b> users</div>
       </div>
       <BulkBar count={_bdSel.count} entityLabel="User" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
@@ -3748,8 +3793,8 @@ function StudentsList() {
       return [...out];
     };
     return {
-      branches: nums('branch_ids', 'branch_id').length ? nums('branch_ids', 'branch_id') : (gScope.branch ? [gScope.branch] : []),
-      verticals: nums('vertical_ids', 'vertical_id').length ? nums('vertical_ids', 'vertical_id') : (gScope.vertical ? [gScope.vertical] : []),
+      branches: nums('branch_ids', 'branch_id').length ? nums('branch_ids', 'branch_id') : (gScope.branches),
+      verticals: nums('vertical_ids', 'vertical_id').length ? nums('vertical_ids', 'vertical_id') : (gScope.verticals),
       courses: nums('course_ids', 'course_id'),
       owners: nums('owner_ids', 'owner_id'),
       status: spx.get('status') || '',
@@ -4464,12 +4509,12 @@ function BatchesList() {
   const { can } = useAuth();
   const ref = useRef_();
   const { scope: gScope, key: scopeKey } = useScope();
-  const [fBranches, setFBranches] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
-  const [fVerticals, setFVerticals] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
   const [q, setQ] = useState('');
   useEffect(() => {
-    setFBranches(gScope.branch ? [gScope.branch] : []);
-    setFVerticals(gScope.vertical ? [gScope.vertical] : []);
+    setFBranches(gScope.branches);
+    setFVerticals(gScope.verticals);
   }, [scopeKey]);
   const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
   const params = new URLSearchParams();

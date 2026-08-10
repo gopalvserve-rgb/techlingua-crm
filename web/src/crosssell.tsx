@@ -18,7 +18,9 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
+import { FilterMulti, EnumMulti } from './dyn';
+import { ListActions, downloadObjectsCsv } from './listtools';
 import { AddModal } from './forms';
 
 const dt = (v: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
@@ -148,40 +150,35 @@ function RulesTab({ courses }: { courses: Array<{ id: number; name: string }> })
 
 function AttemptsTab() {
   const ref = useRef_();
-  const [f, setF] = useState<Record<string, string>>({ action: '', branch_id: '', vertical_id: '', owner_id: '' });
+  const [fAction, setFAction] = useState<string[]>([]);
+  const [fBranches, setFBranches] = useState<number[]>([]);
+  const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [fOwners, setFOwners] = useState<number[]>([]);
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries(f)) if (v) p.set(k, v);
+    if (fAction.length) p.set('action', fAction.join(','));
+    if (fBranches.length) p.set('branch_ids', fBranches.join(','));
+    if (fVerticals.length) p.set('vertical_ids', fVerticals.join(','));
+    if (fOwners.length) p.set('owner_ids', fOwners.join(','));
     return p.toString();
-  }, [f]);
-  const { data } = useFetch<any[]>('/cross-sell/attempts' + (qs ? `?${qs}` : ''), [qs]);
+  }, [fAction, fBranches, fVerticals, fOwners]);
+  const { data, reload } = useFetch<any[]>('/cross-sell/attempts' + (qs ? `?${qs}` : ''), [qs]);
   const rows = data ?? [];
-  const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
 
   return (
     <>
-      <div className="filters" style={{ margin: '12px 0', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <select className="ainp" value={f.action} onChange={(e) => set('action', e.target.value)}>
-          <option value="">All actions</option>
-          <option value="followup">Follow-up</option>
-          <option value="lead">New lead</option>
-          <option value="dismissed">Dismissed</option>
-        </select>
-        <select className="ainp" value={f.branch_id} onChange={(e) => set('branch_id', e.target.value)}>
-          <option value="">All branches</option>
-          {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-        <select className="ainp" value={f.vertical_id} onChange={(e) => set('vertical_id', e.target.value)}>
-          <option value="">All verticals</option>
-          {ref.verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </select>
-        <select className="ainp" value={f.owner_id} onChange={(e) => set('owner_id', e.target.value)}>
-          <option value="">Any owner</option>
-          {ref.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-        </select>
+      <div className="filters" style={{ margin: '12px 0', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
+        <EnumMulti label="Action" icon="bolt" value={fAction} onChange={setFAction}
+          options={[{ id: 'followup', name: 'Follow-up' }, { id: 'lead', name: 'New lead' }, { id: 'dismissed', name: 'Dismissed' }]} />
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals([]); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+          options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))} onChange={setFVerticals} />
+        <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
       </div>
       <TableCard
         title="Cross-sell attempts" icon="list"
+        more={<ListActions onExport={() => downloadObjectsCsv('cross-sell-attempts.csv', rows)} onRefresh={reload} />}
         cols={['Contact', 'From', 'Suggested', 'Action', 'Owner', 'Branch', 'When', 'Note']}
         empty="No cross-sell attempts yet."
         rows={rows.map((a): Cell[] => [
@@ -208,18 +205,23 @@ export function CrossSell() {
   const courses: Array<{ id: number; name: string }> = meta.data?.courses ?? [];
   const [tab, setTab] = useState<'candidates' | 'attempts' | 'rules'>('candidates');
 
-  const [f, setF] = useState<Record<string, string>>({ branch_id: '', vertical_id: '', owner_id: '', course_id: '' });
+  const [fBranches, setFBranches] = useState<number[]>([]);
+  const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [fOwners, setFOwners] = useState<number[]>([]);
+  const [fCourses, setFCourses] = useState<number[]>([]);
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries(f)) if (v) p.set(k, v);
+    if (fBranches.length) p.set('branch_ids', fBranches.join(','));
+    if (fVerticals.length) p.set('vertical_ids', fVerticals.join(','));
+    if (fOwners.length) p.set('owner_ids', fOwners.join(','));
+    if (fCourses.length) p.set('course_ids', fCourses.join(','));
     return p.toString();
-  }, [f]);
+  }, [fBranches, fVerticals, fOwners, fCourses]);
   const { data, reload } = useFetch<any[]>('/cross-sell/candidates' + (qs ? `?${qs}` : ''), [qs]);
   const summary = useFetch<any>('/cross-sell/summary');
   const [actRow, setActRow] = useState<any>(null);
   const rows = data ?? [];
   const s = summary.data;
-  const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   const bump = () => { reload(); summary.reload(); };
 
   const tabs: Array<[string, string]> = [['candidates', 'Candidates'], ['attempts', 'Attempts']];
@@ -243,27 +245,18 @@ export function CrossSell() {
             { lab: 'Dismissed', val: String(s?.dismissed ?? 0), ic: 'x' },
           ]} />
 
-          <div className="filters" style={{ margin: '12px 0', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <select className="ainp" value={f.branch_id} onChange={(e) => set('branch_id', e.target.value)}>
-              <option value="">All branches</option>
-              {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-            <select className="ainp" value={f.vertical_id} onChange={(e) => set('vertical_id', e.target.value)}>
-              <option value="">All verticals</option>
-              {ref.verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
-            <select className="ainp" value={f.owner_id} onChange={(e) => set('owner_id', e.target.value)}>
-              <option value="">Any owner</option>
-              {ref.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-            <select className="ainp" value={f.course_id} onChange={(e) => set('course_id', e.target.value)}>
-              <option value="">Any current course</option>
-              {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+          <div className="filters" style={{ margin: '12px 0', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
+            <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+              onChange={(v) => { setFBranches(v); setFVerticals([]); }} />
+            <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+              options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))} onChange={setFVerticals} />
+            <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
+            <FilterMulti label="Course" icon="book" value={fCourses} options={courses} onChange={setFCourses} />
           </div>
 
           <TableCard
             title="Cross-sell candidates" icon="bolt"
+            more={<ListActions onExport={() => downloadObjectsCsv('cross-sell-candidates.csv', rows)} onRefresh={bump} />}
             cols={['Contact', 'Current course', 'Suggested course', 'Basis', 'Branch', 'Vertical', 'Owner', '']}
             empty="No cross-sell candidates match — won/enrolled contacts appear here with a suggested next course."
             rows={rows.map((r): Cell[] => [

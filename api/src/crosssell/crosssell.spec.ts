@@ -74,9 +74,9 @@ describe('CrossSellService — candidates scoping', () => {
     const { svc, issued } = make();
     await svc.candidates(scopeAll, { branch_id: 9, owner_id: 5, course_id: 100 });
     const q = issued.find((i) => /WITH cand AS/.test(i.sql))!;
-    expect(q.sql).toContain('l.branch_id = $');
-    expect(q.sql).toContain('l.owner_id = $');
-    expect(q.sql).toContain('l.course_id = $');
+    expect(q.sql).toContain('l.branch_id IN ($');
+    expect(q.sql).toContain('l.owner_id IN ($');
+    expect(q.sql).toContain('l.course_id IN ($');
     // the candidate set is only won/enrolled contacts
     expect(q.sql).toContain("st.stage_type = 'won'");
     expect(q.sql).toContain('FROM enrolment e');

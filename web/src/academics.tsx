@@ -55,8 +55,8 @@ export function AttendanceScreen() {
   const ref = useRef_();
   const { scope: gScope } = useScope();
   const { can } = useAuth();
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
-  const [fV, setFV] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [batchId, setBatchId] = useState<string>('');
   const [date, setDate] = useState<string>(isoToday());
   const [mode, setMode] = useState<'staff' | 'self'>('staff');
@@ -171,8 +171,8 @@ export function TestsScreen() {
   const ref = useRef_();
   const { scope: gScope } = useScope();
   const { can } = useAuth();
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
-  const [fV, setFV] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [batchId, setBatchId] = useState<string>('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [tick, setTick] = useState(0);
@@ -322,8 +322,8 @@ export function AssignmentsScreen() {
   const ref = useRef_();
   const { scope: gScope } = useScope();
   const { can } = useAuth();
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
-  const [fV, setFV] = useState<number[]>(gScope.vertical ? [gScope.vertical] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [batchId, setBatchId] = useState<string>('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [tick, setTick] = useState(0);

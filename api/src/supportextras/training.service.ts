@@ -21,7 +21,11 @@ export class TrainingService {
   async list(f: any = {}) {
     const params: unknown[] = [];
     const where = [`t.deleted_at IS NULL`];
-    if (f.category) { params.push(String(f.category)); where.push(`t.category = $${params.length}`); }
+    { // Multi-select category (client, Aug 2026): CSV / repeated / singular -> `t.category IN (...)`.
+      const cats = [...new Set((f.category == null ? [] : (Array.isArray(f.category) ? f.category : [f.category]))
+        .flatMap((x: unknown) => String(x).split(',')).map((x: string) => x.trim()).filter(Boolean))];
+      if (cats.length) { const ph = cats.map((c) => { params.push(c); return `$${params.length}`; }); where.push(`t.category IN (${ph.join(',')})`); }
+    }
     if (f.active === 'true' || f.active === 'false') { params.push(f.active === 'true'); where.push(`t.active = $${params.length}`); }
     const dr = assertDateRange(f.from, f.to);
     if (dr.from) { params.push(dr.from); where.push(`t.created_at >= $${params.length}::date`); }

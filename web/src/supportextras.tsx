@@ -16,6 +16,7 @@ import { toast, useFetch } from './refdata';
 import { rowActions, ConfirmModal, DetailModal } from './rowactions';
 import { DateRange } from './daterange';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { EnumMulti } from './dyn';
 
 const inpStyle = { background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 } as const;
 const REL_CATS = ['feature', 'fix', 'improvement'] as const;
@@ -45,7 +46,7 @@ export function toEmbedUrl(url: string): string {
 export function TrainingVideosScreen() {
   const { can } = useAuth();
   const canManage = can('training.manage');
-  const [fcat, setFcat] = useState('');
+  const [fcat, setFcat] = useState<string[]>([]);
   const [factive, setFactive] = useState('');
   const [q, setQ] = useState('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
@@ -57,7 +58,7 @@ export function TrainingVideosScreen() {
 
   const cats = useFetch<string[]>(`/training-videos/categories`, [tick]);
   const qs = new URLSearchParams();
-  if (fcat) qs.set('category', fcat);
+  if (fcat.length) qs.set('category', fcat.join(','));
   if (factive) qs.set('active', factive);
   if (q.trim()) qs.set('q', q.trim());
   if (range.from) qs.set('from', range.from);
@@ -74,11 +75,8 @@ export function TrainingVideosScreen() {
     <>
       {canManage && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New training video</button></div>}
       <div className="filters">
-        <label className="fchip"><Ic k="grid" />
-          <select value={fcat} onChange={(e) => setFcat(e.target.value)} style={inpStyle}>
-            <option value="">All categories</option>
-            {(cats.data ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
-          </select></label>
+        <EnumMulti label="Category" icon="grid" value={fcat} onChange={setFcat}
+          options={(cats.data ?? []).map((c) => ({ id: c, name: c }))} />
         <label className="fchip"><Ic k="shield" />
           <select value={factive} onChange={(e) => setFactive(e.target.value)} style={inpStyle}>
             <option value="">All</option><option value="true">Active</option><option value="false">Inactive</option>
@@ -177,7 +175,7 @@ function TrainingModal({ initial, onClose, onSaved }: { initial?: any; onClose: 
 export function ReleaseNotesScreen() {
   const { can } = useAuth();
   const canManage = can('release_note.manage');
-  const [fcat, setFcat] = useState('');
+  const [fcat, setFcat] = useState<string[]>([]);
   const [factive, setFactive] = useState('');
   const [q, setQ] = useState('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
@@ -187,7 +185,7 @@ export function ReleaseNotesScreen() {
   const [del, setDel] = useState<any | null>(null);
 
   const qs = new URLSearchParams();
-  if (fcat) qs.set('category', fcat);
+  if (fcat.length) qs.set('category', fcat.join(','));
   if (factive) qs.set('active', factive);
   if (q.trim()) qs.set('q', q.trim());
   if (range.from) qs.set('from', range.from);
@@ -204,11 +202,8 @@ export function ReleaseNotesScreen() {
     <>
       {canManage && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New release note</button></div>}
       <div className="filters">
-        <label className="fchip"><Ic k="grid" />
-          <select value={fcat} onChange={(e) => setFcat(e.target.value)} style={inpStyle}>
-            <option value="">All categories</option>
-            {REL_CATS.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select></label>
+        <EnumMulti label="Category" icon="grid" value={fcat} onChange={setFcat}
+          options={REL_CATS.map((c) => ({ id: c, name: c }))} />
         <label className="fchip"><Ic k="shield" />
           <select value={factive} onChange={(e) => setFactive(e.target.value)} style={inpStyle}>
             <option value="">All</option><option value="true">Published</option><option value="false">Hidden</option>

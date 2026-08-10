@@ -151,8 +151,8 @@ describe('SupportService — RBAC scope goes INSIDE the SQL', () => {
     const { svc, issued } = make({ list: [] });
     await svc.list(scopeAll, { status: 'open', priority: 'urgent', overdue: '1' });
     const q = issued.find((x) => /FROM support_ticket t/.test(x.sql))!;
-    expect(q.sql).toMatch(/t\.status = \$/);
-    expect(q.sql).toMatch(/t\.priority = \$/);
+    expect(q.sql).toMatch(/t\.status IN \(/);
+    expect(q.sql).toMatch(/t\.priority IN \(/);
     expect(q.sql).toMatch(/now\(\) >/);            // the SLA overdue predicate
   });
 });

@@ -117,17 +117,34 @@ export class SupportService {
     status?: string; priority?: string; category?: string; assignee_id?: string | number;
     branch_id?: string | number; vertical_id?: string | number; q?: string;
     from?: string; to?: string; overdue?: string; limit?: number;
+    status_ids?: unknown; priority_ids?: unknown; category_ids?: unknown; assignee_ids?: unknown;
+    branch_ids?: unknown; vertical_ids?: unknown;
   } = {}) {
     const cfg = await this.slaConfig();
     const params: unknown[] = [];
     const slaCols = this.slaSelect(cfg, params);
     const where = [`t.deleted_at IS NULL`, this.ticketScopeWhere(scope, params)];
-    if (f.status) { params.push(f.status); where.push(`t.status = $${params.length}::varchar`); }
-    if (f.priority) { params.push(f.priority); where.push(`t.priority = $${params.length}::varchar`); }
-    if (f.category) { params.push(f.category); where.push(`t.category = $${params.length}::varchar`); }
-    if (f.assignee_id) { params.push(Number(f.assignee_id)); where.push(`t.assignee_id = $${params.length}::bigint`); }
-    if (f.branch_id) { params.push(Number(f.branch_id)); where.push(`t.branch_id = $${params.length}::bigint`); }
-    if (f.vertical_id) { params.push(Number(f.vertical_id)); where.push(`t.vertical_id = $${params.length}::bigint`); }
+    // Multi-select (client, Aug 2026): CSV / repeated / singular -> `col IN (...)`, ANDed on RBAC.
+    const csvS = (v: unknown): string[] => v == null ? []
+      : (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
+    const strIn = (col: string, cast: string, ...keys: string[]) => {
+      const vals = [...new Set(keys.flatMap((k) => csvS((f as any)[k])))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}${cast}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    const numIn = (col: string, ...keys: string[]) => {
+      const vals = [...new Set(keys.flatMap((k) => csvS((f as any)[k])).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}::bigint`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    strIn('t.status', '::varchar', 'status', 'status_ids');
+    strIn('t.priority', '::varchar', 'priority', 'priority_ids');
+    strIn('t.category', '::varchar', 'category', 'category_ids');
+    numIn('t.assignee_id', 'assignee_id', 'assignee_ids');
+    numIn('t.branch_id', 'branch_id', 'branch_ids');
+    numIn('t.vertical_id', 'vertical_id', 'vertical_ids');
     // DEF-DR-02: strict validation — malformed date -> 400, never a 500.
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`t.created_at >= $${params.length}::timestamptz`); }

@@ -242,7 +242,7 @@ export function InventoryScreen() {
   const rd = useRef_();
   const { scope: gScope } = useScope();
   const [tick, setTick] = useState(0);
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
   const [low, setLow] = useState(false);
   const [q, setQ] = useState('');
   const [moveItem, setMoveItem] = useState<any | null>(null);
@@ -385,7 +385,7 @@ export function AssetsScreen() {
   const rd = useRef_();
   const { scope: gScope } = useScope();
   const [tick, setTick] = useState(0);
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fStatus, setFStatus] = useState<number[]>([]);
   const [fCat, setFCat] = useState<number[]>([]);
   const [q, setQ] = useState('');
@@ -527,7 +527,7 @@ export function ProcurementScreen() {
   const rd = useRef_();
   const { scope: gScope } = useScope();
   const [tick, setTick] = useState(0);
-  const [fB, setFB] = useState<number[]>(gScope.branch ? [gScope.branch] : []);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fStatus, setFStatus] = useState<number[]>([]);
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [q, setQ] = useState('');

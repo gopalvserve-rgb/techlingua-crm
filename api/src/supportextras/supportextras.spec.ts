@@ -90,7 +90,7 @@ describe('TrainingService', () => {
     const out = await svc.list({ category: 'Onboarding', active: 'true', q: 'intro', from: '2026-01-01', to: '2026-12-31', limit: 9999 });
     expect(out).toHaveLength(1);
     const call = db.issued.find((c: any) => /FROM training_video t/.test(c.sql) && !/DISTINCT/.test(c.sql));
-    expect(call.sql).toMatch(/t\.category = /);
+    expect(call.sql).toMatch(/t\.category IN \(/);
     expect(call.sql).toMatch(/t\.active = /);
     expect(call.sql).toMatch(/ILIKE/);
     expect(call.params[call.params.length - 1]).toBe(1000); // limit capped

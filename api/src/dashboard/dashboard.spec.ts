@@ -194,7 +194,7 @@ describe('GLOBAL SCOPE NARROW — the top-bar selector narrows within RBAC, neve
     await svc(db).overview(ADMIN, 1, { branch_id: 9 });
     const kpi = calls.find((c) => /FROM lead l/.test(c.sql))!;
     expect(kpi.sql).toMatch(/\(1=1\)/);
-    expect(kpi.sql).toMatch(/l\.branch_id = \$/);   // narrowed on top of the open scope
+    expect(kpi.sql).toMatch(/l\.branch_id IN \(/);   // narrowed on top of the open scope
     expect(kpi.params).toContain(9);
   });
 
@@ -214,7 +214,7 @@ describe('GLOBAL SCOPE NARROW — the top-bar selector narrows within RBAC, neve
     expect(kpi.params[0]).toBe(9);
     // … AND the client narrow (99) is ANDed on top, so the two can only intersect (=> no rows)
     expect(kpi.params).toContain(99);
-    expect((kpi.sql.match(/l\.branch_id = \$/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(kpi.sql).toMatch(/l\.branch_id IN \(/);  // the client narrow is ANDed as an IN, on top of the scope's = $1
   });
 
   it('an absent / zero / non-numeric selection adds no narrow at all (unchanged behaviour)', async () => {
@@ -222,7 +222,7 @@ describe('GLOBAL SCOPE NARROW — the top-bar selector narrows within RBAC, neve
     await svc(db).overview(ADMIN, 1, { branch_id: 0 as any });
     const kpi = calls.find((c) => /FROM lead l/.test(c.sql))!;
     // only the scope's single (no) param — no extra branch predicate beyond the date range
-    expect(kpi.sql).not.toMatch(/l\.branch_id = \$/);
+    expect(kpi.sql).not.toMatch(/l\.branch_id IN \(/);
   });
 
   it('walk-in and referral widgets honour the narrow through their own lead alias', async () => {
@@ -230,14 +230,14 @@ describe('GLOBAL SCOPE NARROW — the top-bar selector narrows within RBAC, neve
     await svc(db).overview(ADMIN, 1, { branch_id: 7 });
     const w = calls.find((c) => /FROM walk_in w/.test(c.sql))!;
     const r = calls.find((c) => /FROM referral r/.test(c.sql))!;
-    expect(w.sql).toContain('wl.branch_id = $');
-    expect(r.sql).toContain('rl.branch_id = $');
+    expect(w.sql).toContain('wl.branch_id IN ($');
+    expect(r.sql).toContain('rl.branch_id IN ($');
   });
 
   it('quick stats honour the narrow too', async () => {
     const { db, calls } = spyDb();
     await svc(db).quickStats(ADMIN, { branch_id: 4 });
-    expect(calls[0].sql).toContain('l.branch_id = $');
+    expect(calls[0].sql).toContain('l.branch_id IN ($');
     expect(calls[0].params).toContain(4);
   });
 });

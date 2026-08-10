@@ -12,6 +12,9 @@ export interface UserListFilters {
   role_id?: number;
   branch_id?: number;
   status?: 'active' | 'disabled';
+  // Multi-select (client, Aug 2026): OR within a filter -> EXISTS ... IN (...); singular kept.
+  role_ids?: number[];
+  branch_ids?: number[];
 }
 
 /**
@@ -25,13 +28,17 @@ export function buildUserFilters(f: UserListFilters, params: unknown[]): string 
     params.push(`%${f.q.trim()}%`);
     sql += ` AND (u.name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone LIKE $${params.length})`;
   }
-  if (f.role_id) {
-    params.push(f.role_id);
-    sql += ` AND EXISTS (SELECT 1 FROM user_assignment fa WHERE fa.user_id = u.id AND fa.is_active AND fa.role_id = $${params.length})`;
+  const ids = (single: number | undefined, arr: number[] | undefined) =>
+    [...new Set([...(arr ?? []), ...(single != null ? [single] : [])])].map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const roleIds = ids(f.role_id, f.role_ids);
+  if (roleIds.length) {
+    const ph = roleIds.map((v) => { params.push(v); return `$${params.length}`; });
+    sql += ` AND EXISTS (SELECT 1 FROM user_assignment fa WHERE fa.user_id = u.id AND fa.is_active AND fa.role_id IN (${ph.join(',')}))`;
   }
-  if (f.branch_id) {
-    params.push(f.branch_id);
-    sql += ` AND EXISTS (SELECT 1 FROM user_assignment fb WHERE fb.user_id = u.id AND fb.is_active AND fb.branch_id = $${params.length})`;
+  const branchIds = ids(f.branch_id, f.branch_ids);
+  if (branchIds.length) {
+    const ph = branchIds.map((v) => { params.push(v); return `$${params.length}`; });
+    sql += ` AND EXISTS (SELECT 1 FROM user_assignment fb WHERE fb.user_id = u.id AND fb.is_active AND fb.branch_id IN (${ph.join(',')}))`;
   }
   if (f.status) {
     if (!['active', 'disabled'].includes(f.status)) throw new BadRequestException('invalid status filter');

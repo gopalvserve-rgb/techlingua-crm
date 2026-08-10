@@ -308,13 +308,29 @@ export class AiService {
   async list(scope: ResolvedScope, f: any = {}) {
     const params: unknown[] = [];
     const where = ['a.deleted_at IS NULL', this.scopeWhere(scope, params)];
-    if (f.analysis_type) { params.push(String(f.analysis_type)); where.push(`a.analysis_type = $${params.length}`); }
-    if (f.subject_type)  { params.push(String(f.subject_type));  where.push(`a.subject_type = $${params.length}`); }
-    if (f.sentiment)     { params.push(String(f.sentiment));     where.push(`a.sentiment = $${params.length}`); }
-    if (f.provider)      { params.push(String(f.provider));      where.push(`a.provider = $${params.length}`); }
-    if (f.branch_id)     { params.push(Number(f.branch_id));     where.push(`a.branch_id = $${params.length}::bigint`); }
-    if (f.vertical_id)   { params.push(Number(f.vertical_id));   where.push(`a.vertical_id = $${params.length}::bigint`); }
-    if (f.owner_id)      { params.push(Number(f.owner_id));      where.push(`a.owner_id = $${params.length}::bigint`); }
+    // Multi-select (client, Aug 2026): each filter accepts CSV / repeated / singular -> `col IN (...)`
+    // (OR within a filter, AND across), on top of the RBAC scope above. Singular params still work.
+    const csv = (v: unknown): string[] => v == null ? []
+      : (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
+    const strIn = (col: string, ...keys: string[]) => {
+      const vals = [...new Set(keys.flatMap((k) => csv(f[k])))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    const numIn = (col: string, ...keys: string[]) => {
+      const vals = [...new Set(keys.flatMap((k) => csv(f[k])).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}::bigint`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    strIn('a.analysis_type', 'analysis_type');
+    strIn('a.subject_type', 'subject_type');
+    strIn('a.sentiment', 'sentiment');
+    strIn('a.provider', 'provider');
+    numIn('a.branch_id', 'branch_id', 'branch_ids');
+    numIn('a.vertical_id', 'vertical_id', 'vertical_ids');
+    numIn('a.owner_id', 'owner_id', 'owner_ids');
     if (f.q)             { params.push(`%${f.q}%`);              where.push(`(a.subject_label ILIKE $${params.length} OR a.summary_text ILIKE $${params.length})`); }
     if (f.created_from)  { params.push(String(f.created_from));  where.push(`a.created_at >= $${params.length}::timestamptz`); }
     if (f.created_to)    { params.push(String(f.created_to));    where.push(`a.created_at < ($${params.length}::date + 1)`); }

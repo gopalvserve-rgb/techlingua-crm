@@ -15,7 +15,8 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
+import { FilterMulti, EnumMulti } from './dyn';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 
 const TYPE_LABEL: Record<string, string> = {
@@ -235,16 +236,27 @@ export function AiIntelligence() {
   const summary = useFetch<any>('/ai/summary', [tick]);
   const configured = !!status.data?.configured;
 
-  const [f, setF] = useState<Record<string, string>>({ analysis_type: '', sentiment: '', subject_type: '', branch_id: '', vertical_id: '', owner_id: '', q: '' });
+  const [fq, setFq] = useState('');
+  const [fType, setFType] = useState<string[]>([]);
+  const [fSent, setFSent] = useState<string[]>([]);
+  const [fSubj, setFSubj] = useState<string[]>([]);
+  const [fBranches, setFBranches] = useState<number[]>([]);
+  const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [fOwners, setFOwners] = useState<number[]>([]);
   const qs = useMemo(() => {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries(f)) if (v) p.set(k, v);
+    if (fq) p.set('q', fq);
+    if (fType.length) p.set('analysis_type', fType.join(','));
+    if (fSent.length) p.set('sentiment', fSent.join(','));
+    if (fSubj.length) p.set('subject_type', fSubj.join(','));
+    if (fBranches.length) p.set('branch_ids', fBranches.join(','));
+    if (fVerticals.length) p.set('vertical_ids', fVerticals.join(','));
+    if (fOwners.length) p.set('owner_ids', fOwners.join(','));
     return p.toString();
-  }, [f]);
+  }, [fq, fType, fSent, fSubj, fBranches, fVerticals, fOwners]);
   const listPath = '/ai/analyses' + (qs ? `?${qs}` : '');
   const list = useFetch<any[]>(listPath, [qs, tick]);
   const rows = list.data ?? [];
-  const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
   const [detail, setDetail] = useState<number | null>(null);
 
   const ids = rows.map((r) => r.id as number);
@@ -273,37 +285,20 @@ export function AiIntelligence() {
 
       {can('ai.run') && <RunPanel configured={configured} onDone={after} />}
 
-      <div className="filters" style={{ margin: '12px 0', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+      <div className="filters" style={{ margin: '12px 0', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
         <input className="ainp" style={{ width: 200 }} placeholder="Search subject / summary…"
-          value={f.q} onChange={(e) => set('q', e.target.value)} />
-        <select className="ainp" value={f.analysis_type} onChange={(e) => set('analysis_type', e.target.value)}>
-          <option value="">All types</option>
-          {Object.entries(TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
-        <select className="ainp" value={f.sentiment} onChange={(e) => set('sentiment', e.target.value)}>
-          <option value="">Any sentiment</option>
-          <option value="positive">Positive</option>
-          <option value="neutral">Neutral</option>
-          <option value="negative">Negative</option>
-        </select>
-        <select className="ainp" value={f.subject_type} onChange={(e) => set('subject_type', e.target.value)}>
-          <option value="">Any subject</option>
-          <option value="lead">Lead</option>
-          <option value="student">Student</option>
-          <option value="transcript">Transcript</option>
-        </select>
-        <select className="ainp" value={f.branch_id} onChange={(e) => set('branch_id', e.target.value)}>
-          <option value="">All branches</option>
-          {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-        <select className="ainp" value={f.vertical_id} onChange={(e) => set('vertical_id', e.target.value)}>
-          <option value="">All verticals</option>
-          {ref.verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </select>
-        <select className="ainp" value={f.owner_id} onChange={(e) => set('owner_id', e.target.value)}>
-          <option value="">Any owner</option>
-          {ref.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-        </select>
+          value={fq} onChange={(e) => setFq(e.target.value)} />
+        <EnumMulti label="Type" icon="doc" value={fType} onChange={setFType}
+          options={Object.entries(TYPE_LABEL).map(([k, l]) => ({ id: k, name: String(l) }))} />
+        <EnumMulti label="Sentiment" icon="bolt" value={fSent} onChange={setFSent}
+          options={[{ id: 'positive', name: 'Positive' }, { id: 'neutral', name: 'Neutral' }, { id: 'negative', name: 'Negative' }]} />
+        <EnumMulti label="Subject" icon="grid" value={fSubj} onChange={setFSubj}
+          options={[{ id: 'lead', name: 'Lead' }, { id: 'student', name: 'Student' }, { id: 'transcript', name: 'Transcript' }]} />
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals([]); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+          options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))} onChange={setFVerticals} />
+        <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
       </div>
 
       <BulkBar count={count} entityLabel="AI analysis" onDelete={() => openBulk(selected)} onClear={clear} />

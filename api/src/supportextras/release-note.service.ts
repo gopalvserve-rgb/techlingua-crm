@@ -23,7 +23,11 @@ export class ReleaseNoteService {
   async list(f: any = {}) {
     const params: unknown[] = [];
     const where = [`r.deleted_at IS NULL`];
-    if (CATS.includes(String(f.category))) { params.push(String(f.category)); where.push(`r.category = $${params.length}`); }
+    { // Multi-select category (client, Aug 2026): CSV / repeated / singular, whitelisted to CATS.
+      const cats = [...new Set((f.category == null ? [] : (Array.isArray(f.category) ? f.category : [f.category]))
+        .flatMap((x: unknown) => String(x).split(',')).map((x: string) => x.trim()).filter((c: string) => CATS.includes(c)))];
+      if (cats.length) { const ph = cats.map((c) => { params.push(c); return `$${params.length}`; }); where.push(`r.category IN (${ph.join(',')})`); }
+    }
     if (f.active === 'true' || f.active === 'false') { params.push(f.active === 'true'); where.push(`r.active = $${params.length}`); }
     const dr = assertDateRange(f.from, f.to);
     if (dr.from) { params.push(dr.from); where.push(`r.release_date >= $${params.length}::date`); }

@@ -6,6 +6,11 @@ import { LEAD_SCOPE_COLS } from '../rbac/scope-cols';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
 import { assertActiveUser } from '../leads/active-user.util';
 
+// Multi-select query helpers (client, Aug 2026): CSV / repeated / singular -> unique values.
+const csvStrs = (v: unknown): string[] => v == null ? []
+  : (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
+const csvNums = (v: unknown): number[] => [...new Set(csvStrs(v).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+
 /**
  * CROSS-SELL — CRM-level, working on the leads/enrolments that exist today.
  *
@@ -58,14 +63,21 @@ export class CrossSellService {
   async candidates(scope: ResolvedScope, f: {
     branch_id?: string | number; vertical_id?: string | number;
     owner_id?: string | number; course_id?: string | number; limit?: number;
+    branch_ids?: unknown; vertical_ids?: unknown; owner_ids?: unknown; course_ids?: unknown;
   } = {}) {
     const params: unknown[] = [];
     const scopeSql = this.scopeWhere(scope, params);
     const extra: string[] = [];
-    if (f.branch_id)   { params.push(Number(f.branch_id));   extra.push(`l.branch_id = $${params.length}::bigint`); }
-    if (f.vertical_id) { params.push(Number(f.vertical_id)); extra.push(`l.vertical_id = $${params.length}::bigint`); }
-    if (f.owner_id)    { params.push(Number(f.owner_id));    extra.push(`l.owner_id = $${params.length}::bigint`); }
-    if (f.course_id)   { params.push(Number(f.course_id));   extra.push(`l.course_id = $${params.length}::bigint`); }
+    const numIn = (col: string, ...keys: string[]) => {
+      const vals = [...new Set(keys.flatMap((k) => csvNums((f as any)[k])))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}::bigint`; });
+      extra.push(`${col} IN (${ph.join(',')})`);
+    };
+    numIn('l.branch_id', 'branch_id', 'branch_ids');
+    numIn('l.vertical_id', 'vertical_id', 'vertical_ids');
+    numIn('l.owner_id', 'owner_id', 'owner_ids');
+    numIn('l.course_id', 'course_id', 'course_ids');
     params.push(Math.min(Number(f.limit ?? 300), 500));
     const limitIdx = params.length;
 
@@ -235,15 +247,28 @@ export class CrossSellService {
   async attempts(scope: ResolvedScope, f: {
     action?: string; status?: string; branch_id?: string | number;
     vertical_id?: string | number; owner_id?: string | number; limit?: number;
+    action_ids?: unknown; branch_ids?: unknown; vertical_ids?: unknown; owner_ids?: unknown;
   } = {}) {
     const params: unknown[] = [];
     const scopeSql = this.scopeWhere(scope, params);
     const where = [`a.deleted_at IS NULL`, scopeSql];
-    if (f.action)      { params.push(f.action);              where.push(`a.action = $${params.length}::varchar`); }
-    if (f.status)      { params.push(f.status);              where.push(`a.status = $${params.length}::varchar`); }
-    if (f.branch_id)   { params.push(Number(f.branch_id));   where.push(`a.branch_id = $${params.length}::bigint`); }
-    if (f.vertical_id) { params.push(Number(f.vertical_id)); where.push(`a.vertical_id = $${params.length}::bigint`); }
-    if (f.owner_id)    { params.push(Number(f.owner_id));    where.push(`a.owner_id = $${params.length}::bigint`); }
+    const strIn = (col: string, cast: string, ...keys: string[]) => {
+      const vals = [...new Set(keys.flatMap((k) => csvStrs((f as any)[k])))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}${cast}`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    const numIn = (col: string, ...keys: string[]) => {
+      const vals = [...new Set(keys.flatMap((k) => csvNums((f as any)[k])))];
+      if (!vals.length) return;
+      const ph = vals.map((v) => { params.push(v); return `$${params.length}::bigint`; });
+      where.push(`${col} IN (${ph.join(',')})`);
+    };
+    strIn('a.action', '::varchar', 'action');
+    if (f.status) { params.push(f.status); where.push(`a.status = $${params.length}::varchar`); }
+    numIn('a.branch_id', 'branch_id', 'branch_ids');
+    numIn('a.vertical_id', 'vertical_id', 'vertical_ids');
+    numIn('a.owner_id', 'owner_id', 'owner_ids');
     params.push(Math.min(Number(f.limit ?? 200), 500));
     const limitIdx = params.length;
     return this.db.query<any>(
