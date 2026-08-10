@@ -156,17 +156,17 @@ export class NotificationEventService {
       `INSERT INTO notification_event_config
          (org_id, event_key, vertical_id, sms_enabled, email_enabled, whatsapp_enabled,
           sms_template_id, email_template_id, whatsapp_template_id, updated_by)
-       VALUES ($1,$2,$3,
-               COALESCE($4, $10), COALESCE($5, $11), COALESCE($6, $12),
-               $7,$8,$9,$13)
+       VALUES ($1,$2,$3::bigint,
+               COALESCE($4::boolean, $10::boolean), COALESCE($5::boolean, $11::boolean), COALESCE($6::boolean, $12::boolean),
+               $7::bigint,$8::bigint,$9::bigint,$13::bigint)
        ON CONFLICT (org_id, event_key, COALESCE(vertical_id, -1)) DO UPDATE SET
-         sms_enabled      = COALESCE($4, notification_event_config.sms_enabled),
-         email_enabled    = COALESCE($5, notification_event_config.email_enabled),
-         whatsapp_enabled = COALESCE($6, notification_event_config.whatsapp_enabled),
-         sms_template_id      = CASE WHEN $14 THEN $7 ELSE notification_event_config.sms_template_id END,
-         email_template_id    = CASE WHEN $15 THEN $8 ELSE notification_event_config.email_template_id END,
-         whatsapp_template_id = CASE WHEN $16 THEN $9 ELSE notification_event_config.whatsapp_template_id END,
-         updated_at = now(), updated_by = $13`,
+         sms_enabled      = COALESCE($4::boolean, notification_event_config.sms_enabled),
+         email_enabled    = COALESCE($5::boolean, notification_event_config.email_enabled),
+         whatsapp_enabled = COALESCE($6::boolean, notification_event_config.whatsapp_enabled),
+         sms_template_id      = CASE WHEN $14::boolean THEN $7::bigint ELSE notification_event_config.sms_template_id END,
+         email_template_id    = CASE WHEN $15::boolean THEN $8::bigint ELSE notification_event_config.email_template_id END,
+         whatsapp_template_id = CASE WHEN $16::boolean THEN $9::bigint ELSE notification_event_config.whatsapp_template_id END,
+         updated_at = now(), updated_by = $13::bigint`,
       [
         orgId, eventKey, verticalId,
         boolOrNull(dto?.sms_enabled), boolOrNull(dto?.email_enabled), boolOrNull(dto?.whatsapp_enabled),
