@@ -126,7 +126,7 @@ export function UserPicker({ value, onChange, multiple = true, branchId, placeho
     else if (e.key === 'Backspace' && !q && value.length) { onChange(value.slice(0, -1)); }
   };
 
-  const chipName = (id: number) => known[id]?.name ?? `User #${id}`;
+  const chipName = (id: number) => known[id]?.name ?? options?.find((o) => Number(o.id) === id)?.name ?? `User #${id}`;
 
   return (
     <div className={`upick ${disabled ? 'dis' : ''}`} ref={root}>
