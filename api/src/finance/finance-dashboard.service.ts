@@ -23,6 +23,10 @@ const INVOICE_COLS: ScopeColumnMap = {
   owner: 'gi.counsellor_id', team: 'gi.team_id', branch: 'gi.branch_id',
   vertical: 'gi.vertical_id', pipeline: 'gi.pipeline_id', campaign: 'gi.campaign_id',
 };
+const REFUND_COLS: ScopeColumnMap = {
+  owner: 'e.counsellor_id', team: 'e.team_id', branch: 'rf.branch_id',
+  vertical: 'rf.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
+};
 
 export interface FinScopeFilter {
   branch_ids?: number[]; vertical_ids?: number[];
@@ -122,6 +126,21 @@ export class FinanceDashboardService {
           AND (e.net_fee_minor - p.paid_minor) > 0
         ORDER BY balance_minor DESC LIMIT 8`, ep);
 
+    // ---- refunds (approved, net down the collection) ----
+    const fp: unknown[] = [];
+    const fw = this.resolver.buildScopeWhere(scope, REFUND_COLS, fp)
+      + this.narrow({ branch: 'rf.branch_id', vertical: 'rf.vertical_id' }, opts, fp);
+    let fDate = '';
+    if (dr.from) { fp.push(dr.from); fDate += ` AND rf.refunded_at >= $${fp.length}::date`; }
+    if (dr.to) { fp.push(dr.to); fDate += ` AND rf.refunded_at < ($${fp.length}::date + 1)`; }
+    const refBase = `FROM refund rf JOIN enrolment e ON e.id = rf.enrolment_id
+                     WHERE rf.deleted_at IS NULL AND rf.status = 'approved' AND ${fw}`;
+    const refAll = await this.db.one<any>(
+      `SELECT COALESCE(sum(rf.amount_minor), 0) AS all_time_minor,
+              count(*) AS n ${refBase}`, fp);
+    const refRange = await this.db.one<any>(
+      `SELECT COALESCE(sum(rf.amount_minor), 0) AS range_minor ${refBase}${fDate}`, fp);
+
     // ---- invoices (gst_invoice) ----
     const ip: unknown[] = [];
     const iw = this.resolver.buildScopeWhere(scope, INVOICE_COLS, ip)
@@ -148,6 +167,10 @@ export class FinanceDashboardService {
       kpis: {
         total_invoiced_minor: num(inv?.invoiced_minor),
         total_collected_minor: num(coll?.all_time_minor),
+        refunds_minor: num(refAll?.refunds_all ?? refAll?.all_time_minor),
+        net_collected_minor: num(coll?.all_time_minor) - num(refAll?.all_time_minor),
+        refunds_in_range_minor: num(refRange?.range_minor),
+        refunds_n: num(refAll?.n),
         collected_in_range_minor: num(rangeColl?.range_minor),
         collected_mtd_minor: num(coll?.mtd_minor),
         collected_today_minor: num(coll?.today_minor),

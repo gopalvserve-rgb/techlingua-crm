@@ -82,6 +82,11 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   // FeeDues is a DERIVED, read-only ageing VIEW — a "due" is cleared by collecting the
   // payment, never deleted — so it carries every control EXCEPT bulk-delete (declared).
   { name: 'FeeDuesScreen', file: 'paymentplans.tsx', req: NO_BULK },
+  // ---- Finance · Refunds (Phase 3 Batch 4) ----
+  { name: 'RefundsScreen', file: 'refunds.tsx', req: FULL },
+  // Collection Reports is a grouped, read-only REPORT — you cannot bulk-delete a group —
+  // so it carries every control EXCEPT bulk-delete (declared).
+  { name: 'CollectionReportsScreen', file: 'revenue.tsx', req: NO_BULK },
   // ---- ERP · Operations ----
   { name: 'CatalogScreen', file: 'operations.tsx', req: FULL },
   { name: 'VendorsScreen', file: 'operations.tsx', req: FULL },

@@ -286,25 +286,12 @@ export const APP: ModuleItem[] = [
           ['Sibling', 'Invoice', 'Configurable', 'Manager'], ['Employee', 'Closure', 'Configurable', 'Manager'],
           ['Promotional', 'Invoice', 'Variable', 'Manager']] },
       ] } },
-    { id: 'revenue', label: 'Revenue', spec: {
-      sub: 'Collection-based & accrual-based reports by branch / vertical / course / counsellor / period.',
-      sprintNote: NOTE_S2,
-      blocks: [{ type: 'hbars', title: 'Revenue by vertical', rows: [], empty: 'Revenue reports fill after first collections' }] } },
-    { id: 'refunds', label: 'Refunds', spec: {
-      sub: 'Refund request → approval workflow, partial refunds, refund mode & accounting impact.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Refund requests', ['Student', 'Amount', 'Type', 'Mode', 'Approver', 'Status'], 'No refund requests yet')] } },
-    { id: 'reports', label: 'Collection Reports', spec: {
-      sub: 'Daily, monthly, branch / vertical / course / counsellor / mode-wise. Tally export.',
-      blocks: [
-        { type: 'table', title: 'Report shortcuts', cols: ['Report', 'Range', 'Format'], rows: [
-          ['Daily collection', 'Today', { b: ['Excel / PDF', 'b-green'] }],
-          ['Monthly revenue', 'Month', { b: ['Excel / PDF', 'b-green'] }],
-          ['Due report', 'All', { b: ['Excel', 'b-green'] }],
-          ['Back-office report', 'MTD', { b: ['Excel', 'b-green'] }],
-          ['Refund report', 'MTD', { b: ['Excel', 'b-green'] }],
-          ['Mode-wise / Counsellor-wise', 'Custom', { b: ['Excel', 'b-green'] }]] },
-      ] } },
+    { id: 'revenue', label: 'Revenue', spec: { dyn: 'revenueView',
+      sub: 'The two views of revenue: COLLECTION (money received, net of approved refunds) and ACCRUAL (fee billed / earned = enrolment net fee recognised). Group by branch / vertical / course / counsellor / payment mode / day / month, with DateRange + scope. India ₹.' } },
+    { id: 'refunds', label: 'Refunds', spec: { dyn: 'refundsList',
+      sub: 'Full or PARTIAL refund of a student\'s collected fee, behind an approval hierarchy: a refund is REQUESTED, then APPROVED / REJECTED by a permitted role (a high-value refund needs a senior approver; nobody approves their own). On approval a REF- voucher (PDF) is minted and net collected reduces. Refund mode + reason. Full list treatment; RBAC refund.*.' } },
+    { id: 'reports', label: 'Collection Reports', spec: { dyn: 'collectionReports',
+      sub: 'Collections in a period grouped by daily / monthly / branch / vertical / course / counsellor / payment mode, with totals (net of refunds). Filter + DateRange + full treatment, exportable to Excel / CSV / PDF (values, not ids). TALLY EXPORT: the period\'s collections (Receipt vouchers) and refunds (Payment vouchers) as a Tally-importable XML file.' } },
   ] },
 
   /* ---------------- Calls ---------------- */

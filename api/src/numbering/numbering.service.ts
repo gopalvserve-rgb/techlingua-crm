@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog', 'employee'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'refund', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog', 'employee'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -49,6 +49,9 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   // Phase 3 owns invoicing. The series exists so the numbering screen is complete and
   // Phase 3 needs no migration; NOTHING allocates from it today.
   invoice:   { prefix: 'INV-', reset: 'fy', label: 'GST Tax Invoices' },
+  // Phase 3 Batch 4 — refund vouchers. REF-, reset per Indian FY (like the invoice
+  // series). Allocated ON APPROVAL only (an unapproved request never burns a number).
+  refund:    { prefix: 'REF-', reset: 'fy', label: 'Refund vouchers' },
   // `lead` is CARRIED FORWARD, not invented: the client had configured it in the old
   // `app_setting.numbering_series` JSON, so migration 029 brought it across rather than
   // silently dropping his setting. Nothing allocates a lead number today — leads are

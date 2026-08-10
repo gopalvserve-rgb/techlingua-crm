@@ -57,6 +57,8 @@ import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, Procuremen
 import { InvoicesScreen, FinanceDashboard } from './invoices';
 import { PaymentPlansScreen, FeeDuesScreen } from './paymentplans';
 import { PaymentsScreen } from './payments';
+import { RefundsScreen } from './refunds';
+import { RevenueScreen, CollectionReportsScreen } from './revenue';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
@@ -4753,6 +4755,10 @@ export const DYN: Record<string, () => JSX.Element> = {
   feeDues: FeeDuesScreen,
   // Phase 3 Batch 3 — Razorpay online collection (per vertical)
   onlinePayments: PaymentsScreen,
+  // Phase 3 Batch 4 — refunds (approval hierarchy), revenue (collection vs accrual), collection reports + Tally
+  refundsList: RefundsScreen,
+  revenueView: RevenueScreen,
+  collectionReports: CollectionReportsScreen,
   // Sprint 5 — conversion & money-lite
   quotations: Quotations,
   saleClosure: SaleClosure,
