@@ -230,6 +230,10 @@ const NOT_UI_DRIVEN: Record<string, string> = {
     'WHATSAPP delivery/read receipts and inbound STOP, signature-verified. The caller is Meta.',
   'GET /webhooks/health':
     'A machine health probe for the capture endpoints — deliberately answerable without a session.',
+  'POST /webhooks/razorpay':
+    'THE RAZORPAY PAYMENT WEBHOOK (Phase 3 Batch 3). Razorpay POSTs payment.captured / payment.failed / payment_link.paid, signed with the vertical\'s webhook secret (HMAC-SHA256 over the raw body). The caller is Razorpay, not this SPA — the client pastes the URL once per vertical account in Razorpay > Settings > Webhooks.',
+  'GET /webhooks/razorpay':
+    'A machine health probe for the Razorpay webhook — answerable without a session, so an integrator can confirm the endpoint before wiring the webhook.',
   'POST /public-api/leads':
     'THE PUBLIC KEY-AUTHED CREATE-LEAD API. The caller is another internal system holding an API key (Authorization: Bearer / X-API-Key), not this SPA — it is @Public and guarded by ApiKeyGuard. Documented in Administration > API.',
   'GET /public-api/leads':

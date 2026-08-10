@@ -286,15 +286,17 @@ describe('the migration is idempotent-shaped', () => {
     expect(minors.filter((m) => !/BIGINT/i.test(m))).toEqual([]);
   });
 
-  it('the PHASE-2 and PHASE-3 seams exist and are nullable (nothing writes them yet)', () => {
+  it('the PHASE-2 and PHASE-3 seams exist and are nullable', () => {
     for (const seam of ['student_profile_id', 'batch_id', 'gateway', 'gateway_order_id', 'gateway_payment_id']) {
       const ok = new RegExp(`${seam}\\s+\\w+.*NULL`, 'i').test(sql);
       expect({ seam, declaredNullable: ok }).toEqual({ seam, declaredNullable: true });
     }
-    // and NOTHING in the Sprint-5 source writes them — a half-populated seam is a
-    // migration nobody planned.
+    // student_profile_id / batch_id remain untouched (Phase-2 seams). The gateway_* seam
+    // is NO LONGER dormant: Phase-3 Batch-3 (Razorpay) writes it from the VERIFIED webhook
+    // capture path (fee.service collect, opts.allowGateway) — that is the seam being filled
+    // exactly as planned, not a half-populated column nobody meant to write.
     const src = sourceOf();
-    for (const seam of ['student_profile_id', 'batch_id', 'gateway_payment_id']) {
+    for (const seam of ['student_profile_id', 'batch_id']) {
       const written = new RegExp(`(INSERT|UPDATE)[\\s\\S]{0,400}${seam}`, 'i').test(src);
       expect({ seam, writtenInPhase1: written }).toEqual({ seam, writtenInPhase1: false });
     }

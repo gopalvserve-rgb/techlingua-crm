@@ -50,6 +50,14 @@ export const MODE_LABELS: Record<string, string> = {
  *  and a rumour. Cash and card-at-desk legitimately have none. */
 const REFERENCE_REQUIRED = ['cheque', 'upi', 'online'];
 
+/**
+ * COLLECT OPTIONS — the seam the Razorpay webhook uses to reach the ONE collect path.
+ * `allowGateway` lets the (verified) webhook stamp the gateway refs a human may not;
+ * `system` skips the HTTP record-scope check (the webhook resolved the enrolment from
+ * the payment row it created, so it is trusted). Neither is reachable from the controller.
+ */
+export interface CollectOptions { allowGateway?: boolean; system?: boolean }
+
 @Injectable()
 export class FeeService {
   constructor(
@@ -230,7 +238,7 @@ export class FeeService {
    * over-collection check cannot be raced. Everything else here is refusing bad input
    * with a sentence a front-desk clerk can act on.
    */
-  async collect(dto: any, me: { id: number }, scope: ResolvedScope) {
+  async collect(dto: any, me: { id: number }, scope: ResolvedScope, opts: CollectOptions = {}) {
     const enrolmentId = Number(dto?.enrolment_id);
     if (!enrolmentId) throw new BadRequestException('Choose the enrolment this payment is against.');
 
@@ -250,18 +258,21 @@ export class FeeService {
     if (REFERENCE_REQUIRED.includes(mode) && !reference) {
       throw new BadRequestException(`A ${MODE_LABELS[mode]} payment needs a reference (UTR / cheque number) — without it the receipt cannot be reconciled.`);
     }
-    // ONLINE means "reconciled by hand". Phase 3 is what makes it a gateway capture, and
-    // this refusal is what stops a clerk believing otherwise.
-    if (dto?.gateway || dto?.gateway_payment_id) {
-      throw new BadRequestException('Online payment capture (Razorpay) arrives in Phase 3. Record the payment manually with its reference for now.');
+    // ONLINE gateway capture (Razorpay) is Phase-3 Batch-3. A HUMAN posting to /fees/collect
+    // may NOT stamp gateway refs by hand — those are set ONLY by the verified webhook path
+    // (opts.allowGateway), so a receipt that claims "Razorpay" really came from Razorpay.
+    if (!opts.allowGateway && (dto?.gateway || dto?.gateway_payment_id)) {
+      throw new BadRequestException('Online payment capture (Razorpay) is recorded automatically by the payment webhook — it cannot be entered by hand here. Record a manual online transfer with its UTR reference instead.');
     }
     const receivedAt = dto?.received_at ? new Date(String(dto.received_at)) : new Date();
     if (Number.isNaN(receivedAt.getTime())) throw new BadRequestException('The received date is not a date.');
     if (receivedAt.getTime() > Date.now() + 60_000) throw new BadRequestException('A payment cannot be received in the future.');
 
-    // scope-check the enrolment BEFORE we lock anything
+    // scope-check the enrolment BEFORE we lock anything. The webhook capture path
+    // (opts.system) is TRUSTED — it already resolved the enrolment from the payment row it
+    // created — so it is not bound by an HTTP caller's record scope.
     const eParams: unknown[] = [enrolmentId];
-    const ew = this.resolver.buildScopeWhere(scope, {
+    const ew = opts.system ? '1=1' : this.resolver.buildScopeWhere(scope, {
       owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
     }, eParams);
@@ -310,12 +321,17 @@ export class FeeService {
       );
       const r = await c.query<{ id: string }>(
         `INSERT INTO fee_receipt (org_id, receipt_no, enrolment_id, lead_id, branch_id, vertical_id,
-                                  amount_minor, mode, reference, received_at, received_by, note)
+                                  amount_minor, mode, reference, received_at, received_by, note,
+                                  gateway, gateway_order_id, gateway_payment_id)
          VALUES ($1::bigint, $2::varchar, $3::bigint, $4::bigint, $5::bigint, $6::bigint,
-                 $7::bigint, $8::varchar, $9, $10::timestamptz, $11::bigint, $12)
+                 $7::bigint, $8::varchar, $9, $10::timestamptz, $11::bigint, $12,
+                 $13, $14, $15)
          RETURNING id`,
         [orgId, receiptNo, enrolmentId, e.lead_id, e.branch_id, e.vertical_id,
-          amount_minor, mode, reference, receivedAt.toISOString(), me.id, dto?.note ?? null],
+          amount_minor, mode, reference, receivedAt.toISOString(), me.id, dto?.note ?? null,
+          opts.allowGateway ? (dto?.gateway ?? null) : null,
+          opts.allowGateway ? (dto?.gateway_order_id ?? null) : null,
+          opts.allowGateway ? (dto?.gateway_payment_id ?? null) : null],
       );
       await c.query(
         `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
@@ -330,6 +346,7 @@ export class FeeService {
       }
       return {
         id: Number(r.rows[0].id), receipt_no: receiptNo,
+        lead_id: Number(e.lead_id),
         paid_minor: paid + amount_minor,
         balance_minor: balance - amount_minor,
         fully_paid: balance - amount_minor === 0,

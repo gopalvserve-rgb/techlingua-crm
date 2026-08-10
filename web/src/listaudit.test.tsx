@@ -77,6 +77,8 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'InvoicesScreen', file: 'invoices.tsx', req: FULL },
   // ---- Finance · Payment Plans + Fee Dues (Phase 3 Batch 2) ----
   { name: 'PaymentPlansScreen', file: 'paymentplans.tsx', req: FULL },
+  // ---- Finance · Online Payments (Phase 3 Batch 3 — Razorpay) ----
+  { name: 'PaymentsScreen', file: 'payments.tsx', req: FULL },
   // FeeDues is a DERIVED, read-only ageing VIEW — a "due" is cleared by collecting the
   // payment, never deleted — so it carries every control EXCEPT bulk-delete (declared).
   { name: 'FeeDuesScreen', file: 'paymentplans.tsx', req: NO_BULK },

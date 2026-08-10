@@ -56,6 +56,7 @@ import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './le
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { InvoicesScreen, FinanceDashboard } from './invoices';
 import { PaymentPlansScreen, FeeDuesScreen } from './paymentplans';
+import { PaymentsScreen } from './payments';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
@@ -4750,6 +4751,8 @@ export const DYN: Record<string, () => JSX.Element> = {
   // Phase 3 Batch 2 — payment plans + fee dues & ageing + auto reminders
   paymentPlans: PaymentPlansScreen,
   feeDues: FeeDuesScreen,
+  // Phase 3 Batch 3 — Razorpay online collection (per vertical)
+  onlinePayments: PaymentsScreen,
   // Sprint 5 — conversion & money-lite
   quotations: Quotations,
   saleClosure: SaleClosure,

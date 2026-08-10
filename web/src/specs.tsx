@@ -267,7 +267,9 @@ export const APP: ModuleItem[] = [
     // payments, receipt PDF. Razorpay capture, GST invoices, dues/ageing and refunds are
     // Phase 3 and the screen says so on its face rather than implying otherwise.
     { id: 'collection', label: 'Fee Collection', spec: { dyn: 'feeCollection',
-      sub: 'Cash, UPI, Card, Cheque, Online (recorded by hand). Partial payments. Auto receipts + PDF. Razorpay capture is Phase 3.' } },
+      sub: 'Cash, UPI, Card, Cheque, Online (recorded by hand). Partial payments. Auto receipts + PDF. Online Razorpay capture is on the Online Payments screen.' } },
+    { id: 'onlinepay', label: 'Online Payments', spec: { dyn: 'onlinePayments',
+      sub: 'Razorpay online collection PER VERTICAL. Mint a payment link for a fee due / installment (amount in paise, partial allowed) using that enrolment\'s vertical\'s Razorpay key. On payment the webhook (HMAC-verified, idempotent) captures it, records the fee collection (oldest-due first) and auto-generates the receipt + PDF. A vertical with no key degrades to a clean message until the client enters it in Settings. Full list treatment; RBAC payment.*.' } },
     { id: 'plans', label: 'Payment Plans', spec: { dyn: 'paymentPlans',
       sub: 'Installment plans on an enrolment — Full / Installment / EMI / Custom. Generates a due-dated schedule that sums EXACTLY to the net fee (₹ paise). Collections apply oldest-due first, updating each installment\'s paid / outstanding / status. Full list treatment.' } },
     { id: 'dues', label: 'Fee Dues', spec: { dyn: 'feeDues',

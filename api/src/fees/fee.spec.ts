@@ -125,10 +125,10 @@ describe('what the desk may and may not record', () => {
     }
   });
 
-  it('REFUSES a gateway payment — Razorpay capture is PHASE 3 and says so', async () => {
+  it('REFUSES hand-entered gateway refs — Razorpay capture only comes from the verified webhook', async () => {
     const { svc } = feeSvc({ ...ENR });
     await expect(svc.collect({ enrolment_id: 1, amount: '100', mode: 'online', reference: 'X', gateway: 'razorpay' }, { id: 3 }, {} as never))
-      .rejects.toThrow(/Phase 3/);
+      .rejects.toThrow(/recorded automatically by the payment webhook/);
   });
 
   it('refuses a payment received in the future', async () => {
