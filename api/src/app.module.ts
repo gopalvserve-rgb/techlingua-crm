@@ -29,6 +29,7 @@ import { NumberingModule } from './numbering/numbering.module';
 import { QuotationsModule } from './quotations/quotations.module';
 import { EnrolmentsModule } from './enrolments/enrolments.module';
 import { FeesModule } from './fees/fees.module';
+import { InvoicesModule } from './invoices/invoices.module';
 import { PerformanceModule } from './performance/performance.module';
 import { ReportsModule } from './reports/reports.module';
 import { WorkspaceModule } from './workspace/workspace.module';
@@ -85,6 +86,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     QuotationsModule,   // line items, discounts, tax shown (NOT GST — Phase 3), PDF, send, revisions
     EnrolmentsModule,   // sale closure + the OPTIONAL per-step approval queue (default OFF)
     FeesModule,         // LITE fee receipt + collection entry (Razorpay capture = Phase 3)
+    InvoicesModule,     // Phase 3 Batch 1 — GST tax invoices (CGST/SGST vs IGST, HSN, place of supply, FY numbering, PDF)
     PerformanceModule,  // monthly targets + counsellor performance, scoped by the ScopeResolver
     // Sprint 6 — reports, workspace, hardening (closes Phase 1)
     ReportsModule,      // the Report Builder + standard reports + exports + scheduled delivery

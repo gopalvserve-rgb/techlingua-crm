@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { FinanceSettingsController } from './finance-settings.controller';
 import { FinanceSettingsService } from './finance-settings.service';
+import { FinanceDashboardController } from './finance-dashboard.controller';
+import { FinanceDashboardService } from './finance-dashboard.service';
 
 /**
  * FINANCE — the discount/scholarship/capping-limit settings and the enforcer. The service
@@ -11,8 +13,8 @@ import { FinanceSettingsService } from './finance-settings.service';
  */
 @Module({
   imports: [DatabaseModule],
-  controllers: [FinanceSettingsController],
-  providers: [FinanceSettingsService],
-  exports: [FinanceSettingsService],
+  controllers: [FinanceSettingsController, FinanceDashboardController],
+  providers: [FinanceSettingsService, FinanceDashboardService],
+  exports: [FinanceSettingsService, FinanceDashboardService],
 })
 export class FinanceModule {}

@@ -244,7 +244,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   'admin.branches': { title: 'Add Branch', fields: [
     F('Branch Name', 'text', 1), F('Branch Code', 'text', 1, 0, 'used in IDs / invoice #'), F('Branch Type', 'select', 0, ['Company Branch', 'Franchise Branch'], 'Franchise → links to Franchise module'), F('Address', 'textarea'),
     F('State', 'select', 0, 0, 'master', 'states'), F('City', 'select', 0, 0, 'filtered by State', 'cities'), F('Contact Number', 'tel'), F('Branch Email', 'email'),
-    F('Branch Head', 'select', 0, 0, 'Employee master', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Branch Head', 'select', 0, 0, 'Employee master', 'users'),
+    F('Legal Name', 'text', 0, 0, 'registered name on the GST tax invoice'),
+    F('GSTIN', 'text', 0, 0, '15-char GSTIN of this branch (seller)'),
+    F('PAN', 'text', 0, 0, 'branch PAN'),
+    F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.verticals': { title: 'Add Vertical', fields: [
     F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.users': { title: 'Add User', fields: [
@@ -462,6 +466,9 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       contact_number: vals['Contact Number'] || undefined,
       email: vals['Branch Email'] || undefined,
       head_user_id: ids['Branch Head'] ?? undefined,
+      legal_name: vals['Legal Name'] || undefined,
+      gstin: vals['GSTIN'] ? String(vals['GSTIN']).trim().toUpperCase() : undefined,
+      pan: vals['PAN'] ? String(vals['PAN']).trim().toUpperCase() : undefined,
       // QA-10 sweep: the Status select on the Add form must be honoured on create
       is_active: vals['Status'] !== 'Inactive',
     });

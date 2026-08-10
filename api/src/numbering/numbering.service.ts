@@ -48,7 +48,7 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   receipt:   { prefix: 'RCP-', reset: 'yearly', label: 'Fee receipts' },
   // Phase 3 owns invoicing. The series exists so the numbering screen is complete and
   // Phase 3 needs no migration; NOTHING allocates from it today.
-  invoice:   { prefix: 'INV-', reset: 'yearly', label: 'Invoices (Phase 3)' },
+  invoice:   { prefix: 'INV-', reset: 'fy', label: 'GST Tax Invoices' },
   // `lead` is CARRIED FORWARD, not invented: the client had configured it in the old
   // `app_setting.numbering_series` JSON, so migration 029 brought it across rather than
   // silently dropping his setting. Nothing allocates a lead number today — leads are
@@ -89,6 +89,13 @@ export interface SeriesRow {
 export function periodToken(reset: string, at: Date): string {
   if (reset === 'yearly') return String(at.getUTCFullYear());
   if (reset === 'monthly') return `${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
+  // Indian FINANCIAL YEAR (Apr–Mar). Token like "2026-27" so a GST invoice serial
+  // reads its own year and restarts each 1 April. (getUTCMonth: 0=Jan, 3=Apr.)
+  if (reset === 'fy') {
+    const y = at.getUTCFullYear();
+    const startYear = at.getUTCMonth() >= 3 ? y : y - 1;
+    return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+  }
   return '';
 }
 
@@ -235,7 +242,7 @@ export class NumberingService {
     const kind = String(dto?.kind ?? '');
     if (!KIND_DEFAULTS[kind]) throw new BadRequestException(`Unknown numbering series "${kind}"`);
     const reset = String(dto?.reset_period ?? 'none');
-    if (!['none', 'yearly', 'monthly'].includes(reset)) throw new BadRequestException('Reset must be none, yearly or monthly');
+    if (!['none', 'yearly', 'monthly', 'fy'].includes(reset)) throw new BadRequestException('Reset must be none, yearly, monthly or fy (Indian financial year)');
     const next = Number(dto?.next_number ?? 1);
     if (!Number.isInteger(next) || next < 1) throw new BadRequestException('Next number must be a whole number of 1 or more');
     const padding = Number(dto?.padding ?? 4);

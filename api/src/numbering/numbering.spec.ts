@@ -126,7 +126,7 @@ describe('admin CRUD', () => {
     const { db } = fakeDb({ 'FROM organisation': [{ id: 1 }] });
     const svc = new NumberingService(db);
     await expect(svc.save({ kind: 'nope' }, 1)).rejects.toThrow(/Unknown numbering series/);
-    await expect(svc.save({ kind: 'quotation', reset_period: 'daily' }, 1)).rejects.toThrow(/none, yearly or monthly/);
+    await expect(svc.save({ kind: 'quotation', reset_period: 'daily' }, 1)).rejects.toThrow(/none, yearly, monthly or fy/);
     await expect(svc.save({ kind: 'quotation', next_number: 0 }, 1)).rejects.toThrow(/1 or more/);
     await expect(svc.save({ kind: 'quotation', next_number: 1, padding: 99 }, 1)).rejects.toThrow(/between 0 and 12/);
   });

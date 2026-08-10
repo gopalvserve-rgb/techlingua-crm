@@ -210,3 +210,52 @@ export function computeTotals(lines: LineComputed[]): Totals {
   safe(t.total_minor, 'quotation total');
   return t;
 }
+
+/* -------------------------------------------------------------------------- */
+/*  AMOUNT IN WORDS — Indian numbering (crore / lakh / thousand), for the GST   */
+/*  tax invoice's mandatory "amount in words" line. Pure + unit-tested.         */
+/* -------------------------------------------------------------------------- */
+
+const WORDS_ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+  'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+const WORDS_TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+function twoDigitWords(n: number): string {
+  return n < 20 ? WORDS_ONES[n] : `${WORDS_TENS[Math.floor(n / 10)]}${n % 10 ? ' ' + WORDS_ONES[n % 10] : ''}`;
+}
+function threeDigitWords(n: number): string {
+  return n >= 100
+    ? `${WORDS_ONES[Math.floor(n / 100)]} Hundred${n % 100 ? ' ' + twoDigitWords(n % 100) : ''}`
+    : twoDigitWords(n);
+}
+
+/** Whole-number -> Indian words (Crore/Lakh/Thousand grouping). `0` -> "Zero". */
+export function integerToIndianWords(num: number): string {
+  let n = Math.abs(Math.trunc(num));
+  if (n === 0) return 'Zero';
+  const crore = Math.floor(n / 10000000); n %= 10000000;
+  const lakh = Math.floor(n / 100000); n %= 100000;
+  const thousand = Math.floor(n / 1000); n %= 1000;
+  let out = '';
+  // >99 crore recurses so arbitrarily large figures still read correctly.
+  if (crore) out += `${integerToIndianWords(crore)} Crore `;
+  if (lakh) out += `${twoDigitWords(lakh)} Lakh `;
+  if (thousand) out += `${twoDigitWords(thousand)} Thousand `;
+  if (n) out += `${threeDigitWords(n)} `;
+  return out.trim();
+}
+
+/**
+ * Paise -> "Rupees … and … Paise Only" in Indian words — the line a GST tax invoice
+ * must carry. Negative amounts (a credit) are prefixed "Minus".
+ */
+export function amountInWordsINR(minor: number): string {
+  const neg = minor < 0;
+  const a = Math.abs(Math.trunc(minor));
+  const rupees = Math.floor(a / 100);
+  const paise = a % 100;
+  let out = `Rupees ${integerToIndianWords(rupees)}`;
+  if (paise) out += ` and ${integerToIndianWords(paise)} Paise`;
+  out += ' Only';
+  return neg ? `Minus ${out}` : out;
+}

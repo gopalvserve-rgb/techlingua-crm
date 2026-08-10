@@ -259,22 +259,10 @@ export const APP: ModuleItem[] = [
 
   /* ---------------- Finance & Collections ---------------- */
   { id: 'finance', label: 'Finance & Collections', icon: 'finance', subs: [
-    { id: 'dashboard', label: 'Finance Dashboard', spec: {
-      sub: 'GST invoicing · Razorpay · branch & vertical-wise revenue · INR',
-      sprintNote: 'Lite fee collection is live in Phase 1; full accounts (GST invoicing, Razorpay capture, Tally export) land in Phase 3.',
-      blocks: [
-        { type: 'kpis', cols: 5, items: [
-          kpi('Total Collected (MTD)', '—', 'rupee'), kpi('Today', '—', 'rupee'),
-          kpi('Pending Dues', '—', 'clock'), kpi('Refunds', '—', 'refresh'), kpi('Back-office', '—', 'users')] },
-        { type: 'row2', cols: '1.4fr 1fr', items: [
-          { type: 'hbars', title: 'Revenue by vertical', rows: [], empty: 'Revenue appears with the first collections' },
-          { type: 'donut', title: 'Payment modes', center: '—', slices: [], empty: 'No collections yet' }] },
-        emptyTable('Recent collections', ['Invoice', 'Student', 'Course', 'Amount', 'Mode', 'Branch', 'Status'], 'No collections yet'),
-      ] } },
-    { id: 'invoices', label: 'Invoices', spec: {
-      sub: 'Auto GST invoices, separate numbering per branch & vertical, tax & proforma, PDF + email/WhatsApp.',
-      actions: [['plus', 'New invoice', 'primary']], sprintNote: NOTE_S2,
-      blocks: [emptyTable('Invoices', ['Invoice #', 'Student', 'Course', 'Amount', 'GST', 'Type', 'Status'], 'No invoices yet')] } },
+    { id: 'dashboard', label: 'Finance Dashboard', spec: { dyn: 'financeDashboard',
+      sub: 'REAL ₹ KPIs from fees, invoices & enrolments — total invoiced, collected, outstanding dues, GST (CGST/SGST/IGST), collection by branch / vertical / course / mode, recent receipts & top dues. Scope + DateRange honoured. India-formatted (₹).' } },
+    { id: 'invoices', label: 'Invoices', spec: { dyn: 'invoicesList',
+      sub: 'GST tax invoices raised from an enrolment (or ad-hoc): seller GSTIN + state, buyer GSTIN + place of supply, HSN/SAC, CGST+SGST (intra-state) or IGST (inter-state), round-off, amount in words, branded PDF. Per-branch & per-vertical FY numbering. Issue / cancel. Full list treatment.' } },
     // Sprint 5 — LITE fee collection is live: a receipt + a collection entry, partial
     // payments, receipt PDF. Razorpay capture, GST invoices, dues/ageing and refunds are
     // Phase 3 and the screen says so on its face rather than implying otherwise.

@@ -26,6 +26,10 @@ export interface BranchDto {
   contact_number?: string | null;
   email?: string | null;
   head_user_id?: number | null;
+  /** Phase 3 — the seller identity on a GST tax invoice. */
+  legal_name?: string | null;
+  gstin?: string | null;
+  pan?: string | null;
   /** QA-10 sweep: the Add Branch form has a Status select — honour it on create. */
   is_active?: boolean;
 }
@@ -133,12 +137,14 @@ export class HierarchyService {
     if (!dto?.name || !dto?.code) throw new BadRequestException('name and code are required');
     const rows = await this.db.query(
       `INSERT INTO branch (org_id, name, code, state_id, city_id, address,
-                           branch_type, contact_number, email, head_user_id, is_active, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11, TRUE),$12) RETURNING *`,
+                           branch_type, contact_number, email, head_user_id, is_active,
+                           legal_name, gstin, pan, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11, TRUE),$12,$13,$14,$15) RETURNING *`,
       [await this.orgId(), dto.name.trim(), dto.code.trim().toUpperCase(),
         dto.state_id ?? null, dto.city_id ?? null, dto.address ?? null,
         HierarchyService.branchType(dto.branch_type), dto.contact_number ?? null,
-        dto.email ?? null, dto.head_user_id ?? null, dto.is_active ?? null, actorId],
+        dto.email ?? null, dto.head_user_id ?? null, dto.is_active ?? null,
+        dto.legal_name ?? null, dto.gstin ?? null, dto.pan ?? null, actorId],
     );
     return rows[0];
   }
@@ -150,6 +156,7 @@ export class HierarchyService {
     return this.genericUpdate('branch', id, clean, [
       'name', 'code', 'state_id', 'city_id', 'address',
       'branch_type', 'contact_number', 'email', 'head_user_id', 'is_active',
+      'legal_name', 'gstin', 'pan',
     ]);
   }
 

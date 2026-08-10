@@ -73,6 +73,8 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'Followups', file: 'dyn.tsx', req: LOG },
   { name: 'Audit', file: 'dyn.tsx', req: LOG },
   { name: 'ErrorLogs', file: 'dyn.tsx', req: LOG },
+  // ---- Finance · GST Invoices (Phase 3) ----
+  { name: 'InvoicesScreen', file: 'invoices.tsx', req: FULL },
   // ---- ERP · Operations ----
   { name: 'CatalogScreen', file: 'operations.tsx', req: FULL },
   { name: 'VendorsScreen', file: 'operations.tsx', req: FULL },

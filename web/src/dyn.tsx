@@ -54,6 +54,7 @@ import { FinanceSettings } from './financesettings';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
+import { InvoicesScreen, FinanceDashboard } from './invoices';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
@@ -1825,6 +1826,7 @@ function Branches() {
               'State': edit.state_name ?? '', 'City': edit.city_name ?? '',
               'Contact Number': edit.contact_number ?? '', 'Branch Email': edit.email ?? '',
               'Branch Head': edit.head_name ?? '',
+              'Legal Name': edit.legal_name ?? '', 'GSTIN': edit.gstin ?? '', 'PAN': edit.pan ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
             initialIds: {
@@ -1843,6 +1845,9 @@ function Branches() {
                 contact_number: vals['Contact Number'] || null,
                 email: vals['Branch Email'] || null,
                 head_user_id: ids['Branch Head'] ?? null,
+                legal_name: vals['Legal Name'] || null,
+                gstin: vals['GSTIN'] ? String(vals['GSTIN']).trim().toUpperCase() : null,
+                pan: vals['PAN'] ? String(vals['PAN']).trim().toUpperCase() : null,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Branch updated';
@@ -4738,6 +4743,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   bulkWhatsApp: BulkWhatsApp,
   settings: Settings,
   financeSettings: FinanceSettings,
+  // Phase 3 Batch 1 — GST tax invoices + finance dashboard
+  invoicesList: InvoicesScreen,
+  financeDashboard: FinanceDashboard,
   // Sprint 5 — conversion & money-lite
   quotations: Quotations,
   saleClosure: SaleClosure,
