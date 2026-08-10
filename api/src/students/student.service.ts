@@ -5,6 +5,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { assertDateRange, requireDateString } from '../common/date.util';
 import { normalizePhone } from '../common/phone.util';
 import { NumberingService } from '../numbering/numbering.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 
 /**
  * STUDENT — the PHASE-2 student profile. A student is born TWO ways:
@@ -46,6 +47,8 @@ export class StudentService {
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
     private readonly numbering: NumberingService,
+    /** Notification Events — fires `lead_converted` + `enrollment_created`. Optional. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -749,6 +752,9 @@ export class StudentService {
         await this.activity(c, leadId, me.id, `Converted to student ${studentNo}`);
         return { id, student_no: studentNo, enrollment_no: enrollmentNo };
       });
+      // Notification Events — the lead just became a student (with its enrolment).
+      await this.notifEvents?.safeFire('lead_converted', { lead_id: leadId });
+      await this.notifEvents?.safeFire('enrollment_created', { lead_id: leadId, vertical_id: Number(lead.vertical_id) });
       return { ...out, already: false, lead_id: leadId };
     } catch (e) {
       if ((e as { code?: string })?.code === '23505' && String((e as Error).message).includes('uq_student_lead')) {

@@ -13,6 +13,7 @@ import {
 import { LeadMergeService } from './merge.service';
 import { JourneyService } from '../journeys/journey.service';
 import { SmsTemplateService } from '../smstemplates/sms-template.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { MERGEABLE_FIELDS } from './merge.util';
 import { toDateString } from '../common/date.util';
 
@@ -111,6 +112,13 @@ export class LeadIngestionService {
      * in-memory test double can omit it.
      */
     private readonly smsAuto?: SmsTemplateService,
+    /**
+     * Client request (Aug 2026) — the Notification Events layer. Hooked in the SAME one
+     * place: a new lead from ANY channel fires the `new_lead_created` event, which fans the
+     * mapped template out on each admin-enabled channel over the existing send path.
+     * Optional so the in-memory test double can omit it.
+     */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   /**
@@ -133,6 +141,9 @@ export class LeadIngestionService {
       // The DLT SMS creation auto-send — idempotent, opt-out-honoured, degrades
       // cleanly to a logged 'not_configured' when Nimbus has no credentials yet.
       await this.smsAuto?.safeAutoSend('lead_created', Number(id));
+      // Notification Events — the curated `New Lead Created` event. Degrades cleanly to a
+      // logged not-configured attempt when a channel has no credentials yet.
+      await this.notifEvents?.safeFire('new_lead_created', { lead_id: Number(id) });
     }
   }
 

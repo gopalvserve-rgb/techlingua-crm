@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
 import { JourneyService } from '../journeys/journey.service';
+import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { IngestPayload } from '../ingestion/ingestion.types';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
@@ -172,6 +173,8 @@ export class LeadsService {
     private readonly sla: SlaService,
     /** Sprint 4 — a stage move is the second-most-used journey trigger after "new lead". */
     private readonly journeys?: JourneyService,
+    /** Notification Events — fires `lead_assigned` when a lead's owner (counsellor) is set. */
+    private readonly notifEvents?: NotificationEventService,
   ) {}
 
   /** Hard cap on the size of ONE bulk action / select-all, so a runaway selection cannot
@@ -479,7 +482,11 @@ export class LeadsService {
     if (!Number.isInteger(Number(ownerId)) || Number(ownerId) <= 0) {
       throw new BadRequestException('owner_id (the user to reassign the lead to) is required');
     }
-    return this.update(id, { owner_id: Number(ownerId) }, actorId, scope);
+    const out = await this.update(id, { owner_id: Number(ownerId) }, actorId, scope);
+    // Notification Events — a counsellor was assigned. dedupe on owner so re-assigning to a
+    // DIFFERENT counsellor fires again, but a no-op re-save does not.
+    await this.notifEvents?.safeFire('lead_assigned', { lead_id: Number(id), dedupe: `${id}:${ownerId}` });
+    return out;
   }
 
   /**

@@ -50,6 +50,7 @@ import { AiModule } from './ai/ai.module';
 import { OperationsModule } from './operations/operations.module';
 import { HrModule } from './hr/hr.module';
 import { SupportExtrasModule } from './supportextras/supportextras.module';
+import { NotificationEventsModule } from './notificationevents/notification-events.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -121,6 +122,9 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     HrModule,        // ERP Batch 6 — Basic HR: employee directory, staff attendance, leaves
     // ERP Batch 7 — Support extras: Training Videos + Release Notes (org-wide staff content under Help & Support)
     SupportExtrasModule,
+    // Client request — Notification Events: 37-event catalog, per-channel enable + template mapping,
+    // fired over the existing notifier/messaging send path.
+    NotificationEventsModule,
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

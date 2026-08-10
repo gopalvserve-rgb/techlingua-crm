@@ -226,6 +226,8 @@ export const APP: ModuleItem[] = [
       sub: 'Dynamic templates per channel — WhatsApp (Meta template name + params), SMS (sender ID + DLT), Email (subject + HTML) — with merge variables and a live preview.' } },
     { id: 'smstpl', label: 'SMS Templates', spec: { dyn: 'smsTemplates',
       sub: 'DLT-compliant SMS templates scoped by Branch + Vertical — Header (DLT sender), body with {#var#} markers, and the DLT Template ID. Sent through the Nimbus gateway; a matching template auto-sends once on every new lead.' } },
+    { id: 'notifevents', label: 'Notification Events', spec: { dyn: 'notificationEvents',
+      sub: 'A catalog of 37 standard events (Leads, Academics, Fees, Certificates, Calls). For each, enable SMS / Email / WhatsApp and map the template it sends. Fires over the existing channels — opt-out & business hours respected; an unconfigured channel degrades to a logged not-sent attempt.' } },
   ] },
 
   /* ---------------- Students & Academics ---------------- */

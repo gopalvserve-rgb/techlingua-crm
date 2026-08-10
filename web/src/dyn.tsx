@@ -27,6 +27,7 @@ import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
+import { NotificationEvents } from './notifevents';
 import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
 import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelete, BulkBar, downloadObjectsCsv } from './listtools';
@@ -4744,6 +4745,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   templates: Templates,
   smsTemplates: SmsTemplates,
   journeys: Journeys,
+  notificationEvents: NotificationEvents,
   bulkWhatsApp: BulkWhatsApp,
   settings: Settings,
   financeSettings: FinanceSettings,

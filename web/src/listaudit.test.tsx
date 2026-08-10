@@ -112,6 +112,10 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'SupportTickets', file: 'support.tsx', req: NO_BULK },
   { name: 'TrainingVideosScreen', file: 'supportextras.tsx', req: FULL },
   { name: 'ReleaseNotesScreen', file: 'supportextras.tsx', req: FULL },
+  // ---- Engagement · Notification Events (fixed 37-event catalog) ----
+  // A FIXED catalog of standard events — you configure each event's channels, you never
+  // create or delete an event — so it carries every control EXCEPT bulk-delete (declared).
+  { name: 'NotificationEvents', file: 'notifevents.tsx', req: NO_BULK },
   { name: 'AttemptsTab', file: 'crosssell.tsx', req: DERIVED },
   { name: 'CrossSell', file: 'crosssell.tsx', req: DERIVED },
 ];

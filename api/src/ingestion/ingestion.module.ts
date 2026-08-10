@@ -3,6 +3,7 @@ import { ScoringModule } from '../scoring/scoring.module';
 import { SlaModule } from '../sla/sla.module';
 import { JourneysModule } from '../journeys/journeys.module';
 import { SmsTemplatesModule } from '../smstemplates/sms-templates.module';
+import { NotificationEventsModule } from '../notificationevents/notification-events.module';
 import { LeadIngestionService } from './lead-ingestion.service';
 import { LeadMergeService } from './merge.service';
 import { ImportService } from './import.service';
@@ -31,7 +32,7 @@ import { SheetWorker } from './channels/sheet.worker';
   // (LeadIngestionService.afterIngest) rather than in each channel.
   // Sprint 4: and every ingested lead can start an automation journey, hooked in the
   // same one place (LeadIngestionService.afterIngest).
-  imports: [ScoringModule, SlaModule, JourneysModule, SmsTemplatesModule],
+  imports: [ScoringModule, SlaModule, JourneysModule, SmsTemplatesModule, NotificationEventsModule],
   controllers: [ImportController, ChannelController, WebhookController],
   providers: [
     LeadIngestionService, LeadMergeService, ImportService, ImportWorker,
