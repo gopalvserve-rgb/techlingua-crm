@@ -350,7 +350,7 @@ describe('card-links — every meaningful KPI card opens its filtered list (and 
     clickBtn(/Unassigned: 0\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { unassigned: 1 });
   });
 
-  it('QUICK STATS — created-range cards link; won/lost/rate/follow-up cards stay informational', async () => {
+  it('QUICK STATS — every card with a sensible destination links (client UAT Aug 2026); only the rate stays informational', async () => {
     const STATS = { range: { from: '2026-07-01', to: '2026-07-14' }, view: 'admin',
       leads: 12, won: 2, lost: 1, hot: 4, duplicates: 3, followups_done: 5, followups_scheduled: 9, conversion_rate: 17 };
     ROUTES = { '/dashboard/quick-stats': STATS };
@@ -361,15 +361,19 @@ describe('card-links — every meaningful KPI card opens its filtered list (and 
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } });
     fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-07-14' } });
 
-    // exact-count matches (all "created within the selected range")
+    // created-range cards
     clickBtn(/Leads: 12\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { created_from: '2026-07-01', created_to: '2026-07-14' });
     clickBtn(/Hot leads: 4\. /);   expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { temperature: 'hot', created_from: '2026-07-01', created_to: '2026-07-14' });
     clickBtn(/Duplicates: 3\. /);  expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { duplicate: 1, created_from: '2026-07-01', created_to: '2026-07-14' });
 
-    // informational — no matching-count list target, so NOT clickable
-    expect(screen.queryByRole('button', { name: /Conversions/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Lost/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Follow-ups done/ })).toBeNull();
-    expect(screen.getByText('Follow-ups done')).toBeTruthy();      // still shown as a stat
+    // client UAT (Aug 2026): Conversions -> won Leads, Lost -> lost Leads, Follow-ups -> the Follow-ups list
+    clickBtn(/Conversions: 2\. /); expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { won: 1, created_from: '2026-07-01', created_to: '2026-07-14' });
+    clickBtn(/Lost: 1\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { lost: 1, created_from: '2026-07-01', created_to: '2026-07-14' });
+    clickBtn(/Follow-ups done: 5\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { fu_from: '2026-07-01', fu_to: '2026-07-14' });
+    clickBtn(/Follow-ups scheduled: 9\. /); expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { followup: 'next7' });
+
+    // the conversion RATE is informational — no list, so NOT clickable (no button carries '17%')
+    expect(screen.queryByRole('button', { name: /17%/ })).toBeNull();
+    expect(screen.getByText('17%')).toBeTruthy();
   });
 });

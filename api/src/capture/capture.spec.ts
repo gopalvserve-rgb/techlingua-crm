@@ -103,10 +103,29 @@ describe('walk-in — ASSIGN ON ADD, through the ONE ingestion path', () => {
     expect(insertIdx).toBeGreaterThanOrEqual(0);   // the row was written before the rescore
   });
 
-  it('the counsellor is MANDATORY', async () => {
-    const { svc } = build();
-    await expect(svc.createWalkIn({ ...WALKIN, counsellor_id: undefined } as any, 1, scope()))
-      .rejects.toThrow(/counsellor_id is required/);
+  // Client UAT (Aug 2026): Assign Counsellor is now OPTIONAL. Ticking Round-Robin (or leaving
+  // the counsellor blank) hands the lead to the campaign distribution engine instead of forcing
+  // an owner — the walk-in is no longer rejected for a missing counsellor.
+  it('the counsellor is OPTIONAL — round-robin hands the lead to campaign distribution (no forced owner)', async () => {
+    const { svc, ingested } = build();
+    await svc.createWalkIn({ ...WALKIN, counsellor_id: undefined, round_robin: true } as any, 1, scope());
+    expect(ingested).toHaveLength(1);
+    expect(ingested[0].ctx.owner_id).toBeUndefined();   // NOT forced -> distribution (round-robin) decides
+  });
+
+  it('round-robin wins even when a counsellor is picked (no forced owner)', async () => {
+    const { svc, ingested } = build();
+    await svc.createWalkIn({ ...WALKIN, counsellor_id: 3, round_robin: true } as any, 1, scope());
+    expect(ingested[0].ctx.owner_id).toBeUndefined();
+  });
+
+  it('a round-robin walk-in stores the auto-assigned owner on the walk-in row', async () => {
+    // the ingestion service (distribution engine) returns the round-robin assignee as owner_id
+    const { svc, calls } = build({ ingestOutcome: { status: 'created', lead_id: 100, owner_id: 12 } });
+    await svc.createWalkIn({ ...WALKIN, counsellor_id: undefined, round_robin: true } as any, 1, scope());
+    const insert = calls.find((c) => /INSERT INTO walk_in/.test(c.sql))!;
+    // the counsellor_id column ($18 -> index 17) carries the auto-assigned owner (12), not null
+    expect(insert.params[17]).toBe(12);
   });
 
   it('the counsellor must be an ACTIVE user', async () => {

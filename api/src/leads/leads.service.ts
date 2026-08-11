@@ -82,6 +82,8 @@ export interface LeadFilters {
   /** Dashboard card links (Aug 2026): only WON leads (current stage_type = 'won') — the
    *  Conversions cards; and only UNASSIGNED leads (owner_id IS NULL) — the Unassigned card. */
   won?: boolean;
+  /** Quick Stats card link (Aug 2026): only LOST leads (current stage_type = 'lost'). */
+  lost?: boolean;
   unassigned?: boolean;
   /** Sprint 3 — the band must be SORTABLE too. */
   sort?: string;
@@ -236,6 +238,7 @@ export class LeadsService {
     // Dashboard card links (Aug 2026): Conversions -> won (current stage is a 'won' stage,
     // via EXISTS so the COUNT query needs no pipeline_stage join); Unassigned -> no owner.
     if (f.won) where.push(`EXISTS (SELECT 1 FROM pipeline_stage ps WHERE ps.id = l.stage_id AND ps.stage_type = 'won')`);
+    if (f.lost) where.push(`EXISTS (SELECT 1 FROM pipeline_stage ps WHERE ps.id = l.stage_id AND ps.stage_type = 'lost')`);
     if (f.unassigned) where.push('l.owner_id IS NULL');
     if (f.sla_breached) {
       where.push(`EXISTS (SELECT 1 FROM lead_sla s

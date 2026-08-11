@@ -611,16 +611,12 @@ function MyTasks() {
   const [view, setView] = useState<'assigned' | 'reported'>('assigned');
   // SHARED date range on the task DUE date (scheduled_at). Default All time — never hide open tasks.
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
-  // Follow-up date filter (client #3): Missed / Today / Tomorrow / Next 7 / Next 30 / Custom.
-  // "No Followup" is not meaningful on a task list (every row IS a follow-up) — hidden here.
-  const [fu, setFu] = useState<FollowupValue>({});
+  // Follow-up filter REMOVED from the Task module (client UAT Aug 2026) — it belongs on
+  // Leads / Follow-ups, not on My Tasks. The date-range filter on the task due date stays.
   const rq = new URLSearchParams({ view, status: 'pending', limit: '50' });
   if (range.from) rq.set('from', range.from);
   if (range.to) rq.set('to', range.to);
-  if (fu.followup) rq.set('followup', fu.followup);
-  if (fu.fu_from) rq.set('fu_from', fu.fu_from);
-  if (fu.fu_to) rq.set('fu_to', fu.fu_to);
-  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}~${fu.followup ?? ''}~${fu.fu_from ?? ''}~${fu.fu_to ?? ''}`;
+  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
   const list = useFetch<any[]>(withScope(`/follow-ups?${rq.toString()}`, sp), [view, rangeKey, refreshTick, scopeKey]);
   const s = sum.data ?? {};
@@ -638,7 +634,6 @@ function MyTasks() {
         </button>
       </div>
       <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <FollowupFilter value={fu} onChange={setFu} allowNoFollowup={false} idPrefix="mytasks-fu" />
         <DateRange value={range} onChange={setRange} idPrefix="mytasks-dr" />
       </div>
       <Kpis items={[
@@ -723,10 +718,16 @@ function QuickStats() {
         { lab: 'Leads', val: String(s?.leads ?? 0), ic: 'leads',
           onClick: () => go('leads', 'all', { created_from: range.from, created_to: range.to }),
           navLabel: `Leads: ${s?.leads ?? 0}. Open leads created in this range` },
-        // Conversions/Lost count by WON/LOST date (updated_at) — the Leads list filters by
-        // CREATED date, so a range-matched count isn't reproducible; left non-clickable.
-        { lab: 'Conversions', val: String(s?.won ?? 0), ic: 'check' },
-        { lab: 'Lost', val: String(s?.lost ?? 0), ic: 'clock' },
+        // Client UAT (Aug 2026): link EVERY card that has a sensible destination. Conversions ->
+        // won Leads, Lost -> lost Leads (won/lost boolean filters on the Leads list, by current
+        // stage_type). The Leads list filters by CREATED date, so pass the same range — the count
+        // shown here (by WON/LOST activity date) may differ slightly from the filtered list.
+        { lab: 'Conversions', val: String(s?.won ?? 0), ic: 'check',
+          onClick: () => go('leads', 'all', { won: 1, created_from: range.from, created_to: range.to }),
+          navLabel: `Conversions: ${s?.won ?? 0}. Open won Leads` },
+        { lab: 'Lost', val: String(s?.lost ?? 0), ic: 'clock',
+          onClick: () => go('leads', 'all', { lost: 1, created_from: range.from, created_to: range.to }),
+          navLabel: `Lost: ${s?.lost ?? 0}. Open lost Leads` },
         // OBS-S16-05: named, not just 'Conversion rate' — the funnel report shows the
         // SAME number, and Counsellor Performance shows a different one. (Informational — no list.)
         { lab: CONVERSION_LABEL_LEAD_WON, val: s ? `${s.conversion_rate}%` : '—', ic: 'target' },
@@ -736,10 +737,15 @@ function QuickStats() {
         { lab: 'Duplicates', val: String(s?.duplicates ?? 0), ic: 'users',
           onClick: () => go('leads', 'all', { duplicate: 1, created_from: range.from, created_to: range.to }),
           navLabel: `Duplicates: ${s?.duplicates ?? 0}. Open duplicate leads created in this range` },
-        // Follow-ups done/scheduled have no date-ranged Follow-ups list, so no matching-count
-        // destination exists — left non-clickable.
-        { lab: 'Follow-ups done', val: String(s?.followups_done ?? 0), ic: 'check' },
-        { lab: 'Follow-ups scheduled', val: String(s?.followups_scheduled ?? 0), ic: 'cal' },
+        // Follow-ups cards open the Follow-ups list. Done -> the Missed/completed view isn't a
+        // list filter, so both land on the Follow-ups list (which now carries date + multi-select
+        // filters, client UAT Aug 2026); scheduled seeds the "Next 7 Days" window.
+        { lab: 'Follow-ups done', val: String(s?.followups_done ?? 0), ic: 'check',
+          onClick: () => go('leads', 'followups', { fu_from: range.from, fu_to: range.to }),
+          navLabel: `Follow-ups done: ${s?.followups_done ?? 0}. Open the Follow-ups list` },
+        { lab: 'Follow-ups scheduled', val: String(s?.followups_scheduled ?? 0), ic: 'cal',
+          onClick: () => go('leads', 'followups', { followup: 'next7' }),
+          navLabel: `Follow-ups scheduled: ${s?.followups_scheduled ?? 0}. Open upcoming Follow-ups` },
       ]} />
 
       <TargetBars />
@@ -997,7 +1003,7 @@ function readLeadNavFilters(search?: string) {
     owners: nums('owner_ids', 'owner_id'), bands: bands(),
     from: sp.get('created_from') || undefined, to: sp.get('created_to') || undefined,
     followup: sp.get('followup') || undefined, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined,
-    sla: b('sla_breached'), dup: b('duplicate'), redflag: b('red_flagged'), won: b('won'), unassigned: b('unassigned'),
+    sla: b('sla_breached'), dup: b('duplicate'), redflag: b('red_flagged'), won: b('won'), lost: b('lost'), unassigned: b('unassigned'),
     sort: sp.get('sort') || 'recent', q: sp.get('q') || '',
   };
 }
@@ -1038,7 +1044,7 @@ function LeadsAll() {
     // Follow-up date filter (client #3).
     followup?: string; fu_from?: string; fu_to?: string;
     // Client change (Jul 2026) — Duplicates; Aug 2026 dashboard card links — won / unassigned.
-    dup?: boolean; won?: boolean; unassigned?: boolean;
+    dup?: boolean; won?: boolean; lost?: boolean; unassigned?: boolean;
     // Red flag filter (client, Aug 2026).
     redflag?: boolean;
     sort: string; q: string;
@@ -1070,6 +1076,7 @@ function LeadsAll() {
   if (f.dup) params.set('duplicate', '1');
   if (f.redflag) params.set('red_flagged', '1');
   if (f.won) params.set('won', '1');
+  if (f.lost) params.set('lost', '1');
   if (f.unassigned) params.set('unassigned', '1');
   if (f.sort && f.sort !== 'recent') params.set('sort', f.sort);
   if (f.q.trim()) params.set('q', f.q.trim());
@@ -1479,22 +1486,72 @@ function InboxDetail({ lead, openLead, canEditLead, canDeleteLead, del }: { lead
 }
 
 function Followups() {
-  const { openLead, refreshTick, bump } = useScreen();
+  const { openLead, refreshTick, bump, search } = useScreen();
   const { can } = useAuth();
+  const ref = useRef_();
+  const { scope: gScope, params: sp, key: scopeKey } = useScope();
   const canEdit = can('followup.update');
   const canDelete = can('followup.delete');
   const del = useDelete('Follow-up', '/follow-ups', () => bump());
-  const [prio, setPrio] = useState<string>('');
+
+  // FULL multi-select filter treatment (client UAT, Aug 2026) — the Follow-ups list now gets the
+  // same filters as the Leads list: Branch › Vertical › Pipeline › Campaign (strict cascade,
+  // seeded from the global top-bar scope), Owner, Follow-up Type, Disposition, Priority, Status,
+  // a date range on the DUE date, and the follow-up preset window. OR within each filter, AND
+  // across. The array params are ANDed on top of the RBAC scope on the server.
+  const [f, setF] = useState(() => {
+    const u = new URLSearchParams(typeof search === 'string' ? search : (typeof window !== 'undefined' ? window.location.search : ''));
+    return {
+      branches: gScope.branches, verticals: gScope.verticals, pipelines: gScope.pipelines, campaigns: gScope.campaigns,
+      owners: [] as number[], types: [] as number[], dispositions: [] as number[],
+      priorities: [] as string[], statuses: [] as string[],
+      from: u.get('from') || undefined as string | undefined, to: u.get('to') || undefined as string | undefined,
+      followup: u.get('followup') || undefined as string | undefined,
+      fu_from: u.get('fu_from') || undefined as string | undefined, fu_to: u.get('fu_to') || undefined as string | undefined,
+    };
+  });
+  // Cascade prune of the hierarchy selections when a parent changes.
+  const setHier = (patch: Partial<typeof f>) => setF((x) => {
+    const nf = { ...x, ...patch };
+    const vOk = new Set(ref.verticals.filter((v) => !nf.branches.length || nf.branches.includes(Number((v as any).branch_id))).map((v) => Number(v.id)));
+    nf.verticals = nf.verticals.filter((id) => vOk.has(id));
+    const pOk = new Set(ref.pipelines.filter((pp) => !nf.verticals.length || nf.verticals.includes(Number((pp as any).vertical_id))).map((pp) => Number(pp.id)));
+    nf.pipelines = nf.pipelines.filter((id) => pOk.has(id));
+    const cOk = new Set(ref.campaigns.filter((c) => !nf.pipelines.length || nf.pipelines.includes(Number((c as any).pipeline_id))).map((c) => Number(c.id)));
+    nf.campaigns = nf.campaigns.filter((id) => cOk.has(id));
+    return nf;
+  });
+  const vOpts = ref.verticals.filter((v) => !f.branches.length || f.branches.includes(Number((v as any).branch_id)));
+  const pOpts = ref.pipelines.filter((pp) => !f.verticals.length || f.verticals.includes(Number((pp as any).vertical_id)));
+  const cOpts = ref.campaigns.filter((c) => !f.pipelines.length || f.pipelines.includes(Number((c as any).pipeline_id)));
+
+  const q = new URLSearchParams({ limit: '200' });
+  const csv = (k: string, v: number[]) => { if (v.length) q.set(k, v.join(',')); };
+  csv('branch_ids', f.branches); csv('vertical_ids', f.verticals); csv('pipeline_ids', f.pipelines);
+  csv('campaign_ids', f.campaigns); csv('owner_ids', f.owners); csv('type_ids', f.types); csv('disposition_ids', f.dispositions);
+  if (f.priorities.length) q.set('priorities', f.priorities.join(','));
+  if (f.statuses.length) q.set('statuses', f.statuses.join(','));
+  if (f.from) q.set('from', f.from);
+  if (f.to) q.set('to', f.to);
+  if (f.followup) q.set('followup', f.followup);
+  if (f.fu_from) q.set('fu_from', f.fu_from);
+  if (f.fu_to) q.set('fu_to', f.fu_to);
+  const fKey = q.toString();
+
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
-  const list = useFetch<any[]>(`/follow-ups?limit=100${prio ? `&priority=${prio}` : ''}`, [prio, refreshTick]);
+  const list = useFetch<any[]>(withScope(`/follow-ups?${fKey}`, sp), [fKey, refreshTick, scopeKey]);
   const rows = (list.data ?? []).map((fx) => ({ leadId: fx.lead_id, id: Number(fx.id), name: `${fx.lead_name}${fx.lead_deleted ? ' (deleted)' : ''} · ${fmtDT(fx.scheduled_at)}`, row: [
     { node: <span className="nm">{dn(fx.lead_name, fx.lead_deleted)}</span> } as Cell,
     { b: [fx.type_name || 'Follow-up', fx.type_name === 'WhatsApp' ? 'b-green' : 'b-indigo'] } as Cell,
     { node: <PrioSelect id={Number(fx.id)} value={fx.priority} onChanged={bump} disabled={!canEdit} /> } as Cell,
     fx.owner_name || '—',
     { node: <span className="mono" style={fx.status === 'pending' && new Date(fx.scheduled_at) < new Date() ? { color: 'var(--danger)' } : undefined}>{fmtDT(fx.scheduled_at)}</span> } as Cell,
+    { b: [fx.status === 'done' ? 'Done' : fx.status === 'cancelled' ? 'Cancelled' : (fx.status === 'pending' && new Date(fx.scheduled_at) < new Date() ? 'Missed' : 'Pending'),
+        fx.status === 'done' ? 'b-green' : fx.status === 'cancelled' ? 'b-gray' : (fx.status === 'pending' && new Date(fx.scheduled_at) < new Date() ? 'b-rose' : 'b-indigo')] } as Cell,
     fx.disposition_name || (fx.status === 'done' ? 'Done' : '—'),
   ] }));
+  const PRIOS = [{ id: 'high', name: 'High' }, { id: 'medium', name: 'Medium' }, { id: 'low', name: 'Low' }];
+  const STATUSES = [{ id: 'pending', name: 'Pending' }, { id: 'done', name: 'Done' }, { id: 'missed', name: 'Missed' }, { id: 'cancelled', name: 'Cancelled' }];
   return (
     <>
       <Kpis items={[
@@ -1503,19 +1560,37 @@ function Followups() {
         { lab: 'This week', val: String(sum.data?.this_week ?? '0'), ic: 'cal' },
         { lab: 'Done (wk)', val: String(sum.data?.done_week ?? '0'), ic: 'check' },
       ]} />
-      <div className="filters">
-        <div className="fchip"><Ic k="bolt" />Priority
-          <select value={prio} onChange={(e) => setPrio(e.target.value)}>
-            <option value="">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
-          </select>
-        </div>
+      <div className="filters" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <FilterMulti label="Branch" icon="branch" value={f.branches} options={ref.branches}
+          onChange={(v) => setHier({ branches: v })} />
+        <FilterMulti label="Vertical" icon="grid" value={f.verticals} options={vOpts}
+          onChange={(v) => setHier({ verticals: v })} />
+        <FilterMulti label="Pipeline" icon="list" value={f.pipelines} options={pOpts}
+          onChange={(v) => setHier({ pipelines: v })} />
+        <FilterMulti label="Campaign" icon="bolt" value={f.campaigns} options={cOpts}
+          onChange={(v) => setHier({ campaigns: v })} />
+        <FilterMulti label="Owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
+          onChange={(v) => setF((x) => ({ ...x, owners: v }))} />
+        <FilterMulti label="Type" icon="cal" value={f.types} options={ref.followupTypes}
+          onChange={(v) => setF((x) => ({ ...x, types: v }))} />
+        <FilterMulti label="Disposition" icon="check" value={f.dispositions} options={ref.dispositions}
+          onChange={(v) => setF((x) => ({ ...x, dispositions: v }))} />
+        <EnumMulti label="Priority" icon="bolt" value={f.priorities} options={PRIOS}
+          onChange={(v) => setF((x) => ({ ...x, priorities: v }))} />
+        <EnumMulti label="Status" icon="check" value={f.statuses} options={STATUSES}
+          onChange={(v) => setF((x) => ({ ...x, statuses: v }))} />
+        <DateRange value={{ from: f.from, to: f.to }} idPrefix="fu-dr"
+          onChange={(v) => setF((x) => ({ ...x, from: v.from, to: v.to }))} />
+        <FollowupFilter value={{ followup: f.followup, fu_from: f.fu_from, fu_to: f.fu_to }} allowNoFollowup={false}
+          onChange={(v) => setF((x) => ({ ...x, followup: v.followup, fu_from: v.fu_from, fu_to: v.fu_to }))}
+          idPrefix="fu-preset" />
       </div>
-      <TableCard fill title="Upcoming follow-ups" more={<ListActions onExport={() => downloadObjectsCsv('follow-ups.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Disposition', 'Actions']}
+      <TableCard fill title="Follow-ups" more={<ListActions onExport={() => downloadObjectsCsv('follow-ups.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Status', 'Disposition', 'Actions']}
         rows={rows.map((r) => [...r.row, rowActions({
           onView: () => openLead(r.leadId),
           onDelete: canDelete ? () => del.openDelete(r.id, r.name) : undefined,
         })])}
-        empty="No follow-ups scheduled yet"
+        empty="No follow-ups match these filters"
         onRowClick={(i) => openLead(rows[i].leadId)} />
       {del.deleteModal}
     </>

@@ -28,6 +28,9 @@ export interface FormField {
    *  pinned to the top of the user list and selected by default. Scoped per field,
    *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
   self?: boolean;
+  /** Client UAT (Aug 2026) — render this field on the ADD form only, never on Edit (e.g. the
+   *  walk-in Round-Robin checkbox is an assign-on-add decision, meaningless when editing). */
+  addOnly?: boolean;
   /** UAT-R2 #19 — 'today' sets a date/datetime input's `min` to the start of today
    *  (no past dates). Only 'today' is supported today. */
   min?: 'today';
@@ -137,7 +140,10 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     // DEF-S34-02 — these three RENDERED but were never SENT and had no columns (migration 027).
     F('Course Fee', 'number', 0, 0, 'auto-filled from the Course master \u00b7 editable'),
     F('How did you hear about us?', 'select', 0, 0, 'Lead Source master', 'masterSources'),
-    F('Counsellor Assigned', 'select', 1, 0, 'Users \u00b7 owns the lead immediately', 'users'),
+    // Client UAT (Aug 2026): Assign Counsellor is now OPTIONAL. Leave it blank and tick
+    // Round-Robin to auto-assign the lead via the campaign's distribution engine.
+    F('Counsellor Assigned', 'select', 0, 0, 'Users \u00b7 owns the lead immediately (optional)', 'users'),
+    { ...F('Assign via Round-Robin', 'checkbox', 0, 0, 'auto-assign the lead via the campaign round-robin \u2014 counsellor can be left blank'), addOnly: true },
     // ticked by default: a walk-in becoming an assigned lead IS the point of this screen.
     // Untick it to log a visit (a fee query from an existing student) without a lead;
     // tick it later on Edit and it converts through the same LeadIngestionService.
@@ -312,7 +318,7 @@ export function entFromLabel(label: string): string {
   const map: Record<string, string> = {
     'Pipeline (Kanban)': 'Lead', Kanban: 'Lead', Leads: 'Lead', 'All Leads': 'Lead', 'Lead Sources': 'Source',
     'Counsellor Performance': 'Counsellor', 'Message Templates': 'Template', 'Study Material': 'Material',
-    'Student Management': 'Student', 'All Students': 'Student', 'Auto-Assignment': 'Rule', 'Duplicate Rules': 'Rule',
+    'Student Management': 'Student', 'All Students': 'Student', 'Duplicate Rules': 'Rule',
     'SLA & TAT': 'Rule', 'Custom Fields': 'Field', 'Tests & Scores': 'Test', 'Agreements & Renewals': 'Agreement',
     'Targets & Performance': 'Target', 'Branches & Verticals': 'Branch', 'Branch Management': 'Branch',
     'Vertical Management': 'Vertical', 'Pipeline Management': 'Pipeline', Branch: 'Branch', Vertical: 'Vertical',
@@ -367,7 +373,10 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       vertical_id: need(ids['Vertical'], 'Pick a Vertical'),
       campaign_id: need(ids['Campaign'], 'Pick a Campaign (a walk-in becomes a lead, and every lead carries the full path)'),
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
-      counsellor_id: need(ids['Counsellor Assigned'], 'A walk-in must be assigned to a counsellor on add'),
+      // Counsellor OPTIONAL (client UAT, Aug 2026); when Round-Robin is ticked the campaign
+      // distribution engine assigns the owner and the counsellor can be left blank.
+      counsellor_id: ids['Counsellor Assigned'] || undefined,
+      round_robin: vals['Assign via Round-Robin'] === '1',
       visited_at: vals['Date & Time of Visit'] || undefined,
       purpose: vals['Purpose of Visit'] || undefined,
       course_id: ids['Course Interested'],
@@ -1275,7 +1284,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
             </div>
           )}
           <div className="form-grid">
-            {[...spec.fields, ...cfFields].map((f) => {
+            {[...spec.fields, ...cfFields].filter((f) => !(f.addOnly && edit)).map((f) => {
               const t = f.type || 'text';
               const span2 = t === 'textarea' || t === 'table';
               // 'checkbox' renders its own caption next to the box — don't print the hint twice

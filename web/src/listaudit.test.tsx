@@ -70,7 +70,7 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'Branches', file: 'dyn.tsx', req: NO_MULTIFILTER },
   { name: 'StudentsList', file: 'dyn.tsx', req: FULL },
   { name: 'BatchesList', file: 'dyn.tsx', req: NO_BULK },
-  { name: 'Followups', file: 'dyn.tsx', req: LOG },
+  { name: 'Followups', file: 'dyn.tsx', req: NO_BULK }, // client UAT Aug 2026 — now full multi-select filter treatment like Leads
   { name: 'Audit', file: 'dyn.tsx', req: LOG },
   { name: 'ErrorLogs', file: 'dyn.tsx', req: LOG },
   // ---- Finance · GST Invoices (Phase 3) ----

@@ -37,7 +37,7 @@ function parseLeadFilters(q: Record<string, string | string[]>) {
     source_ids: nums(q.source_ids), stage_ids: nums(q.stage_ids), bands: bandsOf(q.bands),
     created_from: first(q.created_from) || undefined, created_to: first(q.created_to) || undefined,
     sla_breached: flag(q.sla_breached), flagged: flag(q.flagged), red_flagged: flag(q.red_flagged), duplicate: flag(q.duplicate),
-    paused: flag(q.paused), won: flag(q.won), unassigned: flag(q.unassigned),
+    paused: flag(q.paused), won: flag(q.won), lost: flag(q.lost), unassigned: flag(q.unassigned),
     followup: (first(q.followup) as any) || undefined, fu_from: first(q.fu_from) || undefined, fu_to: first(q.fu_to) || undefined,
     q: first(q.q) || undefined,
   };
@@ -241,18 +241,29 @@ export class FollowUpsController {
   constructor(private readonly fu: FollowUpsService) {}
 
   @Get() @RequirePermission('followup.read')
-  list(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query() q: Record<string, string>) {
+  list(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query() q: Record<string, string | string[]>) {
+    const strs = (v?: string | string[]): string[] | undefined => {
+      if (v == null) return undefined;
+      const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','));
+      const out = [...new Set(parts.map((x) => String(x).trim()).filter(Boolean))];
+      return out.length ? out : undefined;
+    };
     return this.fu.list(s, {
-      lead_id: num(q.lead_id), owner_id: num(q.owner_id), status: q.status || undefined,
-      due: (q.due as 'today' | 'overdue' | 'upcoming') || undefined,
-      mine: q.mine === '1' || q.mine === 'true', limit: num(q.limit),
-      view: (q.view as 'assigned' | 'reported') || undefined,
-      priority: (q.priority as 'low' | 'medium' | 'high') || undefined,
-      branch_id: num(q.branch_id), vertical_id: num(q.vertical_id),
-      pipeline_id: num(q.pipeline_id), campaign_id: num(q.campaign_id),
-      from: q.from || undefined, to: q.to || undefined,
+      lead_id: num(first(q.lead_id)), owner_id: num(first(q.owner_id)), status: first(q.status) || undefined,
+      due: (first(q.due) as 'today' | 'overdue' | 'upcoming') || undefined,
+      mine: flag(q.mine), limit: num(first(q.limit)),
+      view: (first(q.view) as 'assigned' | 'reported') || undefined,
+      priority: (first(q.priority) as 'low' | 'medium' | 'high') || undefined,
+      branch_id: num(first(q.branch_id)), vertical_id: num(first(q.vertical_id)),
+      pipeline_id: num(first(q.pipeline_id)), campaign_id: num(first(q.campaign_id)),
+      // Multi-select arrays (client UAT, Aug 2026) — same treatment as the Leads list.
+      branch_ids: nums(q.branch_ids), vertical_ids: nums(q.vertical_ids),
+      pipeline_ids: nums(q.pipeline_ids), campaign_ids: nums(q.campaign_ids),
+      owner_ids: nums(q.owner_ids), type_ids: nums(q.type_ids), disposition_ids: nums(q.disposition_ids),
+      priorities: strs(q.priorities), statuses: strs(q.statuses),
+      from: first(q.from) || undefined, to: first(q.to) || undefined,
       // Follow-up date filter (client #3) — preset window on the DUE date + optional custom range.
-      followup: (q.followup as any) || undefined, fu_from: q.fu_from || undefined, fu_to: q.fu_to || undefined,
+      followup: (first(q.followup) as any) || undefined, fu_from: first(q.fu_from) || undefined, fu_to: first(q.fu_to) || undefined,
     }, u.id);
   }
 

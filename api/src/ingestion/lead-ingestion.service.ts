@@ -206,8 +206,8 @@ export class LeadIngestionService {
    * eligible ones a better-scoped match overwrites an unscoped same-named course.
    */
   private async loadCourseMaster(branchId: number, verticalId: number): Promise<Map<string, number>> {
-    const rows = await this.db.query<{ id: string; name: string; branch_id: string | null; vertical_id: string | null }>(
-      `SELECT id, name,
+    const rows = await this.db.query<{ id: string; name: string; code: string | null; branch_id: string | null; vertical_id: string | null }>(
+      `SELECT id, name, code,
               NULLIF(meta->>'branch_id','')::bigint   AS branch_id,
               NULLIF(meta->>'vertical_id','')::bigint AS vertical_id
          FROM m_course WHERE deleted_at IS NULL AND is_active`,
@@ -220,7 +220,14 @@ export class LeadIngestionService {
     };
     const map = new Map<string, number>();
     const eligible = rows.map((r) => ({ r, rk: rank(r) })).filter((x) => x.rk >= 0).sort((a, b) => a.rk - b.rk);
-    for (const { r } of eligible) map.set(String(r.name).trim().toLowerCase(), Number(r.id)); // ascending rank: best wins
+    // Client UAT (Aug 2026): a lead CSV may reference a course by its master CODE (preferred) OR by
+    // its name — both resolve here, case-insensitive/trimmed, scoped to the import's Branch+Vertical
+    // exactly like the name path. Register both keys for each eligible course (ascending scope rank,
+    // so a better-scoped course overwrites an unscoped same-keyed one). Name keys are registered
+    // AFTER code keys so, on the rare collision of one course's code with another's name, the
+    // literal name still resolves to its own course.
+    for (const { r } of eligible) { const code = String(r.code ?? '').trim().toLowerCase(); if (code) map.set(code, Number(r.id)); }
+    for (const { r } of eligible) map.set(String(r.name).trim().toLowerCase(), Number(r.id));
     return map;
   }
 

@@ -18,6 +18,11 @@ export interface FollowUpFilters {
   priority?: 'low' | 'medium' | 'high';
   /** Global scope narrow (top-bar selector) — ANDed on top of the RBAC scope, never widens it. */
   branch_id?: number; vertical_id?: number; pipeline_id?: number; campaign_id?: number;
+  /** Multi-select filters (client UAT, Aug 2026) — Follow-ups list gets the same treatment as
+   *  Leads: OR within a filter, AND across filters. Numeric-id arrays + string enum arrays. */
+  branch_ids?: number[]; vertical_ids?: number[]; pipeline_ids?: number[]; campaign_ids?: number[];
+  owner_ids?: number[]; type_ids?: number[]; disposition_ids?: number[];
+  priorities?: string[]; statuses?: string[];
   /** Shared date-range control — filters by the task's DUE date (scheduled_at). */
   from?: string; to?: string;
   /** Follow-up date filter (client #3) — a preset window on the DUE date (scheduled_at, IST),
@@ -112,6 +117,24 @@ export class FollowUpsService {
     if (f.vertical_id) { params.push(f.vertical_id); where.push(`l.vertical_id = $${params.length}`); }
     if (f.pipeline_id) { params.push(f.pipeline_id); where.push(`l.pipeline_id = $${params.length}`); }
     if (f.campaign_id) { params.push(f.campaign_id); where.push(`l.campaign_id = $${params.length}`); }
+    // Multi-select arrays (client UAT, Aug 2026) — OR within each, ANDed across. Guard invalid
+    // priority/status values so a bad enum can't reach SQL.
+    const anyId = (col: string, ids?: number[]) => {
+      const clean = (ids ?? []).filter((n) => Number.isInteger(n) && n > 0);
+      if (clean.length) { params.push(clean); where.push(`${col} = ANY($${params.length}::int[])`); }
+    };
+    anyId('l.branch_id', f.branch_ids); anyId('l.vertical_id', f.vertical_ids);
+    anyId('l.pipeline_id', f.pipeline_ids); anyId('l.campaign_id', f.campaign_ids);
+    anyId('f.owner_id', f.owner_ids); anyId('f.type_id', f.type_ids); anyId('f.disposition_id', f.disposition_ids);
+    if (f.priorities?.length) {
+      const clean = f.priorities.map((p) => assertPriority(p as any));
+      params.push(clean); where.push(`f.priority = ANY($${params.length}::text[])`);
+    }
+    if (f.statuses?.length) {
+      const ok = new Set(['pending', 'done', 'missed', 'cancelled']);
+      const clean = f.statuses.filter((x) => ok.has(String(x)));
+      if (clean.length) { params.push(clean); where.push(`f.status = ANY($${params.length}::text[])`); }
+    }
     if (f.due === 'today') where.push(`f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date <= (now() AT TIME ZONE 'Asia/Kolkata')::date`);
     if (f.due === 'overdue') where.push(`f.status = 'pending' AND f.scheduled_at < now()`);
     if (f.due === 'upcoming') where.push(`f.status = 'pending' AND f.scheduled_at >= now()`);

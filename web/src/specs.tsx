@@ -140,19 +140,6 @@ export const APP: ModuleItem[] = [
     // so it's surfaced here in the Leads area too. Opens the SAME masters screen on Lead Status.
     { id: 'leadstatus', label: 'Lead Status', spec: { dyn: 'leadStatusMaster',
       sub: 'Add, edit, activate/deactivate the Lead Status values used in the lead form and the Status filter. Same master as Administration › Masters › Lead Status.' } },
-    { id: 'assign', label: 'Auto-Assignment', spec: {
-      sub: 'Defined while creating a campaign — round-robin by branch / vertical / pipeline / campaign. Reassign on no-response.',
-      blocks: [
-        { type: 'cfg', title: 'Assignment rules', rows: [
-          { ic: 'refresh', k: 'Round-robin', s: 'Even distribution within scope', v: 'Default', toggle: true },
-          { ic: 'branch', k: 'By branch / vertical', s: 'Lead routed to scope owners', v: 'On', toggle: true },
-          { ic: 'bolt', k: 'By campaign ownership', s: 'Campaign creator owns leads', v: 'On', toggle: true },
-          { ic: 'clock', k: 'Working-hours aware', s: 'Skip offline counsellors', v: 'On', toggle: true },
-          { ic: 'refresh', k: 'Reassign on no-response', s: 'After SLA breach, move to next', v: '48h', toggle: true }] },
-        { type: 'caps', title: 'Per-scope rules', items: [
-          cap('Branch level', 'Round-robin within branch'), cap('Vertical level', 'Per vertical / brand'),
-          cap('Pipeline level', 'Different stages, different owners'), cap('Campaign level', 'Set at campaign creation')] },
-      ] } },
     { id: 'dup', label: 'Duplicate Rules', spec: {
       sub: 'Detect by phone — scoped by branch, vertical, campaign per settings. Re-enquiry handled intelligently.',
       blocks: [

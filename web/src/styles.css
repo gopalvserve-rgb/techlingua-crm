@@ -45,18 +45,22 @@ a{color:inherit;text-decoration:none}
 .topbar{grid-area:topbar;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--surface)}
 .scope{display:flex;align-items:center;gap:1px;overflow:visible;flex:1;min-width:0}
 .scope::-webkit-scrollbar{display:none}
-.scope-chip{display:flex;flex-direction:column;padding:5px 10px;border-radius:9px;white-space:nowrap;border:1px solid transparent;transition:.16s;align-items:flex-start}
+.scope-chip{display:flex;flex-direction:column;padding:2px 7px;border-radius:8px;white-space:nowrap;border:1px solid transparent;transition:.16s;align-items:flex-start}
 .scope-chip:hover{background:var(--surface-2)}
-.scope-chip .lv{font-size:8.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);font-weight:600}
-.scope-chip .vl{display:flex;align-items:center;gap:5px;color:var(--text);font-weight:600;font-size:12.5px}
+.scope-chip .lv{font-size:7.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim);font-weight:600}
+.scope-chip .vl{display:flex;align-items:center;gap:4px;color:var(--text);font-weight:600;font-size:11px}
 .scope-chip.org .vl{color:var(--primary)}
 .scope-chip .vl svg{width:12px;height:12px;opacity:.6}
 .scope-sep{color:var(--text-dim);flex:none}.scope-sep svg{width:14px;height:14px;display:block}
 /* Global scope selector (top bar) — each level is a native <select> blended into a scope chip. */
 .scope-pick{cursor:pointer}
 .scope-multi{display:inline-flex}
-.scope-multi .upick{min-width:120px;max-width:190px}
-.scope-multi .upick-ctl{min-height:30px;padding:2px 8px;background:transparent}
+.scope-multi .upick{min-width:88px;max-width:150px}
+.scope-multi .upick-ctl{min-height:23px;padding:1px 6px;background:transparent}
+.scope-multi .upick-chips input{font-size:11px;min-width:44px;padding:1px 2px}
+.scope-multi .upick-chip{font-size:10px;padding:1px 4px 1px 6px}
+.scope-multi .upick-mag,.scope-multi .upick-caret{width:11px;height:11px}
+.scope-multi .upick-count{font-size:9px}
 .scope .upick-drop{z-index:120;min-width:180px;right:auto}
 
 .scope-pick .vl{position:relative}

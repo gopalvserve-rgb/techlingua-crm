@@ -18,7 +18,7 @@ function makeDb(existingPhones: string[] = []) {
         duplicacy_config: { check_scope: 'this_campaign', on_duplicate: 'ignore' } }];
     }
     if (s.startsWith('SELECT id FROM source WHERE id')) return [{ id: 7 }];
-    if (s.startsWith("SELECT id, name, NULLIF(meta->>'branch_id'")) return [{ id: 21, name: 'IELTS', branch_id: null, vertical_id: null }];
+    if (s.startsWith('SELECT id, name, code,') && s.includes("NULLIF(meta->>'branch_id'")) return [{ id: 21, name: 'IELTS', code: 'IELTS01', branch_id: null, vertical_id: null }];
     if (/^SELECT id, name FROM (state|city|m_course|m_qualification|m_budget|m_status|m_tag)/.test(s)) {
       return s.includes('m_course') ? [{ id: 21, name: 'IELTS' }] : [];
     }

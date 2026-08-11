@@ -61,7 +61,10 @@ export interface WalkInDto {
   vertical_id: number;
   campaign_id: number;
   source_id: number;
-  counsellor_id: number;            // MANDATORY — assign-on-add
+  /** Client UAT (Aug 2026): OPTIONAL now. Blank + round_robin=true => campaign distribution assigns. */
+  counsellor_id?: number;
+  /** Client UAT (Aug 2026): tick to auto-assign via the campaign's round-robin engine instead of a picked counsellor. */
+  round_robin?: boolean;
   visited_at?: string;
   purpose?: string;
   course_id?: number;
@@ -207,7 +210,7 @@ export class CaptureService {
   }
 
   async createWalkIn(dto: WalkInDto, actorId: number, scope: ResolvedScope) {
-    for (const f of ['visitor_name', 'phone', 'branch_id', 'vertical_id', 'campaign_id', 'source_id', 'counsellor_id'] as const) {
+    for (const f of ['visitor_name', 'phone', 'branch_id', 'vertical_id', 'campaign_id', 'source_id'] as const) {
       if (!dto?.[f]) throw new BadRequestException(`${f} is required`);
     }
     if (dto.status) {
@@ -220,11 +223,14 @@ export class CaptureService {
     // RBAC: the campaign, source and counsellor must all be inside the caller's scope
     await this.enforcer.assertRefInScope(scope, 'campaign', Number(dto.campaign_id), actorId);
     await this.enforcer.assertRefInScope(scope, 'source', Number(dto.source_id), actorId);
-    await this.enforcer.assertRefInScope(scope, 'user', Number(dto.counsellor_id), actorId);
-    const c = await this.db.one<{ id: string }>(
-      `SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [Number(dto.counsellor_id)],
-    );
-    if (!c) throw new BadRequestException('counsellor must be an active user');
+    // Assign Counsellor is OPTIONAL (client UAT, Aug 2026) — validate it only when one is picked.
+    if (dto.counsellor_id) {
+      await this.enforcer.assertRefInScope(scope, 'user', Number(dto.counsellor_id), actorId);
+      const c = await this.db.one<{ id: string }>(
+        `SELECT id FROM "user" WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`, [Number(dto.counsellor_id)],
+      );
+      if (!c) throw new BadRequestException('counsellor must be an active user');
+    }
 
     const fee = this.fee(dto.course_fee);
     const heard = await this.heardAboutId(dto.heard_about_source_id);
@@ -232,11 +238,19 @@ export class CaptureService {
     // (assign-on-add is the whole premise of this screen; the checkbox ships ticked).
     const convert = dto.convert_to_lead !== false;
 
-    // ONE ingestion path — the lead is created exactly as a CSV/webhook lead would be,
-    // except the owner is FORCED to the counsellor (assign on add).
+    // Client UAT (Aug 2026): Round-Robin. When ticked (or no counsellor is picked) the walk-in's
+    // lead is auto-assigned by the campaign's distribution engine — the SAME round-robin path a
+    // CSV / webhook lead uses. When unticked with a counsellor picked, that counsellor is forced.
+    const useRoundRobin = dto.round_robin === true;
+    const forcedOwner = (!useRoundRobin && dto.counsellor_id) ? Number(dto.counsellor_id) : null;
+
+    // ONE ingestion path — the lead is created exactly as a CSV/webhook lead would be; the owner is
+    // FORCED to the counsellor only when one is picked and round-robin is off, else distribution decides.
     const outcome = convert
-      ? await this.ingestWalkInLead(dto, fee, actorId)
+      ? await this.ingestWalkInLead(dto, fee, actorId, forcedOwner)
       : null;
+    // Reflect the ACTUAL owner (forced, or the round-robin assignee) back onto the walk-in record.
+    const assignedCounsellor = forcedOwner ?? (outcome?.owner_id != null ? Number(outcome.owner_id) : (dto.counsellor_id ? Number(dto.counsellor_id) : null));
 
     const org = await this.orgId();
     const row = await this.db.one(
@@ -251,7 +265,7 @@ export class CaptureService {
         dto.visitor_name, dto.phone, dto.alt_phone ?? null, dto.whatsapp_phone ?? null,
         dto.email ?? null, dto.visited_at ?? null, dto.purpose ?? null,
         dto.course_id ?? null, fee, heard, convert,
-        Number(dto.counsellor_id), dto.status ?? 'waiting',
+        assignedCounsellor, dto.status ?? 'waiting',
         dto.wait_minutes ?? null, dto.remarks ?? null, actorId],
     );
 
@@ -311,6 +325,7 @@ export class CaptureService {
       | 'course_id' | 'remarks' | 'campaign_id' | 'source_id' | 'counsellor_id'>,
     fee: number | null,
     actorId: number,
+    forcedOwner: number | null = null,
   ) {
     const outcome = await this.ingestion.ingest(
       {
@@ -330,7 +345,9 @@ export class CaptureService {
         campaign_id: Number(dto.campaign_id),
         source_id: Number(dto.source_id),
         actor_id: actorId,
-        owner_id: Number(dto.counsellor_id),      // ASSIGN ON ADD
+        // ASSIGN ON ADD when a counsellor is forced; otherwise leave undefined so the campaign
+        // distribution engine (round-robin) picks the owner (client UAT, Aug 2026).
+        owner_id: forcedOwner ?? undefined,
         duplicate_policy: 'always_create',        // a human at the desk is never swallowed
       },
     );

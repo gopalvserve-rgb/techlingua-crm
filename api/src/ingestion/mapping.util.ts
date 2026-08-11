@@ -25,7 +25,7 @@ export const LEAD_IMPORT_FIELDS: FieldDef[] = [
   { key: 'dob', label: 'Date of Birth', aliases: ['dateofbirth', 'birthdate', 'birthday', 'dob'] },
   { key: 'state', label: 'State', aliases: ['state'], hint: 'State master' },
   { key: 'city', label: 'City', aliases: ['city', 'town'], hint: 'City master' },
-  { key: 'course', label: 'Course', aliases: ['course', 'coursename', 'program', 'programme', 'interestedin'], hint: 'Course master' },
+  { key: 'course', label: 'Course', aliases: ['course', 'coursename', 'coursecode', 'course_code', 'coursecd', 'program', 'programme', 'programcode', 'interestedin'], hint: 'Course master — by code (preferred) or name' },
   { key: 'qualification', label: 'Qualification', aliases: ['qualification', 'education'], hint: 'Qualification master' },
   { key: 'budget', label: 'Budget', aliases: ['budget'], hint: 'Budget master' },
   { key: 'status', label: 'Status', aliases: ['status', 'leadstatus'], hint: 'Status master' },
