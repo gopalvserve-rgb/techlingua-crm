@@ -601,7 +601,7 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .upick-chip button:hover{opacity:1;background:color-mix(in srgb,var(--primary) 22%,transparent)}
 .upick-chip button svg{width:9px;height:9px}
 .upick-count{font-size:10px;font-weight:600;color:var(--text-dim);white-space:nowrap}
-.upick-drop{position:absolute;z-index:40;top:calc(100% + 5px);left:0;right:0;max-height:236px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:5px}
+.upick-drop{position:absolute;z-index:40;top:calc(100% + 5px);left:0;right:0;max-height:360px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:5px}
 .upick-row{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:8px;cursor:pointer;font-size:12.5px}
 .upick-row.act{background:var(--surface-2)}
 .upick-row.sel .upick-name{color:var(--primary)}

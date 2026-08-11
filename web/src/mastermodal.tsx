@@ -12,7 +12,7 @@ import { toast, Named } from './refdata';
 /** Display labels for the API's master type keys (masters.service MASTER_TYPES). */
 export const MASTER_LABELS: Record<string, string> = {
   state: 'State', city: 'City', source: 'Source', course: 'Course',
-  qualification: 'Qualification', budget: 'Budget', status: 'Status',
+  qualification: 'Qualification', budget: 'Budget', status: 'Lead Status',
   tag: 'Tag', followup_type: 'Follow-up Type', disposition: 'Disposition',
   training: 'Training Mode', visit_purpose: 'Purpose of Visit', walkin_status: 'Walk-in Status',
 };

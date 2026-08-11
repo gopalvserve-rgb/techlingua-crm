@@ -136,6 +136,10 @@ export const APP: ModuleItem[] = [
       sub: 'Rule-based scoring you configure yourself — source, budget, course, engagement, recency. Bands for Hot / Warm / Cold.' } },
     { id: 'sources', label: 'Lead Sources', spec: { dyn: 'sources',
       sub: 'Auto-capture via API/webhook from every source. Cost per source tracked for ROI.' } },
+    // Client (Aug 2026): the Lead Status master was hard to find under Administration › Masters,
+    // so it's surfaced here in the Leads area too. Opens the SAME masters screen on Lead Status.
+    { id: 'leadstatus', label: 'Lead Status', spec: { dyn: 'leadStatusMaster',
+      sub: 'Add, edit, activate/deactivate the Lead Status values used in the lead form and the Status filter. Same master as Administration › Masters › Lead Status.' } },
     { id: 'assign', label: 'Auto-Assignment', spec: {
       sub: 'Defined while creating a campaign — round-robin by branch / vertical / pipeline / campaign. Reassign on no-response.',
       blocks: [
@@ -495,7 +499,7 @@ export const APP: ModuleItem[] = [
       actions: [['plus', 'New course', 'primary']] } },
     // Sanctioned addition (UAT: "edit option for Course master and all masters") — see design spec §Sanctioned additions.
     { id: 'masters', label: 'Masters', spec: { dyn: 'mastersAdmin',
-      sub: 'Every dropdown master in one place — add, edit, view and activate/deactivate values (states, cities, sources, courses, statuses, tags & more).' } },
+      sub: 'Every dropdown master in one place — add, edit, view and activate/deactivate values (states, cities, sources, courses, Lead Status, tags & more).' } },
     { id: 'workflow', label: 'Workflow Automation', spec: {
       sub: 'Admin-built rules (same engine as Automation Journeys). Who can build them.',
       blocks: [{ type: 'caps', title: 'Workflow automation', items: [

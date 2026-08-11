@@ -3444,12 +3444,12 @@ function ErrorLogs() {
    "edit option for Course master AND all masters"). One screen manages every
    generic master list (add / edit / view / activate-deactivate). */
 
-function MastersAdmin() {
+function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {}) {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
   const types = useFetch<Array<{ type: string; label: string; parent: string | null }>>('/masters', []);
-  const [type, setType] = useState('course');
+  const [type, setType] = useState(initialType);
   const [inc, setInc] = useState(false);
   const list = useFetch<any[]>(`/masters/${type}${inc ? '?all=1' : ''}`, [refreshTick]);
   const rows = list.data ?? [];
@@ -4773,6 +4773,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   campaigns: Campaigns,
   courses: Courses,
   mastersAdmin: MastersAdmin,
+  // Marketing › Lead Status — the SAME Masters admin, opened straight on the Lead Status master
+  // so it is reachable from the Leads area (client couldn't find it under Administration).
+  leadStatusMaster: () => <MastersAdmin initialType="status" />,
   users: Users,
   roles: Roles,
   audit: Audit,
