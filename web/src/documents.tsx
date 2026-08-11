@@ -55,6 +55,26 @@ export async function authedDownload(path: string, fallbackName: string) {
   } catch { toast('Download failed', true); }
 }
 
+/**
+ * Open a document via a short-lived PRESIGNED Cloudflare R2 URL when the file is stored in R2
+ * (the client's single-file-store rule — docs/dev/57). Sensitive KYC/education docs are NEVER
+ * public: the URL is signed, expires in 5 minutes, and is fetched behind the authed request.
+ * Falls back to the direct authenticated byte-download for any legacy (pre-R2) row.
+ */
+export async function openDocument(basePath: string, doc: { id: number; file_name: string; in_r2?: boolean }) {
+  if (doc.in_r2) {
+    try {
+      const urlPath = `${basePath}/documents/${doc.id}/url`;
+      const res = await fetch(`/api${urlPath}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      if (res.ok) {
+        const body = await res.json();
+        if (body?.url) { window.open(body.url, '_blank', 'noopener'); return; }
+      }
+    } catch { /* fall through to the direct download */ }
+  }
+  await authedDownload(`${basePath}/documents/${doc.id}/download`, doc.file_name);
+}
+
 /** The uploaded-documents list on the review screen + student profile (download each). */
 export function DocumentList({ basePath }: { basePath: string }) {
   const { data } = useFetch<any[]>(`${basePath}/documents`, [basePath]);
@@ -68,7 +88,7 @@ export function DocumentList({ basePath }: { basePath: string }) {
             <div className="t1"><b>{DOC_LABELS[doc.doc_type] ?? doc.doc_type}</b> <span className="sub">· {doc.file_name}</span></div>
             <div className="t2 sub">{fmtSize(Number(doc.size_bytes ?? 0))} · {doc.mime}</div>
           </div>
-          <button className="btn sm" data-testid={`doc-dl-${doc.id}`} onClick={() => authedDownload(`${basePath}/documents/${doc.id}/download`, doc.file_name)}><Ic k="doc" />Download</button>
+          <button className="btn sm" data-testid={`doc-dl-${doc.id}`} onClick={() => openDocument(basePath, doc)}><Ic k="doc" />Download</button>
         </div>
       ))}
     </>

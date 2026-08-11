@@ -6,6 +6,7 @@ import { NotificationEventService } from '../notificationevents/notification-eve
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { assertDateRange, requireDateString } from '../common/date.util';
 import { Letterhead, certificatePdf, CertificateDoc } from '../pdf/documents';
+import { PdfAssetService } from '../storage/pdf-asset.service';
 
 /**
  * CERTIFICATES — completion / participation / merit certificates issued to a student.
@@ -25,6 +26,8 @@ export class CertificateService {
     private readonly numbering: NumberingService,
     /** Notification Events — fires certificate_generated + certificate_issued. Optional. */
     private readonly notifEvents?: NotificationEventService,
+    /** R2 storage — persist the certificate PDF to Cloudflare R2 on serve. Optional. */
+    private readonly pdfAssets?: PdfAssetService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -188,7 +191,9 @@ export class CertificateService {
       student_name: ct.student_name, student_no: ct.student_no, course_name: ct.course_name,
       batch_name: ct.batch_name, issue_date: ct.issue_date, status: ct.status, issued_by_name: ct.issued_by_name,
     };
-    return { buffer: certificatePdf(doc, this.letterheadOf(ct)), filename: `${String(ct.serial_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
+    const out = { buffer: certificatePdf(doc, this.letterheadOf(ct)), filename: `${String(ct.serial_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
+    await this.pdfAssets?.persist('certificate', id, ct.serial_no ? String(ct.serial_no) : null, out.buffer);
+    return out;
   }
 
   /* ---- bulk delete ----------------------------------------------------- */

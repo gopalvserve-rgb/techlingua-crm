@@ -10,6 +10,7 @@ import { computeGstLine, computeGstTotals, supplyTypeFor, GstLineComputed } from
 import { Letterhead, invoicePdf } from '../pdf/documents';
 import { assertDateRange } from '../common/date.util';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
+import { PdfAssetService } from '../storage/pdf-asset.service';
 
 /**
  * GST TAX INVOICES — Finance & Collections › Invoices (Phase 3 Batch 1).
@@ -51,6 +52,7 @@ export class InvoiceService {
     private readonly finance?: FinanceSettingsService,
     /** Notification Events — fires fee_invoice_generated when a GST invoice is issued. Optional. */
     private readonly notifEvents?: NotificationEventService,
+    private readonly pdfAssets?: PdfAssetService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -203,10 +205,15 @@ export class InvoiceService {
 
   async pdf(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string }> {
     const gi = await this.get(id, scope);
-    return {
+    const out = {
       buffer: invoicePdf(gi as any, this.letterheadOf(gi)),
       filename: `${String(gi.invoice_no || 'invoice-draft').replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`,
     };
+    // Persist ISSUED invoices only — a draft has no final number and gets re-serialised on issue.
+    if (gi.status && gi.status !== 'draft' && gi.invoice_no) {
+      await this.pdfAssets?.persist('invoice', id, String(gi.invoice_no), out.buffer);
+    }
+    return out;
   }
 
   /* ------------------------------------------------------------------- writes */

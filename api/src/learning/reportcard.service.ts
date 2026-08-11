@@ -5,6 +5,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { assertDateRange } from '../common/date.util';
 import { Letterhead, reportCardPdf, ReportCardDoc } from '../pdf/documents';
+import { PdfAssetService } from '../storage/pdf-asset.service';
 
 /**
  * REPORT CARD — a per-student, per-term academic-progress SNAPSHOT computed from Batch-1 data:
@@ -39,7 +40,7 @@ export function weightedOverall(parts: { attendance?: number | null; tests?: num
 
 @Injectable()
 export class ReportCardService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService) {}
+  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService, private readonly pdfAssets?: PdfAssetService) {}
 
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -240,8 +241,10 @@ export class ReportCardService {
 
   async pdf(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string }> {
     const rc = await this.get(id, scope);
-    return { buffer: reportCardPdf(this.toDoc(rc), this.letterheadOf(rc)),
+    const out = { buffer: reportCardPdf(this.toDoc(rc), this.letterheadOf(rc)),
       filename: `report-card-${String(rc.student_no ?? rc.student_id)}-${String(rc.term).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
+    await this.pdfAssets?.persist('reportcard', id, `${String(rc.student_no ?? rc.student_id)}-${String(rc.term)}`, out.buffer);
+    return out;
   }
 
   /* ---- PARENT VIEW: a login-free read by share token (published cards only) ---- */

@@ -9,6 +9,7 @@ import { NotificationEventService } from '../notificationevents/notification-eve
 import { formatINR, rupeesToMinor } from '../common/money.util';
 import { assertDateRange } from '../common/date.util';
 import { Letterhead, refundVoucherPdf } from '../pdf/documents';
+import { PdfAssetService } from '../storage/pdf-asset.service';
 
 /**
  * REFUNDS (Phase 3 Batch 4) — a full or PARTIAL refund of fees already COLLECTED against
@@ -79,6 +80,7 @@ export class RefundService {
     private readonly notifier?: NotifierService,
     /** Notification Events — fires refund_initiated / refund_completed. Optional. */
     private readonly notifEvents?: NotificationEventService,
+    private readonly pdfAssets?: PdfAssetService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -430,7 +432,7 @@ export class RefundService {
     };
     const collected = Number(r.collected_minor);
     const approvedRefunds = Number(r.approved_refunds_minor);
-    return {
+    const out = {
       buffer: refundVoucherPdf({
         refund_no: r.refund_no, refunded_at: r.refunded_at,
         amount_minor: Number(r.amount_minor), mode: r.mode, reference: r.reference, reason: r.reason,
@@ -442,6 +444,8 @@ export class RefundService {
       }, lh),
       filename: `${String(r.refund_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`,
     };
+    await this.pdfAssets?.persist('refund', id, r.refund_no ? String(r.refund_no) : null, out.buffer);
+    return out;
   }
 
   /** SOFT-DELETE a refund request — never an approved one (that is the record of money

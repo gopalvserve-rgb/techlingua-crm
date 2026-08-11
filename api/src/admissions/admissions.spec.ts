@@ -10,6 +10,18 @@ import { StudentController } from '../students/student.controller';
 import { AdmissionService } from './admission.service';
 import { KIND_DEFAULTS } from '../numbering/numbering.service';
 
+/** A fake R2 StorageService for the AdmissionService unit tests. */
+function fakeStorage(configured: boolean, sink?: { puts: any[]; presigns: string[] }) {
+  return {
+    isConfigured: async () => configured,
+    studentDocKey: (o: any) => `students/admission-${o.admissionId}/docs/uuid-${o.fileName}`,
+    putObject: async (key: string, bytes: Buffer, ct: string) => { sink?.puts.push({ key, len: bytes.length, ct }); return { key }; },
+    getObject: async (_key: string) => ({ body: Buffer.from('r2-bytes'), contentType: 'image/png' }),
+    presignGet: async (key: string) => { const u = `https://r2.example/${key}?sig=abc`; sink?.presigns.push(u); return u; },
+  } as any;
+}
+
+
 /* --------------------------------------------------------------- RBAC census */
 function routesOf(ctrl: any) {
   const proto = ctrl.prototype;
@@ -82,7 +94,7 @@ function makeService() {
   const resolver: any = { buildScopeWhere: () => 'TRUE' };
   const numbering: any = { allocate: async () => 'ADM-0001' };
   const students: any = { create: async () => ({ id: 55, student_no: 'STU-0001' }) };
-  const svc = new AdmissionService(db, resolver, numbering, students);
+  const svc = new AdmissionService(db, resolver, numbering, students, fakeStorage(false));
   return { svc, inserts };
 }
 
@@ -144,7 +156,7 @@ describe('Approve → student', () => {
     const numbering: any = { allocate: async () => 'ADM-0007' };
     let created: any = null;
     const students: any = { create: async (dto: any) => { created = dto; return { id: 55, student_no: 'STU-0009' }; } };
-    const svc = new AdmissionService(db, resolver, numbering, students);
+    const svc = new AdmissionService(db, resolver, numbering, students, fakeStorage(false));
     const out = await svc.approve(99, { id: 3 }, {} as any);
     expect(created.full_name).toBe('Riya');
     expect(created.branch_id).toBe(1);
@@ -156,7 +168,7 @@ describe('Approve → student', () => {
 describe('Admission document attachments (education + KYC)', () => {
   const b64 = (s: string) => Buffer.from(s).toString('base64');
 
-  function makeDocDb(admissionRow?: any) {
+  function makeDocDb(admissionRow?: any, storage?: any) {
     const queries: any[] = [];
     const db: any = {
       async one(sql: string, params: any[] = []) {
@@ -166,7 +178,8 @@ describe('Admission document attachments (education + KYC)', () => {
         if (/FROM m_course WHERE id=/.test(sql)) return { id: params[0] };
         if (/INSERT INTO admission \(/.test(sql)) return { id: '99' };
         if (/FROM admission a/.test(sql)) return admissionRow ?? { id: 99, status: 'pending', branch_id: 1, vertical_id: 2, course_id: 3, data: { full_name: 'Riya' } };
-        if (/SELECT file_name, mime, content FROM student_document/.test(sql)) return { file_name: 'me.png', mime: 'image/png', content: Buffer.from('hello') };
+        if (/SELECT file_name, mime, content.*FROM student_document/.test(sql)) return { file_name: 'me.png', mime: 'image/png', content: Buffer.from('hello'), r2_key: null };
+        if (/SELECT file_name, r2_key FROM student_document/.test(sql)) return { file_name: 'me.png', r2_key: 'students/admission-99/docs/uuid-me.png' };
         return null;
       },
       async query(sql: string, params: any[] = []) { queries.push({ sql, params }); return []; },
@@ -175,7 +188,7 @@ describe('Admission document attachments (education + KYC)', () => {
     const resolver: any = { buildScopeWhere: () => 'TRUE' };
     const numbering: any = { allocate: async () => 'ADM-0007' };
     const students: any = { create: async () => ({ id: 55, student_no: 'STU-0009' }) };
-    const svc = new AdmissionService(db, resolver, numbering, students);
+    const svc = new AdmissionService(db, resolver, numbering, students, storage ?? fakeStorage(false));
     return { svc, queries };
   }
 
@@ -210,6 +223,32 @@ describe('Admission document attachments (education + KYC)', () => {
     const carry = queries.find((q) => /UPDATE student_document SET student_id=/.test(q.sql));
     expect(carry).toBeTruthy();
     expect(carry.params).toEqual([99, 55]);
+  });
+
+  it('R2 CONFIGURED: an attached document is uploaded to R2 and stored as an r2_key (NOT bytea)', async () => {
+    const sink = { puts: [] as any[], presigns: [] as string[] };
+    const { svc, queries } = makeDocDb(undefined, fakeStorage(true, sink));
+    const out: any = await svc.submitPublic('k', {
+      full_name: 'Riya Sharma', phone: '9812345678', branch_id: 1, vertical_id: 2, course_id: 3,
+      documents: [{ doc_type: 'aadhaar', file_name: 'aadhaar.pdf', mime: 'application/pdf', content: b64('%PDF-1.4') }],
+    }, { ip: '5.5.5.9' });
+    expect(out.documents).toBe(1);
+    // uploaded to R2 with the composed key
+    expect(sink.puts).toHaveLength(1);
+    expect(sink.puts[0].key).toMatch(/^students\/admission-99\/docs\/uuid-aadhaar.pdf$/);
+    const docInsert = queries.find((q) => /INSERT INTO student_document/.test(q.sql));
+    // params: [...,content(6), r2_key(7)] — content is NULL, r2_key is set (no DB blob)
+    expect(docInsert.params[6]).toBeNull();
+    expect(docInsert.params[7]).toBe(sink.puts[0].key);
+  });
+
+  it('R2 download returns a short-lived PRESIGNED url (sensitive doc never public)', async () => {
+    const sink = { puts: [] as any[], presigns: [] as string[] };
+    const { svc } = makeDocDb(undefined, fakeStorage(true, sink));
+    const out: any = await svc.downloadDocumentUrl(99, 5, {} as any);
+    expect(out.url).toMatch(/^https:\/\/r2\.example\//);
+    expect(out.url).toContain('sig=');
+    expect(out.expires_in).toBe(300);
   });
 
   it('download returns the bytes + filename for an in-scope reviewer', async () => {

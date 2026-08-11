@@ -21,6 +21,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { CaptureModule } from './capture/capture.module';
 import { MessagingModule } from './messaging/messaging.module';
+import { StorageModule } from './storage/storage.module';
 import { TemplatesModule } from './templates/templates.module';
 import { SmsTemplatesModule } from './smstemplates/sms-templates.module';
 import { JourneysModule } from './journeys/journeys.module';
@@ -82,6 +83,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     CaptureModule,      // walk-ins (assign-on-add) & referrals
     // Sprint 4 — engagement & automation
     MessagingModule,    // WhatsApp (Meta) · SMS (any gateway) · Email (per-vertical SMTP) + the send log/queue
+    StorageModule,      // Cloudflare R2 — the SINGLE file/asset store (admission docs, generated PDFs, materials); nothing on disk / no DB blobs
     TemplatesModule,    // dynamic templates per channel, merge variables, live preview
     SmsTemplatesModule, // DLT SMS templates (Branch+Vertical) + Nimbus auto-send on new lead
     JourneysModule,     // trigger -> conditions -> actions, idempotent, guard-railed

@@ -62,6 +62,12 @@ export class AdmissionController {
     res.end(content);
   }
 
+  /** Presigned R2 URL for a sensitive doc (5-min, single-use, never public). R2-backed rows only. */
+  @Get(':id/documents/:docId/url') @RequirePermission('admission.review')
+  documentUrl(@Param('id', ParseIntPipe) id: number, @Param('docId', ParseIntPipe) docId: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.downloadDocumentUrl(id, docId, scope);
+  }
+
   @Patch(':id') @RequirePermission('admission.review')
   update(@Param('id', ParseIntPipe) id: number, @Body() b: any, @CurrentScope() scope: ResolvedScope) { return this.svc.update(id, b, scope); }
 

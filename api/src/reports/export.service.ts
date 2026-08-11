@@ -6,6 +6,7 @@ import { Me, ReportService } from './report.service';
 import { ReportConfig } from './query-builder';
 import { TooManyColumnsError, reportPdf } from './report-pdf';
 import { CellType, SheetColumn, buildCsv, buildXlsx } from './xlsx.util';
+import { StorageService } from '../storage/storage.service';
 
 export type ExportFormat = 'xlsx' | 'pdf' | 'csv';
 
@@ -38,6 +39,7 @@ export class ExportService {
   constructor(
     private readonly db: DatabaseService,
     private readonly reports: ReportService,
+    private readonly storage?: StorageService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -114,8 +116,11 @@ export class ExportService {
       `SELECT * FROM report_export WHERE id = $1 AND requested_by = $2`, [id, me.id],
     );
     if (!r) throw new NotFoundException('Export not found.');
-    if (r.status !== 'ready' || !r.bytes) throw new BadRequestException(`This export is "${r.status}", not ready.`);
-    return { buffer: Buffer.from(r.bytes), filename: r.file_name, mime: MIME[r.format as ExportFormat] };
+    if (r.status !== 'ready' || (!r.bytes && !r.r2_key)) throw new BadRequestException(`This export is "${r.status}", not ready.`);
+    const buffer = r.r2_key && this.storage
+      ? (await this.storage.getObject(String(r.r2_key))).body
+      : Buffer.from(r.bytes);
+    return { buffer, filename: r.file_name, mime: MIME[r.format as ExportFormat] };
   }
 
   /** RENDER one queued export. Called by the worker; public so the spec drives it. */
@@ -132,11 +137,20 @@ export class ExportService {
       const name = String(row.config?._name || entity.label);
       const buffer = this.build(row.format, name, out);
 
+      // R2 IS THE STORE (docs/dev/57): upload the rendered file to R2 and keep only the key.
+      // Degrade to bytea when R2 is not configured so exports keep working.
+      let r2Key: string | null = null;
+      if (this.storage && await this.storage.isConfigured()) {
+        try {
+          r2Key = `exports/${id}-${String(row.file_name || 'report').replace(/[^A-Za-z0-9._-]+/g, '_')}`;
+          await this.storage.putObject(r2Key, buffer, MIME[row.format as ExportFormat] || 'application/octet-stream');
+        } catch { r2Key = null; }
+      }
       await this.db.query(
         `UPDATE report_export
-            SET status = 'ready', bytes = $2, row_count = $3, error = NULL, finished_at = now()
+            SET status = 'ready', bytes = $2, r2_key = $4, row_count = $3, error = NULL, finished_at = now()
           WHERE id = $1`,
-        [id, buffer, out.row_count],
+        [id, r2Key ? null : buffer, out.row_count, r2Key],
       );
       return 'ready';
     } catch (e) {

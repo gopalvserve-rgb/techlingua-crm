@@ -8,6 +8,7 @@ import { normalizePhone } from '../common/phone.util';
 import { ChannelConfigService } from './channel-config.service';
 import { MsgChannel, SENDING_CHANNELS } from './providers';
 import { OutboundMessage, PermanentSendError, Transport, transportFor } from './transports';
+import { StorageService } from '../storage/storage.service';
 import { toDateString } from '../common/date.util';
 
 /**
@@ -129,6 +130,7 @@ export class MessagingService {
     private readonly configs: ChannelConfigService,
     private readonly settings: SettingsService,
     private readonly resolver?: ScopeResolverService,
+    private readonly storage?: StorageService,
   ) {}
 
   // ------------------------------------------------------------- guardrails
@@ -232,11 +234,19 @@ export class MessagingService {
 
     // ATTACHMENTS (Sprint 6). Written even when the row is `skipped`, so a send log
     // entry saying "opted out" still shows WHAT would have gone.
+    const r2On = this.storage ? await this.storage.isConfigured() : false;
     for (const a of msg.attachments ?? []) {
+      let r2Key: string | null = null;
+      if (r2On && this.storage && a.content) {
+        try {
+          r2Key = `attachments/${id}/${String(a.filename).replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 160)}`;
+          await this.storage.putObject(r2Key, a.content as Buffer, a.contentType ?? 'application/octet-stream');
+        } catch { r2Key = null; }
+      }
       await this.db.query(
-        `INSERT INTO message_attachment (message_id, filename, content_type, bytes)
-         VALUES ($1, $2, $3, $4)`,
-        [id, String(a.filename).slice(0, 200), a.contentType ?? 'application/octet-stream', a.content],
+        `INSERT INTO message_attachment (message_id, filename, content_type, bytes, r2_key)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [id, String(a.filename).slice(0, 200), a.contentType ?? 'application/octet-stream', r2Key ? null : a.content, r2Key],
       );
     }
 
@@ -274,9 +284,14 @@ export class MessagingService {
     // every screen; the attachment is read once, at the moment of sending.
     const atts = row.channel === 'email'
       ? await this.db.query<any>(
-        `SELECT filename, content_type, bytes FROM message_attachment WHERE message_id = $1 ORDER BY id`, [id],
+        `SELECT filename, content_type, bytes, r2_key FROM message_attachment WHERE message_id = $1 ORDER BY id`, [id],
       )
       : [];
+    for (const a of atts) {
+      if (a.r2_key && this.storage) {
+        try { a.bytes = (await this.storage.getObject(String(a.r2_key))).body; } catch { /* leave null; mailer skips */ }
+      }
+    }
     const msg: OutboundMessage = {
       to: row.to_addr,
       subject: row.subject,

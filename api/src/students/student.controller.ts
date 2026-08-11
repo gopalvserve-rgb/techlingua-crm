@@ -70,6 +70,13 @@ export class StudentController {
     res.end(content);
   }
 
+  /** Presigned R2 URL for a sensitive student doc (5-min, single-use, never public). R2-backed only. */
+  @Get(':id/documents/:docId/url')
+  @RequirePermission('student.update')
+  documentUrl(@Param('id', ParseIntPipe) id: number, @Param('docId', ParseIntPipe) docId: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.downloadDocumentUrl(id, docId, scope);
+  }
+
   /* -------- family / siblings (ERP Batch 3). Read via student.read; link/unlink reuse
    *          student.update, mirroring how batch transfer/waitlist reuse it. -------- */
   @Get(':id/siblings')

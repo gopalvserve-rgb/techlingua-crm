@@ -9,6 +9,8 @@ import { assertDateRange } from '../common/date.util';
 import { normalizePhone } from '../common/phone.util';
 import { RateLimiter } from '../ingestion/channels/rate-limit.util';
 import { parseIncomingDocuments } from '../common/document.util';
+import { StorageService } from '../storage/storage.service';
+import { isNotConfigured } from '../common/not-configured.exception';
 
 /**
  * ONLINE ADMISSION FORM + REVIEW QUEUE (ERP Batch 3).
@@ -57,6 +59,7 @@ export class AdmissionService {
     private readonly resolver: ScopeResolverService,
     private readonly numbering: NumberingService,
     private readonly students: StudentService,
+    private readonly storage: StorageService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -224,11 +227,23 @@ export class AdmissionService {
     // linked to this pending admission; they carry over to the student on approve.
     const admissionId = Number(row!.id);
     const docs = parseIncomingDocuments(dto?.documents);
+    // R2 IS THE STORE (docs/dev/57): upload the bytes to Cloudflare R2 and persist only the
+    // r2_key — never the bytea. If R2 is not configured yet we degrade to the legacy bytea
+    // column so the public form never breaks; in production R2 is set, so `content` stays NULL.
+    const r2On = await this.storage.isConfigured();
     for (const d of docs) {
+      let r2Key: string | null = null;
+      if (r2On) {
+        try {
+          const key = this.storage.studentDocKey({ admissionId, fileName: d.file_name });
+          await this.storage.putObject(key, d.content, d.mime);
+          r2Key = key;
+        } catch (e) { if (!isNotConfigured(e)) throw e; }
+      }
       await this.db.query(
-        `INSERT INTO student_document (org_id, admission_id, doc_type, file_name, mime, size_bytes, content)
-         VALUES ($1::bigint,$2::bigint,$3,$4,$5,$6,$7)`,
-        [orgId, admissionId, d.doc_type, d.file_name, d.mime, d.size_bytes, d.content]);
+        `INSERT INTO student_document (org_id, admission_id, doc_type, file_name, mime, size_bytes, content, r2_key)
+         VALUES ($1::bigint,$2::bigint,$3,$4,$5,$6,$7,$8)`,
+        [orgId, admissionId, d.doc_type, d.file_name, d.mime, d.size_bytes, r2Key ? null : d.content, r2Key]);
     }
     return { ok: true, reference: admissionId, documents: docs.length };
   }
@@ -319,7 +334,8 @@ export class AdmissionService {
   async listDocuments(id: number, scope: ResolvedScope) {
     await this.get(id, scope); // scope + existence (throws 404 outside access)
     return this.db.query<any>(
-      `SELECT id, doc_type, file_name, mime, size_bytes, created_at
+      `SELECT id, doc_type, file_name, mime, size_bytes, created_at,
+              (r2_key IS NOT NULL) AS in_r2
          FROM student_document
         WHERE admission_id=$1::bigint AND deleted_at IS NULL
         ORDER BY id ASC`, [id]);
@@ -329,10 +345,26 @@ export class AdmissionService {
   async downloadDocument(id: number, docId: number, scope: ResolvedScope) {
     await this.get(id, scope);
     const row = await this.db.one<any>(
-      `SELECT file_name, mime, content FROM student_document
+      `SELECT file_name, mime, content, r2_key FROM student_document
         WHERE id=$1::bigint AND admission_id=$2::bigint AND deleted_at IS NULL`, [docId, id]);
     if (!row) throw new NotFoundException('Document not found.');
+    if (row.r2_key) {
+      const obj = await this.storage.getObject(String(row.r2_key));
+      return { file_name: String(row.file_name), mime: String(row.mime), content: obj.body };
+    }
     return { file_name: String(row.file_name), mime: String(row.mime), content: row.content as Buffer };
+  }
+
+  /** A short-lived PRESIGNED R2 URL for an in-scope, R2-backed sensitive document (never public). */
+  async downloadDocumentUrl(id: number, docId: number, scope: ResolvedScope) {
+    await this.get(id, scope);
+    const row = await this.db.one<any>(
+      `SELECT file_name, r2_key FROM student_document
+        WHERE id=$1::bigint AND admission_id=$2::bigint AND deleted_at IS NULL`, [docId, id]);
+    if (!row) throw new NotFoundException('Document not found.');
+    if (!row.r2_key) throw new BadRequestException('This document predates R2 storage — use the direct download.');
+    const url = await this.storage.presignGet(String(row.r2_key), 300, String(row.file_name));
+    return { url, expires_in: 300 };
   }
 
   /* ---- bulk delete ----------------------------------------------------- */

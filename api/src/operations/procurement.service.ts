@@ -7,6 +7,7 @@ import { InventoryService } from './inventory.service';
 import { computeLine, computeTotals, rupeesToMinor } from '../common/money.util';
 import { requireDateString } from '../common/date.util';
 import { Letterhead, purchaseOrderPdf, PurchaseOrderDoc } from '../pdf/documents';
+import { PdfAssetService } from '../storage/pdf-asset.service';
 
 /**
  * PROCUREMENT — purchase orders to a vendor for catalog items. Branch-scoped (ScopeResolver).
@@ -29,6 +30,7 @@ export class ProcurementService {
     private readonly resolver: ScopeResolverService,
     private readonly numbering: NumberingService,
     private readonly inventory: InventoryService,
+    private readonly pdfAssets?: PdfAssetService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -275,7 +277,9 @@ export class ProcurementService {
         discount_minor: Number(it.discount_minor), tax_pct: it.tax_pct, tax_minor: Number(it.tax_minor), total_minor: Number(it.total_minor),
       })),
     };
-    return { buffer: purchaseOrderPdf(doc, this.letterheadOf(lh ?? {})), filename: `${String(po.po_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
+    const out = { buffer: purchaseOrderPdf(doc, this.letterheadOf(lh ?? {})), filename: `${String(po.po_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
+    await this.pdfAssets?.persist('purchase_order', id, po.po_no ? String(po.po_no) : null, out.buffer);
+    return out;
   }
 
   /* --------------------------------------------------------------- bulk */

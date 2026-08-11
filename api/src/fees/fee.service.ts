@@ -9,6 +9,7 @@ import { paidAsAtMinor } from './as-at';
 import { assertDateRange } from '../common/date.util';
 import { PlanService } from '../paymentplans/plan.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
+import { PdfAssetService } from '../storage/pdf-asset.service';
 
 /**
  * LITE FEE — a collection entry and a receipt. That is the WHOLE Phase-1 scope
@@ -71,6 +72,7 @@ export class FeeService {
     private readonly plans?: PlanService,
     /** Notification Events — fires receipt_generated / payment_successful / fee_fully_paid. Optional. */
     private readonly notifEvents?: NotificationEventService,
+    private readonly pdfAssets?: PdfAssetService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -219,7 +221,7 @@ export class FeeService {
       branch_name: r.branch_name, branch_address: r.branch_address,
       branch_phone: r.branch_phone, branch_email: r.branch_email,
     };
-    return {
+    const out = {
       buffer: receiptPdf({
         receipt_no: r.receipt_no, received_at: r.received_at,
         amount_minor: Number(r.amount_minor), mode: r.mode, reference: r.reference, note: r.note,
@@ -232,6 +234,8 @@ export class FeeService {
       }, lh),
       filename: `${String(r.receipt_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`,
     };
+    await this.pdfAssets?.persist('receipt', id, r.receipt_no ? String(r.receipt_no) : null, out.buffer);
+    return out;
   }
 
   /* ----------------------------------------------------------------- writes */

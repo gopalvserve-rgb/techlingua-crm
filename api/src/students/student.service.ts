@@ -6,6 +6,7 @@ import { assertDateRange, requireDateString } from '../common/date.util';
 import { normalizePhone } from '../common/phone.util';
 import { NumberingService } from '../numbering/numbering.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
+import { StorageService } from '../storage/storage.service';
 
 /**
  * STUDENT — the PHASE-2 student profile. A student is born TWO ways:
@@ -49,6 +50,7 @@ export class StudentService {
     private readonly numbering: NumberingService,
     /** Notification Events — fires `lead_converted` + `enrollment_created`. Optional. */
     private readonly notifEvents?: NotificationEventService,
+    private readonly storage?: StorageService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -344,7 +346,8 @@ export class StudentService {
   async listDocuments(id: number, scope: ResolvedScope) {
     await this.get(id, scope); // scope + existence (throws 404 outside access)
     return this.db.query<any>(
-      `SELECT id, doc_type, file_name, mime, size_bytes, created_at
+      `SELECT id, doc_type, file_name, mime, size_bytes, created_at,
+              (r2_key IS NOT NULL) AS in_r2
          FROM student_document
         WHERE student_id=$1::bigint AND deleted_at IS NULL
         ORDER BY id ASC`, [id]);
@@ -354,10 +357,26 @@ export class StudentService {
   async downloadDocument(id: number, docId: number, scope: ResolvedScope) {
     await this.get(id, scope);
     const row = await this.db.one<any>(
-      `SELECT file_name, mime, content FROM student_document
+      `SELECT file_name, mime, content, r2_key FROM student_document
         WHERE id=$1::bigint AND student_id=$2::bigint AND deleted_at IS NULL`, [docId, id]);
     if (!row) throw new NotFoundException('Document not found.');
+    if (row.r2_key && this.storage) {
+      const obj = await this.storage.getObject(String(row.r2_key));
+      return { file_name: String(row.file_name), mime: String(row.mime), content: obj.body };
+    }
     return { file_name: String(row.file_name), mime: String(row.mime), content: row.content as Buffer };
+  }
+
+  /** A short-lived PRESIGNED R2 URL for an in-scope, R2-backed sensitive document (never public). */
+  async downloadDocumentUrl(id: number, docId: number, scope: ResolvedScope) {
+    await this.get(id, scope);
+    const row = await this.db.one<any>(
+      `SELECT file_name, r2_key FROM student_document
+        WHERE id=$1::bigint AND student_id=$2::bigint AND deleted_at IS NULL`, [docId, id]);
+    if (!row) throw new NotFoundException('Document not found.');
+    if (!row.r2_key || !this.storage) throw new BadRequestException('This document predates R2 storage — use the direct download.');
+    const url = await this.storage.presignGet(String(row.r2_key), 300, String(row.file_name));
+    return { url, expires_in: 300 };
   }
 
   /** Has THIS lead already been converted? Drives the leadsheet button state (idempotency). */
