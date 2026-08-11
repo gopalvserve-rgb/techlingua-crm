@@ -173,12 +173,12 @@ export const toggleCell = (props: Parameters<typeof ToggleChip>[0]): Cell => ({ 
 
 /* --------------------------- detail (view) modal ------------------------ */
 
-export function DetailModal({ title, icon = 'eye', width = 600, onClose, children, footer }: {
-  title: ReactNode; icon?: string; width?: number; onClose: () => void; children: ReactNode; footer?: ReactNode;
+export function DetailModal({ title, icon = 'eye', width = 600, className, onClose, children, footer }: {
+  title: ReactNode; icon?: string; width?: number; className?: string; onClose: () => void; children: ReactNode; footer?: ReactNode;
 }) {
   return (
     <div className="add-scrim">
-      <div className="add-modal" style={{ width }}>
+      <div className={`add-modal${className ? ' ' + className : ''}`} style={{ width }}>
         <div className="ah">
           <h3><Ic k={icon} />{title}</h3>
           <button className="ax" onClick={onClose}><Ic k="x" /></button>

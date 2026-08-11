@@ -4317,7 +4317,7 @@ function SiblingsSection({ studentId, branchId, verticalId, canEdit }: { student
   );
 }
 
-function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void }) {
+export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void }) {
   const { can } = useAuth();
   const canEdit = can('student.update');
   const [prof, setProf] = useState<any>(null);
@@ -4353,13 +4353,14 @@ function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: 
   const TABS: Array<[string, string]> = [
     ['overview', 'Overview'], ['contact', 'Contact'], ['family', 'Family'], ['address', 'Address'],
     ['ids', 'ID & Documents'], ['education', 'Education'], ['academics', 'Academics'],
+    ['attendance', 'Attendance'],
     ['certs', 'Certificates'], ['reportcards', 'Report Cards'], ['fees', 'Fees'],
   ];
 
   const Empty = ({ t }: { t: string }) => <div className="empty-note">{t}</div>;
 
   return (
-    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={760}>
+    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={1040} className="add-modal--xl">
       <div className="page-actions" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
         <span className="mono sub">{full.student_no ?? '—'}</span>
         {renderCell(studentStatusCell(full.status))}
@@ -4478,19 +4479,6 @@ function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: 
                 ))}</tbody></table>
             ) : null}
           </Section>
-          <Section title="Attendance">
-            <KV rows={[
-              ['Present %', att?.summary?.present_pct != null ? `${att.summary.present_pct}%` : '—'],
-              ['Present / Total', `${att?.summary?.present ?? 0} / ${att?.summary?.total ?? 0}`],
-              ['Absent · Late · Excused', `${att?.summary?.absent ?? 0} · ${att?.summary?.late ?? 0} · ${att?.summary?.excused ?? 0}`],
-            ]} />
-            {att?.records?.length ? (
-              <table className="minitbl"><thead><tr><th>Date</th><th>Batch</th><th>Status</th><th>Mode</th></tr></thead>
-                <tbody>{att.records.slice(0, 50).map((r: any) => (
-                  <tr key={r.id}><td>{dmy(r.session_date)}</td><td>{r.batch_name ?? '—'}</td><td>{r.status}</td><td>{r.mode ?? '—'}</td></tr>
-                ))}</tbody></table>
-            ) : <Empty t="No attendance records yet." />}
-          </Section>
           <Section title="Tests & Scores">
             {ac?.tests?.length ? (
               <table className="minitbl"><thead><tr><th>Test</th><th>Type</th><th>Date</th><th>Score</th><th>Grade</th></tr></thead>
@@ -4533,6 +4521,31 @@ function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: 
               </div>
             </Section>
           )}
+        </>
+      )}
+
+      {tab === 'attendance' && (
+        <>
+          <Section title="Attendance Summary">
+            <KV rows={[
+              ['Present %', att?.summary?.present_pct != null ? `${att.summary.present_pct}%` : '—'],
+              ['Present', String(att?.summary?.present ?? 0)],
+              ['Absent', String(att?.summary?.absent ?? 0)],
+              ['Late', String(att?.summary?.late ?? 0)],
+              ['Excused', String(att?.summary?.excused ?? 0)],
+              ['Total Sessions', String(att?.summary?.total ?? 0)],
+            ]} />
+          </Section>
+          <Section title="Attendance Records">
+            {att?.records?.length ? (
+              <table className="minitbl"><thead><tr><th>Date</th><th>Batch</th><th>Status</th><th>Mode</th></tr></thead>
+                <tbody>{att.records.map((r: any) => (
+                  <tr key={r.id}><td>{dmy(r.session_date)}</td><td>{r.batch_name ?? '—'}</td>
+                    <td>{renderCell({ b: [r.status, r.status === 'present' ? 'b-green' : r.status === 'absent' ? 'b-red' : 'b-amber'] } as Cell)}</td>
+                    <td>{r.mode ?? '—'}</td></tr>
+                ))}</tbody></table>
+            ) : <Empty t="No attendance records yet." />}
+          </Section>
         </>
       )}
 
