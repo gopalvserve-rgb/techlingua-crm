@@ -186,8 +186,6 @@ export function ScopeSelector() {
 
   return (
     <div className="scope" role="group" aria-label="Global scope">
-      <span className="scope-chip org"><span className="lv">Org</span><span className="vl">Tech Lingua LLP</span></span>
-      <span className="scope-sep"><Ic k="chev" /></span>
       <Level lv="Branch" value={scope.branches} list={ref.branches} onChange={(ids) => set('branch', ids)} />
       <span className="scope-sep"><Ic k="chev" /></span>
       <Level lv="Vertical" value={scope.verticals} list={verticals} onChange={(ids) => set('vertical', ids)} />

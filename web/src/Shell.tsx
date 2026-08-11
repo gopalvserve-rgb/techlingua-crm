@@ -1,6 +1,6 @@
-/** App shell — brand, topbar (scope chips, search, theme, user), sidebar nav tree,
+/** App shell — brand, topbar (scope chips, shortcuts, user menu), sidebar nav tree,
  *  and the per-screen page renderer. Ported 1:1 from the prototype shell. */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -38,7 +38,6 @@ export function Shell() {
   const [drawer, setDrawer] = useState(false);
   const [filter, setFilter] = useState('');
   const [openMods, setOpenMods] = useState<Record<string, boolean>>({ [mod]: true });
-  const [globalQ, setGlobalQ] = useState('');
   const { params: scopeParams, key: scopeKey } = useScope();
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('tl_theme', theme); }, [theme]);
@@ -90,12 +89,6 @@ export function Shell() {
         <div className="mbrand"><div className="logo" style={{ fontSize: 11, color: '#fff' }}>TL</div><span>Tech Lingua</span></div>
         <ScopeSelector />
         <div className="tb-actions">
-          <div className="searchbox">
-            <Ic k="search" />
-            <input placeholder="Search anything…" value={globalQ} onChange={(e) => setGlobalQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { go('leads', 'all'); } }} />
-            <kbd>⌘K</kbd>
-          </div>
           {/* Quick-access shortcuts (client #4). Each is a real, keyboard-accessible destination
               via go(mod,sub,params) reusing the card-link / follow-up filter params:
               New Leads = leads created today (IST); Due Today / Upcoming = the Today's Follow-ups
@@ -127,19 +120,14 @@ export function Shell() {
             </button>
           </div>
           <button className="icon-btn" title="Site Map" onClick={() => go('map', 'all')}><Ic k="grid" /></button>
-          <div className="theme-toggle">
-            <button className={theme === 'light' ? 'on' : ''} onClick={() => setTheme('light')} title="Light"><Ic k="sun" /></button>
-            <button className={theme === 'dark' ? 'on' : ''} onClick={() => setTheme('dark')} title="Dark"><Ic k="moon" /></button>
-          </div>
           {/* Sprint 3 — the real notification centre. Reminders, overdue escalations,
               SLA breaches and assignments all land here; Sprint 4's WhatsApp/SMS/Email
               channels fan out from the same server-side message. */}
           <NotificationBell onOpenLead={(id) => nav(`/m/leads/all?lead=${id}`)} />
-          <button className="user-pill" title="Sign out" onClick={() => { if (confirm('Sign out?')) logout(); }}>
-            <div className="av">{(me?.user.name || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}</div>
-            <div><div className="nm">{me?.user.name}</div><div className="rl">{roleName || me?.user.email}</div></div>
-            <Ic k="logout" />
-          </button>
+          {/* User (Super Admin) menu — the account dropdown. The light/dark theme
+              toggle now lives HERE (client, Aug 2026), not as a standalone top-bar
+              control; switching + localStorage persistence is unchanged. */}
+          <UserMenu me={me} roleName={roleName} theme={theme} setTheme={setTheme} logout={logout} />
         </div>
       </div>
       <nav className={`sidebar ${drawer ? 'open' : ''}`}>
@@ -255,5 +243,60 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
       {campaignOpen && <CampaignModal onClose={() => setCampaignOpen(false)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}
       {roleOpen && <RoleModal onClose={() => setRoleOpen(false)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}
     </ScreenCtx.Provider>
+  );
+}
+
+
+/** The Super Admin (user) account dropdown in the top bar. Holds the account
+ *  header, the light/dark THEME toggle (relocated here from the top bar — the
+ *  toggle behaviour and `tl_theme` persistence live in the Shell and are passed
+ *  in unchanged) and Sign out. Closes on an outside click like the bell. */
+function UserMenu({ me, roleName, theme, setTheme, logout }: {
+  me: ReturnType<typeof useAuth>['me']; roleName: string;
+  theme: string; setTheme: (t: string) => void; logout: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const initials = (me?.user.name || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  return (
+    <div ref={wrap} style={{ position: 'relative' }}>
+      <button className="user-pill" title="Account" aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}>
+        <div className="av">{initials}</div>
+        <div><div className="nm">{me?.user.name}</div><div className="rl">{roleName || me?.user.email}</div></div>
+        <Ic k="chev" />
+      </button>
+      {open && (
+        <div className="user-menu" role="menu" aria-label="Account menu">
+          <div className="um-head">
+            <div className="av">{initials}</div>
+            <div><div className="nm">{me?.user.name}</div><div className="rl">{roleName || me?.user.email}</div></div>
+          </div>
+          <div className="um-sec">
+            <div className="um-label">Theme</div>
+            <div className="theme-toggle" role="group" aria-label="Theme">
+              <button className={theme === 'light' ? 'on' : ''} onClick={() => setTheme('light')} title="Light">
+                <Ic k="sun" />Light
+              </button>
+              <button className={theme === 'dark' ? 'on' : ''} onClick={() => setTheme('dark')} title="Dark">
+                <Ic k="moon" />Dark
+              </button>
+            </div>
+          </div>
+          <button className="um-item danger" role="menuitem"
+            onClick={() => { if (confirm('Sign out?')) logout(); }}>
+            <Ic k="logout" /> Sign out
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
