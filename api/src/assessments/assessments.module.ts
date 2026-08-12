@@ -13,6 +13,15 @@ import { AttemptService } from './attempt.service';
 import { AttemptController } from './attempt.controller';
 import { SubmissionService } from './submission.service';
 import { SubmissionController } from './submission.controller';
+import { GradeSchemeService } from './grade-scheme.service';
+import { GradeSchemeController } from './grade-scheme.controller';
+import { ResultService } from './result.service';
+import { ResultController } from './result.controller';
+import { AssessmentCertificateService } from './assessment-certificate.service';
+import { AssessmentCertificateController } from './assessment-certificate.controller';
+import { PublicCertificateController } from './public-certificate.controller';
+import { AssessmentReportService } from './assessment-report.service';
+import { AssessmentReportController } from './assessment-report.controller';
 
 /**
  * ASSESSMENTS — the Assessment / Test module.
@@ -29,16 +38,20 @@ import { SubmissionController } from './submission.controller';
     QuestionCategoryController, QuestionController,
     AssessmentTemplateController, AssessmentController,
     AttemptController, SubmissionController,
+    GradeSchemeController, ResultController,
+    AssessmentCertificateController, PublicCertificateController, AssessmentReportController,
   ],
   providers: [
     QuestionCategoryService, QuestionService,
     AssessmentTemplateService, AssessmentService,
     AttemptService, SubmissionService,
+    GradeSchemeService, ResultService, AssessmentCertificateService, AssessmentReportService,
   ],
   exports: [
     QuestionCategoryService, QuestionService,
     AssessmentTemplateService, AssessmentService,
     AttemptService, SubmissionService,
+    GradeSchemeService, ResultService, AssessmentCertificateService, AssessmentReportService,
   ],
 })
 export class AssessmentsModule {}

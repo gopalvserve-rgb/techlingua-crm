@@ -154,4 +154,10 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'assessment_attempt', label: 'Test Attempts', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'assignment_submission', label: 'Assignment Submissions', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'assessment_template', label: 'Test Templates', actions: ['read', 'create', 'update', 'delete'] },
+  // Assessment / Test Module — Batch D (migration 066). Results, grading & certificates.
+  // grade_scheme.* configures the (India-default) grading bands; assessment_certificate.* issues
+  // (for a passed+evaluated attempt), revokes and reads certificates. Branch/vertical scoped;
+  // certificate verification is a PUBLIC tokened read, outside RBAC by design.
+  { module: 'grade_scheme', label: 'Grade Schemes', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'assessment_certificate', label: 'Assessment Certificates', actions: ['read', 'issue', 'revoke', 'delete'] },
 ];

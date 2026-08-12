@@ -313,6 +313,7 @@ export class AttemptService {
       }
     });
 
+    await this.cacheGrade(at.id);
     const fresh = await this.db.one<any>(`SELECT * FROM assessment_attempt WHERE id = $1::bigint`, [at.id]);
     return {
       id: Number(at.id), status: fresh.status, auto_score: Number(fresh.auto_score),
@@ -320,6 +321,23 @@ export class AttemptService {
       max_score: Number(fresh.max_score), is_passed: fresh.is_passed,
       has_subjective: result.has_subjective, show_result_mode: at.show_result_mode,
     };
+  }
+
+  /** Cache percentage + grade_label on an attempt from its (pinned or default) grade scheme. */
+  private async cacheGrade(attemptId: number) {
+    await this.db.query(
+      `UPDATE assessment_attempt at
+          SET percentage = CASE WHEN at.max_score > 0 AND at.total_score IS NOT NULL
+                                THEN ROUND(at.total_score / at.max_score * 100, 2) ELSE NULL END,
+              grade_label = (
+                SELECT gb.label FROM grade_band gb
+                 WHERE gb.scheme_id = COALESCE(
+                         (SELECT a.grade_scheme_id FROM assessment a WHERE a.id = at.assessment_id),
+                         (SELECT gs.id FROM grade_scheme gs WHERE gs.org_id = at.org_id AND gs.is_default AND gs.deleted_at IS NULL ORDER BY gs.id LIMIT 1))
+                   AND at.total_score IS NOT NULL AND at.max_score > 0
+                   AND gb.min_pct <= ROUND(at.total_score / at.max_score * 100, 2)
+                 ORDER BY gb.min_pct DESC LIMIT 1)
+        WHERE at.id = $1::bigint`, [attemptId]);
   }
 
   /* --------------------------------------------------------------------- expire */
@@ -436,6 +454,7 @@ export class AttemptService {
       `UPDATE assessment_attempt SET manual_score = $2, total_score = $3, is_passed = $4, status = 'evaluated',
           evaluated_by = $5, evaluated_at = now(), updated_at = now() WHERE id = $1::bigint`,
       [attemptId, manual, total, passed, me.id]);
+    await this.cacheGrade(attemptId);
     return { id: attemptId, status: 'evaluated', auto_score: auto, manual_score: manual, total_score: total, max_score: Number(at.max_score), is_passed: passed };
   }
 

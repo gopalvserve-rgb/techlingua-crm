@@ -62,7 +62,7 @@ import { PaymentsScreen } from './payments';
 import { RefundsScreen } from './refunds';
 import { RevenueScreen, CollectionReportsScreen } from './revenue';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
-import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, AssessmentTemplatesScreen, AssessmentEvaluationScreen } from './assessments';
+import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, AssessmentTemplatesScreen, AssessmentEvaluationScreen, AssessmentResultsScreen, GradeSchemesScreen, AssessmentCertificatesScreen } from './assessments';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
 
@@ -751,6 +751,7 @@ function QuickStats() {
       ]} />
 
       <TargetBars />
+      <AssessmentDashboardCards />
     </>
   );
 }
@@ -802,6 +803,57 @@ function TargetBars() {
   return (
     <HBars title="This month vs target" rows={rows}
       empty="Targets are set under Performance › Monthly Targets — progress bars appear once targets exist" />
+  );
+}
+
+
+/**
+ * ASSESSMENTS on the dashboards (Batch D). A role-aware block: admin/faculty KPIs (assessments,
+ * attempts, pass rate, average %, pending evaluations, certificates), a grade-distribution bar and
+ * clickable stat cards that open the relevant Assessment lists. RBAC-scoped server-side, and the
+ * whole block is hidden from anyone without assessment_attempt.read (no empty teaser).
+ */
+function AssessmentDashboardCards() {
+  const { can } = useAuth();
+  const { go } = useScreen();
+  const admin = useFetch<any>(can('assessment_attempt.read') ? '/assessment-reports/admin' : null);
+  const faculty = useFetch<any>(can('assessment_attempt.read') ? '/assessment-reports/faculty' : null);
+  if (!can('assessment_attempt.read')) return null;
+  const k = admin.data?.kpis; const fk = faculty.data?.kpis;
+  const dist = admin.data?.grade_distribution ?? [];
+  const max = Math.max(1, ...dist.map((d: any) => Number(d.n)));
+  const bars = dist.map((d: any, i: number) => ({ label: d.grade, val: String(d.n), pct: (Number(d.n) * 100) / max, color: BAR_COLOURS[i % BAR_COLOURS.length] }));
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <span className="fchip on" style={{ cursor: 'default' }}><Ic k="doc" />Assessments</span>
+      </div>
+      <Kpis cols={6} items={[
+        { lab: 'Tests / Exams', val: String(k?.assessments ?? 0), ic: 'doc',
+          onClick: () => go('students', 'exams'), navLabel: `Tests: ${k?.assessments ?? 0}. Open Tests / Exams` },
+        { lab: 'Attempts', val: String(k?.attempts ?? 0), ic: 'users',
+          onClick: () => go('students', 'evaluation'), navLabel: `Attempts: ${k?.attempts ?? 0}. Open the Evaluation Queue` },
+        { lab: 'Pass rate', val: k?.pass_rate != null ? `${k.pass_rate}%` : '—', ic: 'target',
+          onClick: () => go('students', 'assessmentresults'), navLabel: 'Pass rate. Open Results' },
+        { lab: 'Average %', val: k?.avg_pct != null ? `${k.avg_pct}%` : '—', ic: 'bolt',
+          onClick: () => go('students', 'assessmentresults'), navLabel: 'Average score. Open Results' },
+        { lab: 'Pending evaluation', val: String((fk?.pending_evaluations ?? 0) + (fk?.pending_submissions ?? 0)), ic: 'clock',
+          onClick: () => go('students', 'evaluation'), navLabel: `Pending evaluations. Open the Evaluation Queue` },
+        { lab: 'Certificates', val: String(k?.certificates_issued ?? 0), ic: 'shield',
+          onClick: () => go('students', 'assessmentcerts'), navLabel: `Certificates issued. Open Certificates` },
+      ]} />
+      <div className="row2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <HBars title="Grade distribution" rows={bars} empty="No evaluated attempts yet" />
+        <TableCard title="Hardest questions (lowest accuracy)" icon="doc"
+          cols={['Question', 'Type', 'Accuracy']}
+          empty="No answered objective questions yet"
+          rows={(admin.data?.hardest_questions ?? []).slice(0, 6).map((h: any): Cell[] => [
+            { node: <span className="sub">{h.body}</span> },
+            h.q_type,
+            `${h.accuracy_pct}% (${h.correct}/${h.answered})`,
+          ])} />
+      </div>
+    </div>
   );
 }
 
@@ -3861,6 +3913,7 @@ function StudentDashboard() {
             fmtFull(s.created_at),
           ])} />
       </div>
+      <AssessmentDashboardCards />
     </>
   );
 }
@@ -5055,6 +5108,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   tests: AssessmentTestsScreen,
   testTemplates: AssessmentTemplatesScreen,
   assessmentEvaluation: AssessmentEvaluationScreen,
+  assessmentResults: AssessmentResultsScreen,
+  gradeSchemes: GradeSchemesScreen,
+  assessmentCertificates: AssessmentCertificatesScreen,
   trainingVideos: TrainingVideosScreen,
   releaseNotes: ReleaseNotesScreen,
   featuresPanel: FeaturesPanel,

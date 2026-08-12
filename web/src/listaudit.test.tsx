@@ -122,6 +122,12 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   // Derived evaluation queue (attempts + submissions): multi-filter + export + refresh +
   // column chooser; not bulk-deletable (records of a student's run), so NO_BULK.
   { name: 'AssessmentEvaluationScreen', file: 'assessments.tsx', req: NO_BULK },
+  // ---- Students & Academics · Assessments (Batch D — Results / Grading / Certificates) ----
+  // Results leaderboard is a DERIVED, per-test read (multi-filter + export + refresh + column
+  // chooser; not bulk-deletable), so NO_BULK.
+  { name: 'AssessmentResultsScreen', file: 'assessments.tsx', req: NO_BULK },
+  { name: 'GradeSchemesScreen', file: 'assessments.tsx', req: FULL },
+  { name: 'AssessmentCertificatesScreen', file: 'assessments.tsx', req: FULL },
   // ---- Engagement · Notification Events (fixed 37-event catalog) ----
   // A FIXED catalog of standard events — you configure each event's channels, you never
   // create or delete an event — so it carries every control EXCEPT bulk-delete (declared).

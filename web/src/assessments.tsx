@@ -14,14 +14,15 @@
  * India-first, scope-aware. RBAC question.* / question_category.*.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api } from './api';
+import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
-import { rowActions, ConfirmModal, DetailModal, Section, KV } from './rowactions';
+import { rowActions, ConfirmModal, DetailModal, Section, KV, fmtFull } from './rowactions';
 import { useScope } from './scope';
 import { FilterMulti, EnumMulti } from './dyn';
+import { DateRange } from './daterange';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 
 /* ------------------------------------------------------------------ shared ---- */
@@ -1534,5 +1535,506 @@ function SubmissionEvaluationModal({ sub, onClose, onSaved }: { sub: any; onClos
         <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Feedback</label><textarea className="ainp" rows={3} value={feedback} onChange={(e) => setFeedback(e.target.value)} disabled={readOnly} /></div>
       </div>
     </DetailModal>
+  );
+}
+
+/* ============================================================================
+ * BATCH D — RESULTS · ANALYTICS · GRADING · CERTIFICATES · DASHBOARDS
+ * ==========================================================================*/
+
+/** Auth-aware PDF open (window.open can't set headers, so fetch as a blob first). */
+async function openPdfAuthed(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
+
+function useStudentsD(branchIds: number[], verticalIds: number[]) {
+  const p = new URLSearchParams(); p.set('limit', '500');
+  if (branchIds.length) p.set('branch_id', branchIds.join(','));
+  if (verticalIds.length) p.set('vertical_id', verticalIds.join(','));
+  return useFetch<any[]>(`/students?${p.toString()}`, [p.toString()]);
+}
+
+const GRADE_BADGE = (g?: string | null) => {
+  if (!g) return 'b-gray';
+  if (/^A/.test(g)) return 'b-green';
+  if (/^B/.test(g)) return 'b-indigo';
+  if (/^C/.test(g)) return 'b-amber';
+  return 'b-rose';
+};
+
+/** A tiny horizontal bar (percentage 0..100). */
+function Bar({ label, pct, sub, color }: { label: string; pct: number; sub?: string; color?: string }) {
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+        <span>{label}</span><span className="sub">{sub ?? `${Math.round(pct)}%`}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 4, background: 'var(--line)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, pct))}%`, background: color ?? 'var(--indigo)' }} />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- RESULTS ---- */
+export function AssessmentResultsScreen() {
+  const rd = useRef_();
+  const { can } = useAuth();
+  const { scope: gScope } = useScope();
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
+  const [fCourse, setFCourse] = useState<number[]>([]);
+  const [tick, setTick] = useState(0);
+  const [testId, setTestId] = useState('');
+  const [card, setCard] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const after = () => setTick((t) => t + 1);
+  const bulkIssue = async () => {
+    if (!testId) return;
+    setBusy(true);
+    try { const r = await api.post<any>('/assessment-certificates/bulk-issue', { assessment_id: Number(testId) }); toast(r.issued ? `${r.issued} certificate(s) issued` : 'No new certificates to issue (all passed students already have one)'); }
+    catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  const tqs = new URLSearchParams();
+  if (fB.length) tqs.set('branch_id', fB.join(','));
+  if (fV.length) tqs.set('vertical_id', fV.join(','));
+  if (fCourse.length) tqs.set('course_id', fCourse.join(','));
+  const tests = useFetch<any[]>(`/assessments?${tqs.toString()}`, [tqs.toString(), tick]);
+  const board = useFetch<any>(testId ? `/assessments/${testId}/results` : null, [testId, tick]);
+  const b = board.data;
+  const rows: any[] = b?.results ?? [];
+
+  return (
+    <>
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches} onChange={setFB} />
+        <FilterMulti label="Vertical" icon="grid" value={fV} options={rd.verticals} onChange={setFV} />
+        <FilterMulti label="Course" icon="doc" value={fCourse} options={rd.courses} onChange={setFCourse} />
+        <label className="fchip"><Ic k="doc" />
+          <select value={testId} onChange={(e) => setTestId(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12, minWidth: 200 }}>
+            <option value="">— choose a test —</option>
+            {(tests.data ?? []).filter((t: any) => t.status !== 'draft').map((t: any) => <option key={t.id} value={t.id}>{t.title} ({TEST_TYPE_LABEL[t.test_type] ?? t.test_type})</option>)}
+          </select></label>
+      </div>
+      {b && (
+        <Kpis cols={4} items={[
+          { lab: 'Students', val: String(b.summary.students), ic: 'users' },
+          { lab: 'Passed', val: String(b.summary.passed), ic: 'check' },
+          { lab: 'Pass rate', val: `${b.summary.pass_rate}%`, ic: 'target' },
+          { lab: 'Average %', val: `${b.summary.avg_pct}%`, ic: 'bolt' },
+        ]} />
+      )}
+      {b && can('assessment_certificate.issue') && b.summary.passed > 0 && (
+        <div className="page-actions" style={{ marginBottom: 8 }}>
+          <button className="btn" onClick={bulkIssue} disabled={busy}><Ic k="shield" />Issue certificates for all passed ({b.summary.passed})</button>
+        </div>
+      )}
+      <TableCard fill title={b ? `Leaderboard — ${b.assessment.title}` : 'Results'} icon="doc" listKey="assessment-results"
+        more={<ListActions onExport={() => downloadObjectsCsv('results.csv', rows.map((r: any) => ({
+          rank: r.rank, student: r.student_name, student_no: r.student_no, score: r.total_score, max: r.max_score,
+          percentage: r.percentage, grade: r.grade_label, result: r.is_passed ? 'Pass' : 'Fail', percentile: r.percentile,
+          branch: r.branch_name, vertical: r.vertical_name,
+        })))} onRefresh={after} />}
+        cols={['Rank', 'Student', 'Score', '%', 'Grade', 'Result', 'Percentile', 'Actions']}
+        empty={testId ? 'No evaluated results for this test yet.' : 'Choose a test to see its leaderboard.'}
+        rows={rows.map((r: any) => [
+          { node: <b>#{r.rank}</b> } as Cell,
+          { node: <div><b className="nm">{r.student_name}</b>{r.student_no ? <div className="sub">{r.student_no}</div> : null}</div> } as Cell,
+          `${r.total_score} / ${r.max_score}`,
+          `${r.percentage}%`,
+          { node: <span className={`badge ${GRADE_BADGE(r.grade_label)}`}>{r.grade_label ?? '—'}</span> } as Cell,
+          { node: <span className={`badge ${r.is_passed ? 'b-green' : 'b-rose'}`}>{r.is_passed ? 'Pass' : 'Fail'}</span> } as Cell,
+          `${r.percentile}%`,
+          rowActions({ onView: () => setCard(r) }),
+        ])} />
+      {card && <ResultCardModal attemptId={card.attempt_id} studentId={card.student_id} onClose={() => setCard(null)} />}
+    </>
+  );
+}
+
+function ResultCardModal({ attemptId, studentId, onClose }: { attemptId: number; studentId: number; onClose: () => void }) {
+  const res = useFetch<any>(`/attempts/${attemptId}/result`, [attemptId]);
+  const rep = useFetch<any>(studentId ? `/assessment-reports/student?student_id=${studentId}` : null, [studentId]);
+  const d = res.data;
+  const overall = rep.data;
+  return (
+    <DetailModal title="Result card" icon="doc" width={720} onClose={onClose}>
+      {!d ? <div className="sub">Loading…</div> : d.available === false ? (
+        <div className="empty" style={{ padding: 24 }}>{d.reason || 'This result is not available yet.'}</div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div>
+              <b style={{ fontSize: 16 }}>{d.student_name}</b>
+              <div className="sub">{d.assessment_title} · Attempt #{d.attempt_no}</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <span className={`badge ${GRADE_BADGE(d.grade_label)}`} style={{ fontSize: 15 }}>{d.grade_label ?? '—'}</span>
+              <div className={`badge ${d.is_passed ? 'b-green' : 'b-rose'}`} style={{ marginTop: 4 }}>{d.is_passed ? 'Passed' : 'Failed'}</div>
+            </div>
+          </div>
+          <Kpis cols={4} items={[
+            { lab: 'Score', val: `${d.total_score ?? '—'} / ${d.max_score}`, ic: 'doc' },
+            { lab: 'Percentage', val: d.percentage != null ? `${d.percentage}%` : '—', ic: 'target' },
+            { lab: 'Time taken', val: d.time_taken_sec != null ? `${Math.floor(d.time_taken_sec / 60)}m ${d.time_taken_sec % 60}s` : '—', ic: 'clock' },
+            { lab: 'Auto / Manual', val: `${d.auto_score ?? 0} / ${d.manual_score ?? 0}`, ic: 'bolt' },
+          ]} />
+          {overall?.kpis && (
+            <Section title="This student — across all tests">
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8 }}>
+                <KV rows={[
+                  ['Attempts', String(overall.kpis.attempts)],
+                  ['Avg %', overall.kpis.avg_pct != null ? `${overall.kpis.avg_pct}%` : '—'],
+                  ['Pass rate', overall.kpis.pass_rate != null ? `${overall.kpis.pass_rate}%` : '—'],
+                  ['Certificates', String(overall.kpis.certificates)],
+                ]} />
+              </div>
+              {(overall.trend ?? []).length > 1 ? overall.trend.map((t: any, i: number) => (
+                <Bar key={i} label={t.label} pct={t.percentage} sub={`${t.percentage}%${t.grade ? ` · ${t.grade}` : ''}`} color="var(--indigo)" />
+              )) : null}
+            </Section>
+          )}
+          {d.analytics && (
+            <>
+              <Section title="Answer summary">
+                <KV rows={[
+                  ['Correct', String(d.analytics.counts.correct)],
+                  ['Incorrect', String(d.analytics.counts.incorrect)],
+                  ['Unattempted', String(d.analytics.counts.unattempted)],
+                  d.analytics.counts.subjective_pending ? ['Pending eval', String(d.analytics.counts.subjective_pending)] : null,
+                ]} />
+              </Section>
+              {d.analytics.by_topic?.length ? (
+                <Section title="By topic / section">
+                  {d.analytics.by_topic.map((t: any) => <Bar key={t.key} label={t.key} pct={t.score_pct} sub={`${t.correct}/${t.total} · ${t.score_pct}%`} color="var(--indigo)" />)}
+                </Section>
+              ) : null}
+              {d.analytics.by_difficulty?.length ? (
+                <Section title="By difficulty">
+                  {d.analytics.by_difficulty.map((t: any) => <Bar key={t.key} label={t.key} pct={t.accuracy_pct} sub={`${t.correct}/${t.total} correct`} color="var(--green)" />)}
+                </Section>
+              ) : null}
+              {d.analytics.by_type?.length ? (
+                <Section title="By question type">
+                  {d.analytics.by_type.map((t: any) => <Bar key={t.key} label={Q_TYPE_LABEL[t.key] ?? t.key} pct={t.accuracy_pct} sub={`${t.correct}/${t.total} correct`} color="var(--amber)" />)}
+                </Section>
+              ) : null}
+            </>
+          )}
+        </>
+      )}
+    </DetailModal>
+  );
+}
+
+/* ------------------------------------------------------------ GRADE SCHEMES -- */
+const DEFAULT_BANDS = [
+  { label: 'Fail', min_pct: 0, max_pct: 50, is_pass: false },
+  { label: 'C', min_pct: 50, max_pct: 60, is_pass: true },
+  { label: 'B', min_pct: 60, max_pct: 70, is_pass: true },
+  { label: 'B+', min_pct: 70, max_pct: 80, is_pass: true },
+  { label: 'A', min_pct: 80, max_pct: 90, is_pass: true },
+  { label: 'A+', min_pct: 90, max_pct: 100, is_pass: true },
+];
+function validateBandsClient(bands: any[]): string | null {
+  if (bands.length < 2) return 'A scheme needs at least two bands.';
+  const bs = bands.map((b) => ({ ...b, min_pct: Number(b.min_pct), max_pct: Number(b.max_pct) }));
+  for (const b of bs) {
+    if (!String(b.label).trim()) return 'Every band needs a label.';
+    if (!Number.isFinite(b.min_pct) || !Number.isFinite(b.max_pct)) return `Band "${b.label}" has a non-numeric bound.`;
+    if (b.min_pct < 0 || b.max_pct > 100) return `Band "${b.label}" must lie within 0–100.`;
+    if (b.min_pct >= b.max_pct) return `Band "${b.label}" has min ≥ max.`;
+  }
+  const sorted = [...bs].sort((a, b) => a.min_pct - b.min_pct);
+  if (sorted[0].min_pct !== 0) return 'The lowest band must start at 0%.';
+  if (sorted[sorted.length - 1].max_pct !== 100) return 'The highest band must end at 100%.';
+  for (let i = 1; i < sorted.length; i++) if (sorted[i].min_pct !== sorted[i - 1].max_pct) return `Bands must be contiguous — "${sorted[i - 1].label}" ends at ${sorted[i - 1].max_pct}% but "${sorted[i].label}" starts at ${sorted[i].min_pct}%.`;
+  if (!bs.some((b) => b.is_pass)) return 'At least one band must be a PASS band.';
+  return null;
+}
+
+export function GradeSchemesScreen() {
+  const rd = useRef_();
+  const { can } = useAuth();
+  const { scope: gScope } = useScope();
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
+  const [tick, setTick] = useState(0);
+  const [edit, setEdit] = useState<any | null>(null);
+  const [del, setDel] = useState<any | null>(null);
+  const after = () => setTick((t) => t + 1);
+
+  const qs = new URLSearchParams();
+  if (fB.length) qs.set('branch_id', fB.join(','));
+  if (fV.length) qs.set('vertical_id', fV.join(','));
+  const list = useFetch<any[]>(`/grade-schemes?${qs.toString()}`, [qs.toString(), tick]);
+  const rows = list.data ?? [];
+  const ids = rows.map((r: any) => Number(r.id));
+  const { selected, count, tableSelect, clear } = useTableSelect(ids);
+  const { openBulk, bulkModal } = useBulkDelete('Grade scheme', '/grade-schemes/bulk-delete/impact', '/grade-schemes/bulk-delete', () => { after(); clear(); });
+
+  const setDefault = async (r: any) => { try { await api.post(`/grade-schemes/${r.id}/set-default`, {}); toast(`"${r.name}" is now the default`); after(); } catch (e: any) { toast(e.message, true); } };
+  const doDelete = async () => { try { await api.del(`/grade-schemes/${del.id}`); toast('Scheme deleted'); setDel(null); after(); } catch (e: any) { toast(e.message, true); } };
+
+  return (
+    <>
+      {can('grade_scheme.create') && <div className="page-actions"><button className="btn primary" onClick={() => setEdit({ id: null, name: '', bands: DEFAULT_BANDS.map((b) => ({ ...b })) })}><Ic k="plus" />New grade scheme</button></div>}
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches} onChange={setFB} />
+        <FilterMulti label="Vertical" icon="grid" value={fV} options={rd.verticals} onChange={setFV} />
+      </div>
+      <BulkBar count={count} entityLabel="Grade scheme" onDelete={() => openBulk(selected)} onClear={clear} />
+      <TableCard fill title="Grade Schemes" icon="grid" listKey="grade-schemes"
+        select={can('grade_scheme.delete') ? tableSelect : undefined}
+        more={<ListActions onExport={() => downloadObjectsCsv('grade-schemes.csv', rows.map((r: any) => ({ name: r.name, default: r.is_default ? 'Yes' : 'No', bands: r.band_count, branch: r.branch_name, vertical: r.vertical_name, active: r.active ? 'Yes' : 'No' })))} onRefresh={after} />}
+        cols={['Name', 'Default', 'Bands', 'Scope', 'Active', 'Actions']}
+        empty="No grade schemes — the India default is seeded on first run."
+        rows={rows.map((r: any) => [
+          r.name,
+          { node: r.is_default ? <span className="badge b-green">Default</span> : <span className="sub">—</span> } as Cell,
+          String(r.band_count),
+          r.branch_name || r.vertical_name ? [r.branch_name, r.vertical_name].filter(Boolean).join(' · ') : 'Org-wide',
+          { b: [r.active ? 'active' : 'inactive', r.active ? 'b-green' : 'b-gray'] } as Cell,
+          rowActions({
+            onView: () => setEdit(r),
+            extra: [
+              ...(can('grade_scheme.update') && !r.is_default ? [{ k: 'check', title: 'Make default', onClick: () => setDefault(r) }] : []),
+            ],
+            onDelete: can('grade_scheme.delete') && !r.is_default ? () => setDel(r) : undefined,
+          }),
+        ])} />
+      {edit && <GradeSchemeModal scheme={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); after(); }} />}
+      {del && <ConfirmModal title="Delete grade scheme?" body={`Delete "${del.name}"?`} danger confirmLabel="Delete" onConfirm={doDelete} onClose={() => setDel(null)} />}
+      {bulkModal}
+    </>
+  );
+}
+
+function GradeSchemeModal({ scheme, onClose, onSaved }: { scheme: any; onClose: () => void; onSaved: () => void }) {
+  const isNew = scheme.id == null;
+  const [name, setName] = useState(scheme.name ?? '');
+  const [active, setActive] = useState(scheme.active !== false);
+  const [bands, setBands] = useState<any[]>(() => (scheme.bands?.length ? scheme.bands.map((b: any) => ({ ...b })) : DEFAULT_BANDS.map((b) => ({ ...b }))));
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!isNew && scheme.id != null && !scheme.bands) {
+      api.get<any>(`/grade-schemes/${scheme.id}`).then((full) => { setName(full.name); setActive(full.active); setBands(full.bands.map((b: any) => ({ ...b }))); }).catch(() => {});
+    }
+  }, [scheme.id]);
+
+  const upd = (i: number, patch: any) => setBands((bs) => bs.map((b, j) => (j === i ? { ...b, ...patch } : b)));
+  const addBand = () => setBands((bs) => [...bs, { label: '', min_pct: bs.length ? bs[bs.length - 1].max_pct : 0, max_pct: 100, is_pass: true }]);
+  const rm = (i: number) => setBands((bs) => bs.filter((_, j) => j !== i));
+
+  const save = async () => {
+    setErr('');
+    if (!name.trim()) return setErr('Give the grade scheme a name.');
+    const v = validateBandsClient(bands);
+    if (v) return setErr(v);
+    setBusy(true);
+    try {
+      const body = { name: name.trim(), active, bands: bands.map((b) => ({ label: String(b.label).trim(), min_pct: Number(b.min_pct), max_pct: Number(b.max_pct), is_pass: !!b.is_pass })) };
+      if (isNew) await api.post('/grade-schemes', body); else await api.patch(`/grade-schemes/${scheme.id}`, body);
+      toast('Grade scheme saved'); onSaved();
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <DetailModal title={isNew ? 'New grade scheme' : 'Edit grade scheme'} icon="grid" width={640} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></>}>
+      <div className="fld"><label>Name *</label><input className="ainp" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. India Standard" /></div>
+      <label className="chk" style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Active</label>
+      <Section title="Bands (contiguous 0–100, at least one pass)">
+        <table className="mini-table" style={{ width: '100%', fontSize: 13 }}>
+          <thead><tr><th>Label</th><th>Min %</th><th>Max %</th><th>Pass</th><th></th></tr></thead>
+          <tbody>
+            {bands.map((b, i) => (
+              <tr key={i}>
+                <td><input className="ainp" style={{ width: 80 }} value={b.label} onChange={(e) => upd(i, { label: e.target.value })} /></td>
+                <td><input className="ainp" style={{ width: 70 }} type="number" value={b.min_pct} onChange={(e) => upd(i, { min_pct: e.target.value })} /></td>
+                <td><input className="ainp" style={{ width: 70 }} type="number" value={b.max_pct} onChange={(e) => upd(i, { max_pct: e.target.value })} /></td>
+                <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!b.is_pass} onChange={(e) => upd(i, { is_pass: e.target.checked })} /></td>
+                <td><button className="btn ghost sm" onClick={() => rm(i)}><Ic k="trash" /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button className="btn sm" style={{ marginTop: 8 }} onClick={addBand}><Ic k="plus" />Add band</button>
+      </Section>
+      {err && <div className="form-err" style={{ color: 'var(--rose)', marginTop: 8 }}>{err}</div>}
+    </DetailModal>
+  );
+}
+
+/* --------------------------------------------------------------- CERTIFICATES */
+export function AssessmentCertificatesScreen() {
+  const rd = useRef_();
+  const { can } = useAuth();
+  const { scope: gScope } = useScope();
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
+  const [fstat, setFstat] = useState('');
+  const [tick, setTick] = useState(0);
+  const [issue, setIssue] = useState(false);
+  const [revoke, setRevoke] = useState<any | null>(null);
+  const [del, setDel] = useState<any | null>(null);
+  const after = () => setTick((t) => t + 1);
+
+  const qs = new URLSearchParams();
+  if (fB.length) qs.set('branch_id', fB.join(','));
+  if (fV.length) qs.set('vertical_id', fV.join(','));
+  if (fstat) qs.set('status', fstat);
+  const list = useFetch<any[]>(`/assessment-certificates?${qs.toString()}`, [qs.toString(), tick]);
+  const rows = list.data ?? [];
+  const ids = rows.map((r: any) => Number(r.id));
+  const { selected, count, tableSelect, clear } = useTableSelect(ids);
+  const { openBulk, bulkModal } = useBulkDelete('Certificate', '/assessment-certificates/bulk-delete/impact', '/assessment-certificates/bulk-delete', () => { after(); clear(); });
+
+  const doRevoke = async (reason: string) => { try { await api.post(`/assessment-certificates/${revoke.id}/revoke`, { reason }); toast('Certificate revoked'); setRevoke(null); after(); } catch (e: any) { toast(e.message, true); } };
+  const doDelete = async () => { try { await api.del(`/assessment-certificates/${del.id}`); toast('Certificate deleted'); setDel(null); after(); } catch (e: any) { toast(e.message, true); } };
+  const copyVerify = (code: string) => { const link = `${window.location.origin}/verify/certificate/${code}`; navigator.clipboard?.writeText(link); toast('Verification link copied'); };
+
+  return (
+    <>
+      {can('assessment_certificate.issue') && <div className="page-actions"><button className="btn primary" onClick={() => setIssue(true)}><Ic k="plus" />Issue certificate</button></div>}
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches} onChange={setFB} />
+        <FilterMulti label="Vertical" icon="grid" value={fV} options={rd.verticals} onChange={setFV} />
+        <label className="fchip"><Ic k="shield" />
+          <select value={fstat} onChange={(e) => setFstat(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
+            <option value="">All</option><option value="issued">Issued</option><option value="revoked">Revoked</option></select></label>
+      </div>
+      <BulkBar count={count} entityLabel="Certificate" onDelete={() => openBulk(selected)} onClear={clear} />
+      <TableCard fill title="Assessment Certificates" icon="shield" listKey="assessment-certificates"
+        select={can('assessment_certificate.delete') ? tableSelect : undefined}
+        more={<ListActions onExport={() => downloadObjectsCsv('certificates.csv', rows.map((r: any) => ({
+          certificate_no: r.certificate_no, student: r.student_name, student_no: r.student_no, title: r.title,
+          test: r.assessment_title, grade: r.grade_label, percentage: r.percentage, issued: fmtFull(r.issued_on),
+          status: r.status, verify_code: r.verify_code, branch: r.branch_name, vertical: r.vertical_name,
+        })))} onRefresh={after} />}
+        cols={['Certificate No', 'Student', 'Test', 'Grade', '%', 'Issued', 'Status', 'Actions']}
+        empty="No certificates issued yet — issue one for a passed, evaluated attempt."
+        rows={rows.map((r: any) => [
+          { mono: r.certificate_no } as Cell,
+          { node: <div><b className="nm">{r.student_name}</b>{r.student_no ? <div className="sub">{r.student_no}</div> : null}</div> } as Cell,
+          r.assessment_title ?? '—',
+          { node: <span className={`badge ${GRADE_BADGE(r.grade_label)}`}>{r.grade_label ?? '—'}</span> } as Cell,
+          r.percentage != null ? `${r.percentage}%` : '—',
+          fmtFull(r.issued_on),
+          { b: [r.status, r.status === 'issued' ? 'b-green' : 'b-red'] } as Cell,
+          rowActions({
+            extra: [
+              { k: 'doc', title: 'Download PDF', onClick: async () => { try { const { url } = await api.get<any>(`/assessment-certificates/${r.id}/file`); if (url) window.open(url, '_blank', 'noopener'); else openPdfAuthed(`/assessment-certificates/${r.id}/pdf`); } catch { openPdfAuthed(`/assessment-certificates/${r.id}/pdf`); } } },
+              { k: 'link', title: 'Copy verification link', onClick: () => copyVerify(r.verify_code) },
+              ...(can('assessment_certificate.revoke') && r.status === 'issued' ? [{ k: 'shield', title: 'Revoke', onClick: () => setRevoke(r) }] : []),
+            ],
+            onDelete: can('assessment_certificate.delete') ? () => setDel(r) : undefined,
+          }),
+        ])} />
+      {issue && <IssueAssessmentCertModal rd={rd} onClose={() => setIssue(false)} onSaved={() => { setIssue(false); after(); }} />}
+      {revoke && <RevokeCertModal cert={revoke} onClose={() => setRevoke(null)} onConfirm={doRevoke} />}
+      {del && <ConfirmModal title="Delete certificate?" body={`Delete ${del.certificate_no} for ${del.student_name}?`} danger confirmLabel="Delete" onConfirm={doDelete} onClose={() => setDel(null)} />}
+      {bulkModal}
+    </>
+  );
+}
+
+function IssueAssessmentCertModal({ rd, onClose, onSaved }: { rd: any; onClose: () => void; onSaved: () => void }) {
+  const [fB, setFB] = useState<number[]>([]);
+  const [fV, setFV] = useState<number[]>([]);
+  const students = useStudentsD(fB, fV);
+  const [studentId, setStudentId] = useState('');
+  const [attemptId, setAttemptId] = useState('');
+  const [title, setTitle] = useState('');
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const attempts = useFetch<any[]>(studentId ? `/attempts?student_id=${studentId}&status=evaluated` : null, [studentId]);
+  const passed = (attempts.data ?? []).filter((a: any) => a.is_passed === true);
+
+  const save = async () => {
+    setErr('');
+    if (!attemptId) return setErr('Choose a passed, evaluated attempt.');
+    setBusy(true);
+    try {
+      const r = await api.post<any>('/assessment-certificates', { attempt_id: Number(attemptId), title: title.trim() || undefined });
+      toast(`Certificate ${r.certificate_no} issued`); onSaved();
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <DetailModal title="Issue certificate" icon="shield" width={560} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Issuing…' : 'Issue'}</button></>}>
+      <div className="filters" style={{ marginBottom: 8 }}>
+        <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches} onChange={setFB} />
+        <FilterMulti label="Vertical" icon="grid" value={fV} options={rd.verticals} onChange={setFV} />
+      </div>
+      <div className="fld"><label>Student *</label>
+        <select className="ainp" value={studentId} onChange={(e) => { setStudentId(e.target.value); setAttemptId(''); }}>
+          <option value="">— choose —</option>
+          {(students.data ?? []).map((s: any) => <option key={s.id} value={s.id}>{s.full_name} ({s.student_no ?? s.id})</option>)}
+        </select></div>
+      <div className="fld"><label>Passed attempt *</label>
+        <select className="ainp" value={attemptId} onChange={(e) => setAttemptId(e.target.value)} disabled={!studentId}>
+          <option value="">{studentId ? (passed.length ? '— choose a passed attempt —' : 'No passed evaluated attempts for this student') : 'Choose a student first'}</option>
+          {passed.map((a: any) => <option key={a.id} value={a.id}>{a.assessment_title} — {a.total_score}/{a.max_score} ({a.attempt_no ? `#${a.attempt_no}` : ''})</option>)}
+        </select></div>
+      <div className="fld"><label>Title (optional)</label><input className="ainp" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Certificate of Achievement — …" /></div>
+      {err && <div className="form-err" style={{ color: 'var(--rose)', marginTop: 8 }}>{err}</div>}
+    </DetailModal>
+  );
+}
+
+function RevokeCertModal({ cert, onClose, onConfirm }: { cert: any; onClose: () => void; onConfirm: (reason: string) => void }) {
+  const [reason, setReason] = useState('');
+  return (
+    <DetailModal title="Revoke certificate" icon="shield" width={480} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn danger" onClick={() => onConfirm(reason)}>Revoke</button></>}>
+      <p className="sub">Revoke <b>{cert.certificate_no}</b> for {cert.student_name}? Public verification will show it as revoked.</p>
+      <div className="fld"><label>Reason (optional)</label><input className="ainp" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
+    </DetailModal>
+  );
+}
+
+/* ------------------------------------------------- PUBLIC certificate verify -- */
+export function PublicCertificateVerify({ code }: { code: string }) {
+  const [state, setState] = useState<{ loading: boolean; data?: any }>({ loading: true });
+  useEffect(() => {
+    fetch(`/api/public/verify/certificate/${encodeURIComponent(code)}`)
+      .then((r) => r.json()).then((data) => setState({ loading: false, data }))
+      .catch(() => setState({ loading: false, data: { valid: false, reason: 'Could not reach the verification service.' } }));
+  }, [code]);
+  const d = state.data;
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg, #0b1020)', padding: 20 }}>
+      <div style={{ maxWidth: 520, width: '100%', background: 'var(--card, #fff)', borderRadius: 14, padding: 28, boxShadow: '0 10px 40px rgba(0,0,0,.2)' }}>
+        {state.loading ? <div className="sub">Verifying…</div> : (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              <div style={{ fontSize: 40 }}>{d?.valid ? '✅' : (d?.revoked ? '⛔' : '❌')}</div>
+              <h2 style={{ margin: '8px 0 0' }}>{d?.valid ? 'Certificate verified' : (d?.revoked ? 'Certificate revoked' : 'Not verified')}</h2>
+              {!d?.valid && <div className="sub" style={{ marginTop: 6 }}>{d?.reason}</div>}
+            </div>
+            {(d?.valid || d?.revoked) && (
+              <KV rows={[
+                ['Certificate No', d.certificate_no],
+                ['Student', d.student_name],
+                d.assessment_title ? ['Test', d.assessment_title] : null,
+                d.title ? ['Title', d.title] : null,
+                d.grade_label ? ['Grade', `${d.grade_label}${d.percentage != null ? ` (${d.percentage}%)` : ''}`] : null,
+                ['Issued on', fmtFull(d.issued_on)],
+                d.org_name ? ['Issued by', d.org_name] : null,
+              ]} />
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
