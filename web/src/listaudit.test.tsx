@@ -115,6 +115,9 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   // ---- Students & Academics · Assessments (Batch A — Question Bank) ----
   { name: 'QuestionBankScreen', file: 'assessments.tsx', req: FULL },
   { name: 'QuestionCategoriesScreen', file: 'assessments.tsx', req: FULL },
+  // ---- Students & Academics · Assessments (Batch B — Tests / Templates) ----
+  { name: 'AssessmentTestsScreen', file: 'assessments.tsx', req: FULL },
+  { name: 'AssessmentTemplatesScreen', file: 'assessments.tsx', req: FULL },
   // ---- Engagement · Notification Events (fixed 37-event catalog) ----
   // A FIXED catalog of standard events — you configure each event's channels, you never
   // create or delete an event — so it carries every control EXCEPT bulk-delete (declared).

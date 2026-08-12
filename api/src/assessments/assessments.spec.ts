@@ -109,3 +109,116 @@ describe('Question Bank — Batch A', () => {
     await expect(svc.create({ name: ' ' }, me, scopeAll)).rejects.toThrow(/name is required/);
   });
 });
+
+/* ============================================================ Batch B — Tests === */
+import { PATH_METADATA as PATH2, METHOD_METADATA as METH2 } from '@nestjs/common/constants';
+import { AssessmentController } from './assessment.controller';
+import { AssessmentTemplateController } from './assessment-template.controller';
+import { AssessmentService } from './assessment.service';
+import { AssessmentTemplateService } from './assessment-template.service';
+
+const tmplSvc = () => new AssessmentTemplateService(mkDb() as any, resolver);
+
+/** A DB double that returns shaped rows for assemble()/publish() by matching the SQL. */
+function mkAssessDb(overrides: Record<string, any[]> = {}) {
+  const asRow = {
+    id: '5', title: 'Mock', description: null, test_type: 'mock', language: null, instructions: null,
+    duration_min: 30, total_marks: '2', passing_marks: null, passing_pct: null, negative_marking: true,
+    default_negative: '0.25', max_attempts: 1, show_result_mode: 'instant', status: 'draft',
+    start_at: null, end_at: null, randomize_options: false, randomize_questions: false, shuffle_per_attempt: false,
+    questions_to_show: null, total_marks_manual: false,
+  };
+  return {
+    one: async (sql: string) => {
+      if (/FROM organisation/.test(sql)) return { id: '1' };
+      if (/FROM assessment a/.test(sql)) return asRow;
+      if (/questions_to_show, total_marks_manual/.test(sql)) return asRow;
+      if (/count\(\*\) AS n FROM assessment_question/.test(sql)) return { n: '1' };
+      return null;
+    },
+    query: async (sql: string) => {
+      if (/FROM assessment_question aq JOIN question q/.test(sql)) {
+        return [{ question_id: '9', marks_override: null, ordering: 1, id: '9', q_type: 'mcq_single',
+          difficulty: 'easy', marks: '2', negative_marks: '0.25', body: 'Pick one', language: null,
+          image_r2_key: null, audio_r2_key: null, youtube_url: null }];
+      }
+      if (/FROM assessment_section s/.test(sql)) return overrides.sections ?? [];
+      if (/FROM question_option/.test(sql)) {
+        return [{ id: '11', body: 'A', image_r2_key: null, is_correct: true, ordering: 1, match_key: null },
+                { id: '12', body: 'B', image_r2_key: null, is_correct: false, ordering: 2, match_key: null }];
+      }
+      return [];
+    },
+    tx: async (fn: (c: any) => any) => fn({ query: async () => ({ rows: [{ id: '5' }] }) }),
+  } as any;
+}
+const assessSvc = (db?: any) => new AssessmentService(db ?? mkAssessDb(), resolver, storage, tmplSvc());
+
+describe('Assessment Tests — Batch B', () => {
+  it('catalogs the assessment + assessment_template modules', () => {
+    for (const m of ['assessment', 'assessment_template']) {
+      expect(PERMISSION_CATALOG.some((x) => x.module === m)).toBe(true);
+    }
+  });
+
+  it('every Batch-B route declares a permission that exists in the catalog', () => {
+    const keys = new Set(PERMISSION_CATALOG.flatMap((m) => m.actions.map((a) => `${m.module}.${a}`)));
+    for (const C of [AssessmentController, AssessmentTemplateController]) {
+      const proto: any = C.prototype;
+      for (const name of Object.getOwnPropertyNames(proto)) {
+        if (name === 'constructor') continue;
+        const isRoute = Reflect.getMetadata(PATH2, proto[name]) !== undefined && Reflect.getMetadata(METH2, proto[name]) !== undefined;
+        if (!isRoute) continue;
+        const perm = Reflect.getMetadata(PERMISSION_KEY, proto[name]);
+        expect(perm).toBeTruthy();
+        expect(keys.has(perm)).toBe(true);
+      }
+    }
+  });
+
+  it('a template needs a name and a known test type', async () => {
+    const s = tmplSvc();
+    await expect(s.create({ name: ' ' }, me, scopeAll)).rejects.toThrow(/name is required/);
+    await expect(s.create({ name: 'T', test_type: 'nope' }, me, scopeAll)).rejects.toThrow(/Unknown test type/);
+  });
+
+  it('a test needs a title and a known type', async () => {
+    const s = assessSvc();
+    await expect(s.create({ title: ' ' }, me, scopeAll)).rejects.toThrow(/title is required/);
+    await expect(s.create({ title: 'X', test_type: 'nope' }, me, scopeAll)).rejects.toThrow(/Unknown test type/);
+  });
+
+  it('rejects an availability window that ends before it starts', async () => {
+    const s = assessSvc();
+    await expect(s.create({ title: 'X', start_at: '2026-08-10T10:00:00Z', end_at: '2026-08-09T10:00:00Z' }, me, scopeAll))
+      .rejects.toThrow(/ends before it starts/);
+  });
+
+  it('publish refuses a test with no questions and no pool', async () => {
+    const db = mkAssessDb();
+    db.one = async (sql: string) => {
+      if (/FROM assessment a/.test(sql)) return { id: '5', status: 'draft', test_type: 'mock', duration_min: 30, passing_marks: null };
+      if (/count\(\*\) AS n FROM assessment_question/.test(sql)) return { n: '0' };
+      if (/questions_to_show, total_marks_manual/.test(sql)) return { questions_to_show: null, total_marks_manual: false, total_marks: '0' };
+      return null;
+    };
+    const s = assessSvc(db);
+    await expect(s.publish(5, me, scopeAll)).rejects.toThrow(/at least one question|section pool/);
+  });
+
+  it('assemble() strips correct answers from the options (the Batch C seam)', async () => {
+    const s = assessSvc();
+    const out = await s.assemble(5, scopeAll, { forAttempt: true });
+    expect(out.question_count).toBe(1);
+    const q = out.questions[0];
+    expect(q.body).toBe('Pick one');
+    expect(q.options.length).toBe(2);
+    for (const o of q.options) {
+      expect('is_correct' in o).toBe(false);
+      expect(o).not.toHaveProperty('is_correct');
+    }
+    // marks flow through, no explanation leaks
+    expect(q.marks).toBe(2);
+    expect('explanation' in q).toBe(false);
+  });
+});

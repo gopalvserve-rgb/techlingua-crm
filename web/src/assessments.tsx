@@ -500,3 +500,592 @@ function CategoryForm({ cat, rd, all, onClose, onSaved }: { cat: any; rd: any; a
     </DetailModal>
   );
 }
+
+/* ============================================================ TESTS / EXAMS === */
+/**
+ * Assessment Batch B — Tests/Exams. A test is assembled from the Batch A question bank
+ * (hand-picked links and/or pooled sections), carries full settings (duration, marks,
+ * negative marking, randomisation, attempt limit, availability window, show-result mode),
+ * and moves draft → published → closed. Reusable settings live in Test Templates.
+ */
+export const TEST_TYPE_OPTS = [
+  { id: 'practice', name: 'Practice' }, { id: 'chapter', name: 'Chapter' }, { id: 'weekly', name: 'Weekly' },
+  { id: 'mock', name: 'Mock' }, { id: 'assignment', name: 'Assignment' }, { id: 'practical', name: 'Practical' },
+  { id: 'final_exam', name: 'Final Exam' },
+];
+const TEST_TYPE_LABEL: Record<string, string> = Object.fromEntries(TEST_TYPE_OPTS.map((t) => [t.id, t.name]));
+const STATUS_OPTS = [{ id: 'draft', name: 'Draft' }, { id: 'published', name: 'Published' }, { id: 'closed', name: 'Closed' }];
+const STATUS_BADGE: Record<string, string> = { draft: 'b-gray', published: 'b-green', closed: 'b-rose' };
+const SHOW_RESULT_OPTS = [
+  { id: 'instant', name: 'Instant — right after submit' },
+  { id: 'manual', name: 'Manual — faculty releases results' },
+  { id: 'after_end', name: 'After the window ends' },
+];
+const fmtDT = (v?: string | null) => {
+  if (!v) return '—';
+  const d = new Date(v); if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+};
+const toLocalInput = (v?: string | null) => {
+  if (!v) return '';
+  const d = new Date(v); if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+export function AssessmentTestsScreen() {
+  const { can } = useAuth();
+  const rd = useRef_();
+  const { scope: gScope } = useScope();
+  const [tick, setTick] = useState(0);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
+  const [fType, setFType] = useState<string[]>([]);
+  const [fStatus, setFStatus] = useState<string[]>([]);
+  const [fCourse, setFCourse] = useState<number[]>([]);
+  const [fLang, setFLang] = useState<string[]>([]);
+  const [q, setQ] = useState('');
+  const [edit, setEdit] = useState<any | null>(null);
+  const [preview, setPreview] = useState<any | null>(null);
+  const [del, setDel] = useState<any | null>(null);
+  const [fromTmpl, setFromTmpl] = useState(false);
+  const [imp, setImp] = useState(false);
+  const after = () => setTick((t) => t + 1);
+
+  const qs = new URLSearchParams();
+  if (fB.length) qs.set('branch_id', fB.join(','));
+  if (fV.length) qs.set('vertical_id', fV.join(','));
+  if (fType.length) qs.set('test_type', fType.join(','));
+  if (fStatus.length) qs.set('status', fStatus.join(','));
+  if (fCourse.length) qs.set('course_id', fCourse.join(','));
+  if (fLang.length) qs.set('language', fLang.join(','));
+  if (q) qs.set('q', q);
+  const list = useFetch<any[]>(`/assessments?${qs.toString()}`, [qs.toString(), tick]);
+  const summary = useFetch<any>('/assessments/summary', [tick]);
+  const rows = list.data ?? [];
+  const langs = Array.from(new Set(rows.map((r: any) => r.language).filter(Boolean))) as string[];
+  const ids = rows.map((r: any) => Number(r.id));
+  const { selected, count, tableSelect, clear } = useTableSelect(ids);
+  const { openBulk, bulkModal } = useBulkDelete('Test', '/assessments/bulk-delete/impact', '/assessments/bulk-delete', () => { after(); clear(); });
+  const doDelete = async () => { try { await api.del(`/assessments/${del.id}`); toast('Test deleted'); setDel(null); after(); } catch (e: any) { toast(e.message, true); } };
+  const doPublish = async (r: any) => { try { const res = await api.post<any>(`/assessments/${r.id}/publish`, {}); toast(`Published — total ${res.total_marks ?? r.total_marks} marks`); after(); } catch (e: any) { toast(e.message, true); } };
+  const doClose = async (r: any) => { try { await api.post(`/assessments/${r.id}/close`, {}); toast('Test closed'); after(); } catch (e: any) { toast(e.message, true); } };
+  const s = summary.data;
+
+  return (
+    <>
+      <div className="page-actions" style={{ display: 'flex', gap: 8 }}>
+        {can('assessment.create') && <button className="btn" onClick={() => setImp(true)}><Ic k="export" />Import CSV</button>}
+        {can('assessment.create') && <button className="btn" onClick={() => setFromTmpl(true)}><Ic k="doc" />New from template</button>}
+        {can('assessment.create') && <button className="btn primary" onClick={() => setEdit({})}><Ic k="plus" />Create test</button>}
+      </div>
+      <Kpis items={[
+        { lab: 'Tests', val: String(s?.total ?? 0), ic: 'doc' },
+        { lab: 'Draft', val: String(s?.draft ?? 0), ic: 'pencil' },
+        { lab: 'Published', val: String(s?.published ?? 0), ic: 'check' },
+        { lab: 'Closed', val: String(s?.closed ?? 0), ic: 'shield' },
+      ]} />
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches} onChange={setFB} />
+        <FilterMulti label="Vertical" icon="grid" value={fV} options={rd.verticals} onChange={setFV} />
+        <EnumMulti label="Type" icon="list" value={fType} options={TEST_TYPE_OPTS} onChange={setFType} />
+        <EnumMulti label="Status" icon="shield" value={fStatus} options={STATUS_OPTS} onChange={setFStatus} />
+        <FilterMulti label="Course" icon="doc" value={fCourse} options={rd.courses} onChange={setFCourse} />
+        <EnumMulti label="Language" icon="grid" value={fLang} options={asOpts(langs)} onChange={setFLang} />
+        <label className="fchip"><Ic k="search" /><input placeholder="Search title" value={q} onChange={(e) => setQ(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }} /></label>
+      </div>
+      <BulkBar count={count} entityLabel="Test" onDelete={() => openBulk(selected)} onClear={clear} />
+      <TableCard fill title="Tests / Exams" icon="doc"
+        select={can('assessment.delete') ? tableSelect : undefined}
+        more={<ListActions onExport={() => downloadObjectsCsv('tests.csv', rows.map((r: any) => ({
+          title: r.title, type: TEST_TYPE_LABEL[r.test_type] ?? r.test_type, course: r.course_name, batch: r.batch_name,
+          language: r.language, duration_min: r.duration_min, total_marks: r.total_marks, passing_marks: r.passing_marks,
+          passing_pct: r.passing_pct, questions: r.question_count, sections: r.section_count, status: r.status,
+          starts: fmtDT(r.start_at), ends: fmtDT(r.end_at), template: r.template_name, branch: r.branch_name, vertical: r.vertical_name,
+        })))} onRefresh={after} />}
+        cols={['Title', 'Type', 'Course', 'Batch', 'Duration', 'Total / Pass', 'Questions', 'Window', 'Status', 'Actions']}
+        empty="No tests yet — create one, start from a template, or import a CSV."
+        rows={rows.map((r: any) => [
+          { node: <div><b className="nm">{r.title}</b>{r.template_name ? <div className="sub">from {r.template_name}</div> : null}</div> } as Cell,
+          { b: [TEST_TYPE_LABEL[r.test_type] ?? r.test_type, 'b-indigo'] } as Cell,
+          r.course_name ?? '—',
+          r.batch_name ?? '—',
+          r.duration_min ? `${r.duration_min} min` : '—',
+          `${r.total_marks}${r.passing_marks != null ? ' / ' + r.passing_marks : (r.passing_pct != null ? ' / ' + r.passing_pct + '%' : '')}`,
+          String(Number(r.question_count ?? 0) + (Number(r.section_count ?? 0) ? ` +${r.section_count} pool` : '')),
+          { node: <span className="sub">{r.start_at || r.end_at ? `${fmtDT(r.start_at)} → ${fmtDT(r.end_at)}` : 'Always open'}</span> } as Cell,
+          { b: [r.status, STATUS_BADGE[r.status] ?? 'b-gray'] } as Cell,
+          rowActions({
+            onView: () => setPreview(r),
+            onEdit: can('assessment.update') ? () => setEdit(r) : undefined,
+            onDelete: can('assessment.delete') ? () => setDel(r) : undefined,
+            extra: [
+              ...(can('assessment.publish') && r.status === 'draft' ? [{ k: 'check', title: 'Publish', onClick: () => doPublish(r) }] : []),
+              ...(can('assessment.publish') && r.status === 'published' ? [{ k: 'shield', title: 'Close', onClick: () => doClose(r) }] : []),
+            ],
+          }),
+        ])} />
+      {edit && <TestBuilder test={edit} rd={rd} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); after(); }} />}
+      {preview && <TestPreview id={preview.id} title={preview.title} onClose={() => setPreview(null)} />}
+      {fromTmpl && <NewFromTemplate rd={rd} onClose={() => setFromTmpl(false)} onCreated={(id) => { setFromTmpl(false); after(); setEdit({ id }); }} />}
+      {del && <ConfirmModal title="Delete test?" body={`Delete "${del.title}"? Question links are removed; the bank questions are kept.`} danger confirmLabel="Delete" onConfirm={doDelete} onClose={() => setDel(null)} />}
+      {imp && <TestImportModal onClose={() => setImp(false)} onDone={() => { setImp(false); after(); }} />}
+      {bulkModal}
+    </>
+  );
+}
+
+function TestBuilder({ test, rd, onClose, onSaved }: { test: any; rd: any; onClose: () => void; onSaved: () => void }) {
+  const isNew = !test?.id;
+  const [loaded, setLoaded] = useState(isNew);
+  const [busy, setBusy] = useState(false);
+  const [f, setF] = useState<any>({
+    title: '', description: '', test_type: 'practice', course_id: '', batch_id: '', language: '',
+    branch_id: '', vertical_id: '', duration_min: 30, max_attempts: 1,
+    negative_marking: false, default_negative: 0, randomize_questions: false, randomize_options: false,
+    shuffle_per_attempt: false, questions_to_show: '', pass_mode: 'marks', passing_marks: '', passing_pct: '',
+    start_at: '', end_at: '', show_result_mode: 'instant', instructions: '',
+    total_marks_manual: false, total_marks: '',
+  });
+  const [picked, setPicked] = useState<any[]>([]);
+  const [sections, setSections] = useState<any[]>([]);
+  const [computed, setComputed] = useState<number>(0);
+  const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
+
+  const cats = useFetch<any[]>('/question-categories', []);
+  const catOpts = (cats.data ?? []).map((c: any) => ({ id: c.id, name: c.parent_name ? `${c.parent_name} › ${c.name}` : c.name }));
+  const batches = useFetch<any[]>('/batches', []);
+  const batchList = (batches.data ?? []).filter((b: any) => (!f.branch_id || Number(b.branch_id) === Number(f.branch_id)) && (!f.vertical_id || Number(b.vertical_id) === Number(f.vertical_id)));
+  const vOpts = rd.verticals.filter((v: any) => !f.branch_id || Number(v.branch_id) === Number(f.branch_id));
+
+  useEffect(() => {
+    if (isNew) return;
+    api.get<any>(`/assessments/${test.id}`).then((a) => {
+      setF({
+        title: a.title ?? '', description: a.description ?? '', test_type: a.test_type ?? 'practice',
+        course_id: a.course_id ?? '', batch_id: a.batch_id ?? '', language: a.language ?? '',
+        branch_id: a.branch_id ?? '', vertical_id: a.vertical_id ?? '',
+        duration_min: a.duration_min ?? 30, max_attempts: a.max_attempts ?? 1,
+        negative_marking: !!a.negative_marking, default_negative: a.default_negative ?? 0,
+        randomize_questions: !!a.randomize_questions, randomize_options: !!a.randomize_options,
+        shuffle_per_attempt: !!a.shuffle_per_attempt, questions_to_show: a.questions_to_show ?? '',
+        pass_mode: a.passing_pct != null ? 'pct' : 'marks', passing_marks: a.passing_marks ?? '', passing_pct: a.passing_pct ?? '',
+        start_at: toLocalInput(a.start_at), end_at: toLocalInput(a.end_at),
+        show_result_mode: a.show_result_mode ?? 'instant', instructions: a.instructions ?? '',
+        total_marks_manual: !!a.total_marks_manual, total_marks: a.total_marks ?? '',
+        status: a.status,
+      });
+      setPicked((a.questions ?? []).map((qq: any) => ({
+        question_id: qq.question_id, body: qq.body, q_type: qq.q_type, difficulty: qq.difficulty,
+        marks: qq.marks, marks_override: qq.marks_override ?? '', category_name: qq.category_name,
+      })));
+      setSections((a.sections ?? []).map((sc: any) => ({
+        section_id: sc.id, title: sc.title, pool_from_category_id: sc.pool_from_category_id ?? '', pool_pick_count: sc.pool_pick_count ?? '',
+        pool_available: sc.pool_available, pool_category_name: sc.pool_category_name,
+      })));
+      setComputed(Number(a.computed_total ?? a.total_marks ?? 0));
+      setLoaded(true);
+    }).catch((e) => { toast(e.message, true); setLoaded(true); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const liveHand = picked.reduce((sum, p) => sum + (p.marks_override !== '' && p.marks_override != null ? Number(p.marks_override) : Number(p.marks || 0)), 0);
+  const status = f.status ?? 'draft';
+
+  const buildBody = () => ({
+    title: f.title, description: f.description || null, test_type: f.test_type,
+    course_id: f.course_id ? Number(f.course_id) : null, batch_id: f.batch_id ? Number(f.batch_id) : null,
+    language: f.language || null, branch_id: f.branch_id ? Number(f.branch_id) : null, vertical_id: f.vertical_id ? Number(f.vertical_id) : null,
+    duration_min: Number(f.duration_min) || 0, max_attempts: Number(f.max_attempts) || 1,
+    negative_marking: f.negative_marking, default_negative: Number(f.default_negative) || 0,
+    randomize_questions: f.randomize_questions, randomize_options: f.randomize_options, shuffle_per_attempt: f.shuffle_per_attempt,
+    questions_to_show: f.questions_to_show === '' ? null : Number(f.questions_to_show),
+    passing_marks: f.pass_mode === 'marks' && f.passing_marks !== '' ? Number(f.passing_marks) : null,
+    passing_pct: f.pass_mode === 'pct' && f.passing_pct !== '' ? Number(f.passing_pct) : null,
+    start_at: f.start_at || null, end_at: f.end_at || null,
+    show_result_mode: f.show_result_mode, instructions: f.instructions || null,
+    total_marks_manual: f.total_marks_manual, total_marks: f.total_marks_manual && f.total_marks !== '' ? Number(f.total_marks) : null,
+    questions: picked.map((p, i) => ({ question_id: p.question_id, marks_override: p.marks_override === '' ? null : Number(p.marks_override), ordering: i + 1 })),
+    sections: sections.filter((s) => s.pool_from_category_id).map((s, i) => ({
+      title: s.title || 'Pooled section', pool_from_category_id: Number(s.pool_from_category_id),
+      pool_pick_count: s.pool_pick_count === '' ? 1 : Number(s.pool_pick_count), ordering: i + 1,
+    })),
+  });
+
+  const save = async (thenPublish?: boolean): Promise<void> => {
+    if (!f.title.trim()) { toast('A test title is required.', true); return; }
+    setBusy(true);
+    try {
+      const body = buildBody();
+      let id = test.id;
+      if (isNew) { const r = await api.post<any>('/assessments', body); id = r.id; } else { await api.patch(`/assessments/${test.id}`, body); }
+      if (thenPublish) { const res = await api.post<any>(`/assessments/${id}/publish`, {}); toast(`Published — total ${res.total_marks} marks`); }
+      else toast(isNew ? 'Test created' : 'Test saved');
+      onSaved();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  const doClose = async () => { setBusy(true); try { await api.post(`/assessments/${test.id}/close`, {}); toast('Test closed'); onSaved(); } catch (e: any) { toast(e.message, true); } finally { setBusy(false); } };
+
+  const addPicked = (qq: any) => setPicked((p) => p.some((x) => Number(x.question_id) === Number(qq.id)) ? p : [...p, { question_id: qq.id, body: qq.body, q_type: qq.q_type, difficulty: qq.difficulty, marks: qq.marks, marks_override: '', category_name: qq.category_name }]);
+  const move = (i: number, d: number) => setPicked((p) => { const j = i + d; if (j < 0 || j >= p.length) return p; const n = [...p]; [n[i], n[j]] = [n[j], n[i]]; return n; });
+  // Incremental persistence for a saved test — the dedicated add/remove/reorder + pool seams.
+  const syncQuestions = async () => {
+    try {
+      const r = await api.post<any>(`/assessments/${test.id}/questions`, { questions: picked.map((p, i) => ({ question_id: p.question_id, marks_override: p.marks_override === '' ? null : Number(p.marks_override), ordering: i + 1 })) });
+      setComputed(Number(r.total_marks ?? 0)); toast(`Questions saved — total ${r.total_marks}`);
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const savePool = async (sc: any) => {
+    if (!sc.pool_from_category_id) { toast('Choose a category first.', true); return; }
+    try {
+      const r = await api.post<any>(`/assessments/${test.id}/section-pool`, { title: sc.title || 'Pooled section', pool_from_category_id: Number(sc.pool_from_category_id), pool_pick_count: sc.pool_pick_count === '' ? 1 : Number(sc.pool_pick_count), section_id: sc.section_id ?? null });
+      setComputed(Number(r.total_marks ?? 0)); toast('Pool saved'); if (r.section_id) setSections((p) => p.map((x) => x === sc ? { ...x, section_id: r.section_id } : x));
+    } catch (e: any) { toast(e.message, true); }
+  };
+
+  return (
+    <DetailModal title={isNew ? 'Create test' : `Edit — ${f.title || 'test'}`} icon="doc" width={880} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span className="sub" style={{ marginRight: 'auto' }}>Live total (hand-picked): <b>{liveHand}</b>{sections.some((s) => s.pool_from_category_id) ? ' + pooled (computed on save)' : ''}{!isNew ? ` · saved total ${computed}` : ''}</span>
+        <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+        {!isNew && status === 'published' && <button className="btn" onClick={doClose} disabled={busy}><Ic k="shield" />Close test</button>}
+        <button className="btn" onClick={() => save(false)} disabled={busy || !loaded}><Ic k="check" />Save draft</button>
+        {status !== 'closed' && <button className="btn primary" onClick={() => save(true)} disabled={busy || !loaded}><Ic k="check" />Save & publish</button>}
+      </div>}>
+      {!loaded ? <div className="empty-note">Loading…</div> : <>
+      <Section title="Test details"><div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Title *</label><input className="ainp" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Java Fundamentals — Mock Test" /></div>
+        <div className="fld"><label>Test type *</label><select className="ainp" value={f.test_type} onChange={(e) => set('test_type', e.target.value)}>{TEST_TYPE_OPTS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+        <div className="fld"><label>Language (optional)</label><input className="ainp" value={f.language} onChange={(e) => set('language', e.target.value)} placeholder="English, Hindi…" /></div>
+        <div className="fld"><label>Branch</label><select className="ainp" value={f.branch_id} onChange={(e) => { set('branch_id', e.target.value); set('vertical_id', ''); set('batch_id', ''); }}><option value="">— org-wide —</option>{rd.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+        <div className="fld"><label>Vertical</label><select className="ainp" value={f.vertical_id} onChange={(e) => { set('vertical_id', e.target.value); set('batch_id', ''); }} disabled={!f.branch_id}><option value="">—</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></div>
+        <div className="fld"><label>Course</label><select className="ainp" value={f.course_id} onChange={(e) => set('course_id', e.target.value)}><option value="">—</option>{rd.courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+        <div className="fld"><label>Batch</label><select className="ainp" value={f.batch_id} onChange={(e) => set('batch_id', e.target.value)}><option value="">—</option>{batchList.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Description</label><input className="ainp" value={f.description} onChange={(e) => set('description', e.target.value)} /></div>
+      </div></Section>
+
+      <Section title="Settings"><div className="form-grid">
+        <div className="fld"><label>Duration (minutes)</label><input className="ainp" type="number" min={0} value={f.duration_min} onChange={(e) => set('duration_min', e.target.value)} /><span className="sub">0 = untimed (assignments/practicals)</span></div>
+        <div className="fld"><label>Max attempts</label><input className="ainp" type="number" min={1} value={f.max_attempts} onChange={(e) => set('max_attempts', e.target.value)} /></div>
+        <div className="fld"><label>Questions to show (optional)</label><input className="ainp" type="number" min={1} value={f.questions_to_show} onChange={(e) => set('questions_to_show', e.target.value)} placeholder="pick N at random" /></div>
+        <div className="fld"><label>Show result</label><select className="ainp" value={f.show_result_mode} onChange={(e) => set('show_result_mode', e.target.value)}>{SHOW_RESULT_OPTS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
+        <div className="fld"><label>Available from</label><input className="ainp" type="datetime-local" value={f.start_at} onChange={(e) => set('start_at', e.target.value)} /></div>
+        <div className="fld"><label>Available until</label><input className="ainp" type="datetime-local" value={f.end_at} onChange={(e) => set('end_at', e.target.value)} /></div>
+        <div className="fld"><label>Passing by</label><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <select className="ainp" value={f.pass_mode} onChange={(e) => set('pass_mode', e.target.value)} style={{ width: 110 }}><option value="marks">Marks</option><option value="pct">Percent</option></select>
+          {f.pass_mode === 'marks'
+            ? <input className="ainp" type="number" min={0} step="0.5" value={f.passing_marks} onChange={(e) => set('passing_marks', e.target.value)} placeholder="passing marks" />
+            : <input className="ainp" type="number" min={0} max={100} step="1" value={f.passing_pct} onChange={(e) => set('passing_pct', e.target.value)} placeholder="passing %" />}
+        </div></div>
+        <div className="fld"><label>Total marks</label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}><input type="checkbox" checked={f.total_marks_manual} onChange={(e) => set('total_marks_manual', e.target.checked)} />Override (else derived)</label>
+          {f.total_marks_manual ? <input className="ainp" type="number" min={0} step="0.5" value={f.total_marks} onChange={(e) => set('total_marks', e.target.value)} placeholder="total marks" /> : <span className="sub">Derived from questions{sections.some((s)=>s.pool_from_category_id)?' + pools':''}: {liveHand || computed}</span>}
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1', display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.negative_marking} onChange={(e) => set('negative_marking', e.target.checked)} />Negative marking</label>
+          {f.negative_marking ? <span style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>default −<input className="ainp" style={{ width: 80 }} type="number" min={0} step="0.25" value={f.default_negative} onChange={(e) => set('default_negative', e.target.value)} /></span> : null}
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.randomize_questions} onChange={(e) => set('randomize_questions', e.target.checked)} />Randomise questions</label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.randomize_options} onChange={(e) => set('randomize_options', e.target.checked)} />Randomise options</label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.shuffle_per_attempt} onChange={(e) => set('shuffle_per_attempt', e.target.checked)} />Shuffle each attempt</label>
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Instructions (shown before the test)</label><textarea className="ainp" rows={2} value={f.instructions} onChange={(e) => set('instructions', e.target.value)} /></div>
+      </div></Section>
+
+      <QuestionPicker rd={rd} catOpts={catOpts} picked={picked} onAdd={addPicked} />
+
+      <Section title={`Selected questions (${picked.length})`}>
+        {picked.length === 0 ? <div className="empty-note">No hand-picked questions yet — add from the picker above, or configure a pooled section below.</div> : (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {picked.map((p, i) => (
+              <div key={p.question_id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, borderBottom: '1px solid var(--line)', paddingBottom: 4 }}>
+                <span className="sub" style={{ width: 22 }}>{i + 1}.</span>
+                <span className={`bdg ${DIFF_BADGE[p.difficulty] ?? 'b-gray'}`}>{p.difficulty}</span>
+                <span style={{ flex: 1 }}>{String(p.body).slice(0, 80)}{String(p.body).length > 80 ? '…' : ''}</span>
+                <span className="sub">{Q_TYPE_LABEL[p.q_type] ?? p.q_type}</span>
+                <input className="ainp" style={{ width: 74 }} type="number" step="0.5" value={p.marks_override} placeholder={String(p.marks)} title="Marks (blank = default)" onChange={(e) => setPicked((pp) => pp.map((x, j) => j === i ? { ...x, marks_override: e.target.value } : x))} />
+                <button className="btn" type="button" title="Up" onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
+                <button className="btn" type="button" title="Down" onClick={() => move(i, 1)} disabled={i === picked.length - 1}>↓</button>
+                <button className="btn" type="button" title="Remove" onClick={() => setPicked((pp) => pp.filter((_, j) => j !== i))}><Ic k="trash" /></button>
+              </div>
+            ))}
+          </div>
+        )}
+        {!isNew && picked.length ? <div style={{ marginTop: 8 }}><button className="btn" type="button" onClick={syncQuestions}><Ic k="check" />Save questions now</button></div> : null}
+      </Section>
+
+      <Section title="Pooled sections (pick N random from a category)">
+        <div style={{ display: 'grid', gap: 8 }}>
+          {sections.map((sc, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input className="ainp" style={{ width: 180 }} value={sc.title} placeholder="Section title" onChange={(e) => setSections((p) => p.map((x, j) => j === i ? { ...x, title: e.target.value } : x))} />
+              <select className="ainp" style={{ minWidth: 200 }} value={sc.pool_from_category_id} onChange={(e) => setSections((p) => p.map((x, j) => j === i ? { ...x, pool_from_category_id: e.target.value } : x))}>
+                <option value="">— category to pool from —</option>{catOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <span style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>pick <input className="ainp" style={{ width: 70 }} type="number" min={1} value={sc.pool_pick_count} onChange={(e) => setSections((p) => p.map((x, j) => j === i ? { ...x, pool_pick_count: e.target.value } : x))} /></span>
+              {!isNew ? <button className="btn" type="button" title="Save this pool" onClick={() => savePool(sc)}><Ic k="check" />Save pool</button> : null}
+              <button className="btn" type="button" title="Remove section" onClick={() => setSections((p) => p.filter((_, j) => j !== i))}><Ic k="trash" /></button>
+            </div>
+          ))}
+          <div><button className="btn" type="button" onClick={() => setSections((p) => [...p, { title: 'Section', pool_from_category_id: '', pool_pick_count: 2 }])}><Ic k="plus" />Add pooled section</button></div>
+        </div>
+      </Section>
+      </>}
+    </DetailModal>
+  );
+}
+
+function QuestionPicker({ rd, catOpts, picked, onAdd }: { rd: any; catOpts: any[]; picked: any[]; onAdd: (q: any) => void }) {
+  const [fCat, setFCat] = useState<number[]>([]);
+  const [fType, setFType] = useState<string[]>([]);
+  const [fDiff, setFDiff] = useState<string[]>([]);
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState<number[]>([]);
+  const qs = new URLSearchParams();
+  if (fCat.length) qs.set('category_id', fCat.join(','));
+  if (fType.length) qs.set('q_type', fType.join(','));
+  if (fDiff.length) qs.set('difficulty', fDiff.join(','));
+  if (q) qs.set('q', q);
+  qs.set('active', '1');
+  const bank = useFetch<any[]>(`/questions?${qs.toString()}`, [qs.toString()]);
+  const pickedIds = new Set(picked.map((p) => Number(p.question_id)));
+  const rows = (bank.data ?? []).filter((r: any) => !pickedIds.has(Number(r.id)));
+  const addSelected = () => { rows.filter((r: any) => sel.includes(Number(r.id))).forEach((r: any) => onAdd(r)); setSel([]); };
+  return (
+    <Section title="Question picker (from the Question Bank)">
+      <div className="filters" style={{ marginBottom: 8 }}>
+        <FilterMulti label="Category" icon="doc" value={fCat} options={catOpts} onChange={setFCat} />
+        <EnumMulti label="Type" icon="list" value={fType} options={Q_TYPE_OPTS} onChange={setFType} />
+        <EnumMulti label="Difficulty" icon="bolt" value={fDiff} options={DIFF_OPTS} onChange={setFDiff} />
+        <label className="fchip"><Ic k="search" /><input placeholder="Search text / tags" value={q} onChange={(e) => setQ(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }} /></label>
+        {sel.length ? <button className="btn primary" type="button" onClick={addSelected}><Ic k="plus" />Add {sel.length} selected</button> : null}
+      </div>
+      <div style={{ maxHeight: 220, overflow: 'auto', display: 'grid', gap: 4 }}>
+        {rows.length === 0 ? <div className="empty-note">No matching bank questions (or all already added).</div> : rows.map((r: any) => (
+          <div key={r.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, padding: '2px 0' }}>
+            <input type="checkbox" checked={sel.includes(Number(r.id))} onChange={(e) => setSel((p) => e.target.checked ? [...p, Number(r.id)] : p.filter((x) => x !== Number(r.id)))} />
+            <span className={`bdg ${DIFF_BADGE[r.difficulty] ?? 'b-gray'}`}>{r.difficulty}</span>
+            <span style={{ flex: 1 }}>{String(r.body).slice(0, 80)}{String(r.body).length > 80 ? '…' : ''}</span>
+            <span className="sub">{Q_TYPE_LABEL[r.q_type] ?? r.q_type} · {r.marks}m</span>
+            <button className="btn" type="button" onClick={() => onAdd(r)}><Ic k="plus" />Add</button>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function TestPreview({ id, title, onClose }: { id: number; title: string; onClose: () => void }) {
+  const d = useFetch<any>(`/assessments/${id}/preview`, [id]);
+  const p = d.data;
+  return (
+    <DetailModal title={`Preview — ${title}`} icon="eye" width={720} onClose={onClose}>
+      {!p ? <div className="empty-note">Assembling…</div> : <>
+        <div className="empty-note" style={{ marginBottom: 10 }}>This is the student-facing set (correct answers are stripped). {p.assessment.duration_min ? `${p.assessment.duration_min} min · ` : ''}{p.assessment.total_marks} marks · {p.question_count} questions.{p.assessment.negative_marking ? ' Negative marking on.' : ''}</div>
+        {p.main_questions?.length ? <Section title="Questions">{p.main_questions.map((qq: any, i: number) => <PreviewQ key={qq.id} n={i + 1} q={qq} />)}</Section> : null}
+        {(p.sections ?? []).map((sc: any) => (
+          <Section key={sc.id} title={`${sc.title} (pooled)`}>{sc.questions.map((qq: any, i: number) => <PreviewQ key={qq.id} n={i + 1} q={qq} />)}</Section>
+        ))}
+        {!p.question_count ? <div className="empty-note">No questions resolved — add questions or a valid pool.</div> : null}
+      </>}
+    </DetailModal>
+  );
+}
+function PreviewQ({ n, q }: { n: number; q: any }) {
+  const embed = youtubeEmbed(q.youtube_url, q.youtube_start_sec, q.youtube_end_sec);
+  return (
+    <div style={{ marginBottom: 10, paddingBottom: 8, borderBottom: '1px solid var(--line)' }}>
+      <div style={{ fontSize: 13.5 }}><b>{n}.</b> {q.body} <span className="sub">({q.marks}m{q.negative_marks ? `, −${q.negative_marks}` : ''})</span></div>
+      {q.image_url ? <img src={q.image_url} alt="q" style={{ maxHeight: 120, borderRadius: 6, marginTop: 6 }} /> : null}
+      {q.audio_url ? <audio controls src={q.audio_url} style={{ width: '100%', marginTop: 6 }} /> : null}
+      {embed ? <div style={{ position: 'relative', paddingTop: '40%', maxWidth: 380, marginTop: 6 }}><iframe title="yt" src={embed} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, borderRadius: 8 }} allowFullScreen /></div> : null}
+      {q.options?.length ? <div style={{ display: 'grid', gap: 3, marginTop: 5 }}>{q.options.map((o: any, i: number) => (
+        <div key={o.id} style={{ fontSize: 13 }}><span className="sub">{String.fromCharCode(65 + i)}.</span> {o.body}{o.match_key ? ` → ${o.match_key}` : ''}</div>
+      ))}</div> : null}
+    </div>
+  );
+}
+
+function NewFromTemplate({ rd, onClose, onCreated }: { rd: any; onClose: () => void; onCreated: (id: number) => void }) {
+  const tmpls = useFetch<any[]>('/assessment-templates', []);
+  const [templateId, setTemplateId] = useState('');
+  const [title, setTitle] = useState('');
+  const [busy, setBusy] = useState(false);
+  const create = async () => {
+    if (!templateId) { toast('Choose a template.', true); return; }
+    setBusy(true);
+    try { const r = await api.post<any>('/assessments/from-template', { template_id: Number(templateId), title: title || undefined }); toast('Test created from template'); onCreated(r.id); }
+    catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title="New test from a template" icon="doc" width={520} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={create} disabled={busy}><Ic k="check" />Create</button></div>}>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Template *</label><select className="ainp" value={templateId} onChange={(e) => setTemplateId(e.target.value)}><option value="">— choose —</option>{(tmpls.data ?? []).map((t: any) => <option key={t.id} value={t.id}>{t.name} ({TEST_TYPE_LABEL[t.test_type] ?? t.test_type})</option>)}</select></div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Title (optional)</label><input className="ainp" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="defaults to the template name" /></div>
+        <div className="empty-note" style={{ gridColumn: '1 / -1' }}>The template's settings are copied into a new draft; add questions in the builder that opens next.</div>
+      </div>
+    </DetailModal>
+  );
+}
+
+function TestImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [fileName, setFileName] = useState('');
+  const [report, setReport] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const onFile = (file?: File) => {
+    if (!file) return;
+    setFileName(file.name);
+    const r = new FileReader();
+    r.onload = () => { try { setRows(parseCsv(String(r.result))); setReport(null); } catch (e: any) { toast(e.message, true); } };
+    r.readAsText(file);
+  };
+  const run = async () => {
+    if (!rows.length) { toast('Choose a CSV first.', true); return; }
+    setBusy(true);
+    try { const res = await api.post<any>('/assessments/import', { rows }); setReport(res); if (res.imported) toast(`${res.imported} test(s) imported`); }
+    catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title="Import tests (CSV)" icon="doc" width={620} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn" onClick={onClose}>Close</button>
+        {report && report.imported ? <button className="btn primary" onClick={onDone}><Ic k="check" />Done</button>
+          : <button className="btn primary" onClick={run} disabled={busy || !rows.length}><Ic k="export" />Import {rows.length || ''}</button>}
+      </div>}>
+      <div className="empty-note" style={{ marginBottom: 10 }}>
+        Columns: <b>title, test_type, course, batch, language, duration_min, passing_marks, passing_pct, negative_marking, max_attempts, instructions</b>.
+        Course/batch are matched by name. Each row creates a DRAFT test — add questions in the builder afterwards. Unknown types/courses are reported row-by-row.
+      </div>
+      <input type="file" accept=".csv,text/csv" onChange={(e) => onFile(e.target.files?.[0])} />
+      {fileName ? <div style={{ marginTop: 8, fontSize: 13 }}>{fileName} — <b>{rows.length}</b> row(s) parsed</div> : null}
+      {report ? (
+        <div className="sheet-sec" style={{ marginTop: 12 }}>
+          <h5>Result: {report.imported} imported, {report.failed} failed</h5>
+          {report.errors?.length ? <div style={{ maxHeight: 220, overflow: 'auto', fontSize: 12.5 }}>{report.errors.map((e: any, i: number) => <div key={i} style={{ color: 'var(--danger)' }}>Row {e.row}: {e.message}</div>)}</div> : <div className="empty-note">No errors.</div>}
+        </div>
+      ) : null}
+    </DetailModal>
+  );
+}
+
+/* ======================================================= TEST TEMPLATES === */
+export function AssessmentTemplatesScreen() {
+  const { can } = useAuth();
+  const rd = useRef_();
+  const { scope: gScope } = useScope();
+  const [tick, setTick] = useState(0);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
+  const [fType, setFType] = useState<string[]>([]);
+  const [fActive, setFActive] = useState<string[]>([]);
+  const [q, setQ] = useState('');
+  const [edit, setEdit] = useState<any | null>(null);
+  const [del, setDel] = useState<any | null>(null);
+  const after = () => setTick((t) => t + 1);
+
+  const qs = new URLSearchParams();
+  if (fB.length) qs.set('branch_id', fB.join(','));
+  if (fV.length) qs.set('vertical_id', fV.join(','));
+  if (fType.length) qs.set('test_type', fType.join(','));
+  if (fActive.length === 1) qs.set('active', fActive[0] === 'active' ? '1' : '0');
+  if (q) qs.set('q', q);
+  const list = useFetch<any[]>(`/assessment-templates?${qs.toString()}`, [qs.toString(), tick]);
+  const rows = list.data ?? [];
+  const ids = rows.map((r: any) => Number(r.id));
+  const { selected, count, tableSelect, clear } = useTableSelect(ids);
+  const { openBulk, bulkModal } = useBulkDelete('Template', '/assessment-templates/bulk-delete/impact', '/assessment-templates/bulk-delete', () => { after(); clear(); });
+  const doDelete = async () => { try { await api.del(`/assessment-templates/${del.id}`); toast('Template deleted'); setDel(null); after(); } catch (e: any) { toast(e.message, true); } };
+
+  return (
+    <>
+      {can('assessment_template.create') && <div className="page-actions"><button className="btn primary" onClick={() => setEdit({})}><Ic k="plus" />Add template</button></div>}
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches} onChange={setFB} />
+        <FilterMulti label="Vertical" icon="grid" value={fV} options={rd.verticals} onChange={setFV} />
+        <EnumMulti label="Type" icon="list" value={fType} options={TEST_TYPE_OPTS} onChange={setFType} />
+        <EnumMulti label="Status" icon="shield" value={fActive} options={[{ id: 'active', name: 'Active' }, { id: 'inactive', name: 'Inactive' }]} onChange={setFActive} />
+        <label className="fchip"><Ic k="search" /><input placeholder="Search name" value={q} onChange={(e) => setQ(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }} /></label>
+      </div>
+      <BulkBar count={count} entityLabel="Template" onDelete={() => openBulk(selected)} onClear={clear} />
+      <TableCard fill title="Test Templates" icon="doc"
+        select={can('assessment_template.delete') ? tableSelect : undefined}
+        more={<ListActions onExport={() => downloadObjectsCsv('test-templates.csv', rows.map((r: any) => ({
+          name: r.name, type: TEST_TYPE_LABEL[r.test_type] ?? r.test_type, duration_min: r.duration_min,
+          negative_marking: r.negative_marking ? 'Yes' : 'No', default_negative: r.default_negative,
+          randomize_questions: r.randomize_questions ? 'Yes' : 'No', randomize_options: r.randomize_options ? 'Yes' : 'No',
+          max_attempts: r.max_attempts, passing_pct: r.passing_pct, show_result: r.show_result_mode,
+          used_by_tests: r.used_count, branch: r.branch_name, vertical: r.vertical_name, active: r.active ? 'Yes' : 'No',
+        })))} onRefresh={after} />}
+        cols={['Name', 'Type', 'Duration', 'Negative', 'Randomise', 'Attempts', 'Pass %', 'Result', 'Used by', 'Active', 'Actions']}
+        empty="No templates yet — add a preset (e.g. Standard MCQ Mock) to speed up test creation."
+        rows={rows.map((r: any) => [
+          { node: <b className="nm">{r.name}</b> } as Cell,
+          { b: [TEST_TYPE_LABEL[r.test_type] ?? r.test_type, 'b-indigo'] } as Cell,
+          r.duration_min ? `${r.duration_min} min` : '—',
+          { b: [r.negative_marking ? `−${r.default_negative}` : 'Off', r.negative_marking ? 'b-amber' : 'b-gray'] } as Cell,
+          `${r.randomize_questions ? 'Q' : ''}${r.randomize_options ? '/O' : ''}` || '—',
+          String(r.max_attempts),
+          r.passing_pct != null ? `${r.passing_pct}%` : '—',
+          r.show_result_mode,
+          String(r.used_count ?? 0),
+          { b: [r.active ? 'Active' : 'Inactive', r.active ? 'b-green' : 'b-gray'] } as Cell,
+          rowActions({ onEdit: can('assessment_template.update') ? () => setEdit(r) : undefined, onDelete: can('assessment_template.delete') ? () => setDel(r) : undefined }),
+        ])} />
+      {edit && <TemplateForm tmpl={edit} rd={rd} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); after(); }} />}
+      {del && <ConfirmModal title="Delete template?" body={`Delete "${del.name}"? Tests already created from it are kept.`} danger confirmLabel="Delete" onConfirm={doDelete} onClose={() => setDel(null)} />}
+      {bulkModal}
+    </>
+  );
+}
+
+function TemplateForm({ tmpl, rd, onClose, onSaved }: { tmpl: any; rd: any; onClose: () => void; onSaved: () => void }) {
+  const isNew = !tmpl?.id;
+  const [f, setF] = useState<any>({
+    name: tmpl.name ?? '', test_type: tmpl.test_type ?? 'mock', branch_id: tmpl.branch_id ?? '', vertical_id: tmpl.vertical_id ?? '',
+    duration_min: tmpl.duration_min ?? 30, negative_marking: !!tmpl.negative_marking, default_negative: tmpl.default_negative ?? 0.25,
+    randomize_questions: tmpl.randomize_questions ?? true, randomize_options: tmpl.randomize_options ?? true, shuffle_per_attempt: !!tmpl.shuffle_per_attempt,
+    questions_to_show: tmpl.questions_to_show ?? '', max_attempts: tmpl.max_attempts ?? 1, passing_pct: tmpl.passing_pct ?? 40,
+    show_result_mode: tmpl.show_result_mode ?? 'instant', instructions: tmpl.instructions ?? '', active: tmpl.active !== false,
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
+  const vOpts = rd.verticals.filter((v: any) => !f.branch_id || Number(v.branch_id) === Number(f.branch_id));
+  const save = async () => {
+    if (!f.name.trim()) { toast('A template name is required.', true); return; }
+    setBusy(true);
+    try {
+      const body = { ...f, branch_id: f.branch_id ? Number(f.branch_id) : null, vertical_id: f.vertical_id ? Number(f.vertical_id) : null,
+        duration_min: Number(f.duration_min) || 0, default_negative: Number(f.default_negative) || 0, max_attempts: Number(f.max_attempts) || 1,
+        questions_to_show: f.questions_to_show === '' ? null : Number(f.questions_to_show), passing_pct: f.passing_pct === '' ? null : Number(f.passing_pct),
+        instructions: f.instructions || null };
+      if (isNew) await api.post('/assessment-templates', body); else await api.patch(`/assessment-templates/${tmpl.id}`, body);
+      toast(isNew ? 'Template created' : 'Template updated'); onSaved();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={isNew ? 'Add template' : `Edit — ${tmpl.name}`} icon="doc" width={620} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button></div>}>
+      <div className="form-grid">
+        <div className="fld"><label>Name *</label><input className="ainp" value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Standard MCQ Mock" /></div>
+        <div className="fld"><label>Test type</label><select className="ainp" value={f.test_type} onChange={(e) => set('test_type', e.target.value)}>{TEST_TYPE_OPTS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+        <div className="fld"><label>Branch</label><select className="ainp" value={f.branch_id} onChange={(e) => { set('branch_id', e.target.value); set('vertical_id', ''); }}><option value="">— org-wide —</option>{rd.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+        <div className="fld"><label>Vertical</label><select className="ainp" value={f.vertical_id} onChange={(e) => set('vertical_id', e.target.value)} disabled={!f.branch_id}><option value="">—</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></div>
+        <div className="fld"><label>Duration (minutes)</label><input className="ainp" type="number" min={0} value={f.duration_min} onChange={(e) => set('duration_min', e.target.value)} /></div>
+        <div className="fld"><label>Max attempts</label><input className="ainp" type="number" min={1} value={f.max_attempts} onChange={(e) => set('max_attempts', e.target.value)} /></div>
+        <div className="fld"><label>Questions to show</label><input className="ainp" type="number" min={1} value={f.questions_to_show} onChange={(e) => set('questions_to_show', e.target.value)} placeholder="optional" /></div>
+        <div className="fld"><label>Passing %</label><input className="ainp" type="number" min={0} max={100} value={f.passing_pct} onChange={(e) => set('passing_pct', e.target.value)} /></div>
+        <div className="fld"><label>Show result</label><select className="ainp" value={f.show_result_mode} onChange={(e) => set('show_result_mode', e.target.value)}>{SHOW_RESULT_OPTS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
+        <div className="fld"><label>Default negative</label><input className="ainp" type="number" min={0} step="0.25" value={f.default_negative} onChange={(e) => set('default_negative', e.target.value)} disabled={!f.negative_marking} /></div>
+        <div className="fld" style={{ gridColumn: '1 / -1', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.negative_marking} onChange={(e) => set('negative_marking', e.target.checked)} />Negative marking</label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.randomize_questions} onChange={(e) => set('randomize_questions', e.target.checked)} />Randomise questions</label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.randomize_options} onChange={(e) => set('randomize_options', e.target.checked)} />Randomise options</label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.shuffle_per_attempt} onChange={(e) => set('shuffle_per_attempt', e.target.checked)} />Shuffle each attempt</label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} />Active</label>
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Default instructions</label><textarea className="ainp" rows={2} value={f.instructions} onChange={(e) => set('instructions', e.target.value)} /></div>
+      </div>
+    </DetailModal>
+  );
+}

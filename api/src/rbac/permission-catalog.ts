@@ -147,4 +147,9 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // scoped. Batches B/C/D add tests, attempts and results.
   { module: 'question_category', label: 'Question Categories', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'question', label: 'Question Bank', actions: ['read', 'create', 'update', 'delete', 'import'] },
+  // Assessment / Test Module — Batch B (migration 064). Tests / exams assembled from the bank
+  // (hand-picked links + pooled sections), settings, publish/close, and reusable settings
+  // templates. Branch/vertical scoped. Batches C/D add attempts and results.
+  { module: 'assessment', label: 'Tests / Exams', actions: ['read', 'create', 'update', 'delete', 'publish'] },
+  { module: 'assessment_template', label: 'Test Templates', actions: ['read', 'create', 'update', 'delete'] },
 ];
