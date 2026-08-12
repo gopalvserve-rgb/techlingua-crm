@@ -306,8 +306,12 @@ export class AttemptService {
         // No subjective: an on-time submit is fully evaluated; an expired one stays 'expired' but scored.
         const status = terminalStatus === 'expired' ? 'expired' : 'evaluated';
         await c.query(
-          `UPDATE assessment_attempt SET status = $2, submitted_at = now(), auto_score = $3, manual_score = 0,
-              total_score = $4, max_score = $5, is_passed = $6, evaluated_at = CASE WHEN $2 = 'evaluated' THEN now() ELSE evaluated_at END,
+          // NB: $2 is referenced twice (the status assignment AND the evaluated_at CASE). Postgres
+          // deduces a parameter's type from EVERY use, so an uncast reuse here raised "inconsistent
+          // types deduced for parameter $2" and 500'd every no-subjective (auto-scored) submit —
+          // a path the seeded demo attempts never exercised. Casting both uses to ::text fixes it.
+          `UPDATE assessment_attempt SET status = $2::text, submitted_at = now(), auto_score = $3, manual_score = 0,
+              total_score = $4, max_score = $5, is_passed = $6, evaluated_at = CASE WHEN $2::text = 'evaluated' THEN now() ELSE evaluated_at END,
               updated_at = now() WHERE id = $1::bigint`,
           [at.id, status, result.auto_score, total, result.max_score, passed]);
       }
