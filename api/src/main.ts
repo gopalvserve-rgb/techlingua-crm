@@ -6,6 +6,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { AppModule } from './app.module';
 import { config } from './config';
+import { QuestionService } from './assessments/question.service';
 
 async function bootstrap() {
   // bodyParser:false -> we register express.json ourselves with a bigger limit:
@@ -63,5 +64,19 @@ async function bootstrap() {
   await app.listen(config.port);
   // eslint-disable-next-line no-console
   console.log(`Tech Lingua CRM API listening on :${config.port}`);
+
+  // Self-healing DEMO MEDIA seed (docs/dev/64). Migration 067 points the demo image_mcq/audio_mcq
+  // at fixed R2 keys; this ensures the actual bytes exist in R2 (a real PNG + WAV synthesised in
+  // Node, uploaded via StorageService — the same store Batch A uses). Idempotent (uploads only
+  // when the object is missing) and error-swallowed: if R2 is not configured it is simply skipped,
+  // never crashing boot. Runs in the server process only (not in tests, which never call main).
+  try {
+    await app.get(QuestionService, { strict: false }).seedDemoMedia();
+    // eslint-disable-next-line no-console
+    console.log('[boot] demo assessment media ensured in R2');
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[boot] demo assessment media seed skipped:', (e as Error)?.message ?? e);
+  }
 }
 bootstrap();

@@ -4,6 +4,7 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { StorageService } from '../storage/storage.service';
+import { demoBinaryTreePng, demoListeningClipWav, DEMO_IMAGE_MCQ_KEY, DEMO_AUDIO_MCQ_KEY } from './demo-media';
 
 /**
  * QUESTION BANK — Assessment Batch A (Insta Infotech IT + British College of Language items).
@@ -282,6 +283,57 @@ export class QuestionService {
     const key = this.storage.questionMediaKey(fileName);
     const url = await this.storage.presignPut(key, contentType, 300);
     return { url, r2_key: key };
+  }
+
+  /**
+   * DEMO MEDIA SEED (docs/dev/64) — invoked once at boot from main.ts. The Batch-A demo image_mcq /
+   * audio_mcq shipped with NULL media, so the sheet showed "-" and no player. This ensures a real
+   * PNG + WAV live in R2 (under fixed keys, via StorageService.putObject — the same store Batch A
+   * uses) and that the two demo questions point at them. Idempotent: uploads only when the object is
+   * missing and sets the key only when NULL. Needs a configured R2 credential, else it throws
+   * NotConfiguredException (the boot caller swallows it — never crashes startup).
+   */
+  async seedDemoMedia() {
+    const findDemo = async (qType: string, tag: string) => {
+      const r = await this.db.query<{ id: string; image_r2_key: string | null; audio_r2_key: string | null }>(
+        `SELECT id, image_r2_key, audio_r2_key FROM question
+          WHERE q_type = $1 AND deleted_at IS NULL AND tags @> ARRAY['demo', $2]::text[]
+          ORDER BY id LIMIT 1`, [qType, tag]);
+      return r[0] ?? null;
+    };
+    const ensureObject = async (key: string, bytes: Buffer, contentType: string) => {
+      const head = await this.storage.headObject(key);
+      if (head && head.size > 0) return false;
+      await this.storage.putObject(key, bytes, contentType);
+      return true;
+    };
+
+    const out: any = { image: null, audio: null };
+
+    const img = await findDemo('image_mcq', 'image');
+    if (img) {
+      const key = String(img.image_r2_key || DEMO_IMAGE_MCQ_KEY);
+      const uploaded = await ensureObject(key, demoBinaryTreePng(), 'image/png');
+      let keySet = false;
+      if (!img.image_r2_key) {
+        await this.db.query(`UPDATE question SET image_r2_key = $2, updated_at = now() WHERE id = $1::bigint AND image_r2_key IS NULL`, [Number(img.id), key]);
+        keySet = true;
+      }
+      out.image = { id: Number(img.id), key, uploaded, keySet };
+    }
+
+    const aud = await findDemo('audio_mcq', 'listening');
+    if (aud) {
+      const key = String(aud.audio_r2_key || DEMO_AUDIO_MCQ_KEY);
+      const uploaded = await ensureObject(key, demoListeningClipWav(), 'audio/wav');
+      let keySet = false;
+      if (!aud.audio_r2_key) {
+        await this.db.query(`UPDATE question SET audio_r2_key = $2, updated_at = now() WHERE id = $1::bigint AND audio_r2_key IS NULL`, [Number(aud.id), key]);
+        keySet = true;
+      }
+      out.audio = { id: Number(aud.id), key, uploaded, keySet };
+    }
+    return out;
   }
 
   /* -------------------------------------------------------------------- import */

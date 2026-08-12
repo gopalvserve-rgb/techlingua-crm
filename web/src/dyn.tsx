@@ -393,6 +393,13 @@ function DashOverview() {
         <DashAiInsights go={go} />
       </div>
 
+      {/* ASSESSMENTS block on the default admin Overview (docs/dev/64). Self-guards on
+          assessment_attempt.read (hidden for anyone without it, so the lead dashboard for a
+          counsellor is unchanged) and sources /assessment-reports/admin + /faculty: KPI cards
+          (tests, attempts, pass rate, avg %, pending evaluation, certificates — each clickable
+          through to its list), a grade distribution and the hardest questions. */}
+      <AssessmentDashboardCards />
+
       {/* ---- manager-only widgets. The server does not even compute these for a
               counsellor, and `widgets` is what decides — not a client-side role guess. ---- */}
       {has('team_leaderboard') && (
