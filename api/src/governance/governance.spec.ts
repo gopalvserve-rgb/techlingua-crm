@@ -144,6 +144,13 @@ describe('Academics Governance — migration 070 + seed', () => {
     expect(mig).toMatch(/results_released_at/);
   });
 
+  it('migration 071 whitelists the workflow actions in audit_log', () => {
+    const m71 = fs.readFileSync(path.join(__dirname, '../../db/migrations/071_audit_workflow_actions.sql'), 'utf8');
+    for (const a of ['workflow_submit', 'workflow_approve', 'workflow_reject', 'workflow_unpublish', 'results_release']) {
+      expect(m71).toContain(`'${a}'`);
+    }
+  });
+
   it('seed.ts registers Academic Admin and gives Trainer submit but not publish', () => {
     expect(seed).toMatch(/'Academic Admin'/);
     expect(seed).toMatch(/grant\('Academic Admin'/);
