@@ -99,6 +99,8 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'LeavesScreen', file: 'hr.tsx', req: FULL },
   // ---- ERP · Learning ----
   { name: 'StudyMaterialScreen', file: 'learning.tsx', req: FULL },
+  { name: 'CourseContentScreen', file: 'academics-content.tsx', req: FULL },
+  { name: 'SyllabusScreen', file: 'academics-content.tsx', req: FULL },
   { name: 'CertificatesScreen', file: 'learning.tsx', req: FULL },
   { name: 'ReportCardsScreen', file: 'learning.tsx', req: FULL },
   // ---- ERP · Admissions ----

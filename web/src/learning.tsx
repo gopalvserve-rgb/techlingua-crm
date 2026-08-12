@@ -61,21 +61,34 @@ function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, extra }: any) {
   );
 }
 
-const MAT_TYPES = ['video', 'link', 'document', 'note'];
+const MAT_TYPES = ['video', 'link', 'document', 'note', 'image', 'audio'];
 const CERT_TYPES = ['completion', 'participation', 'merit', 'other'];
 
 /* ==========================================================================
  * 1) STUDY MATERIAL
  * ======================================================================== */
+const MAT_WF_BADGE = { draft: 'b-gray', pending_approval: 'b-amber', published: 'b-green', changes_requested: 'b-rose', unpublished: 'b-gray' } as Record<string, string>;
+const MAT_WF_LABEL = { draft: 'Draft', pending_approval: 'Pending approval', published: 'Published', changes_requested: 'Changes requested', unpublished: 'Unpublished' } as Record<string, string>;
+const MAT_WF = ['draft', 'pending_approval', 'published', 'changes_requested', 'unpublished'];
+
+/** Upload straight to R2 via presigned PUT; returns the r2_key. */
+async function materialUpload(file: File): Promise<string> {
+  const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/learning/materials/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
+  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  return r2_key;
+}
+
 export function StudyMaterialScreen() {
   const ref = useRef_();
   const { scope: gScope } = useScope();
   const { can } = useAuth();
+  const canApprove = can('material.approve');
   const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [fC, setFC] = useState<number[]>([]);
   const [ftype, setFtype] = useState('');
-  const [fvis, setFvis] = useState('');
+  const [fstat, setFstat] = useState('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [tick, setTick] = useState(0);
   const [add, setAdd] = useState(false);
@@ -87,7 +100,7 @@ export function StudyMaterialScreen() {
   if (fV.length) qs.set('vertical_id', fV.join(','));
   if (fC.length) qs.set('course_id', fC.join(','));
   if (ftype) qs.set('material_type', ftype);
-  if (fvis) qs.set('visibility', fvis);
+  if (fstat) qs.set('status', fstat);
   if (range.from) qs.set('from', range.from);
   if (range.to) qs.set('to', range.to);
   const list = useFetch<any[]>(`/learning/materials?${qs.toString()}`, [qs.toString(), tick]);
@@ -97,6 +110,20 @@ export function StudyMaterialScreen() {
   const { selected, count, tableSelect, clear } = useTableSelect(ids);
   const { openBulk, bulkModal } = useBulkDelete('Material', '/learning/materials/bulk-delete/impact', '/learning/materials/bulk-delete', () => { after(); clear(); });
   const doDelete = async () => { try { await api.del(`/learning/materials/${del.id}`); toast('Material deleted'); setDel(null); after(); } catch (e: any) { toast(e.message, true); } };
+  const wf = async (r: any, verb: string, label: string) => { try { await api.post(`/learning/materials/${r.id}/${verb}`, {}); toast(label); after(); } catch (e: any) { toast(e.message, true); } };
+  const doReject = async (r: any) => { const remarks = window.prompt('Reason / changes requested (sent back to the trainer):', ''); if (remarks == null) return; if (!remarks.trim()) { toast('Remarks are required', true); return; } try { await api.post(`/learning/materials/${r.id}/reject`, { remarks }); toast('Sent back with remarks'); after(); } catch (e: any) { toast(e.message, true); } };
+  const openFile = async (r: any) => { try { const d = await api.get<any>(`/learning/materials/${r.id}`); if (d.file_url) window.open(d.file_url, '_blank', 'noopener'); else toast('No file attached'); } catch (e: any) { toast(e.message, true); } };
+
+  const wfActions = (m: any) => {
+    const s = m.workflow_status; const extra: any[] = [];
+    if (can('material.submit') && !can('material.approve') && (s === 'draft' || s === 'changes_requested' || s === 'unpublished')) extra.push({ k: 'send', title: 'Submit for approval', onClick: () => wf(m, 'submit', 'Submitted for approval') });
+    if (can('material.approve')) {
+      if (s === 'pending_approval') { extra.push({ k: 'check', title: 'Approve & publish', onClick: () => wf(m, 'approve', 'Approved — published') }); extra.push({ k: 'x', title: 'Reject (send back)', onClick: () => doReject(m) }); }
+      if (s === 'draft' || s === 'changes_requested' || s === 'unpublished') extra.push({ k: 'check', title: 'Publish', onClick: () => wf(m, 'approve', 'Published') });
+      if (s === 'published') extra.push({ k: 'restore', title: 'Unpublish', onClick: () => wf(m, 'unpublish', 'Unpublished') });
+    }
+    return extra;
+  };
 
   return (
     <>
@@ -107,29 +134,30 @@ export function StudyMaterialScreen() {
             <select value={ftype} onChange={(e) => setFtype(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
               <option value="">All types</option>{MAT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select></label>
-          <label className="fchip"><Ic k="shield" />
-            <select value={fvis} onChange={(e) => setFvis(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
-              <option value="">All</option><option value="published">Published</option><option value="draft">Draft</option>
-            </select></label>
+          {canApprove && <label className="fchip"><Ic k="shield" />
+            <select value={fstat} onChange={(e) => setFstat(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
+              <option value="">All statuses</option>{MAT_WF.map((t) => <option key={t} value={t}>{MAT_WF_LABEL[t]}</option>)}
+            </select></label>}
           <DateRange value={range} onChange={setRange} idPrefix="mat-dr" style={{ marginLeft: 'auto' }} />
         </>} />
       <BulkBar count={count} entityLabel="Material" onDelete={() => openBulk(selected)} onClear={clear} />
       <TableCard fill title="Study material" icon="doc"
         select={can('material.delete') ? tableSelect : undefined}
         more={<ListActions onExport={() => downloadObjectsCsv('study-material.csv', rows)} onRefresh={after} />}
-        cols={['Title', 'Type', 'Access', 'Course', 'Batch', 'Visibility', 'Parents', 'Actions']}
+        cols={['Title', 'Type', 'Access', 'Course', 'Batch', 'File / Link', 'Status', 'Actions']}
         empty="No study material yet — add an item for a batch, course or vertical."
         rows={rows.map((m: any) => [
-          { node: <div><b className="nm">{m.title}</b>{m.url ? <div className="sub"><a href={m.url} target="_blank" rel="noopener noreferrer">{m.material_type === 'video' ? 'Watch' : 'Open link'}</a></div> : null}</div> } as Cell,
+          { node: <div><b className="nm">{m.title}</b>{m.review_remarks && m.workflow_status === 'changes_requested' ? <div className="sub" style={{ color: 'var(--danger)' }}>↩ {m.review_remarks}</div> : null}</div> } as Cell,
           m.material_type,
           m.access_level,
           m.course_name ?? '—',
           m.batch_name ?? '—',
-          { b: [m.visibility, m.visibility === 'published' ? 'b-green' : 'b-gray'] } as Cell,
-          m.allow_parents ? 'Yes' : 'No',
+          { node: m.file_r2_key ? <a href="#" onClick={(e) => { e.preventDefault(); openFile(m); }}>File</a> : ((m.external_url || m.url) ? <a href={m.external_url || m.url} target="_blank" rel="noopener noreferrer">{m.material_type === 'video' ? 'Watch' : 'Open link'}</a> : '—') } as Cell,
+          { b: [MAT_WF_LABEL[m.workflow_status] ?? m.workflow_status, MAT_WF_BADGE[m.workflow_status] ?? 'b-gray'] } as Cell,
           rowActions({
             onEdit: can('material.update') ? () => setEdit(m) : undefined,
             onDelete: can('material.delete') ? () => setDel(m) : undefined,
+            extra: wfActions(m),
           }),
         ])} />
       {add && <MaterialModal onClose={() => setAdd(false)} onSaved={after} ref_={ref} />}
@@ -150,24 +178,32 @@ function MaterialModal({ initial, onClose, onSaved, ref_ }: { initial?: any; onC
   const [title, setTitle] = useState<string>(initial?.title ?? '');
   const [desc, setDesc] = useState<string>(initial?.description ?? '');
   const [type, setType] = useState<string>(initial?.material_type ?? 'link');
-  const [url, setUrl] = useState<string>(initial?.url ?? '');
+  const [externalUrl, setExternalUrl] = useState<string>(initial?.external_url ?? initial?.url ?? '');
+  const [fileKey, setFileKey] = useState<string>(initial?.file_r2_key ?? '');
+  const [fileName, setFileName] = useState<string>(initial?.file_r2_key ? 'Attached file' : '');
   const [body, setBody] = useState<string>(initial?.body ?? '');
   const [tags, setTags] = useState<string>(initial?.tags ?? '');
-  const [vis, setVis] = useState<string>(initial?.visibility ?? 'draft');
   const [parents, setParents] = useState<boolean>(!!initial?.allow_parents);
-  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false); const [uploading, setUploading] = useState(false); const [err, setErr] = useState('');
 
   const vOpts = ref_.verticals.filter((v: any) => !branchId || Number(v.branch_id) === Number(branchId));
   const cOpts = ref_.courses.filter((c: any) => (!verticalId || Number(c.vertical_id) === Number(verticalId)));
   const batches = useBatches(branchId ? [Number(branchId)] : [], verticalId ? [Number(verticalId)] : []);
+  const isLinkType = type === 'link' || type === 'video';
+
+  const pickFile = async (f?: File | null) => {
+    if (!f) return; setUploading(true); setErr('');
+    try { const key = await materialUpload(f); setFileKey(key); setFileName(f.name); } catch (e: any) { setErr(e.message); } finally { setUploading(false); }
+  };
 
   const save = async () => {
     setErr('');
     if (!title.trim()) return setErr('Give the material a title.');
-    if (type !== 'note' && !url.trim()) return setErr('Add a link / file URL.');
     if (type === 'note' && !body.trim()) return setErr('A note needs some content.');
+    if (isLinkType && !externalUrl.trim()) return setErr('Add a link / YouTube URL.');
+    if (!isLinkType && type !== 'note' && !fileKey && !externalUrl.trim()) return setErr('Upload a file or provide a link.');
     setBusy(true);
-    const base: any = { title: title.trim(), description: desc || null, material_type: type, url: url || null, body: type === 'note' ? body : null, tags: tags || null, visibility: vis, allow_parents: parents };
+    const base: any = { title: title.trim(), description: desc || null, material_type: type, external_url: externalUrl || null, file_r2_key: fileKey || null, body: type === 'note' ? body : null, tags: tags || null, allow_parents: parents };
     if (!isEdit) {
       base.access_level = level;
       if (level === 'batch') { if (!batchId) { setBusy(false); return setErr('Choose a batch.'); } base.batch_id = Number(batchId); }
@@ -176,7 +212,7 @@ function MaterialModal({ initial, onClose, onSaved, ref_ }: { initial?: any; onC
     try {
       if (isEdit) await api.patch(`/learning/materials/${initial.id}`, base);
       else await api.post('/learning/materials', base);
-      toast(isEdit ? 'Material updated' : 'Material added'); onSaved(); onClose();
+      toast(isEdit ? 'Material updated' : 'Material added (draft)'); onSaved(); onClose();
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
@@ -229,17 +265,18 @@ function MaterialModal({ initial, onClose, onSaved, ref_ }: { initial?: any; onC
         <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Title <span className="star">*</span></label><input className="ainp" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
         <div className="fld"><label>Type</label>
           <select className="ainp" value={type} onChange={(e) => setType(e.target.value)}>{MAT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
-        <div className="fld"><label>Visibility</label>
-          <select className="ainp" value={vis} onChange={(e) => setVis(e.target.value)}><option value="draft">Draft</option><option value="published">Published</option></select></div>
-        {type !== 'note' && <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Link / file URL <span className="star">*</span></label><input className="ainp" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" /></div>}
+        <div className="fld"><label>Parents can view</label>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}><input type="checkbox" checked={parents} onChange={(e) => setParents(e.target.checked)} /> Show in the parent view</label></div>
+        {type !== 'note' && <div className="fld" style={{ gridColumn: '1 / -1' }}><label>{isLinkType ? 'Link / YouTube URL' : 'External link (optional)'} {isLinkType && <span className="star">*</span>}</label><input className="ainp" value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} placeholder="https://…" /></div>}
+        {type !== 'note' && !isLinkType && <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Or upload a file (→ R2)</label>
+          <input className="ainp" type="file" onChange={(e) => pickFile(e.target.files?.[0])} />
+          {uploading ? <div className="sub">Uploading…</div> : (fileKey ? <div className="sub">Attached: {fileName} <a href="#" onClick={(e) => { e.preventDefault(); setFileKey(''); setFileName(''); }}>remove</a></div> : null)}</div>}
         {type === 'note' && <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Note content <span className="star">*</span></label><textarea className="ainp" rows={3} value={body} onChange={(e) => setBody(e.target.value)} /></div>}
         <div className="fld"><label>Tags</label><input className="ainp" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="comma,separated" /></div>
-        <div className="fld"><label>Parents can view</label>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}><input type="checkbox" checked={parents} onChange={(e) => setParents(e.target.checked)} /> Show in the parent report-card view</label></div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Description</label><textarea className="ainp" rows={2} value={desc} onChange={(e) => setDesc(e.target.value)} /></div>
       </div>{err && <div className="form-err" style={{ marginTop: 8 }}>{err}</div>}</div>
       <div className="af"><button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save'}</button></div>
+        <button className="btn primary" disabled={busy || uploading} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save'}</button></div>
     </div></div>
   );
 }

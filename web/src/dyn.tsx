@@ -55,6 +55,7 @@ import { CrossSell } from './crosssell';
 import { FinanceSettings } from './financesettings';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
+import { CourseContentScreen, SyllabusScreen } from './academics-content';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { InvoicesScreen, FinanceDashboard } from './invoices';
 import { PaymentPlansScreen, FeeDuesScreen } from './paymentplans';
@@ -5157,6 +5158,8 @@ export const DYN: Record<string, () => JSX.Element> = {
   testsScreen: TestsScreen,
   assignmentsScreen: AssignmentsScreen,
   studyMaterial: StudyMaterialScreen,
+  courseContent: CourseContentScreen,
+  syllabus: SyllabusScreen,
   admissionsList: AdmissionsScreen,
   certificates: CertificatesScreen,
   reportCards: ReportCardsScreen,

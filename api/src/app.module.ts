@@ -46,6 +46,7 @@ import { StudentsModule } from './students/students.module';
 import { FinanceModule } from './finance/finance.module';
 import { AcademicsModule } from './academics/academics.module';
 import { LearningModule } from './learning/learning.module';
+import { AcademicsContentModule } from './academics-content/academics-content.module';
 import { AdmissionsModule } from './admissions/admissions.module';
 import { AiModule } from './ai/ai.module';
 import { OperationsModule } from './operations/operations.module';
@@ -120,6 +121,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     AcademicsModule,
     // Phase 2 ERP Batch 2 — Learning: study material, certificates, report cards + parent view
     LearningModule,
+    AcademicsContentModule,  // Academics Governance Batch 2 — Course Content + Syllabus (governed)
     AdmissionsModule,  // ERP Batch 3 — online admission form (public intake + review→approve) + family/siblings
     AiModule,          // ERP Batch 4 — AI Communication Intelligence (DeepSeek/Gemini) over notes/transcripts
     // Phase 2 ERP Batch 5 — Operations: catalog, inventory, assets, vendors, procurement (PO→receive→stock)
