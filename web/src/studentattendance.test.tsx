@@ -46,7 +46,7 @@ vi.mock('./refdata', async (importOriginal) => {
 
 const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
 const tabBtn = (label: string) =>
-  [...document.querySelectorAll('.seltabs button')].find((b) => b.textContent === label) as HTMLButtonElement | undefined;
+  [...document.querySelectorAll('.fbp-rail button')].find((b) => b.textContent === label) as HTMLButtonElement | undefined;
 
 beforeEach(() => { cleanup(); get.mockClear(); });
 
@@ -72,9 +72,10 @@ describe('Student profile — Attendance tab + enlarged modal', () => {
     fireEvent.click(tabBtn('Attendance')!);
     await flush();
 
-    // Summary
-    expect(screen.getByText('Attendance Summary')).toBeTruthy();
-    expect(screen.getByText('80%')).toBeTruthy();
+    // Summary (scope to the section — the header stat chip also shows 80%)
+    const sumSec = screen.getByText('Attendance Summary').closest('.sheet-sec') as HTMLElement;
+    expect(sumSec).toBeTruthy();
+    expect(within(sumSec).getByText('80%')).toBeTruthy();
 
     // Records table: India-formatted date (DD-MM-YYYY), batch, status
     const recSec = screen.getByText('Attendance Records').closest('.sheet-sec') as HTMLElement;

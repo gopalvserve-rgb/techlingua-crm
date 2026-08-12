@@ -369,3 +369,71 @@ describe('StudentService.create — batch_id (OBS-1)', () => {
     expect(has(issued, /SELECT id, capacity FROM batch/)).toBe(false);
   });
 });
+
+/**
+ * BRANCH TRANSFER — POST /students/:id/transfer re-parents the student's branch/vertical
+ * (optional batch), writes a student_transfer history row, and is RBAC-scoped on BOTH ends.
+ */
+function makeTransfer(opts: { student?: any; branchOk?: boolean; verticalOk?: boolean; batch?: any } = {}) {
+  const issued: Array<{ sql: string; params: unknown[] }> = [];
+  const student = opts.student ?? {
+    id: 7, full_name: 'Meera Nair', student_no: 'STU-0007',
+    batch_id: 5, branch_id: 9, vertical_id: 3, course_id: 100, branch_name: 'Janakpuri',
+  };
+  const db: any = {
+    one: async (sql: string, params: unknown[] = []) => {
+      issued.push({ sql, params });
+      if (/FROM student s\b/.test(sql) && /WHERE s\.id/.test(sql)) return student;
+      if (/FROM branch b\b/.test(sql)) return opts.branchOk === false ? null : { id: params[0], name: 'Vikaspuri' };
+      if (/FROM vertical v\b/.test(sql)) return opts.verticalOk === false ? null : { id: params[0], name: 'BCL' };
+      if (/FROM batch\b/.test(sql) && /branch_id/.test(sql)) return opts.batch ?? null;
+      if (/FROM organisation/.test(sql)) return { id: 1 };
+      return null;
+    },
+    query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return []; },
+    tx: async (fn: any) => fn({
+      query: async (sql: string, params: unknown[] = []) => {
+        issued.push({ sql, params });
+        if (/INSERT INTO student_transfer/.test(sql)) return { rows: [{ id: 321 }] };
+        if (/count\(\*\)::int AS n FROM student WHERE batch_id/.test(sql)) return { rows: [{ n: 0 }] };
+        if (/COALESCE\(max\(position\)/.test(sql)) return { rows: [{ n: 1 }] };
+        return { rows: [] };
+      },
+    }),
+  };
+  const numbering = { allocate: async () => 'X' };
+  return { svc: new StudentService(db as never, resolver as never, numbering as never), issued };
+}
+
+describe('StudentService.branchTransfer', () => {
+  it('re-parents branch + vertical and writes a student_transfer history row', async () => {
+    const { svc, issued } = makeTransfer();
+    const out: any = await svc.branchTransfer(7, { to_branch_id: 10, to_vertical_id: 4, reason: 'Closer to home' }, { id: 5 }, scopeAll);
+    expect(out.transferred).toBe(true);
+    expect(out.to_branch_id).toBe(10);
+    expect(out.to_vertical_id).toBe(4);
+    expect(has(issued, /UPDATE student SET branch_id = \$2::bigint, vertical_id = \$3::bigint/)).toBe(true);
+    expect(has(issued, /INSERT INTO student_transfer/)).toBe(true);
+  });
+
+  it('places the student into a chosen target batch (with room) and logs a batch_transfer too', async () => {
+    const { svc, issued } = makeTransfer({ batch: { id: 88, name: 'IELTS-M', capacity: 10, course_id: 100 } });
+    const out: any = await svc.branchTransfer(7, { to_branch_id: 10, to_vertical_id: 4, to_batch_id: 88 }, { id: 5 }, scopeAll);
+    expect(out.batch_id).toBe(88);
+    expect(out.waitlisted).toBe(false);
+    expect(has(issued, /INSERT INTO batch_transfer/)).toBe(true);
+    expect(has(issued, /INSERT INTO student_transfer/)).toBe(true);
+  });
+
+  it('is RBAC-scoped — an out-of-scope target branch is refused', async () => {
+    const { svc } = makeTransfer({ branchOk: false });
+    await expect(svc.branchTransfer(7, { to_branch_id: 999, to_vertical_id: 4 }, { id: 5 }, scopeAll))
+      .rejects.toThrow(/branch not found|access/i);
+  });
+
+  it('is IDEMPOTENT — moving to the same branch/vertical (no batch change) is refused', async () => {
+    const { svc } = makeTransfer({ student: { id: 7, full_name: 'Meera', student_no: 'STU-7', batch_id: null, branch_id: 9, vertical_id: 3, course_id: 100, branch_name: 'Janakpuri' } });
+    await expect(svc.branchTransfer(7, { to_branch_id: 9, to_vertical_id: 3 }, { id: 5 }, scopeAll))
+      .rejects.toThrow(/already in that branch/i);
+  });
+});

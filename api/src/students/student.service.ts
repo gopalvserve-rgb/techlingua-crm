@@ -226,13 +226,44 @@ export class StudentService {
         WHERE w.student_id = $1::bigint AND w.status = 'waiting'
         ORDER BY w.position ASC`, [sid]);
 
+    // --- BRANCH transfers (student moved between branches/verticals) -----------
+    const branch_transfers = await this.db.query<any>(
+      `SELECT t.id, t.from_branch_id, t.to_branch_id, t.from_vertical_id, t.to_vertical_id,
+              t.from_batch_id, t.to_batch_id, t.reason, t.created_at,
+              fb.name AS from_branch_name, tb.name AS to_branch_name,
+              fv.name AS from_vertical_name, tv.name AS to_vertical_name,
+              fbt.name AS from_batch_name, tbt.name AS to_batch_name, u.name AS transferred_by_name
+         FROM student_transfer t
+         LEFT JOIN branch  fb  ON fb.id = t.from_branch_id
+         LEFT JOIN branch  tb  ON tb.id = t.to_branch_id
+         LEFT JOIN vertical fv ON fv.id = t.from_vertical_id
+         LEFT JOIN vertical tv ON tv.id = t.to_vertical_id
+         LEFT JOIN batch   fbt ON fbt.id = t.from_batch_id
+         LEFT JOIN batch   tbt ON tbt.id = t.to_batch_id
+         LEFT JOIN "user"  u   ON u.id = t.transferred_by
+        WHERE t.student_id = $1::bigint
+        ORDER BY t.created_at DESC`, [sid]);
+
+    // --- Profile photo (R2) — the student's uploaded 'photo' document, presigned (5 min). --
+    let photo_url: string | null = null;
+    try {
+      const ph = await this.db.one<any>(
+        `SELECT id, r2_key, file_name FROM student_document
+          WHERE student_id = $1::bigint AND doc_type = 'photo' AND deleted_at IS NULL
+          ORDER BY id DESC LIMIT 1`, [sid]);
+      if (ph?.r2_key && this.storage) {
+        photo_url = await this.storage.presignGet(String(ph.r2_key), 300, String(ph.file_name ?? 'photo'));
+      }
+    } catch { /* avatar falls back to initials */ }
+
     // --- Attendance: summary + recent records ---------------------------------
     const attKpi = await this.db.one<any>(
       `SELECT count(*)::int AS total,
               count(*) FILTER (WHERE status = 'present')::int AS present,
               count(*) FILTER (WHERE status = 'absent')::int  AS absent,
               count(*) FILTER (WHERE status = 'late')::int    AS late,
-              count(*) FILTER (WHERE status = 'excused')::int AS excused
+              count(*) FILTER (WHERE status = 'excused')::int AS excused,
+              count(*) FILTER (WHERE status = 'half_day')::int AS half_day
          FROM attendance WHERE student_id = $1::bigint AND deleted_at IS NULL`, [sid]);
     const attTotal = Number(attKpi?.total ?? 0);
     const attPresent = Number(attKpi?.present ?? 0);
@@ -307,18 +338,20 @@ export class StudentService {
 
     return {
       student,
+      photo_url,
       siblings,
       academics: {
         current_batch: student.batch_id
           ? { id: Number(student.batch_id), name: student.batch_name ?? null }
           : null,
         transfers,
+        branch_transfers,
         waitlist,
         attendance: {
           summary: {
             total: attTotal, present: attPresent,
             absent: Number(attKpi?.absent ?? 0), late: Number(attKpi?.late ?? 0),
-            excused: Number(attKpi?.excused ?? 0),
+            excused: Number(attKpi?.excused ?? 0), half_day: Number(attKpi?.half_day ?? 0),
             present_pct: attTotal ? Math.round((attPresent / attTotal) * 1000) / 10 : null,
           },
           records: attendance_records,
@@ -339,6 +372,133 @@ export class StudentService {
         },
       },
     };
+  }
+
+  /* -------------------------------------------------- BRANCH transfer ------ */
+  /**
+   * TRANSFER A STUDENT to another BRANCH (and Vertical, optional Batch).
+   *
+   * A re-parent: the student's branch_id/vertical_id are moved to the target, the old batch
+   * (which lived in the OLD branch) is cleared, and — if a target batch is given — the student
+   * is placed into it (respecting capacity; a full batch queues them on batch_waitlist, exactly
+   * like create/transfer elsewhere). The move is RECORDED in student_transfer (from/to
+   * branch+vertical+batch, who, why) and audited by the interceptor.
+   *
+   * RBAC: the caller must reach BOTH ends — the student is loaded through the scoped this.get
+   * (source in-scope), and the target branch/vertical are validated against the same scope, so
+   * a counsellor cannot push a student into, or pull one out of, a branch they cannot see.
+   * IDEMPOTENT: moving to the branch+vertical the student already occupies (with no batch
+   * change) is refused with a clear message rather than writing a no-op history row.
+   */
+  async branchTransfer(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const student = await this.get(id, scope);                 // source in-scope (throws 404)
+    const toBranchId = Number(dto?.to_branch_id);
+    const toVerticalId = Number(dto?.to_vertical_id);
+    if (!toBranchId) throw new BadRequestException('Choose a target branch.');
+    if (!toVerticalId) throw new BadRequestException('Choose a target vertical.');
+
+    // Target branch must be in the caller's scope.
+    const bp: unknown[] = [toBranchId];
+    const bw = this.resolver.buildScopeWhere(scope, { branch: 'b.id' }, bp);
+    const tBranch = await this.db.one<any>(
+      `SELECT b.id, b.name FROM branch b WHERE b.id = $1::bigint AND b.deleted_at IS NULL AND ${bw}`, bp);
+    if (!tBranch) throw new NotFoundException('Target branch not found (or outside your access).');
+
+    // Target vertical must belong to the target branch AND be in scope.
+    const vp: unknown[] = [toVerticalId, toBranchId];
+    const vw = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, vp);
+    const tVertical = await this.db.one<any>(
+      `SELECT v.id, v.name FROM vertical v
+        WHERE v.id = $1::bigint AND v.branch_id = $2::bigint AND v.deleted_at IS NULL AND ${vw}`, vp);
+    if (!tVertical) throw new BadRequestException('That vertical does not belong to the chosen branch (or is outside your access).');
+
+    // Optional target batch — must live in the target branch+vertical.
+    const rawBatch = dto?.to_batch_id;
+    const wantsBatch = rawBatch !== undefined && rawBatch !== null && String(rawBatch).trim() !== '';
+    const toBatchId = wantsBatch ? Number(rawBatch) : null;
+    let tBatch: any = null;
+    if (wantsBatch) {
+      if (!Number.isFinite(toBatchId) || (toBatchId as number) <= 0) throw new BadRequestException('Invalid target batch.');
+      tBatch = await this.db.one<any>(
+        `SELECT id, name, capacity, course_id FROM batch
+          WHERE id = $1::bigint AND deleted_at IS NULL AND branch_id = $2::bigint AND vertical_id = $3::bigint`,
+        [toBatchId, toBranchId, toVerticalId]);
+      if (!tBatch) throw new BadRequestException('That batch is not in the chosen branch and vertical.');
+    }
+
+    const fromBranchId = student.branch_id ? Number(student.branch_id) : null;
+    const fromVerticalId = student.vertical_id ? Number(student.vertical_id) : null;
+    const fromBatchId = student.batch_id ? Number(student.batch_id) : null;
+
+    // IDEMPOTENT: same branch + vertical and no batch move is a no-op.
+    const sameBatch = wantsBatch ? Number(toBatchId) === fromBatchId : fromBatchId == null;
+    if (fromBranchId === toBranchId && fromVerticalId === toVerticalId && sameBatch) {
+      throw new BadRequestException('The student is already in that branch and vertical.');
+    }
+
+    const orgId = await this.orgId();
+    const out = await this.db.tx(async (c) => {
+      // Capacity check for a chosen target batch — a full one waitlists (batch_id stays NULL).
+      let assignedBatchId: number | null = null;
+      let waitlisted = false;
+      let waitlistPosition: number | null = null;
+      if (wantsBatch && tBatch) {
+        const capacity = Number(tBatch.capacity ?? 0);
+        const filledR = await c.query<{ n: string }>(
+          `SELECT count(*)::int AS n FROM student WHERE batch_id = $1::bigint AND deleted_at IS NULL`, [toBatchId]);
+        const filled = Number(filledR.rows[0]?.n ?? 0);
+        if (capacity > 0 && filled >= capacity) {
+          const posR = await c.query<{ n: string }>(
+            `SELECT COALESCE(max(position), 0) + 1 AS n FROM batch_waitlist WHERE batch_id = $1::bigint AND status = 'waiting'`, [toBatchId]);
+          waitlistPosition = Number(posR.rows[0]?.n ?? 1);
+        } else {
+          assignedBatchId = Number(toBatchId);
+        }
+      }
+
+      // Re-parent. Old batch belonged to the old branch, so it is cleared unless a new one is set.
+      await c.query(
+        `UPDATE student SET branch_id = $2::bigint, vertical_id = $3::bigint, batch_id = $4::bigint,
+                            course_id = COALESCE($5::bigint, course_id), updated_at = now()
+          WHERE id = $1::bigint`,
+        [id, toBranchId, toVerticalId, assignedBatchId, tBatch?.course_id ?? null]);
+
+      // History (branch level).
+      const th = await c.query<{ id: string }>(
+        `INSERT INTO student_transfer (org_id, student_id, from_branch_id, to_branch_id,
+                                       from_vertical_id, to_vertical_id, from_batch_id, to_batch_id,
+                                       reason, transferred_by)
+         VALUES ($1::bigint,$2::bigint,$3,$4::bigint,$5,$6::bigint,$7,$8,$9,$10::bigint) RETURNING id`,
+        [orgId, id, fromBranchId, toBranchId, fromVerticalId, toVerticalId, fromBatchId, toBatchId, dto?.reason ?? null, me.id]);
+
+      if (assignedBatchId != null) {
+        // A concrete batch move also lands a batch_transfer row (keeps the batch history whole).
+        await c.query(
+          `INSERT INTO batch_transfer (org_id, student_id, from_batch_id, to_batch_id, reason, transferred_by)
+           VALUES ($1::bigint,$2::bigint,$3,$4::bigint,$5,$6::bigint)`,
+          [orgId, id, fromBatchId, assignedBatchId, dto?.reason ?? 'Branch transfer', me.id]);
+      } else if (waitlisted === false && wantsBatch && waitlistPosition != null) {
+        await c.query(
+          `INSERT INTO batch_waitlist (org_id, batch_id, student_id, position, note, created_by)
+           VALUES ($1::bigint,$2::bigint,$3::bigint,$4::int,$5,$6::bigint)`,
+          [orgId, toBatchId, id, waitlistPosition, 'Waitlisted on branch transfer (batch full)', me.id]);
+        waitlisted = true;
+      }
+
+      return {
+        id, transfer_id: Number(th.rows[0].id), transferred: true,
+        from_branch_id: fromBranchId, to_branch_id: toBranchId,
+        from_vertical_id: fromVerticalId, to_vertical_id: toVerticalId,
+        batch_id: assignedBatchId, waitlisted, waitlist_position: waitlistPosition,
+      };
+    });
+
+    // Best-effort notification (no-ops if the event is not configured).
+    await this.notifEvents?.safeFire('student_transferred', {
+      student_id: id, vertical_id: toVerticalId, dedupe: `transfer:${out.transfer_id}`,
+      vars: { from_branch: student.branch_name ?? '', to_branch: tBranch.name, to_vertical: tVertical.name },
+    });
+    return out;
   }
 
   /* --------------------------------------------------------- documents ------ */

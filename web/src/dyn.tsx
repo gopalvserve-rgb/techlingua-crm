@@ -3,6 +3,7 @@
  * Each component matches the corresponding prototype screen's blocks & columns 1:1.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
@@ -3917,6 +3918,7 @@ function StudentsList() {
   const list = useFetch<any[]>(`/students?${params.toString()}`, [refreshTick, params.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
+  const [xfer, setXfer] = useState<any | null>(null);
   const canDelete = can('student.delete');
   const canCreate = can('student.create');
   const canEdit = can('student.update');
@@ -3982,11 +3984,13 @@ function StudentsList() {
             onView: () => setView(st),
             onEdit: canEdit ? () => openEdit(st) : undefined,
             onDelete: canDelete ? () => del.openDelete(Number(st.id), st.full_name) : undefined,
+            extra: canEdit ? [{ k: 'swap', title: 'Transfer to another branch', onClick: () => setXfer(st) }] : undefined,
           }),
         ])} />
       {del.deleteModal}
       {_bd.bulkModal}
       {view && <StudentDetailModal student={view} onClose={() => setView(null)} onEdit={canEdit ? openEdit : undefined} onChanged={after} />}
+      {xfer && <TransferStudentModal student={xfer} onClose={() => setXfer(null)} onDone={() => { setXfer(null); after(); }} />}
       {add && <StudentModal onClose={() => setAdd(false)} onSaved={after} />}
       {edit && <StudentModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
     </>
@@ -4324,7 +4328,8 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
   const [full, setFull] = useState<any>(student);
   const [batches, setBatches] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<string>('overview');
+  const [tab, setTab] = useState<string>('fees');
+  const [showTransfer, setShowTransfer] = useState(false);
 
   const loadProfile = async () => {
     try {
@@ -4350,28 +4355,62 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
   const ac = prof?.academics;
   const att = ac?.attendance;
   const fees = prof?.fees;
-  const TABS: Array<[string, string]> = [
-    ['overview', 'Overview'], ['contact', 'Contact'], ['family', 'Family'], ['address', 'Address'],
-    ['ids', 'ID & Documents'], ['education', 'Education'], ['academics', 'Academics'],
-    ['attendance', 'Attendance'],
-    ['certs', 'Certificates'], ['reportcards', 'Report Cards'], ['fees', 'Fees'],
+  const TABS: Array<[string, string, string]> = [
+    ['fees', 'Fees Payment', 'rupee'], ['overview', 'Overview', 'eye'], ['contact', 'Contact', 'phone'],
+    ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'],
+    ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
+    ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
   ];
+  const photo = prof?.photo_url as string | undefined;
+  const initials = String(full.full_name ?? '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w: string) => w[0]?.toUpperCase() ?? '').join('') || '?';
+  const attPct = att?.summary?.present_pct;
+  const chip = (label: string, val: ReactNode, cls = '') => (
+    <div className={`fbp-chip ${cls}`}><span className="fbp-chip-v">{val}</span><span className="fbp-chip-l">{label}</span></div>
+  );
 
   const Empty = ({ t }: { t: string }) => <div className="empty-note">{t}</div>;
 
   return (
-    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={1040} className="add-modal--xl">
-      <div className="page-actions" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <span className="mono sub">{full.student_no ?? '—'}</span>
-        {renderCell(studentStatusCell(full.status))}
-        <span className="sub">{[full.branch_name, full.vertical_name, full.course_name].filter(Boolean).join(' › ')}</span>
-        {onEdit && <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>}
-      </div>
-      <div className="seltabs" style={{ flexWrap: 'wrap' }}>
-        {TABS.map(([k, label]) => (
-          <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{label}</button>
-        ))}
-      </div>
+    <DetailModal title={`Student — ${full.full_name}`} icon="students" onClose={onClose} width={1160} className="add-modal--xl fbp-modal">
+      <div className="fbp">
+        <div className="fbp-cover" />
+        <div className="fbp-head">
+          <div className="fbp-id">
+            <h2 className="fbp-name">{full.full_name}</h2>
+            <div className="fbp-sub">
+              <span className="mono">{full.student_no ?? '—'}</span>
+              {full.enrollment_no ? <span className="mono">· {full.enrollment_no}</span> : null}
+              <span>{renderCell(studentStatusCell(full.status))}</span>
+            </div>
+            <div className="fbp-path">{[full.branch_name, full.vertical_name, full.course_name].filter(Boolean).join(' › ') || '—'}</div>
+            <div className="fbp-tags">
+              <span className="fbp-tag"><Ic k="grid" />{ac?.current_batch?.name ?? full.batch_name ?? 'No batch'}</span>
+              <span className="fbp-tag"><Ic k="cal" />Admitted {dmy(full.admission_date)}</span>
+            </div>
+            <div className="fbp-btns">
+              {canEdit && <button className="btn" onClick={() => setShowTransfer(true)}><Ic k="swap" />Transfer student</button>}
+              {onEdit && <button className="btn" onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>}
+            </div>
+          </div>
+          <div className="fbp-avatar" aria-hidden={false} title={full.full_name}>
+            {photo ? <img src={photo} alt={full.full_name} /> : <span>{initials}</span>}
+          </div>
+        </div>
+        <div className="fbp-stats">
+          {chip('Attendance', attPct != null ? `${attPct}%` : '—', 'ok')}
+          {chip('Fees Paid', money(fees?.summary?.collected_minor), 'ok')}
+          {chip('Outstanding', money(fees?.summary?.balance_minor), Number(fees?.summary?.balance_minor ?? 0) > 0 ? 'warn' : '')}
+          {chip('Current Batch', ac?.current_batch?.name ?? full.batch_name ?? 'Not assigned')}
+        </div>
+        <div className="fbp-body">
+          <nav className="fbp-rail" aria-label="Student sections">
+            {TABS.map(([k, label, ic]) => (
+              <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)} data-testid={`fbp-tab-${k}`}>
+                <Ic k={ic} /><span>{label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="fbp-main">
 
       {tab === 'overview' && (
         <Section title="Identity">
@@ -4479,6 +4518,21 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
                 ))}</tbody></table>
             ) : null}
           </Section>
+          <Section title="Branch Transfers">
+            {ac?.branch_transfers?.length ? (
+              <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Batch</th><th>By</th><th>Reason</th></tr></thead>
+                <tbody>{ac.branch_transfers.map((t: any) => (
+                  <tr key={t.id}>
+                    <td>{dmy(t.created_at)}</td>
+                    <td>{[t.from_branch_name, t.from_vertical_name].filter(Boolean).join(' › ') || '—'}</td>
+                    <td>{[t.to_branch_name, t.to_vertical_name].filter(Boolean).join(' › ') || '—'}</td>
+                    <td>{t.to_batch_name ?? '—'}</td>
+                    <td>{t.transferred_by_name ?? '—'}</td>
+                    <td>{t.reason ?? '—'}</td>
+                  </tr>
+                ))}</tbody></table>
+            ) : <Empty t="No branch transfers yet." />}
+          </Section>
           <Section title="Tests & Scores">
             {ac?.tests?.length ? (
               <table className="minitbl"><thead><tr><th>Test</th><th>Type</th><th>Date</th><th>Score</th><th>Grade</th></tr></thead>
@@ -4531,6 +4585,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
               ['Present %', att?.summary?.present_pct != null ? `${att.summary.present_pct}%` : '—'],
               ['Present', String(att?.summary?.present ?? 0)],
               ['Absent', String(att?.summary?.absent ?? 0)],
+              ['Half-day', String(att?.summary?.half_day ?? 0)],
               ['Late', String(att?.summary?.late ?? 0)],
               ['Excused', String(att?.summary?.excused ?? 0)],
               ['Total Sessions', String(att?.summary?.total ?? 0)],
@@ -4603,6 +4658,89 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
           </Section>
         </>
       )}
+          </div>
+        </div>
+      </div>
+      {showTransfer && (
+        <TransferStudentModal student={full}
+          onClose={() => setShowTransfer(false)}
+          onDone={() => { setShowTransfer(false); loadProfile(); onChanged(); }} />
+      )}
+    </DetailModal>
+  );
+}
+
+/**
+ * TRANSFER STUDENT — move a student to another Branch (strict cascade Branch -> Vertical ->
+ * optional Batch) with a reason. Posts to POST /students/:id/transfer; the API re-parents the
+ * student, clears/sets the batch, and writes a branch-transfer history row (scoped both ends).
+ */
+export function TransferStudentModal({ student, onClose, onDone }: { student: any; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const [branchId, setBranchId] = useState<string>('');
+  const [verticalId, setVerticalId] = useState<string>('');
+  const [batchId, setBatchId] = useState<string>('');
+  const [reason, setReason] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+
+  const vOpts = ref.verticals.filter((vt: any) => String(vt.branch_id) === branchId);
+  const batches = useFetch<any[]>(
+    branchId && verticalId ? `/batches?branch_id=${branchId}&vertical_id=${verticalId}&status=active` : null,
+    [branchId, verticalId]);
+
+  const save = async () => {
+    if (!branchId) { toast('Choose a target branch.', true); return; }
+    if (!verticalId) { toast('Choose a target vertical.', true); return; }
+    setBusy(true);
+    try {
+      const res = await api.post<any>(`/students/${student.id}/transfer`, {
+        to_branch_id: Number(branchId), to_vertical_id: Number(verticalId),
+        to_batch_id: batchId ? Number(batchId) : null, reason: reason.trim() || null,
+      });
+      toast(res?.waitlisted ? 'Transferred — target batch full, student waitlisted.' : 'Student transferred.');
+      onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+
+  return (
+    <DetailModal title={`Transfer — ${student.full_name}`} icon="swap" onClose={onClose} width={520}
+      footer={<button className="btn primary" onClick={save} disabled={busy} data-testid="stu-transfer-save"><Ic k="swap" />Transfer</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}>
+        <Ic k="branch" />
+        <div>Currently in <b>{[student.branch_name, student.vertical_name].filter(Boolean).join(' › ') || '—'}</b>
+          {student.batch_name ? <> · batch <b>{student.batch_name}</b></> : null}.</div>
+      </div>
+      <div className="form-grid">
+        <div className="fld">
+          <label htmlFor="tr-branch">Target Branch <span className="star">*</span></label>
+          <select id="tr-branch" className="ainp" value={branchId} disabled={busy}
+            onChange={(e) => { setBranchId(e.target.value); setVerticalId(''); setBatchId(''); }}>
+            <option value="">— Choose branch —</option>
+            {ref.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+        <div className="fld">
+          <label htmlFor="tr-vertical">Target Vertical <span className="star">*</span></label>
+          <select id="tr-vertical" className="ainp" value={verticalId} disabled={busy || !branchId}
+            onChange={(e) => { setVerticalId(e.target.value); setBatchId(''); }}>
+            <option value="">— Choose vertical —</option>
+            {vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </div>
+        <div className="fld">
+          <label htmlFor="tr-batch">Target Batch (optional)</label>
+          <select id="tr-batch" className="ainp" value={batchId} disabled={busy || !verticalId}
+            onChange={(e) => setBatchId(e.target.value)}>
+            <option value="">— No batch —</option>
+            {(batches.data ?? []).map((b: any) => <option key={b.id} value={b.id}>{b.name} ({b.batch_code})</option>)}
+          </select>
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="tr-reason">Reason</label>
+          <input id="tr-reason" className="ainp" value={reason} disabled={busy}
+            placeholder="Why is the student moving?" onChange={(e) => setReason(e.target.value)} />
+        </div>
+      </div>
     </DetailModal>
   );
 }

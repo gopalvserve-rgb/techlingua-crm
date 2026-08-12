@@ -51,6 +51,15 @@ export class StudentController {
     return this.svc.profile(id, scope);
   }
 
+  /** BRANCH TRANSFER — move a student to another Branch (and Vertical, optional Batch). Reuses
+   *  student.update; scoped on BOTH ends inside the service so a transfer cannot cross a scope
+   *  boundary in either direction. Writes a student_transfer history row + audit. */
+  @Post(':id/transfer')
+  @RequirePermission('student.update')
+  transfer(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.branchTransfer(id, dto, me, scope);
+  }
+
   /* -------- documents (education + KYC). List is student.read; download is student.update
    *          (staff/admin, in scope) and never public — sensitive KYC bytes stay behind an
    *          authenticated, scoped request. -------- */

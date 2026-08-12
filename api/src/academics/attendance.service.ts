@@ -21,7 +21,7 @@ import { NotificationEventService } from '../notificationevents/notification-eve
  */
 export const ATT_SCOPE_COLS: ScopeColumnMap = { branch: 'a.branch_id', vertical: 'a.vertical_id', owner: 'a.marked_by' };
 const BATCH_SCOPE_COLS: ScopeColumnMap = { branch: 'bt.branch_id', vertical: 'bt.vertical_id' };
-const VALID = ['present', 'absent', 'late', 'excused'];
+const VALID = ['present', 'absent', 'late', 'excused', 'half_day'];
 const MODES = ['staff', 'self', 'biometric'];
 
 @Injectable()
@@ -187,6 +187,7 @@ export class AttendanceService {
               count(*) FILTER (WHERE a.status = 'absent')::int  AS absent,
               count(*) FILTER (WHERE a.status = 'late')::int    AS late,
               count(*) FILTER (WHERE a.status = 'excused')::int AS excused,
+              count(*) FILTER (WHERE a.status = 'half_day')::int AS half_day,
               count(*) FILTER (WHERE a.parent_notified)::int    AS parent_alerts
          FROM attendance a WHERE ${w}`, params);
     const total = Number(kpi?.total ?? 0);
@@ -200,7 +201,8 @@ export class AttendanceService {
     return {
       kpis: {
         total, present, absent: Number(kpi?.absent ?? 0), late: Number(kpi?.late ?? 0),
-        excused: Number(kpi?.excused ?? 0), parent_alerts: Number(kpi?.parent_alerts ?? 0),
+        excused: Number(kpi?.excused ?? 0), half_day: Number(kpi?.half_day ?? 0),
+        parent_alerts: Number(kpi?.parent_alerts ?? 0),
         present_pct: total ? Math.round((present / total) * 1000) / 10 : null,
       },
       by_student: byStudent.map((r: any) => ({

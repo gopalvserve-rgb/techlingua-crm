@@ -845,3 +845,91 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .enum-chips{display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:34px;padding:2px 0}
 .enum-chip{font-size:11px;font-weight:600;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:5px 9px;cursor:pointer;line-height:1}
 .enum-chip.on{background:var(--primary-soft);border-color:var(--primary);color:var(--primary)}
+
+/* ============================================================================
+ * STUDENT PROFILE — creative Facebook-style shell (docs/dev/59)
+ *   cover strip · avatar (right) · KPI chips · left tab rail · main content.
+ * ========================================================================== */
+.fbp-modal .abody { padding: 0; }
+.fbp { display: flex; flex-direction: column; }
+.fbp-cover {
+  height: 96px;
+  background: var(--grad, linear-gradient(120deg, var(--primary), var(--primary-2, var(--accent))));
+  border-radius: var(--r-md) var(--r-md) 0 0;
+}
+.fbp-head {
+  display: flex; align-items: flex-start; gap: 16px;
+  padding: 0 20px; margin-top: -34px;
+}
+.fbp-id { flex: 1 1 auto; min-width: 0; }
+.fbp-name { margin: 40px 0 2px; font-size: 22px; font-weight: 700; color: var(--text); }
+.fbp-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-muted); font-size: 12px; }
+.fbp-path { margin-top: 4px; color: var(--text-muted); font-size: 12.5px; }
+.fbp-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.fbp-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--text-muted);
+}
+.fbp-tag svg { width: 13px; height: 13px; }
+.fbp-btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.fbp-avatar {
+  flex: 0 0 auto; width: 104px; height: 104px; border-radius: 18px;
+  background: var(--primary-soft, var(--surface-2)); border: 3px solid var(--surface);
+  box-shadow: var(--shadow); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 34px; font-weight: 700; color: var(--primary);
+  margin-top: 8px;
+}
+.fbp-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.fbp-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  padding: 14px 20px 4px;
+}
+.fbp-chip {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.fbp-chip-v { font-size: 17px; font-weight: 700; color: var(--text); }
+.fbp-chip-l { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.fbp-chip.ok .fbp-chip-v { color: var(--success); }
+.fbp-chip.warn .fbp-chip-v { color: var(--warning, var(--amber)); }
+.fbp-body { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 0; padding: 12px 20px 4px; }
+.fbp-rail { display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--border); padding-right: 10px; }
+.fbp-rail button {
+  display: flex; align-items: center; gap: 9px; text-align: left;
+  background: none; border: none; border-radius: var(--r-sm);
+  padding: 8px 10px; font: inherit; font-size: 13px; color: var(--text-muted);
+  cursor: pointer;
+}
+.fbp-rail button svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.fbp-rail button:hover { background: var(--surface-2); color: var(--text); }
+.fbp-rail button.on { background: var(--primary-soft, var(--surface-3)); color: var(--primary); font-weight: 600; }
+.fbp-main { padding: 0 4px 4px 16px; min-width: 0; }
+@media (max-width: 760px) {
+  .fbp-body { grid-template-columns: 1fr; }
+  .fbp-rail { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); padding: 0 0 8px; }
+  .fbp-stats { grid-template-columns: repeat(2, 1fr); }
+  .fbp-head { flex-direction: column-reverse; align-items: center; text-align: center; }
+  .fbp-name { margin-top: 8px; }
+}
+
+/* Attendance quick letter-buttons (P / A / H / L / E) ---------------------- */
+.att-letters { display: inline-flex; gap: 4px; }
+.att-btn {
+  width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-muted); font-weight: 700; font-size: 13px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform .05s ease;
+}
+.att-btn:hover:not(:disabled) { border-color: var(--border-strong); }
+.att-btn:active:not(:disabled) { transform: scale(.92); }
+.att-btn:disabled { opacity: .5; cursor: default; }
+.att-btn.on { color: #fff; border-color: transparent; }
+.att-btn.att-p.on { background: var(--success); }
+.att-btn.att-a.on { background: var(--danger, var(--red)); }
+.att-btn.att-h.on { background: var(--amber); }
+.att-btn.att-l.on { background: var(--amber); }
+.att-btn.att-e.on { background: var(--text-muted); }

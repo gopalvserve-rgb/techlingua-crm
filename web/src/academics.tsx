@@ -101,7 +101,14 @@ export function AttendanceScreen() {
   };
 
   const k = summary.data?.kpis;
-  const statusOpts = ['present', 'absent', 'late', 'excused'];
+  const ATT_LETTERS: Array<{ v: string; ch: string; label: string; cls: string }> = [
+    { v: 'present', ch: 'P', label: 'Present', cls: 'att-p' },
+    { v: 'absent', ch: 'A', label: 'Absent', cls: 'att-a' },
+    { v: 'half_day', ch: 'H', label: 'Half-day', cls: 'att-h' },
+    { v: 'late', ch: 'L', label: 'Late', cls: 'att-l' },
+    { v: 'excused', ch: 'E', label: 'Excused', cls: 'att-e' },
+  ];
+  const ATT_LABEL: Record<string, string> = { present: 'Present', absent: 'Absent', half_day: 'Half-day', late: 'Late', excused: 'Excused' };
 
   return (
     <>
@@ -135,10 +142,17 @@ export function AttendanceScreen() {
             { node: <div><b className="nm">{r.full_name}</b><div className="sub mono">{r.student_no ?? '—'}</div></div> } as Cell,
             {
               node: (
-                <select className="ainp" style={{ maxWidth: 150 }} disabled={!canMark}
-                  value={marks[r.student_id] ?? 'present'} onChange={(e) => setMarks((m) => ({ ...m, [r.student_id]: e.target.value }))}>
-                  {statusOpts.map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
-                </select>
+                <div className="att-letters" role="group" aria-label={`Attendance for ${r.full_name}`}>
+                  {ATT_LETTERS.map((o) => {
+                    const on = (marks[r.student_id] ?? 'present') === o.v;
+                    return (
+                      <button key={o.v} type="button" title={o.label} aria-label={o.label} aria-pressed={on}
+                        disabled={!canMark} className={`att-btn ${o.cls}${on ? ' on' : ''}`}
+                        data-testid={`att-${r.student_id}-${o.v}`}
+                        onClick={() => setMarks((m) => ({ ...m, [r.student_id]: o.v }))}>{o.ch}</button>
+                    );
+                  })}
+                </div>
               ),
             } as Cell,
             r.guardian_mobile || r.father_mobile || '—',
@@ -155,7 +169,7 @@ export function AttendanceScreen() {
           fmtFull(a.session_date),
           a.student_name,
           a.batch_name,
-          a.status,
+          ATT_LABEL[a.status] ?? a.status,
           a.mode,
           a.parent_notified ? 'Sent' : '—',
           a.marked_by_name ?? '—',
