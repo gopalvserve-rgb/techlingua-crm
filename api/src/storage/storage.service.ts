@@ -110,6 +110,11 @@ export class StorageService {
     return `questions/media/${randomUUID()}-${this.safeName(fileName)}`;
   }
 
+  /** submissions/<uuid>-<filename> — assignment/practical file submissions (private, presigned). */
+  submissionKey(fileName: string): string {
+    return `submissions/${randomUUID()}-${this.safeName(fileName)}`;
+  }
+
   // ---------------------------------------------------------------- operations
 
   async putObject(key: string, bytes: Buffer | Uint8Array, contentType: string): Promise<{ key: string }> {

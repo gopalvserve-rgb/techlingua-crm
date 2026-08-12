@@ -9,6 +9,10 @@ import { AssessmentService } from './assessment.service';
 import { AssessmentController } from './assessment.controller';
 import { AssessmentTemplateService } from './assessment-template.service';
 import { AssessmentTemplateController } from './assessment-template.controller';
+import { AttemptService } from './attempt.service';
+import { AttemptController } from './attempt.controller';
+import { SubmissionService } from './submission.service';
+import { SubmissionController } from './submission.controller';
 
 /**
  * ASSESSMENTS — the Assessment / Test module.
@@ -24,14 +28,17 @@ import { AssessmentTemplateController } from './assessment-template.controller';
   controllers: [
     QuestionCategoryController, QuestionController,
     AssessmentTemplateController, AssessmentController,
+    AttemptController, SubmissionController,
   ],
   providers: [
     QuestionCategoryService, QuestionService,
     AssessmentTemplateService, AssessmentService,
+    AttemptService, SubmissionService,
   ],
   exports: [
     QuestionCategoryService, QuestionService,
     AssessmentTemplateService, AssessmentService,
+    AttemptService, SubmissionService,
   ],
 })
 export class AssessmentsModule {}

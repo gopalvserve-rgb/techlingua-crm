@@ -118,6 +118,10 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   // ---- Students & Academics · Assessments (Batch B — Tests / Templates) ----
   { name: 'AssessmentTestsScreen', file: 'assessments.tsx', req: FULL },
   { name: 'AssessmentTemplatesScreen', file: 'assessments.tsx', req: FULL },
+  // ---- Students & Academics · Assessments (Batch C — Evaluation Queue) ----
+  // Derived evaluation queue (attempts + submissions): multi-filter + export + refresh +
+  // column chooser; not bulk-deletable (records of a student's run), so NO_BULK.
+  { name: 'AssessmentEvaluationScreen', file: 'assessments.tsx', req: NO_BULK },
   // ---- Engagement · Notification Events (fixed 37-event catalog) ----
   // A FIXED catalog of standard events — you configure each event's channels, you never
   // create or delete an event — so it carries every control EXCEPT bulk-delete (declared).

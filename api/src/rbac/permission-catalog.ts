@@ -150,6 +150,8 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // Assessment / Test Module — Batch B (migration 064). Tests / exams assembled from the bank
   // (hand-picked links + pooled sections), settings, publish/close, and reusable settings
   // templates. Branch/vertical scoped. Batches C/D add attempts and results.
-  { module: 'assessment', label: 'Tests / Exams', actions: ['read', 'create', 'update', 'delete', 'publish'] },
+  { module: 'assessment', label: 'Tests / Exams', actions: ['read', 'create', 'update', 'delete', 'publish', 'evaluate'] },
+  { module: 'assessment_attempt', label: 'Test Attempts', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'assignment_submission', label: 'Assignment Submissions', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'assessment_template', label: 'Test Templates', actions: ['read', 'create', 'update', 'delete'] },
 ];

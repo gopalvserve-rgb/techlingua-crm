@@ -62,7 +62,7 @@ import { PaymentsScreen } from './payments';
 import { RefundsScreen } from './refunds';
 import { RevenueScreen, CollectionReportsScreen } from './revenue';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
-import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, AssessmentTemplatesScreen } from './assessments';
+import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, AssessmentTemplatesScreen, AssessmentEvaluationScreen } from './assessments';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
 
@@ -5054,6 +5054,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   questionCategories: QuestionCategoriesScreen,
   tests: AssessmentTestsScreen,
   testTemplates: AssessmentTemplatesScreen,
+  assessmentEvaluation: AssessmentEvaluationScreen,
   trainingVideos: TrainingVideosScreen,
   releaseNotes: ReleaseNotesScreen,
   featuresPanel: FeaturesPanel,

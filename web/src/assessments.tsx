@@ -550,6 +550,7 @@ export function AssessmentTestsScreen() {
   const [del, setDel] = useState<any | null>(null);
   const [fromTmpl, setFromTmpl] = useState(false);
   const [imp, setImp] = useState(false);
+  const [launch, setLaunch] = useState<any | null>(null);
   const after = () => setTick((t) => t + 1);
 
   const qs = new URLSearchParams();
@@ -620,6 +621,7 @@ export function AssessmentTestsScreen() {
             onEdit: can('assessment.update') ? () => setEdit(r) : undefined,
             onDelete: can('assessment.delete') ? () => setDel(r) : undefined,
             extra: [
+              ...(can('assessment_attempt.create') && r.status === 'published' ? [{ k: 'bolt', title: 'Launch / Take', onClick: () => setLaunch(r) }] : []),
               ...(can('assessment.publish') && r.status === 'draft' ? [{ k: 'check', title: 'Publish', onClick: () => doPublish(r) }] : []),
               ...(can('assessment.publish') && r.status === 'published' ? [{ k: 'shield', title: 'Close', onClick: () => doClose(r) }] : []),
             ],
@@ -630,6 +632,7 @@ export function AssessmentTestsScreen() {
       {fromTmpl && <NewFromTemplate rd={rd} onClose={() => setFromTmpl(false)} onCreated={(id) => { setFromTmpl(false); after(); setEdit({ id }); }} />}
       {del && <ConfirmModal title="Delete test?" body={`Delete "${del.title}"? Question links are removed; the bank questions are kept.`} danger confirmLabel="Delete" onConfirm={doDelete} onClose={() => setDel(null)} />}
       {imp && <TestImportModal onClose={() => setImp(false)} onDone={() => { setImp(false); after(); }} />}
+      {launch && <LaunchTest test={launch} onClose={() => setLaunch(null)} onDone={after} />}
       {bulkModal}
     </>
   );
@@ -1085,6 +1088,450 @@ function TemplateForm({ tmpl, rd, onClose, onSaved }: { tmpl: any; rd: any; onCl
           <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} />Active</label>
         </div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Default instructions</label><textarea className="ainp" rows={2} value={f.instructions} onChange={(e) => set('instructions', e.target.value)} /></div>
+      </div>
+    </DetailModal>
+  );
+}
+
+/* ==================================================================================
+ *  BATCH C — student attempt player · assignment submission · faculty evaluation
+ * ================================================================================== */
+
+const ATTEMPT_STATUS_OPTS = [
+  { id: 'in_progress', name: 'In progress' }, { id: 'submitted', name: 'Submitted' },
+  { id: 'evaluated', name: 'Evaluated' }, { id: 'expired', name: 'Expired' },
+];
+const ATTEMPT_BADGE: Record<string, string> = { in_progress: 'b-amber', submitted: 'b-indigo', evaluated: 'b-green', expired: 'b-gray' };
+const SUB_STATUS_OPTS = [{ id: 'submitted', name: 'Submitted' }, { id: 'evaluated', name: 'Evaluated' }, { id: 'returned', name: 'Returned' }];
+const SUB_BADGE: Record<string, string> = { submitted: 'b-indigo', evaluated: 'b-green', returned: 'b-amber' };
+const OBJECTIVE_TAKE = new Set(['mcq_single', 'mcq_multi', 'true_false', 'image_mcq', 'audio_mcq', 'video_mcq']);
+const fmtClock = (ms: number) => {
+  if (ms <= 0) return '00:00';
+  const s = Math.floor(ms / 1000); const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const ss = s % 60;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${p(h)}:${p(m)}:${p(ss)}` : `${p(m)}:${p(ss)}`;
+};
+
+/** A small student chooser used by the launch + submit flows. */
+function StudentSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const students = useFetch<any[]>('/students', []);
+  return (
+    <select className="ainp" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">— choose a student —</option>
+      {(students.data ?? []).map((s: any) => <option key={s.id} value={s.id}>{s.full_name}{s.student_no ? ` (${s.student_no})` : ''}</option>)}
+    </select>
+  );
+}
+
+/** Launch a published test for a student: assignment/practical → file submission; else → the player. */
+function LaunchTest({ test, onClose, onDone }: { test: any; onClose: () => void; onDone: () => void }) {
+  const [studentId, setStudentId] = useState('');
+  const [attemptId, setAttemptId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const isFile = test.test_type === 'assignment' || test.test_type === 'practical';
+
+  const start = async () => {
+    if (!studentId) { toast('Choose a student.', true); return; }
+    setBusy(true);
+    try {
+      const r = await api.post<any>(`/assessments/${test.id}/attempts`, { student_id: Number(studentId) });
+      setAttemptId(r.attempt.id);
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  if (attemptId) return <TakeTestPlayer attemptId={attemptId} onClose={() => { setAttemptId(null); onClose(); onDone(); }} />;
+
+  return (
+    <DetailModal title={`Launch — ${test.title}`} icon="bolt" width={520} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+        {!isFile && <button className="btn primary" onClick={start} disabled={busy || !studentId}><Ic k="bolt" />Start attempt</button>}
+      </div>}>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Student *</label><StudentSelect value={studentId} onChange={setStudentId} /></div>
+        <div className="empty-note" style={{ gridColumn: '1 / -1' }}>
+          {isFile
+            ? 'This is an assignment / practical test — the student submits a file below.'
+            : `A timed attempt will start now${test.duration_min ? ` (${test.duration_min} min)` : ''}. Up to ${test.max_attempts} attempt(s) per student.`}
+        </div>
+      </div>
+      {isFile && studentId ? <AssignmentSubmitInline testId={test.id} studentId={Number(studentId)} onDone={() => { onClose(); onDone(); }} /> : null}
+    </DetailModal>
+  );
+}
+
+/** File-submission block for an assignment/practical test (presigned R2 upload). */
+function AssignmentSubmitInline({ testId, studentId, onDone }: { testId: number; studentId: number; onDone: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!file) { toast('Choose a file first.', true); return; }
+    setBusy(true);
+    try {
+      const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/submissions/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
+      const put = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+      if (!put.ok) throw new Error(`Upload failed (${put.status})`);
+      await api.post(`/assessments/${testId}/submissions`, { student_id: studentId, file_r2_key: r2_key, original_filename: file.name, mime: file.type || null, size_bytes: file.size });
+      toast('Submission uploaded'); onDone();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="sheet-sec" style={{ marginTop: 12 }}>
+      <h5>Upload submission (PDF / DOC / DOCX / image)</h5>
+      <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+      <div style={{ marginTop: 10 }}><button className="btn primary" onClick={submit} disabled={busy || !file}><Ic k="export" />Submit file</button></div>
+    </div>
+  );
+}
+
+/** THE TAKE-TEST PLAYER — loads a started attempt, renders every q_type, live countdown,
+ *  autosave, and Submit (auto-submits at 0). */
+function TakeTestPlayer({ attemptId, onClose }: { attemptId: number; onClose: () => void }) {
+  const [data, setData] = useState<any | null>(null);
+  const [ans, setAns] = useState<Record<number, { selected: number[]; text: string; match: Record<string, string> }>>({});
+  const [result, setResult] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [left, setLeft] = useState<number | null>(null);
+  const saveTimer = useRef<any>(null);
+  const submittedRef = useRef(false);
+
+  useEffect(() => {
+    api.get<any>(`/attempts/${attemptId}`).then((d) => {
+      setData(d);
+      const seed: any = {};
+      for (const q of d.questions) seed[q.question_id] = {
+        selected: (q.selected_option_ids ?? []).map(Number),
+        text: q.answer_text ?? '',
+        match: (() => { try { return q.answer_text && q.q_type === 'match_following' ? JSON.parse(q.answer_text) : {}; } catch { return {}; } })(),
+      };
+      setAns(seed);
+      if (d.due_at) setLeft(new Date(d.due_at).getTime() - new Date(d.server_time).getTime());
+    }).catch((e) => toast(e.message, true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attemptId]);
+
+  // countdown → auto-submit at 0
+  useEffect(() => {
+    if (left == null) return;
+    const t = setInterval(() => setLeft((v) => (v == null ? v : v - 1000)), 1000);
+    return () => clearInterval(t);
+  }, [left == null]);
+  useEffect(() => {
+    if (left != null && left <= 0 && !submittedRef.current && data && !result) { void doSubmit(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [left]);
+
+  const payload = () => (data?.questions ?? []).map((q: any) => ({
+    question_id: q.question_id,
+    selected_option_ids: ans[q.question_id]?.selected ?? [],
+    answer_text: q.q_type === 'match_following' ? JSON.stringify(ans[q.question_id]?.match ?? {}) : (ans[q.question_id]?.text ?? ''),
+  }));
+
+  const scheduleSave = () => {
+    if (result || submittedRef.current) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try { await api.patch(`/attempts/${attemptId}/answers`, { answers: payload() }); } catch { /* silent autosave */ }
+    }, 1500);
+  };
+
+  const setSel = (q: any, id: number) => {
+    setAns((p) => {
+      const cur = p[q.question_id] ?? { selected: [], text: '', match: {} };
+      let selected: number[];
+      if (q.q_type === 'mcq_multi') selected = cur.selected.includes(id) ? cur.selected.filter((x) => x !== id) : [...cur.selected, id];
+      else selected = [id];
+      return { ...p, [q.question_id]: { ...cur, selected } };
+    });
+    scheduleSave();
+  };
+  const setText = (q: any, v: string) => { setAns((p) => ({ ...p, [q.question_id]: { ...(p[q.question_id] ?? { selected: [], text: '', match: {} }), text: v } })); scheduleSave(); };
+  const setMatch = (q: any, optId: number, v: string) => { setAns((p) => { const cur = p[q.question_id] ?? { selected: [], text: '', match: {} }; return { ...p, [q.question_id]: { ...cur, match: { ...cur.match, [optId]: v } } }; }); scheduleSave(); };
+
+  const doSubmit = async (auto = false) => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
+    setBusy(true);
+    try {
+      clearTimeout(saveTimer.current);
+      const r = await api.post<any>(`/attempts/${attemptId}/submit`, { answers: payload() });
+      setResult(r);
+      if (!auto) toast('Attempt submitted');
+    } catch (e: any) { submittedRef.current = false; toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  if (!data) return <DetailModal title="Loading attempt…" icon="doc" width={760} onClose={onClose}><div className="empty-note">Loading…</div></DetailModal>;
+
+  if (result) {
+    const instant = result.show_result_mode === 'instant' && !result.has_subjective && result.status === 'evaluated';
+    return (
+      <DetailModal title="Attempt submitted" icon="check" width={520} onClose={onClose}>
+        {instant ? (
+          <div style={{ textAlign: 'center', padding: 8 }}>
+            <div style={{ fontSize: 30, fontWeight: 700 }}>{result.total_score} / {result.max_score}</div>
+            <div className="sub" style={{ marginTop: 4 }}>Auto-scored objective test.</div>
+            {result.is_passed != null ? <div style={{ marginTop: 8 }}><span className={`badge ${result.is_passed ? 'b-green' : 'b-rose'}`}>{result.is_passed ? 'PASSED' : 'FAILED'}</span></div> : null}
+          </div>
+        ) : (
+          <div className="empty-note">Your response has been submitted for evaluation. Results will be released by your faculty.</div>
+        )}
+      </DetailModal>
+    );
+  }
+
+  return (
+    <DetailModal title={data.assessment_title} icon="doc" width={820} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
+        {left != null ? <span className={`badge ${left < 60_000 ? 'b-rose' : 'b-indigo'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>⏱ {fmtClock(left)}</span> : <span className="sub">Untimed</span>}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={onClose} disabled={busy}>Close</button>
+          <button className="btn primary" onClick={() => doSubmit(false)} disabled={busy}><Ic k="check" />Submit attempt</button>
+        </div>
+      </div>}>
+      {left != null && left < 60_000 ? <div className="empty-note" style={{ color: 'var(--danger)', marginBottom: 8 }}>Less than a minute remaining — the attempt auto-submits at 0.</div> : null}
+      {data.questions.map((q: any, i: number) => (
+        <div key={q.question_id} style={{ marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid var(--line)' }}>
+          <div style={{ fontSize: 14 }}><b>{i + 1}.</b> {q.body} <span className="sub">({q.marks}m)</span></div>
+          {q.image_url ? <img src={q.image_url} alt="q" style={{ maxHeight: 140, borderRadius: 6, marginTop: 6 }} /> : null}
+          {q.audio_url ? <audio controls src={q.audio_url} style={{ width: '100%', marginTop: 6 }} /> : null}
+          {youtubeEmbed(q.youtube_url, q.youtube_start_sec, q.youtube_end_sec) ? <div style={{ position: 'relative', paddingTop: '38%', maxWidth: 420, marginTop: 6 }}><iframe title="yt" src={youtubeEmbed(q.youtube_url, q.youtube_start_sec, q.youtube_end_sec)!} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, borderRadius: 8 }} allowFullScreen /></div> : null}
+          <div style={{ marginTop: 8 }}>
+            {OBJECTIVE_TAKE.has(q.q_type) ? (
+              <div style={{ display: 'grid', gap: 5 }}>
+                {q.options.map((o: any, oi: number) => (
+                  <label key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5, cursor: 'pointer' }}>
+                    <input type={q.q_type === 'mcq_multi' ? 'checkbox' : 'radio'} name={`q${q.question_id}`}
+                      checked={(ans[q.question_id]?.selected ?? []).includes(o.id)} onChange={() => setSel(q, o.id)} />
+                    <span className="sub">{String.fromCharCode(65 + oi)}.</span> {o.body}
+                    {o.image_url ? <img src={o.image_url} alt="opt" style={{ maxHeight: 44, borderRadius: 4 }} /> : null}
+                  </label>
+                ))}
+              </div>
+            ) : q.q_type === 'fill_blank' ? (
+              <input className="ainp" value={ans[q.question_id]?.text ?? ''} onChange={(e) => setText(q, e.target.value)} placeholder="Type your answer" />
+            ) : q.q_type === 'match_following' ? (
+              <div style={{ display: 'grid', gap: 5 }}>
+                {q.options.map((o: any) => (
+                  <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5 }}>
+                    <span style={{ minWidth: 160 }}>{o.body}</span> →
+                    <input className="ainp" style={{ flex: 1 }} value={ans[q.question_id]?.match?.[o.id] ?? ''} onChange={(e) => setMatch(q, o.id, e.target.value)} placeholder="matching value" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <textarea className="ainp" rows={q.q_type === 'writing' || q.q_type === 'essay' || q.q_type === 'long_answer' || q.q_type === 'case_study' ? 6 : 3}
+                value={ans[q.question_id]?.text ?? ''} onChange={(e) => setText(q, e.target.value)} placeholder="Write your response" />
+            )}
+          </div>
+        </div>
+      ))}
+    </DetailModal>
+  );
+}
+
+/* ------------------------------------------------------- FACULTY EVALUATION ---- */
+
+export function AssessmentEvaluationScreen() {
+  const { can } = useAuth();
+  const rd = useRef_();
+  const { scope: gScope } = useScope();
+  const [tab, setTab] = useState<'attempts' | 'submissions'>('attempts');
+  const [tick, setTick] = useState(0);
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
+  const [fStatus, setFStatus] = useState<string[]>([]);
+  const [evalAttempt, setEvalAttempt] = useState<any | null>(null);
+  const [evalSub, setEvalSub] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+  const after = () => setTick((t) => t + 1);
+
+  const qs = new URLSearchParams();
+  if (fB.length) qs.set('branch_id', fB.join(','));
+  if (fV.length) qs.set('vertical_id', fV.join(','));
+  if (fStatus.length) qs.set('status', fStatus.join(','));
+  const attempts = useFetch<any[]>(`/attempts?${qs.toString()}`, [tab, qs.toString(), tick]);
+  const submissions = useFetch<any[]>(`/submissions?${qs.toString()}`, [tab, qs.toString(), tick]);
+  const aRows = attempts.data ?? [];
+  const sRows = submissions.data ?? [];
+
+  const runExpiry = async () => {
+    setBusy(true);
+    try { const r = await api.post<any>('/attempts/expire', {}); toast(r.expired ? `${r.expired} overdue attempt(s) expired & scored` : 'No overdue attempts'); after(); }
+    catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <div className="page-actions" style={{ display: 'flex', gap: 8 }}>
+        <div className="seg">
+          <button className={`seg-btn ${tab === 'attempts' ? 'on' : ''}`} onClick={() => setTab('attempts')}>Attempts</button>
+          <button className={`seg-btn ${tab === 'submissions' ? 'on' : ''}`} onClick={() => setTab('submissions')}>Assignment submissions</button>
+        </div>
+        {can('assessment_attempt.update') && <button className="btn" onClick={runExpiry} disabled={busy}><Ic k="clock" />Run expiry sweep</button>}
+      </div>
+      <Kpis items={tab === 'attempts' ? [
+        { lab: 'Attempts', val: String(aRows.length), ic: 'doc' },
+        { lab: 'Awaiting evaluation', val: String(aRows.filter((r: any) => r.status === 'submitted').length), ic: 'clock' },
+        { lab: 'Evaluated', val: String(aRows.filter((r: any) => r.status === 'evaluated').length), ic: 'check' },
+        { lab: 'Expired', val: String(aRows.filter((r: any) => r.status === 'expired').length), ic: 'shield' },
+      ] : [
+        { lab: 'Submissions', val: String(sRows.length), ic: 'doc' },
+        { lab: 'Awaiting evaluation', val: String(sRows.filter((r: any) => r.status === 'submitted').length), ic: 'clock' },
+        { lab: 'Evaluated', val: String(sRows.filter((r: any) => r.status === 'evaluated').length), ic: 'check' },
+      ]} />
+      <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches} onChange={setFB} />
+        <FilterMulti label="Vertical" icon="grid" value={fV} options={rd.verticals} onChange={setFV} />
+        <EnumMulti label="Status" icon="shield" value={fStatus} options={tab === 'attempts' ? ATTEMPT_STATUS_OPTS : SUB_STATUS_OPTS} onChange={setFStatus} />
+      </div>
+      {tab === 'attempts' ? (
+        <TableCard fill title="Attempt evaluation queue" icon="doc"
+          more={<ListActions onExport={() => downloadObjectsCsv('attempts.csv', aRows.map((r: any) => ({
+            student: r.student_name, student_no: r.student_no, test: r.assessment_title, type: TEST_TYPE_LABEL[r.test_type] ?? r.test_type,
+            attempt: r.attempt_no, status: r.status, auto: r.auto_score, manual: r.manual_score, total: r.total_score, max: r.max_score,
+            passed: r.is_passed == null ? '' : (r.is_passed ? 'Yes' : 'No'), submitted: fmtDT(r.submitted_at), branch: r.branch_name, vertical: r.vertical_name,
+          })))} onRefresh={after} />}
+          cols={['Student', 'Test', 'Attempt', 'Auto', 'Total / Max', 'Result', 'Status', 'Submitted', 'Actions']}
+          empty="No attempts yet — launch a test for a student from Tests / Exams."
+          rows={aRows.map((r: any) => [
+            { node: <div><b className="nm">{r.student_name}</b>{r.student_no ? <div className="sub">{r.student_no}</div> : null}</div> } as Cell,
+            { node: <div>{r.assessment_title}<div className="sub">{TEST_TYPE_LABEL[r.test_type] ?? r.test_type}</div></div> } as Cell,
+            `#${r.attempt_no}`,
+            r.auto_score != null ? String(r.auto_score) : '—',
+            r.total_score != null ? `${r.total_score} / ${r.max_score}` : `— / ${r.max_score}`,
+            { node: r.is_passed == null ? <span className="sub">—</span> : <span className={`badge ${r.is_passed ? 'b-green' : 'b-rose'}`}>{r.is_passed ? 'Pass' : 'Fail'}</span> } as Cell,
+            { b: [r.status, ATTEMPT_BADGE[r.status] ?? 'b-gray'] } as Cell,
+            fmtDT(r.submitted_at),
+            rowActions({
+              onView: () => setEvalAttempt(r),
+              extra: can('assessment.evaluate') && (r.status === 'submitted' || r.status === 'evaluated') ? [{ k: 'check', title: 'Evaluate', onClick: () => setEvalAttempt(r) }] : [],
+            }),
+          ])} />
+      ) : (
+        <TableCard fill title="Assignment submission queue" icon="doc"
+          more={<ListActions onExport={() => downloadObjectsCsv('submissions.csv', sRows.map((r: any) => ({
+            student: r.student_name, student_no: r.student_no, test: r.assessment_title, file: r.original_filename,
+            status: r.status, marks: r.marks, max: r.max_marks, passed: r.is_passed == null ? '' : (r.is_passed ? 'Yes' : 'No'),
+            submitted: fmtDT(r.submitted_at), branch: r.branch_name, vertical: r.vertical_name,
+          })))} onRefresh={after} />}
+          cols={['Student', 'Test', 'File', 'Marks / Max', 'Result', 'Status', 'Submitted', 'Actions']}
+          empty="No submissions yet — an assignment/practical test collects a file from the student."
+          rows={sRows.map((r: any) => [
+            { node: <div><b className="nm">{r.student_name}</b>{r.student_no ? <div className="sub">{r.student_no}</div> : null}</div> } as Cell,
+            r.assessment_title,
+            { node: r.file_url ? <a href={r.file_url} target="_blank" rel="noreferrer">{r.original_filename ?? 'file'}</a> : (r.original_filename ?? '—') } as Cell,
+            r.marks != null ? `${r.marks} / ${r.max_marks}` : `— / ${r.max_marks}`,
+            { node: r.is_passed == null ? <span className="sub">—</span> : <span className={`badge ${r.is_passed ? 'b-green' : 'b-rose'}`}>{r.is_passed ? 'Pass' : 'Fail'}</span> } as Cell,
+            { b: [r.status, SUB_BADGE[r.status] ?? 'b-gray'] } as Cell,
+            fmtDT(r.submitted_at),
+            rowActions({ extra: can('assessment.evaluate') ? [{ k: 'check', title: 'Evaluate', onClick: () => setEvalSub(r) }] : [] }),
+          ])} />
+      )}
+      {evalAttempt && <AttemptEvaluationModal attemptId={evalAttempt.id} onClose={() => setEvalAttempt(null)} onSaved={() => { setEvalAttempt(null); after(); }} />}
+      {evalSub && <SubmissionEvaluationModal sub={evalSub} onClose={() => setEvalSub(null)} onSaved={() => { setEvalSub(null); after(); }} />}
+    </>
+  );
+}
+
+function AttemptEvaluationModal({ attemptId, onClose, onSaved }: { attemptId: number; onClose: () => void; onSaved: () => void }) {
+  const { can } = useAuth();
+  const [d, setD] = useState<any | null>(null);
+  const [marks, setMarks] = useState<Record<number, string>>({});
+  const [fb, setFb] = useState<Record<number, string>>({});
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.get<any>(`/attempts/${attemptId}`).then((x) => {
+      setD(x);
+      const m: any = {}; const f: any = {};
+      for (const q of x.questions) { if (!q.objective) { m[q.question_id] = q.evaluator_marks != null ? String(q.evaluator_marks) : ''; f[q.question_id] = q.evaluator_feedback ?? ''; } }
+      setMarks(m); setFb(f);
+    }).catch((e) => toast(e.message, true));
+  }, [attemptId]);
+
+  const subj = (d?.questions ?? []).filter((q: any) => !q.objective);
+  const runningManual = subj.reduce((s: number, q: any) => s + (marks[q.question_id] !== '' && marks[q.question_id] != null ? Number(marks[q.question_id]) : 0), 0);
+  const total = Number(d?.auto_score ?? 0) + runningManual;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const answers = subj.map((q: any) => ({ question_id: q.question_id, evaluator_marks: marks[q.question_id] === '' ? null : Number(marks[q.question_id]), evaluator_feedback: fb[q.question_id] || null }));
+      const r = await api.patch<any>(`/attempts/${attemptId}/evaluate`, { answers });
+      toast(`Evaluated — total ${r.total_score} / ${r.max_score}`); onSaved();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  if (!d) return <DetailModal title="Loading attempt…" icon="doc" width={760} onClose={onClose}><div className="empty-note">Loading…</div></DetailModal>;
+  const readOnly = !can('assessment.evaluate');
+
+  return (
+    <DetailModal title={`Evaluate — ${d.student_name}`} icon="check" width={820} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
+        <span className="sub">Auto {d.auto_score ?? 0} + Manual {runningManual} = <b>{total}</b> / {d.max_score}</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={onClose} disabled={busy}>Close</button>
+          {!readOnly && <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save evaluation</button>}
+        </div>
+      </div>}>
+      <div className="empty-note" style={{ marginBottom: 10 }}>{d.assessment_title} · Attempt #{d.attempt_no} · {d.status}. Objective answers are auto-scored; grade the subjective ones below.</div>
+      {d.questions.map((q: any, i: number) => (
+        <div key={q.question_id} style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid var(--line)' }}>
+          <div style={{ fontSize: 13.5 }}><b>{i + 1}.</b> {q.body} <span className="sub">({q.marks}m)</span>
+            {q.objective ? <span className={`badge ${q.is_correct ? 'b-green' : 'b-rose'}`} style={{ marginLeft: 6 }}>{q.is_correct ? `+${q.awarded_marks}` : `${q.awarded_marks}`}</span> : <span className="badge b-amber" style={{ marginLeft: 6 }}>subjective</span>}
+          </div>
+          {q.objective ? (
+            <div style={{ display: 'grid', gap: 3, marginTop: 5 }}>
+              {q.options.map((o: any, oi: number) => {
+                const chosen = (q.selected_option_ids ?? []).includes(o.id);
+                return <div key={o.id} style={{ fontSize: 13, color: o.is_correct ? 'var(--success)' : (chosen ? 'var(--danger)' : 'var(--text)') }}>
+                  {chosen ? '☑' : '☐'} <span className="sub">{String.fromCharCode(65 + oi)}.</span> {o.body} {o.is_correct ? '✓' : ''}
+                </div>;
+              })}
+              {q.q_type === 'fill_blank' ? <div className="sub">Typed: “{q.answer_text || '—'}”</div> : null}
+            </div>
+          ) : (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ background: 'var(--surface-2, rgba(127,127,127,.08))', borderRadius: 6, padding: 8, fontSize: 13, whiteSpace: 'pre-wrap' }}>{q.answer_text || <span className="sub">No response</span>}</div>
+              {q.file_r2_key ? <div className="sub" style={{ marginTop: 4 }}>Attached file answer</div> : null}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                <label style={{ fontSize: 12 }}>Marks (0–{q.marks})</label>
+                <input className="ainp" style={{ width: 90 }} type="number" min={0} max={q.marks} step="0.5" disabled={readOnly}
+                  value={marks[q.question_id] ?? ''} onChange={(e) => setMarks((p) => ({ ...p, [q.question_id]: e.target.value }))} />
+                <input className="ainp" style={{ flex: 1 }} placeholder="Feedback (optional)" disabled={readOnly}
+                  value={fb[q.question_id] ?? ''} onChange={(e) => setFb((p) => ({ ...p, [q.question_id]: e.target.value }))} />
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </DetailModal>
+  );
+}
+
+function SubmissionEvaluationModal({ sub, onClose, onSaved }: { sub: any; onClose: () => void; onSaved: () => void }) {
+  const { can } = useAuth();
+  const [marks, setMarks] = useState<string>(sub.marks != null ? String(sub.marks) : '');
+  const [feedback, setFeedback] = useState<string>(sub.feedback ?? '');
+  const [status, setStatus] = useState<string>(sub.status === 'submitted' ? 'evaluated' : sub.status);
+  const [busy, setBusy] = useState(false);
+  const readOnly = !can('assessment.evaluate');
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await api.patch<any>(`/submissions/${sub.id}/evaluate`, { marks: marks === '' ? null : Number(marks), feedback: feedback || null, status });
+      toast(`Saved — ${r.marks ?? '—'} / ${r.max_marks}`); onSaved();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Evaluate submission — ${sub.student_name}`} icon="check" width={560} onClose={onClose}
+      footer={<div style={{ display: 'flex', gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button>{!readOnly && <button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button>}</div>}>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Submitted file</label>
+          {sub.file_url ? <a className="btn" href={sub.file_url} target="_blank" rel="noreferrer"><Ic k="export" />Open {sub.original_filename ?? 'file'}</a> : <span className="sub">{sub.original_filename ?? '—'}</span>}
+        </div>
+        <div className="fld"><label>Marks (0–{sub.max_marks})</label><input className="ainp" type="number" min={0} max={sub.max_marks} step="0.5" value={marks} onChange={(e) => setMarks(e.target.value)} disabled={readOnly} /></div>
+        <div className="fld"><label>Status</label><select className="ainp" value={status} onChange={(e) => setStatus(e.target.value)} disabled={readOnly}>{SUB_STATUS_OPTS.filter((o) => o.id !== 'submitted').map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Feedback</label><textarea className="ainp" rows={3} value={feedback} onChange={(e) => setFeedback(e.target.value)} disabled={readOnly} /></div>
       </div>
     </DetailModal>
   );

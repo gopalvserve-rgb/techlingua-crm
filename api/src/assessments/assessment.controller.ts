@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query 
 import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { AssessmentService } from './assessment.service';
+import { AttemptService } from './attempt.service';
+import { SubmissionService } from './submission.service';
 
 interface Me { id: number; name: string }
 
@@ -20,7 +22,24 @@ function manyStr(v?: string | string[]): string[] | undefined {
 /** TESTS / EXAMS — Students & Academics › Assessments › Tests. All routes scope-enforced. */
 @Controller('assessments')
 export class AssessmentController {
-  constructor(private readonly svc: AssessmentService) {}
+  constructor(
+    private readonly svc: AssessmentService,
+    private readonly attempts: AttemptService,
+    private readonly submissions: SubmissionService,
+  ) {}
+
+  // --- Batch C: student attempt flow + assignment submission (keyed on the test id) ---
+  @Post(':id/attempts')
+  @RequirePermission('assessment_attempt.create')
+  startAttempt(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.attempts.start(id, dto, me, scope);
+  }
+
+  @Post(':id/submissions')
+  @RequirePermission('assignment_submission.create')
+  submit(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.submissions.create(id, dto, me, scope);
+  }
 
   @Get()
   @RequirePermission('assessment.read')
