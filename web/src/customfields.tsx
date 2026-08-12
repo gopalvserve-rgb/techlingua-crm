@@ -36,14 +36,19 @@ export const CF_TYPES: Array<{ v: CfType; label: string }> = [
   { v: 'multiselect', label: 'Dropdown (multi)' },
 ];
 
-/** Active lead custom-field definitions. Never throws — an empty list just means "no custom fields". */
-export async function fetchLeadCfDefs(): Promise<CfDef[]> {
+/** Active custom-field definitions for ANY entity. Never throws — [] just means "no custom fields". */
+export async function fetchCfDefs(entity: string): Promise<CfDef[]> {
   try {
-    const rows = await api.get<CfDef[]>('/custom-fields?entity=lead');
+    const rows = await api.get<CfDef[]>(`/custom-fields?entity=${encodeURIComponent(entity)}`);
     return (rows ?? []).map((r) => ({ ...r, options: Array.isArray(r.options) ? r.options : (r.options ?? null) }));
   } catch {
     return [];
   }
+}
+
+/** Active lead custom-field definitions. Never throws — an empty list just means "no custom fields". */
+export async function fetchLeadCfDefs(): Promise<CfDef[]> {
+  return fetchCfDefs('lead');
 }
 
 /** Turn a form string value into the JSON value that persists for a given field type. */

@@ -164,6 +164,23 @@ describe('StudentService.create (direct Add — the Admission form)', () => {
     await expect(svc.create({ full_name: 'X' }, { id: 5 }, scopeAll)).rejects.toThrow();
   });
 
+  // FIX (Aug 2026): student custom-field VALUES persist into student.custom_fields, exactly
+  // as leads persist into lead.custom_fields — one storage, one code path (migration 068).
+  it('persists custom_fields on create (the SAME storage leads use)', async () => {
+    const { svc, issued } = make();
+    await svc.create({ ...FULL, custom_fields: { referred_by: 'Neha', batch_pref: 'Morning' } }, { id: 5 }, scopeAll);
+    const ins = issued.find((i) => /INSERT INTO student/.test(i.sql))!;
+    expect(ins.sql).toMatch(/\bcustom_fields\b/);
+    expect(ins.params).toContain(JSON.stringify({ referred_by: 'Neha', batch_pref: 'Morning' }));
+  });
+
+  it('coerces a non-object custom_fields to {} (never a bad write)', async () => {
+    const { svc, issued } = make();
+    await svc.create({ ...FULL, custom_fields: 'garbage' }, { id: 5 }, scopeAll);
+    const ins = issued.find((i) => /INSERT INTO student/.test(i.sql))!;
+    expect(ins.params).toContain('{}');
+  });
+
   it('never LOGS the sensitive ID-proof fields (aadhaar / pan / passport)', async () => {
     const spies = ['log', 'info', 'warn', 'error', 'debug'].map((m) =>
       jest.spyOn(console, m as any).mockImplementation(() => undefined));

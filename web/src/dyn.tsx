@@ -35,7 +35,7 @@ import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelet
 import { RedFlagModal } from './leadsheet';
 import { ConvertStudentModal } from './convertstudent';
 import { AdmissionsScreen } from './admissions';
-import { CustomFieldsAdmin } from './customfields';
+import { CustomFieldsAdmin, fetchCfDefs, coerceCf, collectCf, type CfDef } from './customfields';
 import StartCalling from './calling';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
@@ -4105,6 +4105,23 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
   const [err, setErr] = useState('');
   const up = (k: string, v: any) => setF((s: any) => ({ ...s, [k]: v }));
 
+  // Custom fields (client, Aug 2026) — admin-defined student fields (entity='student') render
+  // here and persist into student.custom_fields, mirroring the lead Add form. Saved values are
+  // rehydrated from initial.custom_fields so they show on reopen. Non-throwing fetch → [] = none.
+  const [cfDefs, setCfDefs] = useState<CfDef[]>([]);
+  const [cfVals, setCfVals] = useState<Record<string, string>>(() => {
+    const src = (initial?.custom_fields && typeof initial.custom_fields === 'object') ? initial.custom_fields as Record<string, unknown> : {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(src)) out[k] = Array.isArray(v) ? (v as unknown[]).join(', ') : (v == null ? '' : String(v));
+    return out;
+  });
+  useEffect(() => {
+    let live = true;
+    fetchCfDefs('student').then((d) => { if (live) setCfDefs(d); });
+    return () => { live = false; };
+  }, []);
+  const upCf = (key: string, v: string) => setCfVals((s) => ({ ...s, [key]: v }));
+
   const vOpts = ref.verticals.filter((vt) => !f.branch_id || Number(vt.branch_id) === Number(f.branch_id));
   const cOpts = ref.courses.filter((c: any) =>
     (!f.branch_id || Number(c.meta?.branch_id) === Number(f.branch_id))
@@ -4117,6 +4134,12 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
     if (!f.full_name.trim()) return setErr('Student Full Name is required.');
     if (!f.branch_id) return setErr('Choose a branch.');
     if (!f.vertical_id) return setErr('Choose a vertical.');
+    // Custom fields: enforce required ones before we submit (matches the lead Add form).
+    for (const d of cfDefs) {
+      const raw = cfVals[d.field_key];
+      const missing = d.data_type === 'bool' ? !(raw === '1' || raw === 'true') : (raw === undefined || String(raw).trim() === '');
+      if (d.required && missing) return setErr(`${d.label} is required.`);
+    }
     setBusy(true);
     const num = (v: any) => (v === '' || v == null ? null : Number(v));
     const body: any = {
@@ -4137,6 +4160,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
       qualification: f.qualification || null, institution: f.institution || null,
       board_university: f.board_university || null, passing_year: f.passing_year || null, previous_institution: f.previous_institution || null,
       branch_id: num(f.branch_id), vertical_id: num(f.vertical_id), course_id: num(f.course_id), owner_id: num(f.owner_id),
+      custom_fields: collectCf(cfDefs, (key) => cfVals[key]),
     };
     try {
       if (isEdit) await api.patch(`/students/${initial.id}`, body);
@@ -4306,6 +4330,43 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
             {Txt('Passing Year', 'passing_year', { type: 'number', ph: 'e.g. 2022' })}
             {Txt('Previous Institution', 'previous_institution')}
           </div>
+          {/* --------------------- Custom Fields (admin-defined, entity=student) ------- */}
+          {cfDefs.length > 0 && (<>
+            <div className="sec-title">Custom Fields</div>
+            <div className="form-grid">
+              {cfDefs.map((d) => {
+                const val = cfVals[d.field_key] ?? '';
+                if (d.data_type === 'bool') {
+                  return (
+                    <div className="fld" key={d.field_key}>
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <input type="checkbox" checked={val === '1' || val === 'true'} onChange={(e) => upCf(d.field_key, e.target.checked ? '1' : '')} />
+                        {d.label}{d.required ? <span className="star"> *</span> : null}
+                      </label>
+                    </div>
+                  );
+                }
+                if (d.data_type === 'select' || d.data_type === 'multiselect') {
+                  return (
+                    <div className="fld" key={d.field_key}>
+                      <label htmlFor={`st-cf-${d.field_key}`}>{d.label}{d.required ? <span className="star"> *</span> : null}</label>
+                      <select id={`st-cf-${d.field_key}`} className="ainp" value={val} onChange={(e) => upCf(d.field_key, e.target.value)}>
+                        <option value="">— Select —</option>
+                        {(d.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  );
+                }
+                const type = d.data_type === 'number' ? 'number' : d.data_type === 'date' ? 'date' : 'text';
+                return (
+                  <div className="fld" key={d.field_key}>
+                    <label htmlFor={`st-cf-${d.field_key}`}>{d.label}{d.required ? <span className="star"> *</span> : null}</label>
+                    <input id={`st-cf-${d.field_key}`} className="ainp" type={type} value={val} onChange={(e) => upCf(d.field_key, e.target.value)} />
+                  </div>
+                );
+              })}
+            </div>
+          </>)}
           {err && <div className="form-err" style={{ marginTop: 8 }}>{err}</div>}
         </div>
         <div className="af">

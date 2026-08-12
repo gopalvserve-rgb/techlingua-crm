@@ -80,8 +80,15 @@ export function Shell() {
   // `.main--list` flex mode used for the masters made the tall Leads toolbar (band chips + the
   // `.toolbar-surface` filter rows + view switcher + bulk bar) crowd the body and behave unlike
   // Students, so Leads mirrors the Students container instead.
+  // NOTE 'roles' is deliberately NOT here (client UAT, Aug 2026): the Roles screen renders a
+  // tall permission MATRIX + a "Permission depth" block ABOVE/BELOW the roles TableCard, so the
+  // `.main--list` full-height flex (overflow:hidden) squeezed the table body to zero and the ⋯
+  // row menu to a clipped sliver — custom roles were invisible/unmanageable. Dropping it (exactly
+  // like `leadsAll` earlier) lets `main` scroll normally and the roles `.tbl-fill` card falls
+  // back to `.tbl-scroll{max-height:62vh; overflow:auto}` with its sticky header — matrix, rows
+  // and the full ⋯ Edit/Delete menu all visible. Mirrors the known-good Students container.
   const LIST_SCROLL = new Set(['campaigns', 'users', 'audit', 'errorLogs', 'walkIns',
-    'sources', 'branches', 'verticals', 'pipelines', 'courses', 'roles', 'followups']);
+    'sources', 'branches', 'verticals', 'pipelines', 'courses', 'followups']);
   const curDyn = (findScreen(mod, sub)?.sub.spec as any)?.dyn as string | undefined;
   const listScroll = !!curDyn && LIST_SCROLL.has(curDyn);
 

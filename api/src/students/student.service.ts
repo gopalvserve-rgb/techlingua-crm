@@ -706,6 +706,15 @@ export class StudentService {
     if (has('passing_year')) { const n = parseInt(String(dto.passing_year), 10); out.push(['passing_year', dto.passing_year == null || dto.passing_year === '' || !Number.isFinite(n) ? null : n]); }
     str('previous_institution', 'previous_institution', 200);
 
+    // Custom fields (client, Aug 2026) — the admin-defined student fields (entity='student')
+    // persist into student.custom_fields, exactly as leads persist into lead.custom_fields
+    // (migration 068 added the column). One storage, one code path. A non-object is coerced to {}.
+    if (has('custom_fields')) {
+      const cf = dto.custom_fields;
+      const obj = cf && typeof cf === 'object' && !Array.isArray(cf) ? cf : {};
+      out.push(['custom_fields', JSON.stringify(obj)]);
+    }
+
     return out;
   }
 
