@@ -73,7 +73,14 @@ export function Shell() {
   // table body scrolls inside a viewport-bounded container. We opt these screens into the
   // `.main--list` layout (their results card carries `.tbl-fill`). Non-list screens (dashboards,
   // forms, reports) keep the normal page scroll.
-  const LIST_SCROLL = new Set(['leadsAll', 'campaigns', 'users', 'audit', 'errorLogs', 'walkIns',
+  // NOTE (client, Aug 2026): Leads (`leadsAll`) is intentionally NOT in this set. It must scroll
+  // EXACTLY like Student Management (`studentsList`), which is also absent here: a sticky column
+  // header with ONLY the table body scrolling (its `.tbl-fill` card falls back to `.tbl-scroll`
+  // `max-height:62vh; overflow:auto`) and horizontal overflow for wide tables. The full-height
+  // `.main--list` flex mode used for the masters made the tall Leads toolbar (band chips + the
+  // `.toolbar-surface` filter rows + view switcher + bulk bar) crowd the body and behave unlike
+  // Students, so Leads mirrors the Students container instead.
+  const LIST_SCROLL = new Set(['campaigns', 'users', 'audit', 'errorLogs', 'walkIns',
     'sources', 'branches', 'verticals', 'pipelines', 'courses', 'roles', 'followups']);
   const curDyn = (findScreen(mod, sub)?.sub.spec as any)?.dyn as string | undefined;
   const listScroll = !!curDyn && LIST_SCROLL.has(curDyn);
