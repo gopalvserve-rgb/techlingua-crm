@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act, waitFor } from '@testing-library/react';
 
-const post = vi.fn(() => Promise.resolve({ marked: 1, parent_notified: 0 }));
+const post = vi.fn((..._a: any[]) => Promise.resolve({ marked: 1, parent_notified: 0 }));
 vi.mock('./api', () => ({ api: { get: vi.fn(() => Promise.resolve([])), post: (...a: any[]) => post(...a), patch: vi.fn(), del: vi.fn(), put: vi.fn() } }));
 vi.mock('./auth', () => ({ useAuth: () => ({ can: () => true, me: { user: { id: 3, name: 'Asha' } } }) }));
 vi.mock('./scope', () => ({ useScope: () => ({ scope: { branches: [], verticals: [] }, params: '', key: 'k' }) }));
