@@ -152,7 +152,8 @@ function mkAssessDb(overrides: Record<string, any[]> = {}) {
     tx: async (fn: (c: any) => any) => fn({ query: async () => ({ rows: [{ id: '5' }] }) }),
   } as any;
 }
-const assessSvc = (db?: any) => new AssessmentService(db ?? mkAssessDb(), resolver, storage, tmplSvc());
+const workflowSvc = { record: async () => ({}), submit: async () => ({}), approve: async () => ({}), reject: async () => ({}), unpublish: async () => ({}) } as any;
+const assessSvc = (db?: any) => new AssessmentService(db ?? mkAssessDb(), resolver, storage, tmplSvc(), workflowSvc);
 
 describe('Assessment Tests — Batch B', () => {
   it('catalogs the assessment + assessment_template modules', () => {

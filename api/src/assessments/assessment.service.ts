@@ -5,6 +5,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { StorageService } from '../storage/storage.service';
 import { AssessmentTemplateService, TEST_TYPES, SHOW_RESULT_MODES } from './assessment-template.service';
+import { ContentApprovalWorkflowService } from '../governance/content-approval.service';
 
 /**
  * ASSESSMENT (TEST / EXAM) — Assessment Batch B.
@@ -37,6 +38,7 @@ export class AssessmentService {
     private readonly resolver: ScopeResolverService,
     private readonly storage: StorageService,
     private readonly templates: AssessmentTemplateService,
+    private readonly workflow: ContentApprovalWorkflowService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -148,6 +150,7 @@ export class AssessmentService {
     return this.db.query<any>(
       `SELECT a.id, a.title, a.test_type, a.status, a.language, a.duration_min, a.total_marks, a.passing_marks, a.passing_pct,
               a.max_attempts, a.negative_marking, a.randomize_questions, a.questions_to_show,
+              a.submitted_at, a.reviewed_at, a.review_remarks,
               a.start_at, a.end_at, a.course_id, a.batch_id, a.branch_id, a.vertical_id, a.created_at,
               c.name AS course_name, bt.name AS batch_name, b.name AS branch_name, v.name AS vertical_name,
               tm.name AS template_name, u.name AS created_by_name,
@@ -422,9 +425,56 @@ export class AssessmentService {
     return persist && a.total_marks_manual ? Number(a.total_marks) : total;
   }
 
-  /* --------------------------------------------------------- publish / close */
+  /* ---------------------------------- governance: submit / approve(publish) / reject / close */
 
-  async publish(id: number, _me: { id: number }, scope: ResolvedScope) {
+  /**
+   * TRAINER submits a draft test for approval (assessment.submit). draft -> pending_approval.
+   * The trainer CANNOT publish; only an approver (assessment.publish — Academic Admin / Super
+   * Admin) can move it forward. Mirrors the reusable content-approval workflow into the shared
+   * ledger + audit_log so Batch-2 content shares the same code path.
+   */
+  async submit(id: number, me: { id: number }, scope: ResolvedScope) {
+    const a = await this.getRow(id, scope);
+    if (a.status === 'pending_approval') return { id, status: 'pending_approval' };
+    if (a.status === 'published') throw new BadRequestException('This test is already published.');
+    if (a.status === 'closed') throw new BadRequestException('A closed test cannot be submitted.');
+    await this.db.query(
+      `UPDATE assessment SET status='pending_approval', submitted_by=$2, submitted_at=now(), review_remarks=NULL, updated_at=now() WHERE id=$1::bigint`,
+      [id, me?.id ?? null]);
+    await this.workflow.record('assessment', id, 'pending_approval', { me });
+    return { id, status: 'pending_approval' };
+  }
+
+  /**
+   * APPROVER sends a pending test back to the trainer with remarks (assessment.publish).
+   * pending_approval -> draft (ledger: changes_requested; remarks preserved on the row).
+   */
+  async reject(id: number, remarks: string, me: { id: number }, scope: ResolvedScope) {
+    if (!remarks || !String(remarks).trim()) throw new BadRequestException('Remarks are required when sending a test back.');
+    const a = await this.getRow(id, scope);
+    if (a.status !== 'pending_approval') throw new BadRequestException('Only a test pending approval can be sent back.');
+    await this.db.query(
+      `UPDATE assessment SET status='draft', reviewed_by=$2, reviewed_at=now(), review_remarks=$3, updated_at=now() WHERE id=$1::bigint`,
+      [id, me?.id ?? null, String(remarks)]);
+    await this.workflow.record('assessment', id, 'changes_requested', { me, remarks });
+    return { id, status: 'draft', workflow_status: 'changes_requested', review_remarks: String(remarks) };
+  }
+
+  /** APPROVER pulls a published test back to draft (assessment.publish). published -> draft. */
+  async unpublish(id: number, me: { id: number }, scope: ResolvedScope) {
+    const a = await this.getRow(id, scope);
+    if (a.status !== 'published') throw new BadRequestException('Only a published test can be unpublished.');
+    await this.db.query(`UPDATE assessment SET status='draft', updated_at=now() WHERE id=$1::bigint`, [id]);
+    await this.workflow.record('assessment', id, 'unpublished', { me });
+    return { id, status: 'draft', workflow_status: 'unpublished' };
+  }
+
+  /**
+   * APPROVE & PUBLISH (assessment.publish — Academic Admin / Super Admin). A trainer never
+   * holds this permission, so a trainer POST /publish is 403'd by the guard before here.
+   * Accepts a draft (admin shortcut) or a pending_approval test; runs the publish validation.
+   */
+  async publish(id: number, me: { id: number }, scope: ResolvedScope) {
     const a = await this.getRow(id, scope);
     if (a.status === 'published') return { id, status: 'published' };
     if (a.status === 'closed') throw new BadRequestException('A closed test cannot be re-published.');
@@ -449,7 +499,10 @@ export class AssessmentService {
     if (a.passing_marks != null && Number(a.passing_marks) > total) {
       throw new BadRequestException(`Passing marks (${a.passing_marks}) cannot exceed the total (${total}).`);
     }
-    await this.db.query(`UPDATE assessment SET status='published', published_at=now(), updated_at=now() WHERE id=$1::bigint`, [id]);
+    await this.db.query(
+      `UPDATE assessment SET status='published', published_at=now(), published_by=$2, reviewed_by=$2, reviewed_at=now(), review_remarks=NULL, updated_at=now() WHERE id=$1::bigint`,
+      [id, me?.id ?? null]);
+    await this.workflow.record('assessment', id, 'published', { me });
     return { id, status: 'published', total_marks: total };
   }
 

@@ -42,8 +42,13 @@ describe('ResultService — the show_result_mode gate', () => {
     const r: any = await svc.attemptResult(1, scopeAll);
     expect(r.available).toBe(false);
   });
-  it('manual mode: an evaluated attempt IS released with grade + analytics', async () => {
-    const svc = new ResultService(mk({ id: '1', status: 'evaluated', show_result_mode: 'manual', assembled: '[]', total_score: 8, max_score: 10, is_passed: true }), resolver, grades);
+  it('manual mode: an evaluated but UNRELEASED attempt is withheld (governance — Academic Admin releases)', async () => {
+    const svc = new ResultService(mk({ id: '1', status: 'evaluated', show_result_mode: 'manual', assembled: '[]', total_score: 8, max_score: 10, is_passed: true, results_released_at: null }), resolver, grades);
+    const r: any = await svc.attemptResult(1, scopeAll);
+    expect(r.available).toBe(false);
+  });
+  it('manual mode: an evaluated + RELEASED attempt IS shown with grade + analytics', async () => {
+    const svc = new ResultService(mk({ id: '1', status: 'evaluated', show_result_mode: 'manual', assembled: '[]', total_score: 8, max_score: 10, is_passed: true, results_released_at: new Date().toISOString() }), resolver, grades);
     const r: any = await svc.attemptResult(1, scopeAll);
     expect(r.available).toBe(true);
     expect(r.percentage).toBe(80);

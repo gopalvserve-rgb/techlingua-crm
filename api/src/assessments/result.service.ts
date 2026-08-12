@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -53,6 +53,11 @@ export class ResultService {
     const mode = at.show_result_mode || 'instant';
     if (mode === 'manual' && at.status !== 'evaluated') {
       return { available: false, reason: 'Your result will be available once the faculty has finished evaluating this test.' };
+    }
+    // Governance: in manual mode the Academic Admin must RELEASE the result before the student
+    // sees it (results.publish). A trainer evaluates + records marks, but does not release.
+    if (mode === 'manual' && !at.results_released_at) {
+      return { available: false, reason: 'Your result is being reviewed and will be released by the Academic Admin shortly.' };
     }
     if (mode === 'after_end') {
       const ended = at.end_at && Date.now() > new Date(at.end_at).getTime();
@@ -153,6 +158,41 @@ export class ResultService {
   }
 
   /** LEADERBOARD — scope-enforced ranked results for a test (best evaluated attempt per student). */
+  /**
+   * RELEASE a manual-mode result to the student (results.publish — Academic Admin / Super Admin).
+   * The attempt must be evaluated. Idempotent. Trainers evaluate + record marks but do NOT hold
+   * results.publish, so this is the governance gate on results going out to students.
+   */
+  async releaseAttempt(attemptId: number, me: { id: number }, scope: ResolvedScope) {
+    const at = await this.attemptRow(attemptId, scope);
+    if (at.status !== 'evaluated') {
+      throw new BadRequestException('Only an evaluated attempt can have its result released.');
+    }
+    if (at.results_released_at) return { id: attemptId, released: true, already: true };
+    await this.db.query(
+      `UPDATE assessment_attempt SET results_released_at = now(), results_released_by = $2 WHERE id = $1::bigint`,
+      [attemptId, me?.id ?? null]);
+    const org = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
+    await this.db.query(
+      `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, after)
+       VALUES ($1,$2,'assessment_result',$3::bigint,'results_release',$4)`,
+      [Number(org?.id), me?.id ?? null, attemptId, JSON.stringify({ released: true })]);
+    return { id: attemptId, released: true };
+  }
+
+  /** RELEASE every evaluated-but-unreleased attempt of a test in one action (results.publish). */
+  async releaseAssessment(assessmentId: number, me: { id: number }, scope: ResolvedScope) {
+    const params: unknown[] = [assessmentId];
+    const w = this.resolver.buildScopeWhere(scope, ASSESSMENT_SCOPE_COLS, params);
+    const rows = await this.db.query<{ id: string }>(
+      `SELECT at.id FROM assessment_attempt at JOIN assessment a ON a.id = at.assessment_id
+        WHERE at.assessment_id = $1::bigint AND at.deleted_at IS NULL
+          AND at.status = 'evaluated' AND at.results_released_at IS NULL AND ${w}`, params);
+    let released = 0;
+    for (const r of rows) { await this.releaseAttempt(Number(r.id), me, scope); released++; }
+    return { assessment_id: assessmentId, released };
+  }
+
   async leaderboard(assessmentId: number, scope: ResolvedScope) {
     const params: unknown[] = [assessmentId];
     const aw = this.resolver.buildScopeWhere(scope, ASSESSMENT_SCOPE_COLS, params);

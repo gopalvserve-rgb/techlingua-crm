@@ -1,5 +1,5 @@
-import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
-import { CurrentScope, RequirePermission } from '../rbac/rbac.decorators';
+import { Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { ResultService } from './result.service';
 
@@ -21,5 +21,18 @@ export class ResultController {
   @RequirePermission('assessment.read')
   leaderboard(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
     return this.svc.leaderboard(id, scope);
+  }
+
+  // --- Governance: RELEASE results to students (Academic Admin / Super Admin) ---
+  @Post('attempts/:aid/release-result')
+  @RequirePermission('results.publish')
+  releaseAttempt(@Param('aid', ParseIntPipe) aid: number, @CurrentUser() me: { id: number }, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.releaseAttempt(aid, me, scope);
+  }
+
+  @Post('assessments/:id/release-results')
+  @RequirePermission('results.publish')
+  releaseAssessment(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: { id: number }, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.releaseAssessment(id, me, scope);
   }
 }

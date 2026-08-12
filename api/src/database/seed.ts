@@ -151,7 +151,7 @@ async function seed(c: PoolClient) {
   // ---- system roles (PROJECT_DOCUMENTATION §3.2) ---------------------------
   const roleNames = [
     'Super Admin', 'Organization Admin', 'Branch Manager', 'Vertical Manager', 'Team Leader',
-    'Counsellor', 'Telecaller', 'Trainer', 'Academic Coordinator', 'Accountant',
+    'Counsellor', 'Telecaller', 'Trainer', 'Academic Coordinator', 'Academic Admin', 'Accountant',
     'HR Manager', 'Marketing Manager', 'Student', 'Parent',
   ];
   const roles = new Map<string, Id>();
@@ -226,9 +226,46 @@ async function seed(c: PoolClient) {
     'referral.read', 'referral.create', 'referral.update'];
   await grant('Counsellor', agentPerms, 'own');
   await grant('Telecaller', agentPerms, 'own');
-  await grant('Trainer', ['dashboard.read', 'master.read',
+  // Trainer (governance): teaching + academic activity, DRAFT + SUBMIT for approval, but NO
+  // global publish/approve and NO certificate issue (migration 070). batch.read only.
+  await grant('Trainer', ['dashboard.read', 'master.read', 'notification.read',
+    'batch.read', 'student.read',
+    'attendance.read', 'attendance.mark',
+    'test.read', 'test.create', 'test.update', 'test.grade',
+    'coursework.read', 'coursework.create', 'coursework.update', 'coursework.grade',
     'question_category.read', 'question_category.create', 'question_category.update',
-    'question.read', 'question.create', 'question.update', 'question.import'], 'branch');
+    'question.read', 'question.create', 'question.update', 'question.import',
+    'assessment.read', 'assessment.create', 'assessment.update', 'assessment.submit', 'assessment.evaluate',
+    'assessment_template.read',
+    'assessment_attempt.read', 'assessment_attempt.create', 'assessment_attempt.update',
+    'assignment_submission.read', 'assignment_submission.create', 'assignment_submission.update',
+    'grade_scheme.read', 'results.read', 'reportcard.read', 'certificate.read',
+    'assessment_certificate.read',
+    'material.read', 'material.create', 'material.update', 'material.submit',
+    'course_content.read', 'course_content.create', 'course_content.update', 'course_content.submit',
+    'syllabus.read', 'syllabus.create', 'syllabus.update', 'syllabus.submit'], 'branch');
+  // Academic Admin (governance): full academics authority — create/change batches; APPROVE &
+  // PUBLISH everything students see; publish results & issue certificates; manage attendance.
+  await grant('Academic Admin', ['dashboard.read', 'master.read', 'notification.read',
+    'student.read', 'student.update',
+    'batch.read', 'batch.create', 'batch.update', 'batch.delete',
+    'attendance.read', 'attendance.mark', 'attendance.manage',
+    'test.read', 'test.create', 'test.update', 'test.delete', 'test.grade',
+    'coursework.read', 'coursework.create', 'coursework.update', 'coursework.delete', 'coursework.grade',
+    'question_category.read', 'question_category.create', 'question_category.update', 'question_category.delete',
+    'question.read', 'question.create', 'question.update', 'question.delete', 'question.import',
+    'assessment.read', 'assessment.create', 'assessment.update', 'assessment.delete',
+    'assessment.submit', 'assessment.publish', 'assessment.evaluate',
+    'assessment_template.read', 'assessment_template.create', 'assessment_template.update', 'assessment_template.delete',
+    'assessment_attempt.read', 'assessment_attempt.create', 'assessment_attempt.update', 'assessment_attempt.delete',
+    'assignment_submission.read', 'assignment_submission.create', 'assignment_submission.update', 'assignment_submission.delete',
+    'results.read', 'results.publish',
+    'grade_scheme.read', 'grade_scheme.create', 'grade_scheme.update',
+    'assessment_certificate.read', 'assessment_certificate.issue', 'assessment_certificate.revoke', 'assessment_certificate.delete',
+    'certificate.read', 'certificate.issue', 'certificate.revoke', 'reportcard.read', 'reportcard.create',
+    'material.read', 'material.create', 'material.update', 'material.delete', 'material.submit', 'material.approve',
+    'course_content.read', 'course_content.create', 'course_content.update', 'course_content.delete', 'course_content.submit', 'course_content.approve',
+    'syllabus.read', 'syllabus.create', 'syllabus.update', 'syllabus.delete', 'syllabus.submit', 'syllabus.approve'], 'branch');
   await grant('Academic Coordinator', ['dashboard.read', 'master.read',
     'question_category.read', 'question_category.create', 'question_category.update', 'question_category.delete',
     'question.read', 'question.create', 'question.update', 'question.delete', 'question.import'], 'branch');

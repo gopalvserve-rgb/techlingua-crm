@@ -515,8 +515,9 @@ export const TEST_TYPE_OPTS = [
   { id: 'final_exam', name: 'Final Exam' },
 ];
 const TEST_TYPE_LABEL: Record<string, string> = Object.fromEntries(TEST_TYPE_OPTS.map((t) => [t.id, t.name]));
-const STATUS_OPTS = [{ id: 'draft', name: 'Draft' }, { id: 'published', name: 'Published' }, { id: 'closed', name: 'Closed' }];
-const STATUS_BADGE: Record<string, string> = { draft: 'b-gray', published: 'b-green', closed: 'b-rose' };
+const STATUS_OPTS = [{ id: 'draft', name: 'Draft' }, { id: 'pending_approval', name: 'Pending approval' }, { id: 'published', name: 'Published' }, { id: 'closed', name: 'Closed' }];
+const STATUS_BADGE: Record<string, string> = { draft: 'b-gray', pending_approval: 'b-amber', published: 'b-green', closed: 'b-rose' };
+const STATUS_LABEL: Record<string, string> = { draft: 'Draft', pending_approval: 'Pending approval', published: 'Published', closed: 'Closed' };
 const SHOW_RESULT_OPTS = [
   { id: 'instant', name: 'Instant — right after submit' },
   { id: 'manual', name: 'Manual — faculty releases results' },
@@ -572,6 +573,9 @@ export function AssessmentTestsScreen() {
   const doDelete = async () => { try { await api.del(`/assessments/${del.id}`); toast('Test deleted'); setDel(null); after(); } catch (e: any) { toast(e.message, true); } };
   const doPublish = async (r: any) => { try { const res = await api.post<any>(`/assessments/${r.id}/publish`, {}); toast(`Published — total ${res.total_marks ?? r.total_marks} marks`); after(); } catch (e: any) { toast(e.message, true); } };
   const doClose = async (r: any) => { try { await api.post(`/assessments/${r.id}/close`, {}); toast('Test closed'); after(); } catch (e: any) { toast(e.message, true); } };
+  const doSubmit = async (r: any) => { try { await api.post(`/assessments/${r.id}/submit`, {}); toast('Submitted for approval'); after(); } catch (e: any) { toast(e.message, true); } };
+  const doUnpublish = async (r: any) => { try { await api.post(`/assessments/${r.id}/unpublish`, {}); toast('Unpublished — back to draft'); after(); } catch (e: any) { toast(e.message, true); } };
+  const doReject = async (r: any) => { const remarks = window.prompt('Reason / changes requested (sent back to the trainer):', ''); if (remarks == null) return; if (!remarks.trim()) { toast('Remarks are required', true); return; } try { await api.post(`/assessments/${r.id}/reject`, { remarks }); toast('Sent back to draft with remarks'); after(); } catch (e: any) { toast(e.message, true); } };
   const s = summary.data;
 
   return (
@@ -616,14 +620,21 @@ export function AssessmentTestsScreen() {
           `${r.total_marks}${r.passing_marks != null ? ' / ' + r.passing_marks : (r.passing_pct != null ? ' / ' + r.passing_pct + '%' : '')}`,
           String(Number(r.question_count ?? 0) + (Number(r.section_count ?? 0) ? ` +${r.section_count} pool` : '')),
           { node: <span className="sub">{r.start_at || r.end_at ? `${fmtDT(r.start_at)} → ${fmtDT(r.end_at)}` : 'Always open'}</span> } as Cell,
-          { b: [r.status, STATUS_BADGE[r.status] ?? 'b-gray'] } as Cell,
+          { node: <div><span className={`badge ${(r.review_remarks && r.status==='draft') ? 'b-rose' : (STATUS_BADGE[r.status] ?? 'b-gray')}`}>{(r.review_remarks && r.status==='draft') ? 'Changes requested' : (STATUS_LABEL[r.status] ?? r.status)}</span>{(r.review_remarks && r.status==='draft') ? <div className="sub" title={r.review_remarks} style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>“{r.review_remarks}”</div> : null}</div> } as Cell,
           rowActions({
             onView: () => setPreview(r),
             onEdit: can('assessment.update') ? () => setEdit(r) : undefined,
             onDelete: can('assessment.delete') ? () => setDel(r) : undefined,
             extra: [
               ...(can('assessment_attempt.create') && r.status === 'published' ? [{ k: 'bolt', title: 'Launch / Take', onClick: () => setLaunch(r) }] : []),
+              // Trainer (has submit, NOT publish): Submit a draft for approval
+              ...(can('assessment.submit') && !can('assessment.publish') && r.status === 'draft' ? [{ k: 'send', title: 'Submit for approval', onClick: () => doSubmit(r) }] : []),
+              // Academic Admin / approver (has publish): approve a pending test, or reject with remarks
+              ...(can('assessment.publish') && r.status === 'pending_approval' ? [{ k: 'check', title: 'Approve & publish', onClick: () => doPublish(r) }] : []),
+              ...(can('assessment.publish') && r.status === 'pending_approval' ? [{ k: 'x', title: 'Reject (send back with remarks)', onClick: () => doReject(r) }] : []),
+              // Approver may also publish a draft directly (admin shortcut)
               ...(can('assessment.publish') && r.status === 'draft' ? [{ k: 'check', title: 'Publish', onClick: () => doPublish(r) }] : []),
+              ...(can('assessment.publish') && r.status === 'published' ? [{ k: 'restore', title: 'Unpublish', onClick: () => doUnpublish(r) }] : []),
               ...(can('assessment.publish') && r.status === 'published' ? [{ k: 'shield', title: 'Close', onClick: () => doClose(r) }] : []),
             ],
           }),
@@ -1601,6 +1612,17 @@ export function AssessmentResultsScreen() {
     try { const r = await api.post<any>('/assessment-certificates/bulk-issue', { assessment_id: Number(testId) }); toast(r.issued ? `${r.issued} certificate(s) issued` : 'No new certificates to issue (all passed students already have one)'); }
     catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
+  // Governance: release results/grades to students (results.publish — Academic Admin / Super Admin)
+  const releaseAll = async () => {
+    if (!testId) return;
+    setBusy(true);
+    try { const r = await api.post<any>(`/assessments/${testId}/release-results`, {}); toast(r.released ? `${r.released} result(s) released to students` : 'No pending results to release'); after(); }
+    catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  const releaseOne = async (r: any) => {
+    try { await api.post(`/attempts/${r.attempt_id}/release-result`, {}); toast('Result released to student'); after(); }
+    catch (e: any) { toast(e.message, true); }
+  };
 
   const tqs = new URLSearchParams();
   if (fB.length) tqs.set('branch_id', fB.join(','));
@@ -1631,9 +1653,10 @@ export function AssessmentResultsScreen() {
           { lab: 'Average %', val: `${b.summary.avg_pct}%`, ic: 'bolt' },
         ]} />
       )}
-      {b && can('assessment_certificate.issue') && b.summary.passed > 0 && (
-        <div className="page-actions" style={{ marginBottom: 8 }}>
-          <button className="btn" onClick={bulkIssue} disabled={busy}><Ic k="shield" />Issue certificates for all passed ({b.summary.passed})</button>
+      {b && (can('results.publish') || (can('assessment_certificate.issue') && b.summary.passed > 0)) && (
+        <div className="page-actions" style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
+          {can('results.publish') && <button className="btn primary" onClick={releaseAll} disabled={busy}><Ic k="send" />Release results to students</button>}
+          {can('assessment_certificate.issue') && b.summary.passed > 0 && <button className="btn" onClick={bulkIssue} disabled={busy}><Ic k="shield" />Issue certificates for all passed ({b.summary.passed})</button>}
         </div>
       )}
       <TableCard fill title={b ? `Leaderboard — ${b.assessment.title}` : 'Results'} icon="doc" listKey="assessment-results"
@@ -1652,7 +1675,7 @@ export function AssessmentResultsScreen() {
           { node: <span className={`badge ${GRADE_BADGE(r.grade_label)}`}>{r.grade_label ?? '—'}</span> } as Cell,
           { node: <span className={`badge ${r.is_passed ? 'b-green' : 'b-rose'}`}>{r.is_passed ? 'Pass' : 'Fail'}</span> } as Cell,
           `${r.percentile}%`,
-          rowActions({ onView: () => setCard(r) }),
+          rowActions({ onView: () => setCard(r), extra: can('results.publish') ? [{ k: 'send', title: 'Release this result', onClick: () => releaseOne(r) }] : [] }),
         ])} />
       {card && <ResultCardModal attemptId={card.attempt_id} studentId={card.student_id} onClose={() => setCard(null)} />}
     </>

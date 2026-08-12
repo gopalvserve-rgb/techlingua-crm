@@ -53,6 +53,7 @@ import { HrModule } from './hr/hr.module';
 import { SupportExtrasModule } from './supportextras/supportextras.module';
 import { AssessmentsModule } from './assessments/assessments.module';
 import { NotificationEventsModule } from './notificationevents/notification-events.module';
+import { GovernanceModule } from './governance/governance.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -63,6 +64,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
   imports: [
     DatabaseModule,
     RbacModule,
+    GovernanceModule,  // Academics Governance — reusable content-approval workflow (@Global service)
     AuthModule,
     UsersModule,
     TeamsModule,

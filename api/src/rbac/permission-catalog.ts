@@ -112,7 +112,7 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // (both distinct from 'delete', which removes the record). Report cards: 'create' = generate
   // (compute + snapshot), 'read' shows/downloads; the parent view is a public tokened read,
   // outside RBAC by design.
-  { module: 'material', label: 'Study Material', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'material', label: 'Study Material', actions: ['read', 'create', 'update', 'delete', 'submit', 'approve'] },
   { module: 'certificate', label: 'Certificates', actions: ['read', 'issue', 'revoke', 'delete'] },
   { module: 'reportcard', label: 'Report Cards', actions: ['read', 'create', 'delete'] },
   // ERP Batch 3 — online admission form + review queue. 'read' = see the queue; 'manage' =
@@ -150,7 +150,7 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // Assessment / Test Module — Batch B (migration 064). Tests / exams assembled from the bank
   // (hand-picked links + pooled sections), settings, publish/close, and reusable settings
   // templates. Branch/vertical scoped. Batches C/D add attempts and results.
-  { module: 'assessment', label: 'Tests / Exams', actions: ['read', 'create', 'update', 'delete', 'publish', 'evaluate'] },
+  { module: 'assessment', label: 'Tests / Exams', actions: ['read', 'create', 'update', 'delete', 'submit', 'publish', 'evaluate'] },
   { module: 'assessment_attempt', label: 'Test Attempts', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'assignment_submission', label: 'Assignment Submissions', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'assessment_template', label: 'Test Templates', actions: ['read', 'create', 'update', 'delete'] },
@@ -160,4 +160,13 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // certificate verification is a PUBLIC tokened read, outside RBAC by design.
   { module: 'grade_scheme', label: 'Grade Schemes', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'assessment_certificate', label: 'Assessment Certificates', actions: ['read', 'issue', 'revoke', 'delete'] },
+  // Academics Governance — Batch 1 (migration 070). The content-approval workflow the
+  // trainer/academic-admin governance runs on. `results.publish` releases results/grades to
+  // students (distinct from assessment.evaluate, which records marks). `course_content` and
+  // `syllabus` are declared now; their entities + screens land in Batch 2 and REUSE the same
+  // ContentApprovalWorkflowService (submit -> pending_approval -> approve/publish, or reject
+  // with remarks). Trainers hold read/create/update/submit; only Academic Admin holds approve.
+  { module: 'results', label: 'Results & Grades (release)', actions: ['read', 'publish'] },
+  { module: 'course_content', label: 'Course Content', actions: ['read', 'create', 'update', 'delete', 'submit', 'approve'] },
+  { module: 'syllabus', label: 'Syllabus', actions: ['read', 'create', 'update', 'delete', 'submit', 'approve'] },
 ];

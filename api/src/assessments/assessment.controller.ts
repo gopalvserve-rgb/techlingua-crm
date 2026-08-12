@@ -119,10 +119,29 @@ export class AssessmentController {
     return this.svc.setSectionPool(id, dto, me, scope);
   }
 
+  // --- Governance: submit (trainer) -> approve/publish or reject (approver) ---
+  @Post(':id/submit')
+  @RequirePermission('assessment.submit')
+  submitForApproval(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.submit(id, me, scope);
+  }
+
   @Post(':id/publish')
   @RequirePermission('assessment.publish')
   publish(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     return this.svc.publish(id, me, scope);
+  }
+
+  @Post(':id/reject')
+  @RequirePermission('assessment.publish')
+  reject(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.reject(id, dto?.remarks ?? dto?.review_remarks ?? '', me, scope);
+  }
+
+  @Post(':id/unpublish')
+  @RequirePermission('assessment.publish')
+  unpublish(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.unpublish(id, me, scope);
   }
 
   @Post(':id/close')

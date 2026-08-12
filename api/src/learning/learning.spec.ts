@@ -39,8 +39,12 @@ describe('Learning RBAC census', () => {
   });
   it('migration 048 seeds + grants every material./certificate./reportcard. permission the catalog declares', () => {
     const sql = readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '048_erp_learning.sql'), 'utf8');
+    // material.submit / material.approve are the Academics-Governance verbs (migration 070),
+    // not part of the original Learning module, so they are excluded from this 048 census.
+    const GOVERNANCE = new Set(['material.submit', 'material.approve']);
     const keys = PERMISSION_CATALOG.filter((m) => ['material', 'certificate', 'reportcard'].includes(m.module))
-      .flatMap((m) => m.actions.map((a) => `${m.module}.${a}`));
+      .flatMap((m) => m.actions.map((a) => `${m.module}.${a}`))
+      .filter((k) => !GOVERNANCE.has(k));
     const ungranted = keys.filter((k) => !new RegExp(`'${k.replace('.', '\\.')}'\\s*,\\s*'`).test(sql));
     expect(ungranted).toEqual([]);
   });
