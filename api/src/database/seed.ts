@@ -226,8 +226,12 @@ async function seed(c: PoolClient) {
     'referral.read', 'referral.create', 'referral.update'];
   await grant('Counsellor', agentPerms, 'own');
   await grant('Telecaller', agentPerms, 'own');
-  await grant('Trainer', ['dashboard.read', 'master.read'], 'own');
-  await grant('Academic Coordinator', ['dashboard.read', 'master.read'], 'branch');
+  await grant('Trainer', ['dashboard.read', 'master.read',
+    'question_category.read', 'question_category.create', 'question_category.update',
+    'question.read', 'question.create', 'question.update', 'question.import'], 'branch');
+  await grant('Academic Coordinator', ['dashboard.read', 'master.read',
+    'question_category.read', 'question_category.create', 'question_category.update', 'question_category.delete',
+    'question.read', 'question.create', 'question.update', 'question.delete', 'question.import'], 'branch');
   await grant('Accountant', ['dashboard.read', 'report.read', 'report.export', 'master.read'], 'branch');
   await grant('HR Manager', ['dashboard.read', 'user.read', 'master.read'], 'all');
   await grant('Marketing Manager', [

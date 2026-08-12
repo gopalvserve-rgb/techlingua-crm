@@ -141,4 +141,10 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // What's-New feed; 'manage' = admins create/edit/delete the entries.
   { module: 'training', label: 'Training Videos', actions: ['view', 'manage'] },
   { module: 'release_note', label: 'Release Notes', actions: ['view', 'manage'] },
+  // Assessment / Test Module — Batch A (migration 063). The Question Bank foundation: a
+  // subject/topic taxonomy + a reusable question bank with a wide type list (IT + Language),
+  // difficulty, marks, media (image/audio -> R2, YouTube video id), CSV import. Branch/vertical
+  // scoped. Batches B/C/D add tests, attempts and results.
+  { module: 'question_category', label: 'Question Categories', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'question', label: 'Question Bank', actions: ['read', 'create', 'update', 'delete', 'import'] },
 ];

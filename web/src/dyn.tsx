@@ -62,6 +62,7 @@ import { PaymentsScreen } from './payments';
 import { RefundsScreen } from './refunds';
 import { RevenueScreen, CollectionReportsScreen } from './revenue';
 import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './hr';
+import { QuestionBankScreen, QuestionCategoriesScreen } from './assessments';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
 
@@ -5048,6 +5049,9 @@ export const DYN: Record<string, () => JSX.Element> = {
   hrLeaves: LeavesScreen,
   customFields: CustomFieldsAdmin,
   sitemap: Sitemap,
+  // Assessment / Test Module — Batch A: Question Bank + Categories
+  questionBank: QuestionBankScreen,
+  questionCategories: QuestionCategoriesScreen,
   trainingVideos: TrainingVideosScreen,
   releaseNotes: ReleaseNotesScreen,
   featuresPanel: FeaturesPanel,

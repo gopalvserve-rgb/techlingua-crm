@@ -105,6 +105,11 @@ export class StorageService {
     return `material/${this.safeName(materialRef)}/${randomUUID()}-${this.safeName(fileName)}`;
   }
 
+  /** questions/media/<uuid>-<filename> — question / option image + audio (private, presigned). */
+  questionMediaKey(fileName: string): string {
+    return `questions/media/${randomUUID()}-${this.safeName(fileName)}`;
+  }
+
   // ---------------------------------------------------------------- operations
 
   async putObject(key: string, bytes: Buffer | Uint8Array, contentType: string): Promise<{ key: string }> {
