@@ -88,20 +88,20 @@ export class ContentApprovalWorkflowService {
       `INSERT INTO content_approval
          (org_id, entity_type, entity_id, workflow_status,
           submitted_by, submitted_at, reviewed_by, reviewed_at, review_remarks, published_by, published_at, updated_at)
-       VALUES ($1,$2,$3::bigint,$4,
-          CASE WHEN $5 THEN $6 ELSE NULL END, CASE WHEN $5 THEN now() ELSE NULL END,
-          CASE WHEN $7 THEN $6 ELSE NULL END, CASE WHEN $7 THEN now() ELSE NULL END,
-          $8,
-          CASE WHEN $9 THEN $6 ELSE NULL END, CASE WHEN $9 THEN now() ELSE NULL END, now())
+       VALUES ($1::bigint,$2::text,$3::bigint,$4::text,
+          CASE WHEN $5::boolean THEN $6::bigint ELSE NULL END, CASE WHEN $5::boolean THEN now() ELSE NULL END,
+          CASE WHEN $7::boolean THEN $6::bigint ELSE NULL END, CASE WHEN $7::boolean THEN now() ELSE NULL END,
+          $8::text,
+          CASE WHEN $9::boolean THEN $6::bigint ELSE NULL END, CASE WHEN $9::boolean THEN now() ELSE NULL END, now())
        ON CONFLICT (entity_type, entity_id) DO UPDATE SET
           workflow_status = EXCLUDED.workflow_status,
-          submitted_by    = CASE WHEN $5 THEN $6 ELSE content_approval.submitted_by END,
-          submitted_at    = CASE WHEN $5 THEN now() ELSE content_approval.submitted_at END,
-          reviewed_by     = CASE WHEN $7 THEN $6 ELSE content_approval.reviewed_by END,
-          reviewed_at     = CASE WHEN $7 THEN now() ELSE content_approval.reviewed_at END,
-          review_remarks  = CASE WHEN $7 THEN $8 ELSE content_approval.review_remarks END,
-          published_by    = CASE WHEN $9 THEN $6 ELSE content_approval.published_by END,
-          published_at    = CASE WHEN $9 THEN now() ELSE content_approval.published_at END,
+          submitted_by    = CASE WHEN $5::boolean THEN $6::bigint ELSE content_approval.submitted_by END,
+          submitted_at    = CASE WHEN $5::boolean THEN now() ELSE content_approval.submitted_at END,
+          reviewed_by     = CASE WHEN $7::boolean THEN $6::bigint ELSE content_approval.reviewed_by END,
+          reviewed_at     = CASE WHEN $7::boolean THEN now() ELSE content_approval.reviewed_at END,
+          review_remarks  = CASE WHEN $7::boolean THEN $8::text ELSE content_approval.review_remarks END,
+          published_by    = CASE WHEN $9::boolean THEN $6::bigint ELSE content_approval.published_by END,
+          published_at    = CASE WHEN $9::boolean THEN now() ELSE content_approval.published_at END,
           updated_at      = now()
        RETURNING *`,
       [org, entityType, entityId, target, isSubmit, me, isReview, remarks, isPublish],
