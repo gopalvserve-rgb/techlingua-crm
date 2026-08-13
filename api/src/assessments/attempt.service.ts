@@ -4,6 +4,7 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { AssessmentService } from './assessment.service';
 import { scoreAttempt, computeIsPassed, ScorerQuestion, ScorerAnswer } from './scorer';
+import { studentLmsAccess, canAttempt, lmsBlockedMessage } from '../students/lms-access';
 
 /**
  * ATTEMPT FLOW — Assessment Batch C.
@@ -60,10 +61,21 @@ export class AttemptService {
     const params: unknown[] = [id];
     const w = this.resolver.buildScopeWhere(scope, STUDENT_SCOPE_COLS, params);
     const s = await this.db.one<any>(
-      `SELECT s.id, s.full_name, s.student_no, s.branch_id, s.vertical_id, s.owner_id, s.team_id
+      `SELECT s.id, s.full_name, s.student_no, s.status, s.branch_id, s.vertical_id, s.owner_id, s.team_id
          FROM student s WHERE s.id = $1::bigint AND s.deleted_at IS NULL AND ${w}`, params);
     if (!s) throw new NotFoundException('Student not found (or outside your access)');
     return s;
+  }
+
+  /** LMS ACCESS GATE — a student may only start/continue/submit an attempt when their
+   *  lifecycle status grants attempt access (FULL/DEPENDS). LIMITED (On Hold/Inactive),
+   *  ALUMNI (Completed) and NONE statuses are blocked with a clear 403. Centralised in
+   *  studentLmsAccess (one code path with the material seam). */
+  private assertLmsAttempt(statusCode?: string | null) {
+    const access = studentLmsAccess(statusCode);
+    if (!canAttempt(access)) {
+      throw new ForbiddenException(lmsBlockedMessage(String(statusCode ?? ''), String(statusCode ?? ''), access, 'attempt'));
+    }
   }
 
   private async attemptRow(id: number, scope: ResolvedScope) {
@@ -71,7 +83,7 @@ export class AttemptService {
     const w = this.resolver.buildScopeWhere(scope, ATTEMPT_SCOPE_COLS, params);
     const at = await this.db.one<any>(
       `SELECT at.*, a.title AS assessment_title, a.test_type, a.show_result_mode, a.negative_marking,
-              a.passing_marks, a.passing_pct, a.total_marks AS assessment_total, s.full_name AS student_name, s.student_no
+              a.passing_marks, a.passing_pct, a.total_marks AS assessment_total, s.full_name AS student_name, s.student_no, s.status AS student_status
          FROM assessment_attempt at
          JOIN assessment a ON a.id = at.assessment_id
          JOIN student s ON s.id = at.student_id
@@ -93,6 +105,7 @@ export class AttemptService {
     const studentId = Number(dto?.student_id);
     if (!Number.isInteger(studentId) || studentId <= 0) throw new BadRequestException('Choose a student to start the attempt for.');
     const student = await this.scopedStudent(studentId, scope);
+    this.assertLmsAttempt(student.status);  // LMS access gate
 
     // resume an in-progress attempt (that has not timed out) instead of making a second one
     const open = await this.db.one<any>(
@@ -203,6 +216,7 @@ export class AttemptService {
 
   async saveAnswers(attemptId: number, dto: any, me: Me, scope: ResolvedScope) {
     const at = await this.attemptRow(attemptId, scope);
+    this.assertLmsAttempt(at.student_status);
     if (at.status !== 'in_progress') throw new BadRequestException('This attempt is already submitted.');
     if (at.due_at && Date.now() > new Date(at.due_at).getTime()) {
       throw new BadRequestException('Time is up — this attempt can no longer be edited. Submit it to score.');
@@ -255,6 +269,7 @@ export class AttemptService {
 
   async submit(attemptId: number, dto: any, me: Me, scope: ResolvedScope) {
     const at = await this.attemptRow(attemptId, scope);
+    this.assertLmsAttempt(at.student_status);
     if (at.status !== 'in_progress') throw new BadRequestException('This attempt has already been submitted.');
     if (Array.isArray(dto?.answers) && dto.answers.length) {
       // final flush of any unsaved answers (allowed even a hair past due — this finalises)

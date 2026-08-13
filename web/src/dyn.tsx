@@ -1012,6 +1012,28 @@ export function FilterMulti({ label, icon, value, options, onChange, testid }: {
   );
 }
 
+/* Multi-select STATUS filter for the students list — the 11 lifecycle codes (strings, so it
+ * cannot reuse the numeric FilterMulti). A native <details> popover keeps it dependency-free. */
+export function StatusMultiFilter({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const toggle = (code: string) => onChange(value.includes(code) ? value.filter((c) => c !== code) : [...value, code]);
+  const label = value.length ? `${value.length} selected` : 'All statuses';
+  return (
+    <details className="fmulti" data-testid="fm-status" style={{ position: 'relative' }}>
+      <summary className="fmulti-lbl" style={{ cursor: 'pointer', listStyle: 'none' }}><Ic k="check" />Status: {label}</summary>
+      <div style={{ position: 'absolute', zIndex: 40, top: '100%', left: 0, marginTop: 6, minWidth: 200, maxHeight: 300, overflow: 'auto',
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, boxShadow: '0 8px 24px rgba(0,0,0,.18)' }}>
+        {Object.entries(STUDENT_STATUS_META).map(([code, m]) => (
+          <label key={code} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 6px', fontSize: 12, cursor: 'pointer' }}>
+            <input type="checkbox" checked={value.includes(code)} onChange={() => toggle(code)} data-testid={`fm-status-${code}`} />
+            <span className={m.cls} style={{ padding: '1px 8px', borderRadius: 999 }}>{m.label}</span>
+          </label>
+        ))}
+        {value.length ? <button className="btn ghost" style={{ width: '100%', marginTop: 4, fontSize: 12 }} onClick={() => onChange([])}>Clear</button> : null}
+      </div>
+    </details>
+  );
+}
+
 /**
  * Multi-select for STRING-valued filters (status, type, sentiment, category, priority, action…)
  * (client, Aug 2026). FilterMulti/UserPicker are numeric-id only, so enum filters use this small
@@ -3857,9 +3879,32 @@ function FeaturesPanel() {
 /*  batches bound to Branch -> Vertical -> Course.                       */
 /* ==================================================================== */
 
-const STUDENT_STATUS_OPTS = [{ id: 1, name: 'Active' }, { id: 2, name: 'Inactive' }];
 const BAR_COLOURS = ['var(--primary)', 'var(--accent)', '#6366f1', '#0ea5e9', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6'];
-const studentStatusCell = (status: string): Cell => ({ b: [status === 'active' ? 'Active' : 'Inactive', status === 'active' ? 'b-green' : 'b-gray'] });
+
+/* STUDENT LIFECYCLE STATUS (migration 073) — the 11-status catalog mirrored client-side for
+ * colour-coded badges + the LMS-access hint. The API's student_status_def is the source of
+ * truth; this map is for display + the Change-Status form. */
+type LmsAccess = 'full' | 'limited' | 'none' | 'alumni' | 'depends';
+const STUDENT_STATUS_META: Record<string, { label: string; cls: string; lms: LmsAccess }> = {
+  active:        { label: 'Active',         cls: 'b-green',  lms: 'full' },
+  on_hold:       { label: 'On Hold',        cls: 'b-amber',  lms: 'limited' },
+  inactive:      { label: 'Inactive',       cls: 'b-gray',   lms: 'limited' },
+  suspended:     { label: 'Suspended',      cls: 'b-rose',   lms: 'none' },
+  withdrawn:     { label: 'Withdrawn',      cls: 'b-rose',   lms: 'none' },
+  dropped_out:   { label: 'Dropped Out',    cls: 'b-red',    lms: 'none' },
+  transferred:   { label: 'Transferred',    cls: 'b-cyan',   lms: 'depends' },
+  completed:     { label: 'Completed',      cls: 'b-indigo', lms: 'alumni' },
+  cancelled:     { label: 'Cancelled',      cls: 'b-red',    lms: 'none' },
+  failed:        { label: 'Failed',         cls: 'b-red',    lms: 'none' },
+  course_expired:{ label: 'Course Expired', cls: 'b-gray',   lms: 'none' },
+};
+const SENSITIVE_STATUS = new Set(['on_hold', 'suspended', 'withdrawn', 'dropped_out', 'cancelled']);
+const LMS_HINT: Record<LmsAccess, string> = {
+  full: 'Full LMS access', limited: 'Limited LMS — view material, no new tests',
+  none: 'No LMS access', alumni: 'Alumni — view material only', depends: 'LMS access per transfer',
+};
+const statusMeta = (status: string) => STUDENT_STATUS_META[status] ?? { label: status || '—', cls: 'b-gray', lms: 'full' as LmsAccess };
+const studentStatusCell = (status: string): Cell => { const m = statusMeta(status); return { b: [m.label, m.cls] }; };
 const batchStatusCell = (status: string): Cell =>
   ({ b: [status === 'active' ? 'Active' : status === 'completed' ? 'Completed' : 'Cancelled', status === 'active' ? 'b-green' : status === 'completed' ? 'b-indigo' : 'b-gray'] });
 
@@ -3948,7 +3993,7 @@ function StudentsList() {
       verticals: nums('vertical_ids', 'vertical_id').length ? nums('vertical_ids', 'vertical_id') : (gScope.verticals),
       courses: nums('course_ids', 'course_id'),
       owners: nums('owner_ids', 'owner_id'),
-      status: spx.get('status') || '',
+      statuses: (spx.get('status') || '').split(',').map((x) => x.trim()).filter(Boolean),
       q: spx.get('q') || '',
     };
   };
@@ -3957,12 +4002,12 @@ function StudentsList() {
   const [fVerticals, setFVerticals] = useState<number[]>(s0.verticals);
   const [fCourses, setFCourses] = useState<number[]>(s0.courses);
   const [fOwners, setFOwners] = useState<number[]>(s0.owners);
-  const [status, setStatus] = useState<string>(s0.status);
+  const [fStatuses, setFStatuses] = useState<string[]>(s0.statuses);
   const [q, setQ] = useState<string>(s0.q);
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   useEffect(() => {
     setFBranches(s0.branches); setFVerticals(s0.verticals); setFCourses(s0.courses);
-    setFOwners(s0.owners); setStatus(s0.status); setQ(s0.q);
+    setFOwners(s0.owners); setFStatuses(s0.statuses); setQ(s0.q);
   }, [s0]);
 
   const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
@@ -3975,7 +4020,7 @@ function StudentsList() {
   if (fVerticals.length) params.set('vertical_id', fVerticals.join(','));
   if (fCourses.length) params.set('course_id', fCourses.join(','));
   if (fOwners.length) params.set('owner_id', fOwners.join(','));
-  if (status === 'active' || status === 'inactive') params.set('status', status);
+  if (fStatuses.length) params.set('status', fStatuses.join(','));
   if (q.trim()) params.set('q', q.trim());
   if (range.from) params.set('from', range.from);
   if (range.to) params.set('to', range.to);
@@ -4014,14 +4059,7 @@ function StudentsList() {
         <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
         <FilterMulti label="Course" icon="book" value={fCourses} options={cOpts} onChange={setFCourses} />
         <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
-        <label className="fchip"><Ic k="check" />
-          <select value={status} onChange={(e) => setStatus(e.target.value)}
-            style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-        </label>
+        <StatusMultiFilter value={fStatuses} onChange={setFStatuses} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / ID…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <DateRange value={range} onChange={setRange} idPrefix="stu-list-dr" style={{ marginLeft: 'auto' }} />
       </div>
@@ -4455,6 +4493,17 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<string>('fees');
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showStatus, setShowStatus] = useState(false);
+  const canStatusManage = can('student.status_manage');
+  const statusHist = useFetch<any[]>(tab === 'status' ? `/students/${student.id}/status-history` : null, [student.id, tab]);
+  const [lms, setLms] = useState<any>(null);
+  const [lmsErr, setLmsErr] = useState<string>('');
+  useEffect(() => {
+    if (tab !== 'status') { setLms(null); setLmsErr(''); return; }
+    setLms(null); setLmsErr('');
+    api.get<any>(`/students/${student.id}/lms`).then(setLms).catch((e) => setLmsErr((e as Error).message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, student.id]);
 
   const loadProfile = async () => {
     try {
@@ -4484,6 +4533,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
     ['fees', 'Fees Payment', 'rupee'], ['overview', 'Overview', 'eye'], ['contact', 'Contact', 'phone'],
     ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'],
     ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
+    ['status', 'Status & LMS', 'flag'],
     ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
   ];
   const photo = prof?.photo_url as string | undefined;
@@ -4506,6 +4556,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
               <span className="mono">{full.student_no ?? '—'}</span>
               {full.enrollment_no ? <span className="mono">· {full.enrollment_no}</span> : null}
               <span>{renderCell(studentStatusCell(full.status))}</span>
+              <span className="sub" style={{ fontSize: 11 }}>· {LMS_HINT[statusMeta(full.status).lms]}</span>
             </div>
             <div className="fbp-path">{[full.branch_name, full.vertical_name, full.course_name].filter(Boolean).join(' › ') || '—'}</div>
             <div className="fbp-tags">
@@ -4513,6 +4564,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
               <span className="fbp-tag"><Ic k="cal" />Admitted {dmy(full.admission_date)}</span>
             </div>
             <div className="fbp-btns">
+              {canEdit && <button className="btn" onClick={() => setShowStatus(true)} data-testid="stu-change-status"><Ic k="flag" />Change status</button>}
               {canEdit && <button className="btn" onClick={() => setShowTransfer(true)}><Ic k="swap" />Transfer student</button>}
               {onEdit && <button className="btn" onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>}
             </div>
@@ -4754,6 +4806,48 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
         </Section>
       )}
 
+      {tab === 'status' && (
+        <>
+          <Section title="Current Status">
+            <KV rows={[
+              ['Status', <span>{renderCell(studentStatusCell(full.status))} <span className="sub" style={{ fontSize: 11 }}>· {LMS_HINT[statusMeta(full.status).lms]}</span></span>],
+              ['Reason', dash(full.status_reason)],
+              ['Last Attendance', full.status_last_attendance_date ? dmy(full.status_last_attendance_date) : '—'],
+              ['Effective Date', full.status_effective_date ? dmy(full.status_effective_date) : '—'],
+              ['Outstanding (snapshot)', full.status_outstanding_minor != null ? money(full.status_outstanding_minor) : '—'],
+              ['Approved By', dash(full.status_approved_by_name)],
+              ['Changed By', dash(full.status_changed_by_name)],
+              ['Changed At', full.status_changed_at ? fmtFull(full.status_changed_at) : '—'],
+            ]} />
+            {canEdit && <button className="btn primary" style={{ marginTop: 8 }} onClick={() => setShowStatus(true)}><Ic k="flag" />Change status</button>}
+          </Section>
+          <Section title="LMS Access">
+            {lmsErr ? <div className="notice warn"><Ic k="lock" /><div>{lmsErr}</div></div>
+              : lms ? (
+                <KV rows={[
+                  ['Access level', <b>{String(lms.lms_access).toUpperCase()}</b>],
+                  ['Can start tests', lms.can_attempt ? 'Yes' : 'No'],
+                  ['Can view material', lms.can_view_material ? 'Yes' : 'No'],
+                  ['Published material', String((lms.material ?? []).length)],
+                  ['Course content', String((lms.course_content ?? []).length)],
+                  ['Syllabus', String((lms.syllabus ?? []).length)],
+                ]} />
+              ) : <Empty t="Loading LMS access…" />}
+          </Section>
+          <Section title="Status History">
+            {(statusHist.data ?? []).length ? (
+              <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Reason</th><th>Outstanding</th><th>Approved By</th><th>By</th></tr></thead>
+                <tbody>{(statusHist.data ?? []).map((h: any) => (
+                  <tr key={h.id}><td>{fmtFull(h.changed_at)}</td><td>{h.from_label ?? h.from_status ?? '—'}</td>
+                    <td>{renderCell(studentStatusCell(h.to_status))}</td><td>{dash(h.reason)}</td>
+                    <td>{h.outstanding_minor != null ? money(h.outstanding_minor) : '—'}</td>
+                    <td>{dash(h.approved_by_name)}</td><td>{dash(h.changed_by_name)}</td></tr>
+                ))}</tbody></table>
+            ) : <Empty t="No status changes yet." />}
+          </Section>
+        </>
+      )}
+
       {tab === 'fees' && (
         <>
           <Section title="Collection Summary">
@@ -4790,6 +4884,12 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
         <TransferStudentModal student={full}
           onClose={() => setShowTransfer(false)}
           onDone={() => { setShowTransfer(false); loadProfile(); onChanged(); }} />
+      )}
+      {showStatus && (
+        <ChangeStatusModal student={full} outstandingMinor={fees?.summary?.balance_minor}
+          canManageSensitive={canStatusManage}
+          onClose={() => setShowStatus(false)}
+          onDone={() => { setShowStatus(false); loadProfile(); onChanged(); }} />
       )}
     </DetailModal>
   );
@@ -4865,6 +4965,105 @@ export function TransferStudentModal({ student, onClose, onDone }: { student: an
           <input id="tr-reason" className="ainp" value={reason} disabled={busy}
             placeholder="Why is the student moving?" onChange={(e) => setReason(e.target.value)} />
         </div>
+      </div>
+    </DetailModal>
+  );
+}
+
+/**
+ * CHANGE STATUS — the lifecycle transition modal (migration 073). Selecting a status reveals
+ * exactly the fields that status needs: SENSITIVE statuses (On Hold / Suspended / Withdrawn /
+ * Dropped Out / Cancelled — catalog requires_approval) require a Reason, Last Attendance Date,
+ * an effective date (Hold Start / Dropout) and an Approved-By user, and show the outstanding-fee
+ * snapshot (prefilled read-only from dues). Validation mirrors the API; the API is the real gate.
+ * Sensitive options + the Approved-By picker are hidden from users lacking student.status_manage.
+ */
+export function ChangeStatusModal({ student, outstandingMinor, canManageSensitive, onClose, onDone }:
+  { student: any; outstandingMinor?: number; canManageSensitive: boolean; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const catalog = useFetch<any[]>(`/students/status-catalog`, []);
+  const [toStatus, setToStatus] = useState<string>('');
+  const [reason, setReason] = useState('');
+  const [lastAtt, setLastAtt] = useState(student.status_last_attendance_date ? String(student.status_last_attendance_date).slice(0, 10) : '');
+  const [effective, setEffective] = useState('');
+  const [approvedBy, setApprovedBy] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+
+  const all = catalog.data ?? [];
+  const opts = all.filter((o) => canManageSensitive || !o.requires_approval);
+  const def = all.find((o) => o.code === toStatus);
+  const sensitive = !!def?.requires_approval;
+  const effLabel = toStatus === 'on_hold' ? 'Hold Start Date' : 'Dropout Date';
+  const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
+
+  const save = async () => {
+    if (!toStatus) { toast('Choose a status.', true); return; }
+    if (sensitive) {
+      if (!reason.trim()) { toast('Reason is required for this status.', true); return; }
+      if (!lastAtt) { toast('Last Attendance Date is required.', true); return; }
+      if (!effective) { toast(`${effLabel} is required.`, true); return; }
+    }
+    setBusy(true);
+    try {
+      const res = await api.post<any>(`/students/${student.id}/status`, {
+        to_status: toStatus,
+        reason: reason.trim() || null,
+        last_attendance_date: lastAtt || null,
+        effective_date: effective || null,
+        approved_by: sensitive && approvedBy ? Number(approvedBy) : null,
+      });
+      toast(res?.unchanged ? 'Status unchanged.' : `Status set to ${def?.label ?? toStatus}.`);
+      onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+
+  return (
+    <DetailModal title={`Change status — ${student.full_name}`} icon="flag" onClose={onClose} width={560}
+      footer={<button className="btn primary" onClick={save} disabled={busy || !toStatus} data-testid="stu-status-save"><Ic k="flag" />Update status</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}>
+        <Ic k="flag" /><div>Currently <b>{statusMeta(student.status).label}</b> · {LMS_HINT[statusMeta(student.status).lms]}</div>
+      </div>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="cs-status">New Status <span className="star">*</span></label>
+          <select id="cs-status" className="ainp" value={toStatus} disabled={busy}
+            onChange={(e) => setToStatus(e.target.value)} data-testid="stu-status-select">
+            <option value="">— Choose status —</option>
+            {opts.map((o) => <option key={o.code} value={o.code}>{o.label} — {String(o.lms_access).toUpperCase()} LMS</option>)}
+          </select>
+          {def ? <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>{def.meaning} · {LMS_HINT[statusMeta(def.code).lms]}</div> : null}
+        </div>
+        {(sensitive || (def && def.requires_reason)) && (
+          <div className="fld" style={{ gridColumn: '1 / -1' }}>
+            <label htmlFor="cs-reason">Reason {sensitive ? <span className="star">*</span> : null}</label>
+            <input id="cs-reason" className="ainp" value={reason} disabled={busy}
+              placeholder={toStatus === 'on_hold' ? 'Hold reason' : toStatus === 'suspended' ? 'Suspension reason' : toStatus === 'dropped_out' ? 'Dropout reason' : 'Reason'}
+              onChange={(e) => setReason(e.target.value)} />
+          </div>
+        )}
+        {sensitive && (
+          <>
+            <div className="fld">
+              <label htmlFor="cs-lastatt">Last Attendance Date <span className="star">*</span></label>
+              <input id="cs-lastatt" type="date" className="ainp" value={lastAtt} disabled={busy} onChange={(e) => setLastAtt(e.target.value)} />
+            </div>
+            <div className="fld">
+              <label htmlFor="cs-eff">{effLabel} <span className="star">*</span></label>
+              <input id="cs-eff" type="date" className="ainp" value={effective} disabled={busy} onChange={(e) => setEffective(e.target.value)} />
+            </div>
+            <div className="fld">
+              <label htmlFor="cs-out">Outstanding Fee (snapshot)</label>
+              <input id="cs-out" className="ainp" value={money(outstandingMinor)} readOnly disabled title="Snapshotted at the moment of change" />
+            </div>
+            <div className="fld">
+              <label htmlFor="cs-appr">Approved By</label>
+              <select id="cs-appr" className="ainp" value={approvedBy} disabled={busy} onChange={(e) => setApprovedBy(e.target.value)}>
+                <option value="">— You (acting approver) —</option>
+                {selectableUsers(ref.users).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+          </>
+        )}
       </div>
     </DetailModal>
   );

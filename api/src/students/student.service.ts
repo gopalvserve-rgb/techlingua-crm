@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -7,6 +7,8 @@ import { normalizePhone } from '../common/phone.util';
 import { NumberingService } from '../numbering/numbering.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { StorageService } from '../storage/storage.service';
+import { RbacDataService } from '../rbac/rbac-data.service';
+import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVENUE_CANCELLING_STATUSES, lmsBlockedMessage } from './lms-access';
 
 /**
  * STUDENT — the PHASE-2 student profile. A student is born TWO ways:
@@ -51,6 +53,9 @@ export class StudentService {
     /** Notification Events — fires `lead_converted` + `enrollment_created`. Optional. */
     private readonly notifEvents?: NotificationEventService,
     private readonly storage?: StorageService,
+    /** RBAC grants — to check the SECONDARY `student.status_manage` permission for sensitive
+     *  status changes (the route guard is student.update; the sensitive gate is here). */
+    private readonly rbacData?: RbacDataService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -77,7 +82,9 @@ export class StudentService {
     multi('s.vertical_id', f.vertical_id);
     multi('s.course_id', f.course_id);
     multi('s.owner_id', f.owner_id);
-    if (f.status === 'active' || f.status === 'inactive') { params.push(f.status); where.push(`s.status = $${params.length}::varchar`); }
+    // Multi-select STATUS filter (lifecycle codes, comma-joined). Genuinely narrows the list.
+    const statusCodes = String(f.status ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (statusCodes.length) { params.push(statusCodes); where.push(`s.status = ANY($${params.length}::varchar[])`); }
 
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`s.created_at >= $${params.length}::timestamptz`); }
@@ -87,11 +94,13 @@ export class StudentService {
 
     return this.db.query<any>(
       `SELECT s.id, s.student_no, s.enrollment_no, s.full_name, s.phone, s.email, s.status,
+              sd.label AS status_label, sd.lms_access, s.status_changed_at,
               s.branch_id, s.vertical_id, s.course_id, s.batch_id, s.owner_id,
               s.enrolment_id, s.created_at, s.lead_id,
               b.name AS branch_name, v.name AS vertical_name, c.name AS course_name,
               u.name AS owner_name, bt.name AS batch_name, e.enrolment_no
          FROM student s
+         LEFT JOIN student_status_def sd ON sd.code = s.status
          LEFT JOIN branch  b  ON b.id = s.branch_id
          LEFT JOIN vertical v ON v.id = s.vertical_id
          LEFT JOIN m_course c ON c.id = s.course_id
@@ -111,8 +120,14 @@ export class StudentService {
     const row = await this.db.one<any>(
       `SELECT s.*, b.name AS branch_name, v.name AS vertical_name, c.name AS course_name,
               u.name AS owner_name, bt.name AS batch_name, e.enrolment_no, e.net_fee_minor,
-              l.full_name AS lead_name, st.name AS state_name, ci.name AS city_name
+              l.full_name AS lead_name, st.name AS state_name, ci.name AS city_name,
+              sd.label AS status_label, sd.lms_access, sd.meaning AS status_meaning,
+              sd.is_terminal AS status_is_terminal,
+              apu.name AS status_approved_by_name, chu.name AS status_changed_by_name
          FROM student s
+         LEFT JOIN student_status_def sd ON sd.code = s.status
+         LEFT JOIN "user" apu ON apu.id = s.status_approved_by
+         LEFT JOIN "user" chu ON chu.id = s.status_changed_by
          LEFT JOIN branch  b  ON b.id = s.branch_id
          LEFT JOIN vertical v ON v.id = s.vertical_id
          LEFT JOIN m_course c ON c.id = s.course_id
@@ -1006,7 +1021,11 @@ export class StudentService {
 
     if (dto?.status !== undefined) {
       const st = String(dto.status);
-      if (st !== 'active' && st !== 'inactive') throw new BadRequestException('Status must be active or inactive.');
+      const def = await this.db.one<any>(`SELECT code FROM student_status_def WHERE code = $1`, [st]);
+      if (!def) throw new BadRequestException('Unknown status.');
+      // Sensitive statuses MUST go through the gated Change-Status endpoint (reason + approver
+      // + outstanding snapshot + student.status_manage). A plain PATCH cannot set them.
+      if (SENSITIVE_STATUSES.has(st)) throw new BadRequestException('Use the Change Status action for this status (it needs a reason, dates and an approver).');
       set('status', st);
     }
     if (dto?.batch_id !== undefined) {
@@ -1146,4 +1165,172 @@ export class StudentService {
       [leadId, note, actorId],
     );
   }
+  /* ------------------------------------------------------ status lifecycle */
+
+  /** The 11-status catalog (self-manageable master) — powers the Change-Status UI + labels. */
+  async statusCatalog() {
+    return this.db.query<any>(
+      `SELECT code, label, meaning, lms_access, requires_reason, requires_approval, is_terminal, ordering
+         FROM student_status_def ORDER BY ordering, code`);
+  }
+
+  /** The student's CURRENT outstanding dues (paise) — net fee of their enrolment minus
+   *  receipts, floored at 0 (the same net_fee/receipts basis the Fee Dues service uses). A
+   *  student with no enrolment has nothing outstanding. */
+  async studentOutstandingMinor(studentId: number): Promise<number> {
+    const r = await this.db.one<{ outstanding_minor: string }>(
+      `SELECT GREATEST(0, e.net_fee_minor - COALESCE(sum(fr.amount_minor), 0))::bigint AS outstanding_minor
+         FROM student s
+         JOIN enrolment e ON e.id = s.enrolment_id AND e.deleted_at IS NULL
+         LEFT JOIN fee_receipt fr ON fr.enrolment_id = e.id AND fr.deleted_at IS NULL
+        WHERE s.id = $1::bigint
+        GROUP BY e.net_fee_minor`, [studentId]);
+    return Number(r?.outstanding_minor ?? 0);
+  }
+
+  /**
+   * CHANGE STATUS — the lifecycle transition. The route is guarded by student.update; the
+   * SENSITIVE statuses (On Hold / Suspended / Withdrawn / Dropped Out / Cancelled) are ALSO
+   * gated by student.status_manage and require reason + last_attendance_date + effective date
+   * + an Approved-By user, and snapshot the student's outstanding fee. Every transition writes
+   * student_status_history. A Cancelled/Withdrawn/Dropped-Out student's enrolment is cancelled
+   * so it stops counting toward booked revenue/targets (delivering enrolment cancellation).
+   * Scope-enforced (the student is loaded through the scoped get()). Idempotent (same status → no-op).
+   */
+  async changeStatus(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const student = await this.get(id, scope);
+    const to = String(dto?.to_status ?? '').trim();
+    if (!to) throw new BadRequestException('Choose a status.');
+    const def = await this.db.one<any>(`SELECT * FROM student_status_def WHERE code = $1`, [to]);
+    if (!def) throw new BadRequestException('Unknown status.');
+    const from = String(student.status ?? 'active');
+    const sensitive = SENSITIVE_STATUSES.has(to);
+
+    if (sensitive) {
+      const grants = this.rbacData ? await this.rbacData.loadUserGrants(me.id) : null;
+      const allowed = grants ? this.resolver.resolve(grants, 'student.status_manage').allowed : false;
+      if (!allowed) {
+        throw new ForbiddenException('You need the "Manage student status" permission to set a sensitive status (On Hold / Suspended / Withdrawn / Dropped Out / Cancelled).');
+      }
+    }
+
+    const clean = (v: unknown) => (v == null || String(v).trim() === '' ? null : String(v).trim());
+    const asDate = (v: unknown, label: string): string | null => {
+      const c = clean(v);
+      if (c == null) return null;
+      return requireDateString(c, () => { throw new BadRequestException(`${label} is not a valid date.`); });
+    };
+    const reason = clean(dto?.reason);
+    const lastAtt = asDate(dto?.last_attendance_date, 'Last Attendance Date');
+    const effective = asDate(dto?.effective_date, to === 'on_hold' ? 'Hold Start Date' : 'Effective date');
+    let approvedBy: number | null = dto?.approved_by != null && dto.approved_by !== '' ? Number(dto.approved_by) : null;
+
+    if (sensitive) {
+      const effLabel = to === 'on_hold' ? 'Hold Start Date' : 'Dropout Date';
+      if (!reason) throw new BadRequestException(`Reason is required for status "${def.label}".`);
+      if (!lastAtt) throw new BadRequestException(`Last Attendance Date is required for status "${def.label}".`);
+      if (!effective) throw new BadRequestException(`${effLabel} is required for status "${def.label}".`);
+      if (approvedBy == null) approvedBy = me.id; // the acting user holds status_manage → the approver
+      const appr = await this.db.one<any>(`SELECT id FROM "user" WHERE id = $1::bigint`, [approvedBy]);
+      if (!appr) throw new BadRequestException('Approved By must be a valid user.');
+    }
+
+    const outstanding = await this.studentOutstandingMinor(id);
+
+    if (from === to) return { id, status: to, unchanged: true, outstanding_minor: outstanding };
+
+    const orgId = await this.orgId();
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE student SET status = $2, status_reason = $3, status_last_attendance_date = $4,
+                            status_effective_date = $5, status_outstanding_minor = $6,
+                            status_approved_by = $7, status_changed_by = $8, status_changed_at = now(),
+                            updated_at = now()
+          WHERE id = $1::bigint`,
+        [id, to, reason, lastAtt, effective, outstanding, approvedBy, me.id]);
+
+      await c.query(
+        `INSERT INTO student_status_history (org_id, branch_id, vertical_id, student_id, from_status, to_status,
+             reason, last_attendance_date, effective_date, outstanding_minor, approved_by, changed_by)
+         VALUES ($1::bigint,$2,$3,$4::bigint,$5,$6,$7,$8,$9,$10,$11,$12::bigint)`,
+        [orgId, student.branch_id ?? null, student.vertical_id ?? null, id, from, to,
+          reason, lastAtt, effective, outstanding, approvedBy, me.id]);
+
+      if (REVENUE_CANCELLING_STATUSES.has(to) && student.enrolment_id) {
+        await c.query(
+          `UPDATE enrolment SET status = 'cancelled', updated_at = now()
+            WHERE id = $1::bigint AND deleted_at IS NULL AND status IN ('active','pending_approval')`,
+          [Number(student.enrolment_id)]);
+      }
+    });
+
+    await this.notifEvents?.safeFire('student_status_changed', {
+      student_id: id, vertical_id: student.vertical_id ?? undefined, dedupe: `status:${id}:${to}:${Date.now()}`,
+      vars: { from_status: from, to_status: to, status_label: def.label, reason: reason ?? '' },
+    });
+
+    return {
+      id, from_status: from, to_status: to, lms_access: def.lms_access,
+      outstanding_minor: outstanding, approved_by: approvedBy,
+      enrolment_cancelled: REVENUE_CANCELLING_STATUSES.has(to) && !!student.enrolment_id,
+    };
+  }
+
+  /** The transition trail — who / when / reason / approver. Scope-enforced via get(). */
+  async statusHistory(id: number, scope: ResolvedScope) {
+    await this.get(id, scope);
+    return this.db.query<any>(
+      `SELECT h.id, h.from_status, h.to_status, h.reason, h.last_attendance_date, h.effective_date,
+              h.outstanding_minor, h.approved_by, h.changed_by, h.changed_at,
+              df.label AS from_label, dt.label AS to_label,
+              ap.name AS approved_by_name, ch.name AS changed_by_name
+         FROM student_status_history h
+         LEFT JOIN student_status_def df ON df.code = h.from_status
+         LEFT JOIN student_status_def dt ON dt.code = h.to_status
+         LEFT JOIN "user" ap ON ap.id = h.approved_by
+         LEFT JOIN "user" ch ON ch.id = h.changed_by
+        WHERE h.student_id = $1::bigint
+        ORDER BY h.changed_at DESC, h.id DESC`, [id]);
+  }
+
+  /**
+   * STUDENT-FACING LMS READ — the published study material / course content / syllabus the
+   * student may consume, WITH the LMS-access gate enforced by their lifecycle status. A NONE
+   * status is blocked with a clear 403; LIMITED (On Hold/Inactive) and ALUMNI (Completed) may
+   * view material but cannot start attempts. Staff/admin management reads are unaffected.
+   */
+  async lmsContent(id: number, scope: ResolvedScope) {
+    const student = await this.get(id, scope);
+    const access = studentLmsAccess(student.status);
+    const label = student.status_label ?? student.status;
+    if (!canViewMaterial(access)) {
+      throw new ForbiddenException(lmsBlockedMessage(String(student.status), String(label), access, 'material'));
+    }
+    const material = await this.db.query<any>(
+      `SELECT m.id, m.title, m.description, m.material_type, m.url, m.external_url, m.access_level, m.created_at,
+              c.name AS course_name, bt.name AS batch_name
+         FROM study_material m
+         LEFT JOIN m_course c ON c.id = m.course_id
+         LEFT JOIN batch bt ON bt.id = m.batch_id
+        WHERE m.deleted_at IS NULL AND m.visibility = 'published'
+          AND ( (m.access_level = 'batch' AND m.batch_id = $2::bigint)
+             OR (m.access_level = 'course' AND m.course_id = $3::bigint)
+             OR (m.access_level = 'vertical' AND m.vertical_id = $4::bigint) )
+        ORDER BY m.created_at DESC`,
+      [id, student.batch_id ?? null, student.course_id ?? null, student.vertical_id ?? null]);
+    const courseContent = await this.db.query<any>(
+      `SELECT id, title, module_no, description, created_at FROM course_content
+        WHERE deleted_at IS NULL AND workflow_status = 'published' AND course_id = $1::bigint
+        ORDER BY module_no, id`, [student.course_id ?? null]);
+    const syllabus = await this.db.query<any>(
+      `SELECT id, title, version, body, created_at FROM syllabus
+        WHERE deleted_at IS NULL AND workflow_status = 'published' AND course_id = $1::bigint
+        ORDER BY version, id`, [student.course_id ?? null]);
+    return {
+      student_id: id, status: student.status, status_label: label, lms_access: access,
+      can_attempt: canAttempt(access), can_view_material: canViewMaterial(access),
+      material, course_content: courseContent, syllabus,
+    };
+  }
+
 }

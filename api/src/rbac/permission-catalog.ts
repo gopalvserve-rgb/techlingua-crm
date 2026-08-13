@@ -89,7 +89,9 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // 'create' on student is what the "Convert to Student" button checks; it is granted to
   // exactly the roles that hold enrolment.create. 'delete' is admin-only (a student is a
   // record). Batches are branch/vertical/course-scoped and managed by managers/admins.
-  { module: 'student', label: 'Students', actions: ['read', 'create', 'update', 'delete'] },
+  // status_manage = the gate for SENSITIVE lifecycle statuses (On Hold / Suspended / Withdrawn
+  // / Dropped Out / Cancelled) — Academic Admin + Org/Super Admin only (migration 073).
+  { module: 'student', label: 'Students', actions: ['read', 'create', 'update', 'delete', 'status_manage'] },
   { module: 'batch', label: 'Batches', actions: ['read', 'create', 'update', 'delete'] },
   // Client request (migration 045) — Finance Settings: discount / scholarship / capping
   // limit, BOTH percentage and amount. 'read' shows the screen; 'manage' CHANGES the caps

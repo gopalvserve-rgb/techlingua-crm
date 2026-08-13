@@ -36,6 +36,13 @@ export class StudentController {
     return this.svc.byLead(leadId, scope);
   }
 
+  /** The 11-status lifecycle CATALOG (labels + LMS access) — powers the Change-Status UI. */
+  @Get('status-catalog')
+  @RequirePermission('student.read')
+  statusCatalog() {
+    return this.svc.statusCatalog();
+  }
+
   @Get(':id')
   @RequirePermission('student.read')
   get(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
@@ -58,6 +65,30 @@ export class StudentController {
   @RequirePermission('student.update')
   transfer(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     return this.svc.branchTransfer(id, dto, me, scope);
+  }
+
+  /** CHANGE STATUS — the lifecycle transition. Guarded by student.update; the SENSITIVE
+   *  statuses are additionally gated by student.status_manage INSIDE the service (else 403),
+   *  where the required fields + outstanding snapshot + history are enforced. */
+  @Post(':id/status')
+  @RequirePermission('student.update')
+  changeStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.changeStatus(id, dto, me, scope);
+  }
+
+  /** The status transition trail (who / when / reason / approver). */
+  @Get(':id/status-history')
+  @RequirePermission('student.read')
+  statusHistory(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.statusHistory(id, scope);
+  }
+
+  /** STUDENT-FACING LMS READ — published material/content/syllabus for the student, with the
+   *  status-driven LMS-access gate enforced (NONE → 403). */
+  @Get(':id/lms')
+  @RequirePermission('student.read')
+  lms(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.lmsContent(id, scope);
   }
 
   /* -------- documents (education + KYC). List is student.read; download is student.update

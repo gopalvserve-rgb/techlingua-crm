@@ -293,8 +293,6 @@ const UNREACHABLE_BACKLOG: Record<string, string> = {
     'The Start Calling batch detail. The UI uses /leads/handout, /leads/handout/campaigns and /leads/handout/current. ALSO A ROUTING HAZARD: `:id` is declared alongside the literal siblings and could shadow them depending on declaration order — worth checking regardless of the UI.',
   'GET /sla/lead/:id':
     'Per-lead SLA detail. The lead sheet renders the SLA badge from data the lead payload already carries, so this route has no caller. Verify, then wire or delete.',
-  'GET /reports/exports/mine':
-    'THERE IS NO "MY RECENT EXPORTS" LIST. The UI polls one export by id and, on timeout, tells the client "it will appear in your recent exports" — a list that does not exist on any screen. CLIENT-VISIBLE: the message promises a place to look.',
   'DELETE /numbering/:id':
     'A numbering series can be created and edited from Settings > Numbering, but never deleted.',
   'DELETE /settings/channels/:id':

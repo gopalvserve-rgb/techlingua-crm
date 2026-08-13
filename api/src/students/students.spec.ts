@@ -282,12 +282,21 @@ describe('Students & Batches RBAC', () => {
   it('every permission a route names exists in the catalog', () => {
     expect(ALL.filter((r) => r.permission && !CATALOG_KEYS.has(r.permission)).map((r) => r.permission)).toEqual([]);
   });
-  it('migration 044 GRANTS every student.* / batch.* permission the catalog declares', () => {
+  it('migration 044 GRANTS every student.* / batch.* permission the catalog declares (except status_manage, added in 073)', () => {
     const sql = readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '044_students_batches.sql'), 'utf8');
     const keys = PERMISSION_CATALOG.filter((m) => ['student', 'batch'].includes(m.module))
-      .flatMap((m) => m.actions.map((a) => `${m.module}.${a}`));
+      .flatMap((m) => m.actions.map((a) => `${m.module}.${a}`))
+      .filter((k) => k !== 'student.status_manage'); // migration 073 catalogues + grants this one
     const ungranted = keys.filter((k) => !new RegExp(`'${k.replace('.', '\\.')}'\\s*,\\s*'`).test(sql));
     expect(ungranted).toEqual([]);
+  });
+  it('migration 073 catalogues + grants student.status_manage to Academic Admin / Org / Super Admin', () => {
+    const sql = readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '073_student_status_lifecycle.sql'), 'utf8');
+    expect(/'student\.status_manage'\s*,\s*'student'\s*,\s*'status_manage'/.test(sql)).toBe(true);
+    const granted = (role: string) => new RegExp(`'student\\.status_manage'\\s*,\\s*'${role}'`).test(sql);
+    expect(granted('Academic Admin')).toBe(true);
+    expect(granted('Organization Admin')).toBe(true);
+    expect(granted('Super Admin')).toBe(true);
   });
   it('a Counsellor can create a student (convert) but cannot delete one', () => {
     const sql = readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '044_students_batches.sql'), 'utf8');
@@ -510,5 +519,105 @@ describe('StudentService.branchTransfer', () => {
     const { svc } = makeTransfer({ student: { id: 7, full_name: 'Meera', student_no: 'STU-7', batch_id: null, branch_id: 9, vertical_id: 3, course_id: 100, branch_name: 'Janakpuri' } });
     await expect(svc.branchTransfer(7, { to_branch_id: 9, to_vertical_id: 3 }, { id: 5 }, scopeAll))
       .rejects.toThrow(/already in that branch/i);
+  });
+});
+
+/* ============================================================================
+ * STUDENT STATUS LIFECYCLE (migration 073) — validation, sensitive-gating,
+ * outstanding snapshot + history, revenue cancellation, and the list filter.
+ * ==========================================================================*/
+describe('StudentService.changeStatus + lifecycle', () => {
+  const scope: ResolvedScope = { permissionKey: 'student.update', allowed: true, all: true, filters: [], allowedFields: null, deniedFields: [] };
+  const STUDENT = (over: any = {}) => ({ id: 7, status: 'active', status_label: 'Active', branch_id: 9, vertical_id: 3, course_id: 100, batch_id: null, enrolment_id: 55, ...over });
+  const DEF: Record<string, any> = {
+    active: { code: 'active', label: 'Active', lms_access: 'full' },
+    on_hold: { code: 'on_hold', label: 'On Hold', lms_access: 'limited' },
+    completed: { code: 'completed', label: 'Completed', lms_access: 'alumni' },
+    cancelled: { code: 'cancelled', label: 'Cancelled', lms_access: 'none' },
+  };
+
+  function makeStatus(opts: { student?: any; hasManage?: boolean; outstanding?: number } = {}) {
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      one: async (sql: string, params: unknown[] = []) => {
+        issued.push({ sql, params });
+        if (/GREATEST\(0, e\.net_fee_minor/.test(sql)) return { outstanding_minor: String(opts.outstanding ?? 15000) };
+        if (/FROM student_status_def WHERE code/.test(sql)) return DEF[String(params[0])] ?? null;
+        if (/FROM student s\b/.test(sql)) return opts.student === null ? null : (opts.student ?? STUDENT());
+        if (/FROM organisation/.test(sql)) return { id: 1 };
+        if (/FROM "user" WHERE id/.test(sql)) return { id: Number(params[0]) };
+        return null;
+      },
+      query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return []; },
+      tx: async (fn: any) => fn({ query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return { rows: [] }; } }),
+    };
+    const resolver = {
+      buildScopeWhere: () => '1=1',
+      resolve: (_g: any, _k: string) => ({ allowed: !!opts.hasManage }),
+    };
+    const rbacData = { loadUserGrants: async (_u: number) => ({ userId: 1 }) };
+    const numbering = { allocate: async () => 'X' };
+    const notif = { safeFire: async () => {} };
+    const svc = new StudentService(db as never, resolver as never, numbering as never, notif as never, undefined as never, rbacData as never);
+    return { svc, issued };
+  }
+
+  it('SENSITIVE status without student.status_manage → 403', async () => {
+    const { svc } = makeStatus({ hasManage: false });
+    await expect(svc.changeStatus(7, { to_status: 'on_hold', reason: 'x', last_attendance_date: '2026-08-01', effective_date: '2026-08-05', approved_by: 1 }, { id: 2 }, scope))
+      .rejects.toThrow(/Manage student status|permission/i);
+  });
+
+  it('SENSITIVE status with permission but MISSING reason → 400', async () => {
+    const { svc } = makeStatus({ hasManage: true });
+    await expect(svc.changeStatus(7, { to_status: 'on_hold', last_attendance_date: '2026-08-01', effective_date: '2026-08-05' }, { id: 2 }, scope))
+      .rejects.toThrow(/Reason is required/i);
+  });
+
+  it('SENSITIVE status with permission but MISSING effective date → 400', async () => {
+    const { svc } = makeStatus({ hasManage: true });
+    await expect(svc.changeStatus(7, { to_status: 'on_hold', reason: 'Fees pending', last_attendance_date: '2026-08-01' }, { id: 2 }, scope))
+      .rejects.toThrow(/Hold Start Date is required/i);
+  });
+
+  it('SENSITIVE status with permission + all fields → OK, writes history + outstanding snapshot', async () => {
+    const { svc, issued } = makeStatus({ hasManage: true, outstanding: 15000 });
+    const out: any = await svc.changeStatus(7, { to_status: 'on_hold', reason: 'Fees pending', last_attendance_date: '2026-08-01', effective_date: '2026-08-05', approved_by: 3 }, { id: 2 }, scope);
+    expect(out.to_status).toBe('on_hold');
+    expect(out.outstanding_minor).toBe(15000);
+    expect(out.approved_by).toBe(3);
+    expect(has(issued, /UPDATE student SET status = \$2/)).toBe(true);
+    expect(has(issued, /INSERT INTO student_status_history/)).toBe(true);
+  });
+
+  it('NON-sensitive status (completed) needs no status_manage and no extra fields → OK (alumni)', async () => {
+    const { svc, issued } = makeStatus({ hasManage: false });
+    const out: any = await svc.changeStatus(7, { to_status: 'completed' }, { id: 2 }, scope);
+    expect(out.to_status).toBe('completed');
+    expect(out.lms_access).toBe('alumni');
+    expect(has(issued, /INSERT INTO student_status_history/)).toBe(true);
+  });
+
+  it('CANCELLED cancels the enrolment so it stops counting toward booked revenue', async () => {
+    const { svc, issued } = makeStatus({ hasManage: true, outstanding: 0 });
+    const out: any = await svc.changeStatus(7, { to_status: 'cancelled', reason: 'Admission cancelled', last_attendance_date: '2026-08-01', effective_date: '2026-08-05', approved_by: 1 }, { id: 2 }, scope);
+    expect(out.enrolment_cancelled).toBe(true);
+    expect(has(issued, /UPDATE enrolment SET status = 'cancelled'/)).toBe(true);
+  });
+
+  it('idempotent: setting the current status is a no-op (no history row)', async () => {
+    const { svc, issued } = makeStatus({ hasManage: true, student: STUDENT({ status: 'active' }) });
+    const out: any = await svc.changeStatus(7, { to_status: 'active' }, { id: 2 }, scope);
+    expect(out.unchanged).toBe(true);
+    expect(has(issued, /INSERT INTO student_status_history/)).toBe(false);
+  });
+
+  it('the list STATUS filter is a genuine multi-select (narrows via ANY)', async () => {
+    const { svc, issued } = makeStatus({});
+    await svc.list(scope, { status: 'on_hold,suspended' });
+    const q = issued.find((i) => /FROM student s/.test(i.sql) && /ORDER BY s\.created_at/.test(i.sql));
+    expect(q).toBeTruthy();
+    expect(/s\.status = ANY\(/.test(q!.sql)).toBe(true);
+    expect(q!.params.some((p) => Array.isArray(p) && (p as any[]).includes('on_hold') && (p as any[]).includes('suspended'))).toBe(true);
   });
 });
