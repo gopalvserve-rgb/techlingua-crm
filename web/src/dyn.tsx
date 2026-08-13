@@ -44,7 +44,7 @@ import {
 import {
   CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure,
 } from './sprint5';
-import { fmtINR } from './money';
+import { fmtINR, enrolDiscount, previewSchedule, EnrolDiscountType } from './money';
 import {
   ActivityReport, Announcements, CampaignRoiReport, FunnelReport, KnowledgeBase, Notes,
   ReportBuilder, SavedReports, ScheduledDelivery, TatReport, TeamChat,
@@ -5283,38 +5283,99 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
   const ref = useRef_();
   const [courseId, setCourseId] = useState('');
   const [batchId, setBatchId] = useState('');
-  const [fee, setFee] = useState('');
-  const [discount, setDiscount] = useState('');
-  const [plan, setPlan] = useState('full');
+  const [fee, setFee] = useState('');                       // gross fee (₹), from master, editable
+  const [discType, setDiscType] = useState<EnrolDiscountType>('none');
+  const [discValue, setDiscValue] = useState('');           // ₹ (amount) or % (percent)
+  const [plan, setPlan] = useState<'full' | 'installment' | 'custom'>('full');
+  const [count, setCount] = useState('3');                  // installments count
+  const [down, setDown] = useState('');                     // down payment (₹)
+  const [rows, setRows] = useState<Array<{ amount: string; date: string }>>([{ amount: '', date: '' }]);
   const [start, setStart] = useState('');
   const [batches, setBatches] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
-  const courses = ref.courses ?? [];
+
+  // BRANCH -> VERTICAL -> COURSE cascade: a student already has ONE branch + vertical, so we
+  // filter the Course list to that vertical (the app models course-under-vertical via meta).
+  const coursesAll = (ref.courses ?? []) as any[];
+  const courses = coursesAll.filter((c: any) =>
+    String((c.meta as any)?.vertical_id ?? '') === String(student.vertical_id ?? '') ||
+    !((c.meta as any)?.vertical_id));   // courses not scoped to a vertical stay selectable
+  const branchName = student.branch_name ?? ref.branches?.find((b: any) => Number(b.id) === Number(student.branch_id))?.name ?? '—';
+  const verticalName = student.vertical_name ?? ref.verticals?.find((v: any) => Number(v.id) === Number(student.vertical_id))?.name ?? '—';
+
   useEffect(() => {
     if (!courseId) { setBatches([]); return; }
     api.get<any[]>(`/batches?vertical_id=${student.vertical_id}&status=active`)
       .then((bs) => setBatches((bs ?? []).filter((b: any) => Number(b.course_id) === Number(courseId))))
       .catch(() => setBatches([]));
   }, [courseId, student.vertical_id]);
+
+  // Choosing a course auto-fills the fee from the Course master (editable).
+  const chooseCourse = (cid: string) => {
+    setCourseId(cid); setBatchId('');
+    const c = coursesAll.find((x: any) => Number(x.id) === Number(cid));
+    setFee(c ? String((c.meta as any)?.fee ?? '') : '');
+  };
+
+  const grossMinor = Math.round(Number(fee || 0) * 100);
+  const dv = discType === 'percent' ? Number(discValue || 0) : Math.round(Number(discValue || 0) * 100);
+  const { discount_minor, net_minor } = enrolDiscount(grossMinor, discType, discType === 'percent' ? Number(discValue || 0) : Math.round(Number(discValue || 0) * 100));
+  const downMinor = Math.round(Number(down || 0) * 100);
+  const customAmounts = rows.map((r) => Math.round(Number(r.amount || 0) * 100));
+  const customDates = rows.map((r) => r.date).filter(Boolean);
+  const sched = previewSchedule({
+    plan_type: plan, net_minor, down_minor: downMinor,
+    num_installments: Math.max(1, Number(count) || 1), start_date: start || undefined,
+    custom_amounts_minor: plan === 'custom' ? customAmounts : undefined,
+    custom_dates: plan === 'custom' && customDates.length === rows.length ? rows.map((r) => r.date) : undefined,
+  });
+
+  const setRow = (i: number, patch: Partial<{ amount: string; date: string }>) =>
+    setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const planIntent = plan === 'full' ? 'full'
+    : plan === 'installment' ? (Number(count) === 3 ? 'emi_3' : Number(count) === 6 ? 'emi_6' : 'custom')
+    : 'custom';
+
   const save = async () => {
     if (!courseId) { toast('Choose a course.', true); return; }
+    if (plan !== 'full' && !sched.balances) { toast(sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
     try {
-      await api.post(`/students/${student.id}/enrolments`, {
+      // 1) create the enrolment (discount computed + capped server-side; net is authoritative)
+      const enr = await api.post<any>(`/students/${student.id}/enrolments`, {
         course_id: Number(courseId), batch_id: batchId ? Number(batchId) : null,
-        fee_minor: Math.round(Number(fee || 0) * 100), discount_minor: Math.round(Number(discount || 0) * 100),
-        payment_plan: plan, start_date: start || null,
+        fee_minor: grossMinor, discount_type: discType, discount_value: dv,
+        payment_plan: planIntent, start_date: start || null,
       });
+      // 2) build the payment plan as part of enrollment (Full / Installments / Custom + down
+      //    payment). A missing payment_plan.create permission never fails the enrollment.
+      if (enr?.id) {
+        try {
+          await api.post('/payment-plans', {
+            enrolment_id: Number(enr.id),
+            plan_type: plan, frequency: plan === 'full' ? 'once' : 'monthly',
+            down_payment_minor: downMinor,
+            num_installments: plan === 'installment' ? Math.max(1, Number(count) || 1) : undefined,
+            custom_amounts_minor: plan === 'custom' ? customAmounts : undefined,
+            custom_dates: plan === 'custom' && customDates.length === rows.length ? rows.map((r) => r.date) : undefined,
+            start_date: start || null,
+          });
+        } catch (pe) { toast(`Enrollment added; payment plan not created — ${(pe as Error).message}`, true); }
+      }
       toast('Course enrollment added.'); onDone();
     } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
   };
+
   return (
-    <DetailModal title={`Enroll in another course — ${student.full_name}`} icon="grid" onClose={onClose} width={560}
+    <DetailModal title={`Enroll in another course — ${student.full_name}`} icon="grid" onClose={onClose} width={620}
       footer={<button className="btn primary" onClick={save} disabled={busy || !courseId} data-testid="enrol-add-save"><Ic k="plus" />Add enrollment</button>}>
       <div className="form-grid">
+        {/* BRANCH -> VERTICAL -> COURSE */}
+        <div className="fld"><label>Branch</label><input className="ainp" value={branchName} disabled readOnly /></div>
+        <div className="fld"><label>Vertical</label><input className="ainp" value={verticalName} disabled readOnly /></div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
           <label htmlFor="ae-course">Course <span className="star">*</span></label>
-          <select id="ae-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => { setCourseId(e.target.value); setBatchId(''); }} data-testid="enrol-course">
+          <select id="ae-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => chooseCourse(e.target.value)} data-testid="enrol-course">
             <option value="">— Choose course —</option>
             {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -5326,15 +5387,84 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
             {batches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
-        <div className="fld">
-          <label htmlFor="ae-plan">Payment plan</label>
-          <select id="ae-plan" className="ainp" value={plan} disabled={busy} onChange={(e) => setPlan(e.target.value)}>
-            <option value="full">Full payment</option><option value="emi_3">3 installments</option><option value="emi_6">6 installments</option><option value="custom">Custom</option>
+        <div className="fld"><label htmlFor="ae-fee">Course fee (₹) — from master</label>
+          <input id="ae-fee" className="ainp" type="number" value={fee} disabled={busy} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 20000" data-testid="enrol-fee" /></div>
+
+        {/* DISCOUNT — amount OR percent */}
+        <div className="fld"><label htmlFor="ae-dtype">Discount</label>
+          <select id="ae-dtype" className="ainp" value={discType} disabled={busy} onChange={(e) => { setDiscType(e.target.value as EnrolDiscountType); setDiscValue(''); }} data-testid="enrol-disc-type">
+            <option value="none">No discount</option>
+            <option value="amount">By amount (₹)</option>
+            <option value="percent">By percentage (%)</option>
           </select>
         </div>
-        <div className="fld"><label htmlFor="ae-fee">Fee (INR)</label><input id="ae-fee" className="ainp" type="number" value={fee} disabled={busy} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 30000" /></div>
-        <div className="fld"><label htmlFor="ae-disc">Discount (INR)</label><input id="ae-disc" className="ainp" type="number" value={discount} disabled={busy} onChange={(e) => setDiscount(e.target.value)} placeholder="0" /></div>
-        <div className="fld"><label htmlFor="ae-start">Start date</label><input id="ae-start" className="ainp" type="date" value={start} disabled={busy} onChange={(e) => setStart(e.target.value)} /></div>
+        <div className="fld"><label htmlFor="ae-dval">{discType === 'percent' ? 'Discount %' : 'Discount ₹'}</label>
+          <input id="ae-dval" className="ainp" type="number" value={discValue} disabled={busy || discType === 'none'}
+            onChange={(e) => setDiscValue(e.target.value)} placeholder={discType === 'percent' ? 'e.g. 10' : 'e.g. 2000'} data-testid="enrol-disc-value" /></div>
+
+        {/* GROSS / DISCOUNT / NET — shown prominently (the client wants these visible) */}
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', padding: '8px 10px', background: 'var(--surface-2, #f8fafc)', borderRadius: 8, fontSize: 13 }}>
+            <div>Gross fee: <b data-testid="enrol-gross">{fmtINR(grossMinor)}</b></div>
+            <div>Discount: <b style={{ color: 'var(--red, #b91c1c)' }} data-testid="enrol-discamt">− {fmtINR(discount_minor)}</b></div>
+            <div>Net fee after discount: <b style={{ color: 'var(--green, #15803d)' }} data-testid="enrol-net">{fmtINR(net_minor)}</b></div>
+          </div>
+        </div>
+
+        {/* PAYMENT PLAN */}
+        <div className="fld"><label htmlFor="ae-plan">Payment plan</label>
+          <select id="ae-plan" className="ainp" value={plan} disabled={busy} onChange={(e) => setPlan(e.target.value as any)} data-testid="enrol-plan">
+            <option value="full">Full payment</option>
+            <option value="installment">Installments (fixed count)</option>
+            <option value="custom">Custom (own amounts)</option>
+          </select>
+        </div>
+        {plan === 'installment' && (
+          <div className="fld"><label htmlFor="ae-count">Number of installments</label>
+            <input id="ae-count" className="ainp" type="number" min={1} value={count} disabled={busy} onChange={(e) => setCount(e.target.value)} data-testid="enrol-count" /></div>
+        )}
+        {plan !== 'full' && (
+          <div className="fld"><label htmlFor="ae-down">Down payment (₹, optional)</label>
+            <input id="ae-down" className="ainp" type="number" value={down} disabled={busy} onChange={(e) => setDown(e.target.value)} placeholder="0" data-testid="enrol-down" /></div>
+        )}
+        <div className="fld"><label htmlFor="ae-start">Start / first due date</label>
+          <input id="ae-start" className="ainp" type="date" value={start} disabled={busy} onChange={(e) => setStart(e.target.value)} /></div>
+
+        {plan === 'custom' && (
+          <div className="fld" style={{ gridColumn: '1 / -1' }}>
+            <label>Custom installments (amounts + due dates must total the payable after down payment)</label>
+            <table className="minitbl" style={{ width: '100%' }}>
+              <thead><tr><th>#</th><th>Amount (₹)</th><th>Due date</th><th /></tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td><input className="ainp" type="number" style={{ width: 110 }} value={r.amount} onChange={(e) => setRow(i, { amount: e.target.value })} data-testid={`enrol-crow-amt-${i}`} /></td>
+                  <td><input className="ainp" type="date" value={r.date} onChange={(e) => setRow(i, { date: e.target.value })} /></td>
+                  <td>{rows.length > 1 && <button className="ax" title="Remove" onClick={() => setRows((rs) => rs.filter((_, idx) => idx !== i))}><Ic k="x" /></button>}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+            <button className="btn" style={{ marginTop: 6 }} onClick={() => setRows((rs) => [...rs, { amount: '', date: '' }])}><Ic k="plus" />Add installment</button>
+          </div>
+        )}
+
+        {/* SCHEDULE PREVIEW — sums to the net */}
+        {plan !== 'full' && (
+          <div className="fld" style={{ gridColumn: '1 / -1' }}>
+            <label>Schedule preview</label>
+            <table className="minitbl" style={{ width: '100%' }} data-testid="enrol-schedule">
+              <thead><tr><th>#</th><th>Due</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+              <tbody>{sched.rows.map((r) => (
+                <tr key={r.seq_no}><td>{r.label}</td><td>{r.due_date}</td><td style={{ textAlign: 'right' }}>{fmtINR(r.amount_minor)}</td></tr>
+              ))}</tbody>
+              <tfoot><tr>
+                <td colSpan={2} style={{ fontWeight: 700 }}>Total</td>
+                <td style={{ textAlign: 'right', fontWeight: 700, color: sched.balances ? 'var(--green,#15803d)' : 'var(--red,#b91c1c)' }} data-testid="enrol-sched-total">{fmtINR(sched.sum_minor)}</td>
+              </tr></tfoot>
+            </table>
+            {!sched.balances && <div className="form-err" style={{ marginTop: 4 }}>{sched.error || `The schedule must total the net fee ${fmtINR(net_minor)}.`}</div>}
+          </div>
+        )}
       </div>
     </DetailModal>
   );

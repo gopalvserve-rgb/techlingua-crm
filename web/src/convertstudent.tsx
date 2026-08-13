@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { Ic } from './icons';
 import { toast, useRef_ } from './refdata';
+import { enrolDiscount, fmtINR, EnrolDiscountType } from './money';
 
 interface ExistingStudent { id: number; student_no: string; full_name: string; status: string }
 
@@ -25,7 +26,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   const [err, setErr] = useState('');
   const [lead, setLead] = useState<any>(null);
   // Multi-course rows: each is a {vertical → course (→ fee, discount)} selection. Item 1.
-  const [rows, setRows] = useState<Array<{ vertical_id: string; course_id: string; fee: string; discount: string }>>([]);
+  const [rows, setRows] = useState<Array<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string }>>([]);
   const [result, setResult] = useState<any>(null);
 
   useEffect(() => {
@@ -44,7 +45,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
         const cid = ld?.course_id ? String(ld.course_id) : '';
         const course = cid ? (ref.courses ?? []).find((c: any) => Number(c.id) === Number(cid)) : null;
         const fee = course ? String((course.meta as any)?.fee ?? '') : '';
-        setRows([{ vertical_id: v, course_id: cid, fee, discount: '' }]);
+        setRows([{ vertical_id: v, course_id: cid, fee, disc_type: 'none', disc_value: '' }]);
       } catch (e) { if (live) setErr((e as Error).message); }
       finally { if (live) setLoading(false); }
     })();
@@ -57,9 +58,9 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   const coursesFor = (vid: string) => (ref.courses ?? []).filter((c: any) =>
     !vid || String((c.meta as any)?.vertical_id ?? '') === String(vid));
 
-  const setRow = (i: number, patch: Partial<{ vertical_id: string; course_id: string; fee: string; discount: string }>) =>
+  const setRow = (i: number, patch: Partial<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string }>) =>
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addRow = () => setRows((rs) => [...rs, { vertical_id: '', course_id: '', fee: '', discount: '' }]);
+  const addRow = () => setRows((rs) => [...rs, { vertical_id: '', course_id: '', fee: '', disc_type: 'none', disc_value: '' }]);
   const removeRow = (i: number) => setRows((rs) => rs.filter((_, idx) => idx !== i));
   // Choosing a course prefills the fee from the Course master (editable).
   const chooseCourse = (i: number, cid: string) => {
@@ -75,7 +76,9 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
         vertical_id: r.vertical_id ? Number(r.vertical_id) : undefined,
         course_id: Number(r.course_id),
         fee_minor: r.fee !== '' ? Math.round(Number(r.fee) * 100) : undefined,
-        discount_minor: r.discount !== '' ? Math.round(Number(r.discount) * 100) : undefined,
+        discount_type: r.disc_type,
+        discount_value: r.disc_type === 'percent' ? Number(r.disc_value || 0)
+          : r.disc_type === 'amount' ? Math.round(Number(r.disc_value || 0) * 100) : 0,
       }));
       const r = await api.post<any>('/students/convert', { lead_id: leadId, courses });
       if (r?.already) {
@@ -146,7 +149,8 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                   <th style={{ textAlign: 'left' }}>Vertical</th>
                   <th style={{ textAlign: 'left' }}>Course</th>
                   <th style={{ textAlign: 'left' }}>Fee (₹)</th>
-                  <th style={{ textAlign: 'left' }}>Discount (₹)</th>
+                  <th style={{ textAlign: 'left' }}>Discount</th>
+                  <th style={{ textAlign: 'left' }}>Net</th>
                   <th />
                 </tr></thead>
                 <tbody>
@@ -166,10 +170,26 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                           {coursesFor(r.vertical_id).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                       </td>
-                      <td><input className="ainp" type="number" style={{ width: 90 }} value={r.fee}
-                        onChange={(e) => setRow(i, { fee: e.target.value })} placeholder="0" /></td>
-                      <td><input className="ainp" type="number" style={{ width: 90 }} value={r.discount}
-                        onChange={(e) => setRow(i, { discount: e.target.value })} placeholder="0" /></td>
+                      <td><input className="ainp" type="number" style={{ width: 80 }} value={r.fee}
+                        onChange={(e) => setRow(i, { fee: e.target.value })} placeholder="0" data-testid={`conv-fee-${i}`} /></td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <select className="ainp" style={{ width: 64 }} value={r.disc_type}
+                            onChange={(e) => setRow(i, { disc_type: e.target.value as EnrolDiscountType, disc_value: '' })} data-testid={`conv-disc-type-${i}`}>
+                            <option value="none">—</option>
+                            <option value="amount">₹</option>
+                            <option value="percent">%</option>
+                          </select>
+                          <input className="ainp" type="number" style={{ width: 70 }} value={r.disc_value} disabled={r.disc_type === 'none'}
+                            onChange={(e) => setRow(i, { disc_value: e.target.value })} placeholder="0" data-testid={`conv-disc-value-${i}`} />
+                        </div>
+                      </td>
+                      <td data-testid={`conv-net-${i}`}>{(() => {
+                        const gross = Math.round(Number(r.fee || 0) * 100);
+                        const val = r.disc_type === 'percent' ? Number(r.disc_value || 0) : Math.round(Number(r.disc_value || 0) * 100);
+                        const { discount_minor, net_minor } = enrolDiscount(gross, r.disc_type, val);
+                        return <span title={`Discount ${fmtINR(discount_minor)}`}>{fmtINR(net_minor)}</span>;
+                      })()}</td>
                       <td>{rows.length > 1 && (
                         <button className="ax" title="Remove" onClick={() => removeRow(i)}><Ic k="x" /></button>
                       )}</td>

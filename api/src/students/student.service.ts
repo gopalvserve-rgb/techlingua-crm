@@ -10,6 +10,8 @@ import { StorageService } from '../storage/storage.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
 import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVENUE_CANCELLING_STATUSES, lmsBlockedMessage, combineAccess, ENROLMENT_STATUSES } from './lms-access';
 import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
+import { computeEnrolmentDiscount, EnrolmentDiscountType } from '../enrolments/discount.util';
+import { FinanceSettingsService } from '../finance/finance-settings.service';
 
 /**
  * STUDENT — the PHASE-2 student profile. A student is born TWO ways:
@@ -65,12 +67,40 @@ export class StudentService {
     /** RBAC grants — to check the SECONDARY `student.status_manage` permission for sensitive
      *  status changes (the route guard is student.update; the sensitive gate is here). */
     private readonly rbacData?: RbacDataService,
+    /** Finance caps — enforce the discount capping (%/₹) on enrolment discounts (item 4). */
+    private readonly finance?: FinanceSettingsService,
   ) {}
 
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
     if (!r) throw new NotFoundException('No organisation');
     return Number(r.id);
+  }
+
+  /** ITEM 4 — resolve an enrolment's discount from the form. A discount is EITHER an amount
+   *  (₹, paise) OR a percentage (%) on the gross fee; the discount AMOUNT + NET are computed
+   *  here (never trust a client net). Legacy payloads (only discount_minor) read as an amount.
+   *  Then enforce the finance discount cap (%/₹) — over-cap throws 400. */
+  private async resolveDiscount(feeMinor: number, dto: any, verticalId: number | null, actorId: number) {
+    const rawType = String(dto?.discount_type ?? '').trim().toLowerCase();
+    let type: EnrolmentDiscountType; let value: number;
+    if (rawType === 'percent') { type = 'percent'; value = Number(dto?.discount_value ?? 0); }
+    else if (rawType === 'amount') {
+      type = 'amount';
+      value = dto?.discount_value != null && String(dto.discount_value).trim() !== ''
+        ? Math.trunc(Number(dto.discount_value)) : Math.trunc(Number(dto?.discount_minor ?? 0));
+    } else if (rawType === 'none') { type = 'none'; value = 0; }
+    else { const amt = Math.trunc(Number(dto?.discount_minor ?? 0)); type = amt > 0 ? 'amount' : 'none'; value = amt; }
+    let d;
+    try { d = computeEnrolmentDiscount(feeMinor, type, value); }
+    catch (e) { throw new BadRequestException((e as Error).message); }
+    if (this.finance) {
+      await this.finance.assertAllowed({
+        verticalId, userId: actorId, kind: 'discount',
+        base: d.gross_fee_minor, discount: d.discount_amount_minor, label: 'Enrolment discount',
+      });
+    }
+    return d;
   }
 
   /* ------------------------------------------------------------------ reads */
@@ -1129,7 +1159,8 @@ export class StudentService {
   async createConvertEnrolments(studentId: number, leadId: number, lead: any, rows: any[], me: { id: number }) {
     const orgId = await this.orgId();
     type R = { courseId: number; courseName: string; branchId: number; verticalId: number;
-      batchId: number | null; feeMinor: number; disc: number; net: number; plan: string; startDate: string | null };
+      batchId: number | null; feeMinor: number; disc: number; net: number; plan: string; startDate: string | null;
+      discount_type: string; discount_value: number };
     const resolved: R[] = [];
     for (const row of rows) {
       const courseId = row?.course_id ? Number(row.course_id) : null;
@@ -1152,16 +1183,16 @@ export class StudentService {
         const masterFee = Number((course.meta as any)?.fee ?? 0);
         feeMinor = Math.round((Number.isFinite(masterFee) ? masterFee : 0) * 100);
       }
-      const disc = row?.discount_minor != null && String(row.discount_minor).trim() !== '' ? Number(row.discount_minor) : 0;
-      if (!Number.isFinite(feeMinor) || feeMinor < 0 || !Number.isFinite(disc) || disc < 0) {
-        throw new BadRequestException('Fee and discount must be non-negative.');
-      }
-      const net = row?.net_fee_minor != null && String(row.net_fee_minor).trim() !== '' ? Number(row.net_fee_minor) : Math.max(0, feeMinor - disc);
+      if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new BadRequestException('Fee must be a non-negative amount.');
+      const dsc = await this.resolveDiscount(feeMinor, row, verticalId, me.id);
+      const disc = dsc.discount_amount_minor;
+      const net = dsc.net_fee_minor;
       const plan = String(row?.payment_plan ?? 'full');
       if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
       const startDate = row?.start_date != null && String(row.start_date).trim() !== ''
         ? requireDateString(String(row.start_date), () => { throw new BadRequestException('Invalid start date.'); }) : null;
-      resolved.push({ courseId, courseName: course.name, branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate });
+      resolved.push({ courseId, courseName: course.name, branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate,
+        discount_type: dsc.discount_type, discount_value: dsc.discount_value });
     }
     const out: any[] = [];
     await this.db.tx(async (c) => {
@@ -1170,14 +1201,17 @@ export class StudentService {
         const ins = await c.query<{ id: string }>(
           `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
                                   course_id, batch_id, student_profile_id, fee_minor, discount_minor,
-                                  net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by)
+                                  net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by,
+                                  gross_fee_minor, discount_type, discount_value, discount_amount_minor)
            VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
                    $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
-                   $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint)
+                   $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
+                   $17::bigint,$18::varchar,$19::numeric,$20::bigint)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, r.branchId, r.verticalId, lead.owner_id ?? me.id,
             r.courseId, r.batchId, studentId, r.feeMinor, r.disc, r.net, r.plan, r.startDate,
-            `Enrolled in ${r.courseName} on conversion`, me.id]);
+            `Enrolled in ${r.courseName} on conversion`, me.id,
+            r.feeMinor, r.discount_type, r.discount_value, r.disc]);
         const eid = Number(ins.rows[0].id);
         await c.query(
           `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
@@ -1186,7 +1220,8 @@ export class StudentService {
           [orgId, r.branchId, r.verticalId, eid, studentId, r.courseId,
             `Enrolled in ${r.courseName}`, r.startDate, r.net, me.id]);
         out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName,
-          vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected' });
+          vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected',
+          gross_fee_minor: r.feeMinor, discount_type: r.discount_type, discount_value: r.discount_value, discount_amount_minor: r.disc });
       }
     });
     return out;
@@ -1562,9 +1597,10 @@ export class StudentService {
       if (!b) throw new BadRequestException("That batch is not in this student's vertical.");
     }
     const fee = Number(dto?.fee_minor ?? 0);
-    const disc = Number(dto?.discount_minor ?? 0);
-    if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(disc) || disc < 0) throw new BadRequestException('Fee and discount must be non-negative.');
-    const net = dto?.net_fee_minor != null && String(dto.net_fee_minor).trim() !== '' ? Number(dto.net_fee_minor) : Math.max(0, fee - disc);
+    if (!Number.isFinite(fee) || fee < 0) throw new BadRequestException('Fee must be a non-negative amount.');
+    const dsc = await this.resolveDiscount(fee, dto, student.vertical_id != null ? Number(student.vertical_id) : null, me.id);
+    const disc = dsc.discount_amount_minor;
+    const net = dsc.net_fee_minor;
     const plan = String(dto?.payment_plan ?? 'full');
     if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
     const startDate = dto?.start_date != null && String(dto.start_date).trim() !== ''
@@ -1577,14 +1613,17 @@ export class StudentService {
       const r = await c.query<{ id: string }>(
         `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
                                 course_id, batch_id, student_profile_id, fee_minor, discount_minor,
-                                net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by)
+                                net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by,
+                                gross_fee_minor, discount_type, discount_value, discount_amount_minor)
          VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
                  $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
-                 $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint)
+                 $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
+                 $17::bigint,$18::varchar,$19::numeric,$20::bigint)
          RETURNING id`,
         [orgId, enrolmentNo, student.lead_id ?? null, student.branch_id, student.vertical_id,
           student.owner_id ?? me.id, courseId, batchId, id, fee, disc, net, plan, startDate,
-          dto?.remarks ?? null, me.id]);
+          dto?.remarks ?? null, me.id,
+          dsc.gross_fee_minor, dsc.discount_type, dsc.discount_value, dsc.discount_amount_minor]);
       const eid = Number(r.rows[0].id);
       await c.query(
         `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
@@ -1594,7 +1633,9 @@ export class StudentService {
           `Enrolled in ${course.name}`, startDate, net, me.id]);
       return { id: eid, enrolment_no: enrolmentNo };
     });
-    return { ...out, course_id: courseId, course_name: course.name, status: 'active', course_status: 'active' };
+    return { ...out, course_id: courseId, course_name: course.name, status: 'active', course_status: 'active',
+      gross_fee_minor: dsc.gross_fee_minor, discount_type: dsc.discount_type, discount_value: dsc.discount_value,
+      discount_amount_minor: dsc.discount_amount_minor, net_fee_minor: dsc.net_fee_minor };
   }
 
   /** CHANGE a SINGLE enrolment's status — mirrors the student status endpoint. Per-status

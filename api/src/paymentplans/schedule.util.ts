@@ -37,6 +37,10 @@ export interface ScheduleInput {
   start_date: string;         // 'YYYY-MM-DD' — first due date
   /** CUSTOM only: explicit due dates for each installment (overrides frequency spacing) */
   custom_dates?: string[];
+  /** CUSTOM only: explicit installment AMOUNTS (paise). When given, they REPLACE the equal
+   *  split — the client types each installment's amount and they must sum to the remaining
+   *  payable (total − down payment). The count of installments becomes custom_amounts.length. */
+  custom_amounts?: number[];
 }
 
 export interface ScheduleRow {
@@ -121,16 +125,33 @@ export function generateSchedule(input: ScheduleInput): ScheduleRow[] {
     return [{ seq_no: 1, due_date: ymd(input.start_date), amount_minor: total, label: 'Full payment' }];
   }
 
-  const n = Math.trunc(Number(input.num_installments));
-  if (!Number.isFinite(n) || n < 1) throw new Error('installment count must be 1 or more');
+  const remainder = total - down;
+  // CUSTOM amounts: the caller supplied each installment's amount — they must sum EXACTLY to
+  // the remaining payable (total − down). This is the client's "custom" plan: user-defined
+  // amounts + due dates. We validate the sum here so a plan that does not add up is rejected.
+  const hasCustomAmounts = input.plan_type === 'custom'
+    && Array.isArray(input.custom_amounts) && input.custom_amounts.length > 0;
+  let parts: number[];
+  let n: number;
+  if (hasCustomAmounts) {
+    parts = (input.custom_amounts as number[]).map((a) => Math.trunc(Number(a)));
+    if (parts.some((a) => !Number.isFinite(a) || a < 0)) throw new Error('every custom installment amount must be a non-negative amount');
+    n = parts.length;
+    const psum = parts.reduce((a, b) => a + b, 0);
+    if (psum !== remainder) {
+      throw new Error(`the custom installment amounts (${psum}) must sum to the payable after down payment (${remainder})`);
+    }
+  } else {
+    n = Math.trunc(Number(input.num_installments));
+    if (!Number.isFinite(n) || n < 1) throw new Error('installment count must be 1 or more');
+    parts = splitEvenly(remainder, n);
+  }
 
   const rows: ScheduleRow[] = [];
   let seq = 1;
-  const remainder = total - down;
   if (down > 0) {
     rows.push({ seq_no: seq++, due_date: ymd(input.start_date), amount_minor: down, label: 'Down payment' });
   }
-  const parts = splitEvenly(remainder, n);
   // when there IS a down payment, the N installments start one period AFTER the start date
   const baseOffset = down > 0 ? 1 : 0;
   for (let i = 0; i < n; i++) {

@@ -8,6 +8,7 @@ import { ApprovalService, requiredSteps } from './approval.service';
 import { requireDateString, assertDateRange } from '../common/date.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { stageOrdinal } from './admission-journey.util';
+import { computeEnrolmentDiscount, EnrolmentDiscountType } from './discount.util';
 
 /**
  * ENROLMENT — the SALE CLOSURE record. "Sale closure = enrolment" (§5).
@@ -217,16 +218,19 @@ export class EnrolmentService {
           `INSERT INTO enrolment (org_id, enrolment_no, lead_id, quotation_id, branch_id, vertical_id,
                                   pipeline_id, campaign_id, counsellor_id, team_id, course_id,
                                   fee_minor, discount_minor, net_fee_minor, payment_plan,
-                                  first_payment_minor, plan_note, start_date, status, remarks, created_by)
+                                  first_payment_minor, plan_note, start_date, status, remarks, created_by,
+                                  gross_fee_minor, discount_type, discount_value, discount_amount_minor)
            VALUES ($1::bigint, $2::varchar, $3::bigint, $4::bigint, $5::bigint, $6::bigint,
                    $7::bigint, $8::bigint, $9::bigint, $10::bigint, $11::bigint,
                    $12::bigint, $13::bigint, $14::bigint, $15::varchar,
-                   $16::bigint, $17, $18::date, $19::varchar, $20, $21::bigint)
+                   $16::bigint, $17, $18::date, $19::varchar, $20, $21::bigint,
+                   $22::bigint, $23::varchar, $24::numeric, $25::bigint)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, quotationId, lead.branch_id, lead.vertical_id,
             lead.pipeline_id ?? null, lead.campaign_id ?? null, counsellorId, lead.team_id ?? null, courseId,
             money.fee_minor, money.discount_minor, money.net_fee_minor, plan,
-            money.first_payment_minor, dto?.plan_note ?? null, startDate, status, dto?.remarks ?? null, me.id],
+            money.first_payment_minor, dto?.plan_note ?? null, startDate, status, dto?.remarks ?? null, me.id,
+            money.gross_fee_minor, money.discount_type, money.discount_value, money.discount_amount_minor],
         );
         id = Number(r.rows[0].id);
       } catch (e) {
@@ -317,6 +321,10 @@ export class EnrolmentService {
       fee: dto?.fee, fee_minor: dto?.fee_minor ?? (dto?.fee === undefined ? cur.fee_minor : undefined),
       discount: dto?.discount,
       discount_minor: dto?.discount_minor ?? (dto?.discount === undefined ? cur.discount_minor : undefined),
+      // carry the discount ENTRY MODE through an edit (a % discount re-saved stays a %),
+      // defaulting to whatever the enrolment currently holds when the form omits it.
+      discount_type: dto?.discount_type ?? (dto?.discount === undefined && dto?.discount_minor === undefined && dto?.discount_value === undefined ? cur.discount_type : undefined),
+      discount_value: dto?.discount_value ?? (dto?.discount_type === undefined && dto?.discount === undefined && dto?.discount_minor === undefined ? cur.discount_value : undefined),
       first_payment: dto?.first_payment,
       first_payment_minor: dto?.first_payment_minor ?? (dto?.first_payment === undefined ? cur.first_payment_minor : undefined),
     });
@@ -344,14 +352,18 @@ export class EnrolmentService {
             SET course_id = $2::bigint, fee_minor = $3::bigint, discount_minor = $4::bigint,
                 net_fee_minor = $5::bigint, payment_plan = $6::varchar, first_payment_minor = $7::bigint,
                 plan_note = $8, start_date = $9::date, counsellor_id = $10::bigint,
-                remarks = $11, updated_at = now()
+                remarks = $11,
+                gross_fee_minor = $12::bigint, discount_type = $13::varchar,
+                discount_value = $14::numeric, discount_amount_minor = $15::bigint,
+                updated_at = now()
           WHERE id = $1::bigint`,
         [id, dto?.course_id === undefined ? cur.course_id : (dto.course_id || null),
           money.fee_minor, money.discount_minor, money.net_fee_minor, plan, money.first_payment_minor,
           dto?.plan_note === undefined ? cur.plan_note : dto.plan_note,
           dto?.start_date === undefined ? cur.start_date : this.date(dto.start_date),
           dto?.counsellor_id === undefined ? cur.counsellor_id : (dto.counsellor_id || null),
-          dto?.remarks === undefined ? cur.remarks : dto.remarks],
+          dto?.remarks === undefined ? cur.remarks : dto.remarks,
+          money.gross_fee_minor, money.discount_type, money.discount_value, money.discount_amount_minor],
       );
       await this.activity(c, Number(cur.lead_id), me.id, `Enrolment ${cur.enrolment_no} updated`);
     });
@@ -400,7 +412,8 @@ export class EnrolmentService {
    * net, and we ignore it. A net that disagrees with its own fee and discount is the
    * kind of thing that is only discovered by an accountant, in April.
    */
-  normaliseMoney(dto: any): { fee_minor: number; discount_minor: number; net_fee_minor: number; first_payment_minor: number } {
+  normaliseMoney(dto: any): { fee_minor: number; discount_minor: number; net_fee_minor: number; first_payment_minor: number;
+      discount_type: EnrolmentDiscountType; discount_value: number; gross_fee_minor: number; discount_amount_minor: number } {
     const m = (rup: unknown, minor: unknown, label: string): number => {
       try {
         const v = minor !== undefined && minor !== null ? Math.trunc(Number(minor)) : rupeesToMinor(rup);
@@ -409,10 +422,36 @@ export class EnrolmentService {
       } catch (e) { throw new BadRequestException(`${label}: ${(e as Error).message}`); }
     };
     const fee_minor = m(dto?.fee, dto?.fee_minor, 'Total fee');
-    const discount_minor = m(dto?.discount, dto?.discount_minor, 'Discount');
-    if (discount_minor > fee_minor) throw new BadRequestException('The discount cannot be more than the total fee.');
+
+    // ITEM 4 — a discount is EITHER an amount (₹) OR a percentage (%), on the gross fee. The
+    // discount AMOUNT + NET are recomputed here (the client never dictates the net). Legacy
+    // callers that send only `discount`/`discount_minor` are read as an amount discount.
+    const rawType = String(dto?.discount_type ?? '').trim().toLowerCase();
+    let discount: ReturnType<typeof computeEnrolmentDiscount>;
+    if (rawType === 'percent') {
+      const pct = Number(dto?.discount_value ?? dto?.discount_pct ?? 0);
+      try { discount = computeEnrolmentDiscount(fee_minor, 'percent', pct); }
+      catch (e) { throw new BadRequestException((e as Error).message); }
+    } else if (rawType === 'amount') {
+      const amt = dto?.discount_value != null && String(dto.discount_value).trim() !== ''
+        ? m(undefined, dto.discount_value, 'Discount') : m(dto?.discount, dto?.discount_minor, 'Discount');
+      if (amt > fee_minor) throw new BadRequestException('The discount cannot be more than the total fee.');
+      discount = computeEnrolmentDiscount(fee_minor, 'amount', amt);
+    } else if (rawType === 'none') {
+      discount = computeEnrolmentDiscount(fee_minor, 'none', 0);
+    } else {
+      // no explicit type — infer from the legacy amount field.
+      const amt = m(dto?.discount, dto?.discount_minor, 'Discount');
+      if (amt > fee_minor) throw new BadRequestException('The discount cannot be more than the total fee.');
+      discount = computeEnrolmentDiscount(fee_minor, amt > 0 ? 'amount' : 'none', amt);
+    }
     const first_payment_minor = m(dto?.first_payment, dto?.first_payment_minor, 'First payment');
-    return { fee_minor, discount_minor, net_fee_minor: fee_minor - discount_minor, first_payment_minor };
+    return {
+      fee_minor, discount_minor: discount.discount_amount_minor, net_fee_minor: discount.net_fee_minor,
+      first_payment_minor,
+      discount_type: discount.discount_type, discount_value: discount.discount_value,
+      gross_fee_minor: discount.gross_fee_minor, discount_amount_minor: discount.discount_amount_minor,
+    };
   }
 
   /** DEF-S16-02's sibling: identical shape, one call away from the identical bug. */

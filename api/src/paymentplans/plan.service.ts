@@ -187,12 +187,29 @@ export class PlanService {
     const startDate = toDateString(dto?.start_date) || toDateString(e.start_date) || new Date().toISOString().slice(0, 10);
     const customDates = Array.isArray(dto?.custom_dates)
       ? dto.custom_dates.map((d: unknown) => toDateString(d)).filter(Boolean) as string[] : undefined;
+    // CUSTOM amounts (item 4): the client typed each installment's amount. Accept paise
+    // (custom_amounts_minor) or rupees (custom_amounts); they must sum to (net − down) or
+    // generateSchedule throws — which we surface as a 400.
+    let customAmounts: number[] | undefined;
+    if (Array.isArray(dto?.custom_amounts_minor) && dto.custom_amounts_minor.length) {
+      customAmounts = dto.custom_amounts_minor.map((a: unknown) => Math.trunc(Number(a)));
+    } else if (Array.isArray(dto?.custom_amounts) && dto.custom_amounts.length) {
+      customAmounts = dto.custom_amounts.map((a: unknown) => rupeesToMinor(a));
+    }
+    const effInstallments = planType === 'custom' && customAmounts?.length ? customAmounts.length : numInstallments;
 
-    // Build (and self-validate) the schedule BEFORE we write anything.
-    const schedule = generateSchedule({
-      plan_type: planType, total_minor: total, down_payment_minor: downPayment,
-      num_installments: numInstallments, frequency, start_date: startDate as string, custom_dates: customDates,
-    });
+    // Build (and self-validate) the schedule BEFORE we write anything. A schedule that does
+    // not sum to the net (custom amounts) is a BadRequest, not a 500.
+    let schedule;
+    try {
+      schedule = generateSchedule({
+        plan_type: planType, total_minor: total, down_payment_minor: downPayment,
+        num_installments: effInstallments, frequency, start_date: startDate as string,
+        custom_dates: customDates, custom_amounts: customAmounts,
+      });
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
+    }
 
     const orgId = await this.orgId();
     return this.db.tx(async (c) => {
@@ -202,7 +219,7 @@ export class PlanService {
           `INSERT INTO payment_plan (org_id, enrolment_id, plan_type, frequency, total_minor,
                                      down_payment_minor, num_installments, start_date, note, created_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,$9,$10) RETURNING id`,
-          [orgId, enrolmentId, planType, frequency, total, downPayment, numInstallments, startDate, dto?.note ?? null, me.id],
+          [orgId, enrolmentId, planType, frequency, total, downPayment, schedule.filter((r) => r.label !== 'Down payment').length || 1, startDate, dto?.note ?? null, me.id],
         );
         planId = Number(r.rows[0].id);
       } catch (err) {

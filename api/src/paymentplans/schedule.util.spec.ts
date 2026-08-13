@@ -79,4 +79,26 @@ describe('generateSchedule — sums to the total, always', () => {
   it('rejects a down payment larger than the total', () => {
     expect(() => generateSchedule({ plan_type: 'installment', total_minor: 1000, down_payment_minor: 2000, num_installments: 2, frequency: 'monthly', start_date: '2026-09-01' })).toThrow(/down payment/i);
   });
+
+  it('CUSTOM amounts (down payment + user-defined installments) sum to the net', () => {
+    // ₹18,000 net, ₹6,000 down, then custom 5000 + 4000 + 3000 = 12000 (== 18000-6000).
+    const rows = generateSchedule({
+      plan_type: 'custom', total_minor: 1800000, down_payment_minor: 600000,
+      num_installments: 3, frequency: 'custom', start_date: '2026-09-01',
+      custom_dates: ['2026-10-01', '2026-11-01', '2026-12-01'],
+      custom_amounts: [500000, 400000, 300000],
+    });
+    expect(rows[0].label).toBe('Down payment');
+    expect(rows[0].amount_minor).toBe(600000);
+    expect(rows.slice(1).map((r) => r.amount_minor)).toEqual([500000, 400000, 300000]);
+    expect(rows.reduce((a, r) => a + r.amount_minor, 0)).toBe(1800000);
+  });
+
+  it('CUSTOM amounts that do NOT sum to the payable are rejected', () => {
+    expect(() => generateSchedule({
+      plan_type: 'custom', total_minor: 1800000, down_payment_minor: 600000,
+      num_installments: 2, frequency: 'custom', start_date: '2026-09-01',
+      custom_amounts: [500000, 400000],   // 900000 != 1200000
+    })).toThrow(/must sum to the payable/i);
+  });
 });
