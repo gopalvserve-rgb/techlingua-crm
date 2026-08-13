@@ -1313,11 +1313,11 @@ export class StudentService {
          LEFT JOIN m_course c ON c.id = m.course_id
          LEFT JOIN batch bt ON bt.id = m.batch_id
         WHERE m.deleted_at IS NULL AND m.visibility = 'published'
-          AND ( (m.access_level = 'batch' AND m.batch_id = $2::bigint)
-             OR (m.access_level = 'course' AND m.course_id = $3::bigint)
-             OR (m.access_level = 'vertical' AND m.vertical_id = $4::bigint) )
+          AND ( (m.access_level = 'batch' AND m.batch_id = $1::bigint)
+             OR (m.access_level = 'course' AND m.course_id = $2::bigint)
+             OR (m.access_level = 'vertical' AND m.vertical_id = $3::bigint) )
         ORDER BY m.created_at DESC`,
-      [id, student.batch_id ?? null, student.course_id ?? null, student.vertical_id ?? null]);
+      [student.batch_id ?? null, student.course_id ?? null, student.vertical_id ?? null]);
     const courseContent = await this.db.query<any>(
       `SELECT id, title, module_no, description, created_at FROM course_content
         WHERE deleted_at IS NULL AND workflow_status = 'published' AND course_id = $1::bigint

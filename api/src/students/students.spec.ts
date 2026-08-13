@@ -612,6 +612,25 @@ describe('StudentService.changeStatus + lifecycle', () => {
     expect(has(issued, /INSERT INTO student_status_history/)).toBe(false);
   });
 
+  it('lmsContent runs the material/content/syllabus reads and returns the access summary (active → can_attempt)', async () => {
+    const { svc, issued } = makeStatus({ student: STUDENT({ status: 'active', status_label: 'Active', lms_access: 'full' }) });
+    const out: any = await svc.lmsContent(7, scope);
+    expect(out.lms_access).toBe('full');
+    expect(out.can_attempt).toBe(true);
+    expect(out.can_view_material).toBe(true);
+    // every param a query names must be referenced (guards the "$1 unreferenced" 500)
+    expect(has(issued, /FROM study_material m/)).toBe(true);
+    expect(has(issued, /FROM course_content/)).toBe(true);
+    expect(has(issued, /FROM syllabus/)).toBe(true);
+    const mat = issued.find((i) => /FROM study_material m/.test(i.sql))!;
+    for (let n = 1; n <= mat.params.length; n++) expect(mat.sql.includes(`$${n}`)).toBe(true);
+  });
+
+  it('lmsContent throws 403 for a NONE-access status (suspended)', async () => {
+    const { svc } = makeStatus({ student: STUDENT({ status: 'suspended', status_label: 'Suspended' }) });
+    await expect(svc.lmsContent(7, scope)).rejects.toThrow(/LMS access NONE/i);
+  });
+
   it('the list STATUS filter is a genuine multi-select (narrows via ANY)', async () => {
     const { svc, issued } = makeStatus({});
     await svc.list(scope, { status: 'on_hold,suspended' });
