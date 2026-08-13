@@ -987,7 +987,18 @@ export class StudentService {
         student_id: Number(out.id), vertical_id: Number(lead.vertical_id), dedupe: `welcome:${out.id}`,
         vars: { student_no: out.student_no, enrollment_no: out.enrollment_no },
       });
-      return { ...out, already: false, lead_id: leadId };
+      // Item 1 — MULTI-COURSE / MULTI-VERTICAL CONVERT. If the caller sent a `courses[]`
+      // array (each row a {vertical_id, course_id, batch_id?, fee_minor?} selection), create
+      // ONE enrolment per selected course for the fresh student, each linked to the lead
+      // (so the Admission Journey's Lead stage resolves) and each starting at an EARLY
+      // admission_stage (course_selected — NOT admitted; it must still go through payment →
+      // invoice → approval → confirmation → admit). Fees auto-fetched from the Course master
+      // (editable). Back-compat: no `courses[]` => the classic single-course convert.
+      const courseRows: any[] = Array.isArray(dto?.courses) ? dto.courses : [];
+      const createdEnrolments = courseRows.length
+        ? await this.createConvertEnrolments(Number(out.id), leadId, lead, courseRows, me)
+        : [];
+      return { ...out, already: false, lead_id: leadId, enrolments: createdEnrolments };
     } catch (e) {
       if ((e as { code?: string })?.code === '23505' && String((e as Error).message).includes('uq_student_lead')) {
         const s = await this.db.one<any>(
@@ -1102,6 +1113,83 @@ export class StudentService {
     let deleted = 0;
     for (const id of ok) { await this.remove(id, me, scope); deleted++; }
     return { deleted, skipped: this.idList(raw).length - deleted };
+  }
+
+  /**
+   * ITEM 1 — create N enrolments for a freshly-converted student, one per selected
+   * {vertical_id, course_id, batch_id?, fee/discount?} row. REUSES the per-enrolment create
+   * shape from `addEnrolment` (dev/72): each enrolment carries the originating `lead_id`
+   * (so the Admission Journey Lead stage resolves to the real lead + date), `student_profile_id`
+   * (so it is exempt from `uq_enrolment_lead` and a student may hold MANY course enrolments),
+   * and the migration-075 default `admission_stage='course_selected'` (an EARLY stage — the
+   * enrolment is NOT auto-admitted). Fee is taken from the row, else auto-fetched from the
+   * Course master (`m_course.meta.fee`, rupees -> paise). All rows are validated FIRST, then
+   * inserted in ONE transaction (atomic — a bad row rejects the whole set with a 400).
+   */
+  async createConvertEnrolments(studentId: number, leadId: number, lead: any, rows: any[], me: { id: number }) {
+    const orgId = await this.orgId();
+    type R = { courseId: number; courseName: string; branchId: number; verticalId: number;
+      batchId: number | null; feeMinor: number; disc: number; net: number; plan: string; startDate: string | null };
+    const resolved: R[] = [];
+    for (const row of rows) {
+      const courseId = row?.course_id ? Number(row.course_id) : null;
+      if (!courseId) throw new BadRequestException('Each selected course row must name a course.');
+      const course = await this.db.one<any>(`SELECT id, name, meta FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
+      if (!course) throw new BadRequestException('Unknown course in the selection.');
+      const verticalId = row?.vertical_id ? Number(row.vertical_id) : Number(lead.vertical_id);
+      const branchId = row?.branch_id ? Number(row.branch_id) : Number(lead.branch_id);
+      const batchId = row?.batch_id != null && String(row.batch_id).trim() !== '' ? Number(row.batch_id) : null;
+      if (batchId != null) {
+        const b = await this.db.one<any>(
+          `SELECT id FROM batch WHERE id = $1::bigint AND deleted_at IS NULL AND vertical_id = $2::bigint`,
+          [batchId, verticalId]);
+        if (!b) throw new BadRequestException(`The chosen batch is not in the "${course.name}" vertical.`);
+      }
+      let feeMinor: number;
+      if (row?.fee_minor != null && String(row.fee_minor).trim() !== '') {
+        feeMinor = Number(row.fee_minor);
+      } else {
+        const masterFee = Number((course.meta as any)?.fee ?? 0);
+        feeMinor = Math.round((Number.isFinite(masterFee) ? masterFee : 0) * 100);
+      }
+      const disc = row?.discount_minor != null && String(row.discount_minor).trim() !== '' ? Number(row.discount_minor) : 0;
+      if (!Number.isFinite(feeMinor) || feeMinor < 0 || !Number.isFinite(disc) || disc < 0) {
+        throw new BadRequestException('Fee and discount must be non-negative.');
+      }
+      const net = row?.net_fee_minor != null && String(row.net_fee_minor).trim() !== '' ? Number(row.net_fee_minor) : Math.max(0, feeMinor - disc);
+      const plan = String(row?.payment_plan ?? 'full');
+      if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
+      const startDate = row?.start_date != null && String(row.start_date).trim() !== ''
+        ? requireDateString(String(row.start_date), () => { throw new BadRequestException('Invalid start date.'); }) : null;
+      resolved.push({ courseId, courseName: course.name, branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate });
+    }
+    const out: any[] = [];
+    await this.db.tx(async (c) => {
+      for (const r of resolved) {
+        const enrolmentNo = await this.numbering.allocate('enrolment', { branch_id: r.branchId, vertical_id: r.verticalId }, c);
+        const ins = await c.query<{ id: string }>(
+          `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
+                                  course_id, batch_id, student_profile_id, fee_minor, discount_minor,
+                                  net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by)
+           VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
+                   $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
+                   $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint)
+           RETURNING id`,
+          [orgId, enrolmentNo, leadId, r.branchId, r.verticalId, lead.owner_id ?? me.id,
+            r.courseId, r.batchId, studentId, r.feeMinor, r.disc, r.net, r.plan, r.startDate,
+            `Enrolled in ${r.courseName} on conversion`, me.id]);
+        const eid = Number(ins.rows[0].id);
+        await c.query(
+          `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
+               from_status, to_status, reason, effective_date, outstanding_minor, changed_by)
+           VALUES ($1::bigint,$2,$3,$4::bigint,$5::bigint,$6::bigint,NULL,'active',$7,$8::date,$9::bigint,$10::bigint)`,
+          [orgId, r.branchId, r.verticalId, eid, studentId, r.courseId,
+            `Enrolled in ${r.courseName}`, r.startDate, r.net, me.id]);
+        out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName,
+          vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected' });
+      }
+    });
+    return out;
   }
 
   /* -------------------------------------------------- bulk convert (leads -> students) */

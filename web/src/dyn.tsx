@@ -133,7 +133,7 @@ const fmtDate = (v?: string | null) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const LEAD_COLS = ['Lead', 'Course', 'Vertical · Pipeline', 'Source', 'Score', 'Owner', 'Stage', 'Next follow-up'];
+const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Owner', 'Stage', 'Next follow-up'];
 
 /* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
 const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
@@ -196,8 +196,10 @@ function leadRow(l: any): Cell[] {
         <Avatar name={l.full_name} />
         <div><div className="nm">{l.full_name}</div><div className="sub mono">{l.phone}</div></div>
       </div>) },
+    dn(l.branch_name, l.branch_deleted) || '—',
     l.course_name || '—',
     `${dn(l.vertical_name, l.vertical_deleted)} · ${dn(l.pipeline_name, l.pipeline_deleted)}`,
+    dn(l.campaign_name, l.campaign_deleted) || '—',
     { b: [dn(l.source_name, l.source_deleted) || '—', 'b-indigo'] },
     { node: (
       <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1193,6 +1195,7 @@ function LeadsAll() {
   const [flagLead, setFlagLead] = useState<{ id: number; name?: string; flagged?: boolean } | null>(null);
   const canConvert = can('student.create');
   const [convertLead, setConvertLead] = useState<{ id: number; name?: string } | null>(null);
+  const [journeyStud, setJourneyStud] = useState<{ id: number; full_name?: string } | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume' | 'delete' | 'convert'>(null);
   const [transferLead, setTransferLead] = useState<{ id: number; name?: string } | null>(null);
@@ -1395,7 +1398,10 @@ function LeadsAll() {
       {flagLead && <RedFlagModal leadId={flagLead.id} leadName={flagLead.name} flagged={flagLead.flagged}
         onDone={() => { setFlagLead(null); bump(); }} onClose={() => setFlagLead(null)} />}
       {convertLead && <ConvertStudentModal leadId={convertLead.id} leadName={convertLead.name}
-        onDone={bump} onClose={() => setConvertLead(null)} />}
+        onDone={bump} onClose={() => setConvertLead(null)}
+        onOpenJourney={(id, _no, name) => setJourneyStud({ id, full_name: name })} />}
+      {journeyStud && <StudentDetailModal student={journeyStud} initialTab="admission"
+        onClose={() => setJourneyStud(null)} onChanged={bump} />}
       {bulk === 'transfer' && <BulkTransferModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {bulk === 'reassign' && <BulkReassignModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {(bulk === 'pause' || bulk === 'resume') && <BulkPauseModal ids={selectedIds} action={bulk} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
@@ -4484,14 +4490,14 @@ function SiblingsSection({ studentId, branchId, verticalId, canEdit }: { student
   );
 }
 
-export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void }) {
+export function StudentDetailModal({ student, onClose, onChanged, onEdit, initialTab }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void; initialTab?: string }) {
   const { can } = useAuth();
   const canEdit = can('student.update');
   const [prof, setProf] = useState<any>(null);
   const [full, setFull] = useState<any>(student);
   const [batches, setBatches] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<string>('fees');
+  const [tab, setTab] = useState<string>(initialTab ?? 'fees');
   const [showTransfer, setShowTransfer] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
   const [addEnrol, setAddEnrol] = useState(false);

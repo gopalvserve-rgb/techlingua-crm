@@ -43,7 +43,8 @@ function make(opts: { lead?: any; existing?: any; enrolment?: any; wonStage?: an
       if (/FROM lead l\s+WHERE l\.id/.test(sql)) return opts.lead === null ? null : (opts.lead ?? LEAD());
       if (/FROM student WHERE lead_id/.test(sql)) return opts.existing ?? null;
       if (/FROM vertical WHERE id/.test(sql)) return { id: 3 };
-      if (/FROM m_course WHERE id/.test(sql)) return { id: 100 };
+      if (/FROM m_course WHERE id/.test(sql)) return { id: 100, name: 'French A1', meta: { fee: 45000, vertical_id: 3 } };
+      if (/FROM batch WHERE id/.test(sql)) return { id: 700 };
       if (/FROM enrolment\s+WHERE lead_id/.test(sql)) return opts.enrolment ?? null;
       return null;
     },
@@ -52,6 +53,7 @@ function make(opts: { lead?: any; existing?: any; enrolment?: any; wonStage?: an
       query: async (sql: string, params: unknown[] = []) => {
         issued.push({ sql, params });
         if (/INSERT INTO student/.test(sql)) return { rows: [{ id: 501 }] };
+        if (/INSERT INTO enrolment\b/.test(sql)) return { rows: [{ id: 900 + (issued.filter((i) => /INSERT INTO enrolment\b/.test(i.sql)).length) }] };
         if (/FROM pipeline_stage/.test(sql)) return { rows: opts.wonStage ? [opts.wonStage] : [] };
         return { rows: [] };
       },
@@ -108,6 +110,53 @@ describe('StudentService.convert', () => {
     const q = issued.find((i) => /FROM student s/.test(i.sql));
     expect(q).toBeTruthy();
     expect(q!.sql).toMatch(/s\.owner_id = \$/);
+  });
+});
+
+describe('StudentService.convert — multi-course / multi-vertical (item 1)', () => {
+  it('creates ONE enrolment per selected course, each linked to the lead + an early admission_stage', async () => {
+    const { svc, issued } = make({ wonStage: { id: 77, name: 'Won' } });
+    const out: any = await svc.convert({
+      lead_id: 10,
+      courses: [
+        { vertical_id: 3, course_id: 100, fee_minor: 4500000 },
+        { vertical_id: 7, course_id: 101, fee_minor: 3000000 },
+      ],
+    }, { id: 5 }, scopeAll);
+    expect(out.already).toBe(false);
+    expect(has(issued, /INSERT INTO student/)).toBe(true);
+    // exactly TWO enrolments inserted, each with the lead id threaded through
+    const enrolIns = issued.filter((i) => /INSERT INTO enrolment\b/.test(i.sql));
+    expect(enrolIns.length).toBe(2);
+    expect(enrolIns.every((i) => (i.params as any[]).includes(10))).toBe(true);   // lead_id present
+    // service returns the created enrolments, each starting at the early stage
+    expect(Array.isArray(out.enrolments)).toBe(true);
+    expect(out.enrolments.length).toBe(2);
+    expect(out.enrolments.every((e: any) => e.admission_stage === 'course_selected')).toBe(true);
+    expect(out.enrolments.map((e: any) => e.vertical_id)).toEqual([3, 7]);        // two DIFFERENT verticals
+    // each enrolment writes a status-history row
+    expect(issued.filter((i) => /INSERT INTO enrolment_status_history/.test(i.sql)).length).toBe(2);
+  });
+
+  it('auto-fetches the fee from the Course master when a row omits fee_minor', async () => {
+    const { svc, issued } = make();
+    const out: any = await svc.convert({ lead_id: 10, courses: [{ vertical_id: 3, course_id: 100 }] }, { id: 5 }, scopeAll);
+    // mock m_course meta.fee = 45000 rupees -> 4_500_000 paise
+    expect(out.enrolments[0].net_fee_minor).toBe(4_500_000);
+    const enrolIns = issued.find((i) => /INSERT INTO enrolment\b/.test(i.sql));
+    expect((enrolIns!.params as any[]).includes(4_500_000)).toBe(true);
+  });
+
+  it('back-compat — no courses[] means NO extra enrolment is created (classic single convert)', async () => {
+    const { svc, issued } = make({ wonStage: { id: 77, name: 'Won' } });
+    const out: any = await svc.convert({ lead_id: 10 }, { id: 5 }, scopeAll);
+    expect(out.enrolments).toEqual([]);
+    expect(issued.filter((i) => /INSERT INTO enrolment\b/.test(i.sql)).length).toBe(0);
+  });
+
+  it('rejects a course row with no course_id (400)', async () => {
+    const { svc } = make();
+    await expect(svc.convert({ lead_id: 10, courses: [{ vertical_id: 3 }] }, { id: 5 }, scopeAll)).rejects.toThrow();
   });
 });
 
