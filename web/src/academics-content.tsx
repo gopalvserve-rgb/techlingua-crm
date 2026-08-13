@@ -258,7 +258,7 @@ function ContentModal({ kind, base, initial, onClose, onSaved, ref_ }: { kind: '
   const save = async () => {
     setErr('');
     if (!title.trim()) return setErr('Give it a title.');
-    if (!isEdit && !courseId) return setErr('Choose a course.');
+    if (!isEdit && (!branchId || !verticalId || !courseId)) return setErr('Choose a branch, vertical and course.');
     setBusy(true);
     const base_body: any = {
       title: title.trim(),
@@ -269,7 +269,7 @@ function ContentModal({ kind, base, initial, onClose, onSaved, ref_ }: { kind: '
     };
     if (isSyl) { base_body.version = version.trim() || 'v1'; base_body.body = text || null; }
     else { base_body.module_no = Number(moduleNo) || 1; base_body.description = text || null; }
-    if (!isEdit) base_body.course_id = Number(courseId);
+    if (!isEdit) { base_body.course_id = Number(courseId); base_body.branch_id = Number(branchId); base_body.vertical_id = Number(verticalId); }
     try {
       if (isEdit) await api.patch(`${base}/${initial.id}`, base_body);
       else await api.post(base, base_body);

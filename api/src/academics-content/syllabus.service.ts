@@ -39,15 +39,16 @@ export class SyllabusService {
     return this.resolver.resolve(grants, `${ENTITY}.approve`).allowed;
   }
 
-  private async courseInScope(courseId: number, scope: ResolvedScope) {
-    const params: unknown[] = [courseId];
-    const w = this.resolver.buildScopeWhere(scope, { branch: 'c.branch_id', vertical: 'c.vertical_id' }, params);
-    const c = await this.db.one<any>(
-      `SELECT c.id, c.branch_id, c.vertical_id FROM m_course c
-        WHERE c.id = $1::bigint AND c.deleted_at IS NULL AND ${w}`, params);
-    if (!c) throw new BadRequestException('Choose a course within your access.');
-    if (!c.branch_id || !c.vertical_id) throw new BadRequestException('That course is missing a branch/vertical.');
-    return c;
+  private async scopeInScope(branchId: number, verticalId: number, courseId: number, scope: ResolvedScope) {
+    const p: unknown[] = [branchId, verticalId];
+    const w = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, p);
+    const v = await this.db.one<any>(
+      `SELECT v.id, v.branch_id FROM vertical v
+        WHERE v.id = $2::bigint AND v.branch_id = $1::bigint AND v.deleted_at IS NULL AND ${w}`, p);
+    if (!v) throw new BadRequestException('Choose a branch and vertical within your access.');
+    const c = await this.db.one<any>(`SELECT id FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
+    if (!c) throw new BadRequestException('Choose a valid course.');
+    return { branch_id: branchId, vertical_id: verticalId, id: courseId };
   }
 
   private tags(raw: unknown): string[] | null {
@@ -120,8 +121,11 @@ export class SyllabusService {
     const title = String(dto?.title ?? '').trim();
     if (!title) throw new BadRequestException('Give the syllabus a title.');
     const courseId = Number(dto?.course_id);
+    const branchIdIn = Number(dto?.branch_id);
+    const verticalIdIn = Number(dto?.vertical_id);
     if (!courseId) throw new BadRequestException('Choose a course.');
-    const c = await this.courseInScope(courseId, scope);
+    if (!branchIdIn || !verticalIdIn) throw new BadRequestException('Choose a branch and vertical.');
+    const c = await this.scopeInScope(branchIdIn, verticalIdIn, courseId, scope);
     const batchId = dto?.batch_id ? Number(dto.batch_id) : null;
     const org = await this.orgId();
     const version = String(dto?.version ?? 'v1').trim() || 'v1';

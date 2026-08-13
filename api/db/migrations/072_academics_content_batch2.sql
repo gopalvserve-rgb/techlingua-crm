@@ -150,22 +150,30 @@ BEGIN
   SELECT id INTO v_org FROM organisation ORDER BY id LIMIT 1;
   IF v_org IS NULL THEN RETURN; END IF;
 
-  -- Primary (IT-ish) scope: first course with a resolvable branch/vertical.
-  SELECT c.id, c.branch_id, c.vertical_id INTO it_course, it_branch, it_vertical
-    FROM m_course c WHERE c.deleted_at IS NULL AND c.branch_id IS NOT NULL AND c.vertical_id IS NOT NULL
-    ORDER BY c.id LIMIT 1;
-  IF it_course IS NULL THEN RETURN; END IF;
-  SELECT id INTO it_batch FROM batch WHERE course_id = it_course AND deleted_at IS NULL ORDER BY id LIMIT 1;
+  -- Scope source of truth = batch (carries branch_id + vertical_id + course_id). Primary (IT-ish).
+  SELECT bt.branch_id, bt.vertical_id, bt.course_id, bt.id
+    INTO it_branch, it_vertical, it_course, it_batch
+    FROM batch bt WHERE bt.deleted_at IS NULL ORDER BY bt.id LIMIT 1;
 
-  -- Secondary (Language-ish) scope: a course under a DIFFERENT vertical, else reuse the primary.
-  SELECT c.id, c.branch_id, c.vertical_id INTO lg_course, lg_branch, lg_vertical
-    FROM m_course c WHERE c.deleted_at IS NULL AND c.branch_id IS NOT NULL AND c.vertical_id IS NOT NULL
-      AND c.vertical_id <> it_vertical
-    ORDER BY c.id LIMIT 1;
-  IF lg_course IS NULL THEN
-    lg_course := it_course; lg_branch := it_branch; lg_vertical := it_vertical;
+  -- Fallback when no batch exists: any branch -> vertical + any course (course/vertical-level, no batch).
+  IF it_course IS NULL THEN
+    SELECT b.id, v.id, c.id INTO it_branch, it_vertical, it_course
+      FROM branch b
+      JOIN vertical v ON v.branch_id = b.id AND v.deleted_at IS NULL
+      JOIN m_course c ON c.deleted_at IS NULL
+      WHERE b.deleted_at IS NULL
+      ORDER BY b.id, v.id, c.id LIMIT 1;
+    it_batch := NULL;
   END IF;
-  SELECT id INTO lg_batch FROM batch WHERE course_id = lg_course AND deleted_at IS NULL ORDER BY id LIMIT 1;
+  IF it_course IS NULL THEN RETURN; END IF;
+
+  -- Secondary (Language-ish) scope: a batch under a DIFFERENT vertical, else reuse the primary.
+  SELECT bt.branch_id, bt.vertical_id, bt.course_id, bt.id
+    INTO lg_branch, lg_vertical, lg_course, lg_batch
+    FROM batch bt WHERE bt.deleted_at IS NULL AND bt.vertical_id <> it_vertical ORDER BY bt.id LIMIT 1;
+  IF lg_course IS NULL THEN
+    lg_branch := it_branch; lg_vertical := it_vertical; lg_course := it_course; lg_batch := it_batch;
+  END IF;
 
   -- (a) PUBLISHED study material — a YouTube link (external_url), IT scope, batch or course level.
   IF NOT EXISTS (SELECT 1 FROM study_material WHERE title = '[DEMO] Intro Video — Getting Started') THEN
