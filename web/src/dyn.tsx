@@ -5071,6 +5071,7 @@ export function ChangeStatusModal({ student, outstandingMinor, canManageSensitiv
       if (!reason.trim()) { toast('Reason is required for this status.', true); return; }
       if (!lastAtt) { toast('Last Attendance Date is required.', true); return; }
       if (!effective) { toast(`${effLabel} is required.`, true); return; }
+      if (!approvedBy) { toast('Approved By is required.', true); return; }
     }
     setBusy(true);
     try {
@@ -5125,9 +5126,9 @@ export function ChangeStatusModal({ student, outstandingMinor, canManageSensitiv
               <input id="cs-out" className="ainp" value={money(outstandingMinor)} readOnly disabled title="Snapshotted at the moment of change" />
             </div>
             <div className="fld">
-              <label htmlFor="cs-appr">Approved By</label>
+              <label htmlFor="cs-appr">Approved By <span className="star">*</span></label>
               <select id="cs-appr" className="ainp" value={approvedBy} disabled={busy} onChange={(e) => setApprovedBy(e.target.value)}>
-                <option value="">— You (acting approver) —</option>
+                <option value="">— Choose approver —</option>
                 {selectableUsers(ref.users).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
