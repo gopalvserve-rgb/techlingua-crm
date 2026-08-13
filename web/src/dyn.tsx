@@ -4494,7 +4494,13 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
   const [tab, setTab] = useState<string>('fees');
   const [showTransfer, setShowTransfer] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
+  const [addEnrol, setAddEnrol] = useState(false);
+  const [enrolStatusFor, setEnrolStatusFor] = useState<any | null>(null);
+  const [enrolHistFor, setEnrolHistFor] = useState<any | null>(null);
   const canStatusManage = can('student.status_manage');
+  const enrolData = useFetch<any>(tab === 'enrollments' ? `/students/${student.id}/enrolments` : null, [student.id, tab]);
+  const learnData = useFetch<any>(tab === 'learning' ? `/students/${student.id}/learning` : null, [student.id, tab]);
+  const reloadEnrol = () => { enrolData.reload(); loadProfile(); onChanged(); };
   const statusHist = useFetch<any[]>(tab === 'status' ? `/students/${student.id}/status-history` : null, [student.id, tab]);
   const [lms, setLms] = useState<any>(null);
   const [lmsErr, setLmsErr] = useState<string>('');
@@ -4533,7 +4539,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
     ['fees', 'Fees Payment', 'rupee'], ['overview', 'Overview', 'eye'], ['contact', 'Contact', 'phone'],
     ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'],
     ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
-    ['status', 'Status & LMS', 'flag'],
+    ['status', 'Status & LMS', 'flag'], ['enrollments', 'Course Enrollment', 'grid'], ['learning', 'Syllabus', 'book'],
     ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
   ];
   const photo = prof?.photo_url as string | undefined;
@@ -4848,6 +4854,56 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
         </>
       )}
 
+      {tab === 'enrollments' && (
+        <Section title="Course Enrollment">
+          <div className="notice" style={{ marginBottom: 10 }}>
+            <Ic k="grid" /><div>Overall student status: <b>{statusMeta(full.status).label}</b>. Each course enrollment carries its <b>own</b> status — completing or cancelling one course does <b>not</b> change the others or the overall student status.</div>
+          </div>
+          {canEdit && <button className="btn primary" style={{ marginBottom: 10 }} onClick={() => setAddEnrol(true)} data-testid="enrol-add"><Ic k="plus" />Enroll in another course</button>}
+          {(enrolData.data?.enrolments ?? []).length ? (
+            <table className="minitbl"><thead><tr><th>Course</th><th>Batch</th><th>Enrolled</th><th>Net Fee</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
+              <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => (
+                <tr key={e.id} data-testid={`enrol-row-${e.id}`}>
+                  <td><b className="nm">{e.course_name ?? '—'}</b><div className="sub mono">{e.enrolment_no}</div></td>
+                  <td>{e.batch_name ?? '—'}</td>
+                  <td>{e.start_date ? dmy(e.start_date) : dmy(e.created_at)}</td>
+                  <td>{money(e.net_fee_minor)}</td>
+                  <td>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</td>
+                  <td><span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span></td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button>}
+                    {' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolHistFor(e)}><Ic k="list" />History</button>
+                  </td>
+                </tr>
+              ))}</tbody></table>
+          ) : <Empty t="No course enrollments yet — use the Enroll in another course button." />}
+        </Section>
+      )}
+
+      {tab === 'learning' && (
+        <Section title="My Syllabus & Course Content">
+          <div className="notice" style={{ marginBottom: 10 }}><Ic k="book" /><div>Published syllabus &amp; course content for the course(s) you are enrolled in. Access follows your LMS status — a cancelled / withdrawn / dropped-out course is locked.</div></div>
+          {(learnData.data?.courses ?? []).length ? (learnData.data.courses as any[]).map((c: any) => (
+            <div key={c.enrolment_id} style={{ padding: 12, marginBottom: 10, border: '1px solid var(--border)', borderRadius: 8 }} data-testid={`learn-course-${c.enrolment_id}`}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <b>{c.course_name ?? '—'}</b>
+                <span>{renderCell(studentStatusCell(c.course_status))} <span className="sub">{String(c.effective_lms_access ?? '').toUpperCase()}</span></span>
+              </div>
+              {c.blocked ? <div className="notice warn" style={{ marginTop: 8 }}><Ic k="lock" /><div>Content locked for this course (no LMS access for its current status).</div></div> : (
+                <>
+                  <div className="sub" style={{ marginTop: 8, fontWeight: 600 }}>Syllabus</div>
+                  {(c.syllabus ?? []).length ? <ul>{(c.syllabus as any[]).map((x: any) => <li key={x.id}>{x.title} <span className="sub">v{x.version}</span></li>)}</ul> : <div className="sub">No published syllabus.</div>}
+                  <div className="sub" style={{ marginTop: 8, fontWeight: 600 }}>Course Content</div>
+                  {(c.course_content ?? []).length ? <ul>{(c.course_content as any[]).map((x: any) => <li key={x.id}>{x.module_no != null ? `${x.module_no}. ` : ''}{x.title}</li>)}</ul> : <div className="sub">No published content.</div>}
+                  <div className="sub" style={{ marginTop: 8, fontWeight: 600 }}>Study Material</div>
+                  {(c.material ?? []).length ? <ul>{(c.material as any[]).map((x: any) => <li key={x.id}>{x.title} <span className="sub">{x.material_type}</span></li>)}</ul> : <div className="sub">No published material.</div>}
+                </>
+              )}
+            </div>
+          )) : <Empty t="No enrolled courses with published content yet." />}
+        </Section>
+      )}
+
       {tab === 'fees' && (
         <>
           <Section title="Collection Summary">
@@ -4890,6 +4946,19 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
           canManageSensitive={canStatusManage}
           onClose={() => setShowStatus(false)}
           onDone={() => { setShowStatus(false); loadProfile(); onChanged(); }} />
+      )}
+      {addEnrol && (
+        <AddEnrolmentModal student={full}
+          onClose={() => setAddEnrol(false)}
+          onDone={() => { setAddEnrol(false); reloadEnrol(); }} />
+      )}
+      {enrolStatusFor && (
+        <ChangeEnrolmentStatusModal student={full} enrolment={enrolStatusFor} canManageSensitive={canStatusManage}
+          onClose={() => setEnrolStatusFor(null)}
+          onDone={() => { setEnrolStatusFor(null); reloadEnrol(); }} />
+      )}
+      {enrolHistFor && (
+        <EnrolmentHistoryModal student={full} enrolment={enrolHistFor} onClose={() => setEnrolHistFor(null)} />
       )}
     </DetailModal>
   );
@@ -5065,6 +5134,171 @@ export function ChangeStatusModal({ student, outstandingMinor, canManageSensitiv
           </>
         )}
       </div>
+    </DetailModal>
+  );
+}
+
+/**
+ * ADD ENROLMENT — enrol an existing student into ANOTHER course (course / batch / fee picker).
+ * POSTs /students/:id/enrolments; the new enrolment starts active / course_status active. This
+ * is what lets a student hold MULTIPLE course enrollments from the Course Enrollment section.
+ */
+export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const [courseId, setCourseId] = useState('');
+  const [batchId, setBatchId] = useState('');
+  const [fee, setFee] = useState('');
+  const [discount, setDiscount] = useState('');
+  const [plan, setPlan] = useState('full');
+  const [start, setStart] = useState('');
+  const [batches, setBatches] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  const courses = ref.courses ?? [];
+  useEffect(() => {
+    if (!courseId) { setBatches([]); return; }
+    api.get<any[]>(`/batches?vertical_id=${student.vertical_id}&status=active`)
+      .then((bs) => setBatches((bs ?? []).filter((b: any) => Number(b.course_id) === Number(courseId))))
+      .catch(() => setBatches([]));
+  }, [courseId, student.vertical_id]);
+  const save = async () => {
+    if (!courseId) { toast('Choose a course.', true); return; }
+    setBusy(true);
+    try {
+      await api.post(`/students/${student.id}/enrolments`, {
+        course_id: Number(courseId), batch_id: batchId ? Number(batchId) : null,
+        fee_minor: Math.round(Number(fee || 0) * 100), discount_minor: Math.round(Number(discount || 0) * 100),
+        payment_plan: plan, start_date: start || null,
+      });
+      toast('Course enrollment added.'); onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Enroll in another course — ${student.full_name}`} icon="grid" onClose={onClose} width={560}
+      footer={<button className="btn primary" onClick={save} disabled={busy || !courseId} data-testid="enrol-add-save"><Ic k="plus" />Add enrollment</button>}>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="ae-course">Course <span className="star">*</span></label>
+          <select id="ae-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => { setCourseId(e.target.value); setBatchId(''); }} data-testid="enrol-course">
+            <option value="">— Choose course —</option>
+            {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="fld">
+          <label htmlFor="ae-batch">Batch</label>
+          <select id="ae-batch" className="ainp" value={batchId} disabled={busy} onChange={(e) => setBatchId(e.target.value)}>
+            <option value="">— Optional —</option>
+            {batches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+        <div className="fld">
+          <label htmlFor="ae-plan">Payment plan</label>
+          <select id="ae-plan" className="ainp" value={plan} disabled={busy} onChange={(e) => setPlan(e.target.value)}>
+            <option value="full">Full payment</option><option value="emi_3">3 installments</option><option value="emi_6">6 installments</option><option value="custom">Custom</option>
+          </select>
+        </div>
+        <div className="fld"><label htmlFor="ae-fee">Fee (INR)</label><input id="ae-fee" className="ainp" type="number" value={fee} disabled={busy} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 30000" /></div>
+        <div className="fld"><label htmlFor="ae-disc">Discount (INR)</label><input id="ae-disc" className="ainp" type="number" value={discount} disabled={busy} onChange={(e) => setDiscount(e.target.value)} placeholder="0" /></div>
+        <div className="fld"><label htmlFor="ae-start">Start date</label><input id="ae-start" className="ainp" type="date" value={start} disabled={busy} onChange={(e) => setStart(e.target.value)} /></div>
+      </div>
+    </DetailModal>
+  );
+}
+
+/**
+ * CHANGE ENROLMENT STATUS — the per-course transition, mirroring the student Change-Status modal
+ * but on ONE enrolment. SENSITIVE statuses (On Hold / Withdrawn / Dropped Out / Cancelled) reveal
+ * Reason + Last Attendance + effective date + a REQUIRED Approved-By (the fix), gated by
+ * student.status_manage. Setting a completed/failed status leaves the other enrolments + the
+ * overall student status untouched. The API is the real gate.
+ */
+export function ChangeEnrolmentStatusModal({ student, enrolment, canManageSensitive, onClose, onDone }:
+  { student: any; enrolment: any; canManageSensitive: boolean; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const catalog = useFetch<any[]>(`/students/enrolment-status-catalog`, []);
+  const [toStatus, setToStatus] = useState('');
+  const [reason, setReason] = useState('');
+  const [lastAtt, setLastAtt] = useState('');
+  const [effective, setEffective] = useState('');
+  const [approvedBy, setApprovedBy] = useState('');
+  const [busy, setBusy] = useState(false);
+  const all = catalog.data ?? [];
+  const opts = all.filter((o) => canManageSensitive || !o.requires_approval);
+  const def = all.find((o) => o.code === toStatus);
+  const sensitive = !!def?.requires_approval;
+  const effLabel = toStatus === 'on_hold' ? 'Hold Start Date' : 'Effective Date';
+  const save = async () => {
+    if (!toStatus) { toast('Choose a status.', true); return; }
+    if (sensitive) {
+      if (!reason.trim()) { toast('Reason is required for this status.', true); return; }
+      if (!lastAtt) { toast('Last Attendance Date is required.', true); return; }
+      if (!effective) { toast(`${effLabel} is required.`, true); return; }
+      if (!approvedBy) { toast('Approved By is required.', true); return; }
+    }
+    setBusy(true);
+    try {
+      const res = await api.post<any>(`/students/${student.id}/enrolments/${enrolment.id}/status`, {
+        to_status: toStatus, reason: reason.trim() || null,
+        last_attendance_date: lastAtt || null, effective_date: effective || null,
+        approved_by: sensitive && approvedBy ? Number(approvedBy) : null,
+      });
+      toast(res?.unchanged ? 'Status unchanged.' : `Enrollment set to ${def?.label ?? toStatus}.`);
+      onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Change enrollment status — ${enrolment.course_name ?? enrolment.enrolment_no}`} icon="flag" onClose={onClose} width={560}
+      footer={<button className="btn primary" onClick={save} disabled={busy || !toStatus} data-testid="enrol-status-save"><Ic k="flag" />Update status</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}>
+        <Ic k="flag" /><div>Currently <b>{statusMeta(enrolment.course_status).label}</b> · this course only — the overall student status is unaffected.</div>
+      </div>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="ces-status">New Status <span className="star">*</span></label>
+          <select id="ces-status" className="ainp" value={toStatus} disabled={busy} onChange={(e) => setToStatus(e.target.value)} data-testid="enrol-status-select">
+            <option value="">— Choose status —</option>
+            {opts.map((o) => <option key={o.code} value={o.code}>{o.label} — {String(o.lms_access).toUpperCase()} LMS</option>)}
+          </select>
+          {def ? <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>{def.meaning}</div> : null}
+        </div>
+        {(sensitive || (def && def.requires_reason)) && (
+          <div className="fld" style={{ gridColumn: '1 / -1' }}>
+            <label htmlFor="ces-reason">Reason {sensitive ? <span className="star">*</span> : null}</label>
+            <input id="ces-reason" className="ainp" value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} />
+          </div>
+        )}
+        {sensitive && (
+          <>
+            <div className="fld"><label htmlFor="ces-lastatt">Last Attendance Date <span className="star">*</span></label><input id="ces-lastatt" type="date" className="ainp" value={lastAtt} disabled={busy} onChange={(e) => setLastAtt(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="ces-eff">{effLabel} <span className="star">*</span></label><input id="ces-eff" type="date" className="ainp" value={effective} disabled={busy} onChange={(e) => setEffective(e.target.value)} /></div>
+            <div className="fld" style={{ gridColumn: '1 / -1' }}>
+              <label htmlFor="ces-appr">Approved By <span className="star">*</span></label>
+              <select id="ces-appr" className="ainp" value={approvedBy} disabled={busy} onChange={(e) => setApprovedBy(e.target.value)}>
+                <option value="">— Choose approver —</option>
+                {selectableUsers(ref.users).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+          </>
+        )}
+      </div>
+    </DetailModal>
+  );
+}
+
+/** The per-enrolment status transition trail. */
+export function EnrolmentHistoryModal({ student, enrolment, onClose }: { student: any; enrolment: any; onClose: () => void }) {
+  const hist = useFetch<any[]>(`/students/${student.id}/enrolments/${enrolment.id}/status-history`, [enrolment.id]);
+  const rows = hist.data ?? [];
+  return (
+    <DetailModal title={`Status history — ${enrolment.course_name ?? enrolment.enrolment_no}`} icon="list" onClose={onClose} width={680}>
+      {rows.length ? (
+        <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Reason</th><th>Outstanding</th><th>Approved By</th><th>By</th></tr></thead>
+          <tbody>{rows.map((h: any) => (
+            <tr key={h.id}><td>{fmtFull(h.changed_at)}</td><td>{h.from_label ?? h.from_status ?? '—'}</td>
+              <td>{renderCell(studentStatusCell(h.to_status))}</td><td>{h.reason ?? '—'}</td>
+              <td>{h.outstanding_minor != null ? fmtINR(Number(h.outstanding_minor), { symbol: true }) : '—'}</td>
+              <td>{h.approved_by_name ?? '—'}</td><td>{h.changed_by_name ?? '—'}</td></tr>
+          ))}</tbody></table>
+      ) : <div className="empty-note">No status changes yet.</div>}
     </DetailModal>
   );
 }

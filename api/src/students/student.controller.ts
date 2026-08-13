@@ -43,6 +43,14 @@ export class StudentController {
     return this.svc.statusCatalog();
   }
 
+  /** The enrolment (per-course) status catalog — the shared catalog filtered to the enrolment
+   *  subset. Literal route declared before ':id' so no numeric id can shadow it. */
+  @Get('enrolment-status-catalog')
+  @RequirePermission('student.read')
+  enrolmentStatusCatalog() {
+    return this.svc.enrolmentStatusCatalog();
+  }
+
   @Get(':id')
   @RequirePermission('student.read')
   get(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
@@ -89,6 +97,46 @@ export class StudentController {
   @RequirePermission('student.read')
   lms(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
     return this.svc.lmsContent(id, scope);
+  }
+
+  /* -------- PER-COURSE ENROLLMENT status (the Course Enrollment section) -------- */
+
+  /** LIST this student's course enrolments, each with its OWN status + combined LMS access. */
+  @Get(':id/enrolments')
+  @RequirePermission('student.read')
+  enrolments(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.listEnrolments(id, scope);
+  }
+
+  /** ADD an enrolment (enrol the student into ANOTHER course). Reuses student.update. */
+  @Post(':id/enrolments')
+  @RequirePermission('student.update')
+  addEnrolment(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.addEnrolment(id, dto, me, scope);
+  }
+
+  /** CHANGE a single enrolment's status. Guarded by student.update; SENSITIVE statuses are
+   *  additionally gated by student.status_manage INSIDE the service (403), with the required
+   *  fields + Approved-By enforced (400). */
+  @Post(':id/enrolments/:eid/status')
+  @RequirePermission('student.update')
+  changeEnrolmentStatus(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.changeEnrolmentStatus(eid, dto, me, scope, id);
+  }
+
+  /** The per-enrolment status transition trail. */
+  @Get(':id/enrolments/:eid/status-history')
+  @RequirePermission('student.read')
+  enrolmentStatusHistory(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.enrolmentStatusHistory(eid, scope, id);
+  }
+
+  /** STUDENT SYLLABUS + COURSE CONTENT ACCESS — per enrolled course, published-only, gated by
+   *  the combined (overall + per-enrolment) LMS access. Blocks a cancelled/withdrawn course. */
+  @Get(':id/learning')
+  @RequirePermission('student.read')
+  learning(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.learning(id, scope);
   }
 
   /* -------- documents (education + KYC). List is student.read; download is student.update

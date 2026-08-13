@@ -56,3 +56,35 @@ export function lmsBlockedMessage(statusCode: string, label: string, access: Lms
   const what = seam === 'attempt' ? 'start or continue an assessment attempt' : 'view published study material';
   return `LMS access ${access.toUpperCase()} for status "${label || statusCode}" — the student cannot ${what}.`;
 }
+
+/* =============================================================================
+ * PER-ENROLMENT (per-course) STATUS — shares the SAME catalog/taxonomy as the student
+ * lifecycle above (one taxonomy), but applies to a single course enrolment. The set is a
+ * subset: no 'inactive'/'suspended' (those are student-level concepts), plus the academic
+ * outcomes a course can reach.
+ * ============================================================================= */
+
+/** The statuses a single course enrolment may hold (subset of the shared catalog). */
+export const ENROLMENT_STATUSES = new Set([
+  'active', 'on_hold', 'completed', 'withdrawn', 'dropped_out', 'cancelled', 'failed', 'course_expired', 'transferred',
+]);
+
+/** The enrolment's own LMS access from its course_status — reuses the shared status map. */
+export function enrolmentLmsAccess(courseStatus?: string | null): LmsAccess {
+  return studentLmsAccess(courseStatus);
+}
+
+/**
+ * COMBINE the overall-student LMS access with a single enrolment's LMS access and return the
+ * MORE RESTRICTIVE of the two (effective access for that course's content). Ordering, most to
+ * least restrictive: none < limited < alumni < full (depends is normalised to full — the
+ * transfer flow moves the learner). So a cancelled enrolment (none) blocks that course's
+ * content even for an overall-active student; a completed enrolment under an active student
+ * yields alumni (view-only); active+active yields full.
+ */
+export function combineAccess(a: LmsAccess, b: LmsAccess): LmsAccess {
+  const rank = (x: LmsAccess): number =>
+    x === 'none' ? 0 : x === 'limited' ? 1 : x === 'alumni' ? 2 : 3; // full/depends = 3
+  const lo = rank(a) <= rank(b) ? a : b;
+  return lo === 'depends' ? 'full' : lo;
+}
