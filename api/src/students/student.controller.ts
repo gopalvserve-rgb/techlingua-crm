@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { StudentService } from './student.service';
+import { RbacDataService } from '../rbac/rbac-data.service';
 
 interface Me { id: number; name: string }
 
@@ -16,7 +17,24 @@ interface Me { id: number; name: string }
  */
 @Controller('students')
 export class StudentController {
-  constructor(private readonly svc: StudentService) {}
+  constructor(
+    private readonly svc: StudentService,
+    private readonly rbac: RbacDataService,
+  ) {}
+
+  /** The caller's admission capabilities — feed the admission-journey next-action flags. */
+  private async caps(userId: number): Promise<{ canApprove: boolean; canUpdate: boolean }> {
+    const g = await this.rbac.loadUserGrants(userId);
+    const has = (k: string) => g.rolePermissions.some((rp) => rp.permissionKey === k);
+    return { canApprove: has('admission.approve'), canUpdate: has('student.update') };
+  }
+
+  /** ADMISSION JOURNEY — the intake funnel timeline per enrolment for this student. */
+  @Get(':id/admission-journey')
+  @RequirePermission('student.read')
+  async admissionJourney(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.studentAdmissionJourney(id, scope, await this.caps(Number(me.id)));
+  }
 
   @Get()
   @RequirePermission('student.read')

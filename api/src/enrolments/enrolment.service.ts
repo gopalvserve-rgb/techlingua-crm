@@ -7,6 +7,7 @@ import { rupeesToMinor } from '../common/money.util';
 import { ApprovalService, requiredSteps } from './approval.service';
 import { requireDateString, assertDateRange } from '../common/date.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
+import { stageOrdinal } from './admission-journey.util';
 
 /**
  * ENROLMENT — the SALE CLOSURE record. "Sale closure = enrolment" (§5).
@@ -492,4 +493,118 @@ export class EnrolmentService {
       [leadId, note, actorId],
     );
   }
+
+  /* ======================================================================= */
+  /* ADMISSION JOURNEY (migration 075) — the intake funnel + approval gates.  */
+  /* The stage timeline is assembled by the shared admission-journey.util; the */
+  /* transition endpoints below persist the workflow stages (approved onward)  */
+  /* and write an admission_event each. Scope is enforced on load.             */
+  /* ======================================================================= */
+
+  /** A scoped, lightweight load of the columns the admission workflow needs (404 if out of scope). */
+  private async admissionRow(id: number, scope: ResolvedScope) {
+    const params: unknown[] = [id];
+    const w = this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params);
+    const e = await this.db.one<any>(
+      `SELECT e.id, e.enrolment_no, e.org_id, e.branch_id, e.vertical_id, e.lead_id,
+              e.student_profile_id AS student_id, e.admission_stage, e.status
+         FROM enrolment e
+        WHERE e.id = $1::bigint AND e.deleted_at IS NULL AND ${w}`,
+      params,
+    );
+    if (!e) throw new NotFoundException('Enrolment not found (or outside your access)');
+    return e;
+  }
+
+  private async hasPaymentAndInvoice(id: number): Promise<{ payment: boolean; invoice: boolean }> {
+    const p = await this.db.one<any>(
+      `SELECT count(*)::int AS n FROM fee_receipt WHERE enrolment_id = $1::bigint AND deleted_at IS NULL`, [id]);
+    const i = await this.db.one<any>(
+      `SELECT count(*)::int AS n FROM gst_invoice
+        WHERE enrolment_id = $1::bigint AND deleted_at IS NULL AND status IN ('issued','paid') AND invoice_no IS NOT NULL`, [id]);
+    return { payment: Number(p?.n ?? 0) > 0, invoice: Number(i?.n ?? 0) > 0 };
+  }
+
+  private async logAdmissionEvent(c: any, e: any, stage: string, note: string | null, actorId: number) {
+    await c.query(
+      `INSERT INTO admission_event (org_id, branch_id, vertical_id, enrolment_id, student_id, stage, note, changed_by)
+       VALUES ($1::bigint, $2::bigint, $3::bigint, $4::bigint, $5::bigint, $6::varchar, $7, $8::bigint)`,
+      [e.org_id, e.branch_id ?? null, e.vertical_id ?? null, e.id, e.student_id ?? null, stage, note, actorId],
+    );
+  }
+
+  /** APPROVE — only an admission.approve holder (route-guarded). Requires payment + invoice. */
+  async approveAdmission(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const e = await this.admissionRow(id, scope);
+    if (e.admission_stage === 'rejected') throw new BadRequestException(`${e.enrolment_no} was rejected and cannot be approved.`);
+    if (stageOrdinal(e.admission_stage) >= stageOrdinal('approved')) {
+      throw new BadRequestException(`${e.enrolment_no} is already past approval (${e.admission_stage}).`);
+    }
+    const { payment, invoice } = await this.hasPaymentAndInvoice(id);
+    if (!payment || !invoice) {
+      throw new BadRequestException('A payment and an invoice/receipt are required before approval.');
+    }
+    const remarks = dto?.remarks ?? dto?.note ?? null;
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment SET admission_stage = 'approved', admission_approved_by = $2::bigint,
+                admission_approved_at = now(), admission_approval_remarks = $3, updated_at = now()
+          WHERE id = $1::bigint`, [id, me.id, remarks]);
+      await this.logAdmissionEvent(c, e, 'approved', remarks ? `Approved — ${remarks}` : 'Admission & payment approved', me.id);
+    });
+    return { id, admission_stage: 'approved' };
+  }
+
+  /** CONFIRM — capture the student's confirmation. Only from `approved`. */
+  async confirmAdmission(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const e = await this.admissionRow(id, scope);
+    if (e.admission_stage !== 'approved') {
+      throw new BadRequestException(`Student confirmation is only recorded after approval. ${e.enrolment_no} is ${e.admission_stage}.`);
+    }
+    const via = String(dto?.student_confirmed_via ?? dto?.via ?? '').trim();
+    if (!via) throw new BadRequestException('The confirmation method (student_confirmed_via) is required.');
+    const note = dto?.note ?? dto?.student_confirmation_note ?? null;
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment SET admission_stage = 'student_confirmed', student_confirmed_at = now(),
+                student_confirmed_via = $2::varchar, student_confirmation_note = $3,
+                confirmation_captured_by = $4::bigint, updated_at = now()
+          WHERE id = $1::bigint`, [id, via, note, me.id]);
+      await this.logAdmissionEvent(c, e, 'student_confirmed', `Student confirmed via ${via}${note ? ` — ${note}` : ''}`, me.id);
+    });
+    return { id, admission_stage: 'student_confirmed' };
+  }
+
+  /** ADMIT — convert to admission. Only from `student_confirmed`. */
+  async admitAdmission(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const e = await this.admissionRow(id, scope);
+    if (e.admission_stage !== 'student_confirmed') {
+      throw new BadRequestException(`Convert-to-admission is only allowed after student confirmation. ${e.enrolment_no} is ${e.admission_stage}.`);
+    }
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment SET admission_stage = 'admitted', admitted_at = now(), admitted_by = $2::bigint, updated_at = now()
+          WHERE id = $1::bigint`, [id, me.id]);
+      await this.logAdmissionEvent(c, e, 'admitted', dto?.note ?? 'Converted to admission', me.id);
+    });
+    return { id, admission_stage: 'admitted' };
+  }
+
+  /** REJECT — an admission.approve holder rejects with remarks (required). */
+  async rejectAdmission(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const e = await this.admissionRow(id, scope);
+    if (e.admission_stage === 'admitted') throw new BadRequestException(`${e.enrolment_no} is already admitted and cannot be rejected.`);
+    if (e.admission_stage === 'rejected') throw new BadRequestException(`${e.enrolment_no} is already rejected.`);
+    const remarks = String(dto?.remarks ?? dto?.reason ?? dto?.note ?? '').trim();
+    if (!remarks) throw new BadRequestException('A reason (remarks) is required to reject an admission.');
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment SET admission_stage = 'rejected', admission_rejected_reason = $2,
+                admission_rejected_by = $3::bigint, admission_rejected_at = now(), updated_at = now()
+          WHERE id = $1::bigint`, [id, remarks, me.id]);
+      await this.logAdmissionEvent(c, e, 'rejected', `Rejected — ${remarks}`, me.id);
+    });
+    return { id, admission_stage: 'rejected' };
+  }
+
 }

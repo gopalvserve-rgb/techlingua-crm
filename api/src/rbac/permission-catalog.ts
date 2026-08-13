@@ -120,7 +120,7 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // ERP Batch 3 — online admission form + review queue. 'read' = see the queue; 'manage' =
   // create/edit/delete the public form links; 'review' = approve (→ student) / reject; 'delete'
   // = bulk-delete submissions. Sibling/family linking reuses student.update + student.read.
-  { module: 'admission', label: 'Admissions (Online form & review)', actions: ['read', 'manage', 'review', 'delete'] },
+  { module: 'admission', label: 'Admissions (Online form & review)', actions: ['read', 'manage', 'review', 'delete', 'approve'] },
   // Phase 2 ERP Batch 5 (migration 051) — Operations. Catalog + vendor are ORG-WIDE masters
   // (read granted broadly @ 'all', writes admin/manager). Inventory / asset / procurement are
   // BRANCH-SCOPED. inventory.manage = stock movements (receipt/issue/adjustment) + thresholds;

@@ -78,6 +78,37 @@ export class EnrolmentController {
     return this.svc.settleApproval(d.entity_id, false, Number(me.id));
   }
 
+  /* -------- ADMISSION JOURNEY (migration 075) — the intake funnel + gates -------- */
+
+  /** APPROVE — authorized person only (admission.approve → 403 without). Validates payment +
+   *  invoice exist (400 otherwise) then moves the stage to `approved`. */
+  @Post(':id/admission/approve')
+  @RequirePermission('admission.approve')
+  approveAdmission(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.approveAdmission(id, dto, me, scope);
+  }
+
+  /** CONFIRM — record the student's confirmation (student_confirmed_via required). From `approved`. */
+  @Post(':id/admission/confirm')
+  @RequirePermission('student.update')
+  confirmAdmission(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.confirmAdmission(id, dto, me, scope);
+  }
+
+  /** ADMIT — convert to admission. From `student_confirmed`. */
+  @Post(':id/admission/admit')
+  @RequirePermission('student.update')
+  admitAdmission(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.admitAdmission(id, dto, me, scope);
+  }
+
+  /** REJECT — authorized person only (admission.approve). Remarks required. */
+  @Post(':id/admission/reject')
+  @RequirePermission('admission.approve')
+  rejectAdmission(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.rejectAdmission(id, dto, me, scope);
+  }
+
   @Get(':id')
   @RequirePermission('enrolment.read')
   get(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {

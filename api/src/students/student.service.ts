@@ -9,6 +9,7 @@ import { NotificationEventService } from '../notificationevents/notification-eve
 import { StorageService } from '../storage/storage.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
 import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVENUE_CANCELLING_STATUSES, lmsBlockedMessage, combineAccess, ENROLMENT_STATUSES } from './lms-access';
+import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
 
 /**
  * STUDENT — the PHASE-2 student profile. A student is born TWO ways:
@@ -342,7 +343,7 @@ export class StudentService {
       `SELECT e.id, e.enrolment_no, e.status, e.net_fee_minor, e.fee_minor, e.discount_minor,
               e.payment_plan, e.start_date, e.created_at, e.course_id, e.batch_id,
               e.course_status, e.course_status_reason, e.course_status_effective_date,
-              e.course_status_changed_at, co.name AS course_name, bt.name AS batch_name,
+              e.course_status_changed_at, e.admission_stage, co.name AS course_name, bt.name AS batch_name,
               sd.label AS course_status_label, sd.lms_access AS course_lms_access
          FROM enrolment e
          LEFT JOIN m_course co ON co.id = e.course_id
@@ -1403,6 +1404,7 @@ export class StudentService {
               e.course_status, e.course_status_reason, e.course_status_last_attendance_date,
               e.course_status_effective_date, e.course_status_outstanding_minor,
               e.course_status_approved_by, e.course_status_changed_by, e.course_status_changed_at,
+              e.admission_stage,
               co.name AS course_name, bt.name AS batch_name,
               sd.label AS course_status_label, sd.is_terminal AS course_status_is_terminal,
               ap.name AS course_status_approved_by_name, ch.name AS course_status_changed_by_name
@@ -1439,6 +1441,25 @@ export class StudentService {
    *  enrolment (status active / course_status active), linked via student_profile_id, in the
    *  student's own branch/vertical; scope-enforced through get(). This is what makes "2
    *  courses" possible from the Course Enrollment section. */
+  /** ADMISSION JOURNEY for a student — the intake funnel per enrolment (migration 075). Loads the
+   *  student in scope, then assembles each of its enrolments' stage timeline. `caps` are the
+   *  caller's admission capabilities (feed the next-action flags; the API still enforces). */
+  async studentAdmissionJourney(id: number, scope: ResolvedScope, caps: { canApprove: boolean; canUpdate: boolean }) {
+    const student = await this.get(id, scope);   // scope + existence (404)
+    const sid = Number(student.id);
+    const rows = await this.db.query<any>(
+      `SELECT e.id FROM enrolment e
+        WHERE e.deleted_at IS NULL AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
+        ORDER BY e.created_at DESC, e.id DESC`,
+      [sid, student.enrolment_id ? Number(student.enrolment_id) : 0]);
+    const enrolments = [];
+    for (const r of rows) {
+      const j = await assembleAdmissionJourney(this.db, Number(r.id), { canApprove: caps.canApprove, canUpdate: caps.canUpdate, withEvents: true });
+      if (j) enrolments.push(j);
+    }
+    return { student_id: sid, student_name: student.full_name, enrolments };
+  }
+
   async addEnrolment(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
     const student = await this.get(id, scope);
     const courseId = dto?.course_id ? Number(dto.course_id) : null;

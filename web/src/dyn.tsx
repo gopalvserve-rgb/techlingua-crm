@@ -4498,6 +4498,10 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
   const [enrolStatusFor, setEnrolStatusFor] = useState<any | null>(null);
   const [enrolHistFor, setEnrolHistFor] = useState<any | null>(null);
   const canStatusManage = can('student.status_manage');
+  const canApproveAdm = can('admission.approve');
+  const journeyData = useFetch<any>(tab === 'admission' ? `/students/${student.id}/admission-journey` : null, [student.id, tab]);
+  const [admActionFor, setAdmActionFor] = useState<{ enrolment: any; action: string } | null>(null);
+  const reloadJourney = () => { journeyData.reload(); loadProfile(); onChanged(); };
   const enrolData = useFetch<any>(tab === 'enrollments' ? `/students/${student.id}/enrolments` : null, [student.id, tab]);
   const learnData = useFetch<any>(tab === 'learning' ? `/students/${student.id}/learning` : null, [student.id, tab]);
   const reloadEnrol = () => { enrolData.reload(); loadProfile(); onChanged(); };
@@ -4540,6 +4544,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
     ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'],
     ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
     ['status', 'Status & LMS', 'flag'], ['enrollments', 'Course Enrollment', 'grid'], ['learning', 'Syllabus', 'book'],
+    ['admission', 'Admission Journey', 'check'],
     ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
   ];
   const photo = prof?.photo_url as string | undefined;
@@ -4904,6 +4909,66 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
         </Section>
       )}
 
+      {tab === 'admission' && (
+        <Section title="Admission Journey">
+          <div className="notice" style={{ marginBottom: 10 }}>
+            <Ic k="check" /><div>The admission funnel: <b>Lead → Course → Payment → Invoice/Receipt → Approved</b> (authorized person only) <b>→ Student Confirmation → Admitted</b>. Approval &amp; student confirmation are enforced gates.</div>
+          </div>
+          {(journeyData.data?.enrolments ?? []).length ? (journeyData.data.enrolments as any[]).map((j: any) => {
+            const clr = (st: string) => st === 'done' ? '#16a34a' : st === 'current' ? '#2563eb' : st === 'blocked' ? '#dc2626' : '#cbd5e1';
+            const ic = (st: string) => st === 'done' ? 'check' : st === 'current' ? 'flag' : st === 'blocked' ? 'x' : 'clock';
+            return (
+              <div key={j.enrolment_id} style={{ padding: 12, marginBottom: 12, border: '1px solid var(--border)', borderRadius: 8 }} data-testid={`admj-enrol-${j.enrolment_id}`}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div><b>{j.course_name ?? '—'}</b> <span className="sub mono">· {j.enrolment_no}</span></div>
+                  <span className="pill" style={{ background: j.is_rejected ? '#fee2e2' : j.is_admitted ? '#dcfce7' : '#dbeafe', color: j.is_rejected ? '#b91c1c' : j.is_admitted ? '#15803d' : '#1d4ed8', padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700 }} data-testid={`admj-current-${j.enrolment_id}`}>
+                    {j.is_rejected ? 'Rejected' : j.is_admitted ? 'Admitted' : `Current: ${(j.stages.find((x: any) => x.stage === j.current_stage)?.label) ?? j.current_stage}`}
+                  </span>
+                </div>
+                {j.is_rejected && j.rejected && (
+                  <div className="notice warn" style={{ marginBottom: 8 }}><Ic k="x" /><div>Rejected — {j.rejected.reason}{j.rejected.by ? ` · by ${j.rejected.by}` : ''}{j.rejected.at ? ` · ${dmy(j.rejected.at)}` : ''}</div></div>
+                )}
+                <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                  {j.stages.map((s: any, i: number) => (
+                    <li key={s.stage} style={{ display: 'flex', gap: 10, paddingBottom: i === j.stages.length - 1 ? 0 : 14, position: 'relative' }} data-testid={`admj-step-${j.enrolment_id}-${s.stage}`} data-status={s.status}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <span style={{ width: 24, height: 24, borderRadius: 999, background: clr(s.status), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic k={ic(s.status)} /></span>
+                        {i < j.stages.length - 1 && <span style={{ flex: 1, width: 2, background: s.status === 'done' ? '#16a34a' : 'var(--border)', marginTop: 2, minHeight: 14 }} />}
+                      </div>
+                      <div style={{ flex: 1, paddingTop: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <b style={{ color: s.status === 'pending' ? 'var(--muted, #94a3b8)' : 'inherit', fontWeight: s.status === 'current' ? 800 : 600 }}>{s.label}</b>
+                          {s.at && <span className="sub" style={{ fontSize: 11 }}>{dmy(s.at)}</span>}
+                        </div>
+                        {s.detail && <div className="sub" style={{ fontSize: 12 }}>{s.detail}</div>}
+                        {s.by && <div className="sub" style={{ fontSize: 11 }}>by {s.by}</div>}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+                {!j.is_rejected && !j.is_admitted && (
+                  <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {j.next?.action === 'approve' && canApproveAdm && j.next.can && (
+                      <button className="btn primary" onClick={() => setAdmActionFor({ enrolment: j, action: 'approve' })} data-testid={`admj-approve-${j.enrolment_id}`}><Ic k="check" />Approve admission &amp; payment</button>
+                    )}
+                    {j.next?.action === 'confirm' && canEdit && j.next.can && (
+                      <button className="btn primary" onClick={() => setAdmActionFor({ enrolment: j, action: 'confirm' })} data-testid={`admj-confirm-${j.enrolment_id}`}><Ic k="flag" />Record student confirmation</button>
+                    )}
+                    {j.next?.action === 'admit' && canEdit && j.next.can && (
+                      <button className="btn primary" onClick={() => setAdmActionFor({ enrolment: j, action: 'admit' })} data-testid={`admj-admit-${j.enrolment_id}`}><Ic k="award" />Convert to admission</button>
+                    )}
+                    {canApproveAdm && (
+                      <button className="btn" style={{ color: '#b91c1c', borderColor: '#fca5a5' }} onClick={() => setAdmActionFor({ enrolment: j, action: 'reject' })} data-testid={`admj-reject-${j.enrolment_id}`}><Ic k="x" />Reject</button>
+                    )}
+                    {j.next?.action && !j.next.can && j.next.reason && <span className="sub" style={{ fontSize: 12 }}>{j.next.reason}</span>}
+                  </div>
+                )}
+              </div>
+            );
+          }) : <Empty t="No enrolments to show an admission journey for yet." />}
+        </Section>
+      )}
+
       {tab === 'fees' && (
         <>
           <Section title="Collection Summary">
@@ -4959,6 +5024,70 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit }: { st
       )}
       {enrolHistFor && (
         <EnrolmentHistoryModal student={full} enrolment={enrolHistFor} onClose={() => setEnrolHistFor(null)} />
+      )}
+      {admActionFor && (
+        <AdmissionActionModal enrolment={admActionFor.enrolment} action={admActionFor.action}
+          onClose={() => setAdmActionFor(null)}
+          onDone={() => { setAdmActionFor(null); reloadJourney(); }} />
+      )}
+    </DetailModal>
+  );
+}
+
+/**
+ * ADMISSION ACTION — the approve / reject / confirm / admit modal for the Admission Journey
+ * (migration 075). POSTs to the scope-enforced /enrolments/:id/admission/* endpoints; the API is
+ * the real gate (approve requires admission.approve + a payment & invoice; confirm needs a
+ * method; admit only from student_confirmed; reject needs remarks).
+ */
+export function AdmissionActionModal({ enrolment, action, onClose, onDone }:
+  { enrolment: any; action: string; onClose: () => void; onDone: () => void }) {
+  const [remarks, setRemarks] = useState('');
+  const [via, setVia] = useState('in_person');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const eid = enrolment.enrolment_id;
+  const titles: Record<string, string> = { approve: 'Approve admission & payment', reject: 'Reject admission', confirm: 'Record student confirmation', admit: 'Convert to admission' };
+  const ctas: Record<string, string> = { approve: 'Approve', reject: 'Reject', confirm: 'Save confirmation', admit: 'Admit' };
+
+  const submit = async () => {
+    if (action === 'reject' && !remarks.trim()) { toast('Remarks are required to reject.', true); return; }
+    setBusy(true);
+    try {
+      if (action === 'approve') await api.post(`/enrolments/${eid}/admission/approve`, { remarks: remarks.trim() || null });
+      else if (action === 'reject') await api.post(`/enrolments/${eid}/admission/reject`, { remarks: remarks.trim() });
+      else if (action === 'confirm') await api.post(`/enrolments/${eid}/admission/confirm`, { student_confirmed_via: via, note: note.trim() || null });
+      else if (action === 'admit') await api.post(`/enrolments/${eid}/admission/admit`, { note: note.trim() || null });
+      toast(action === 'admit' ? 'Converted to admission.' : action === 'approve' ? 'Admission & payment approved.' : action === 'confirm' ? 'Student confirmation recorded.' : 'Admission rejected.');
+      onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+
+  return (
+    <DetailModal title={`${titles[action]} — ${enrolment.enrolment_no}`} icon="check" onClose={onClose} width={480}
+      footer={<button className={`btn ${action === 'reject' ? '' : 'primary'}`} onClick={submit} disabled={busy} data-testid="admj-action-save">{ctas[action]}</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}><Ic k="check" /><div>{enrolment.course_name ?? 'Course'} · <span className="mono">{enrolment.enrolment_no}</span></div></div>
+      {action === 'confirm' && (
+        <div className="fld"><label htmlFor="adm-via">Confirmation method <span className="star">*</span></label>
+          <select id="adm-via" className="ainp" value={via} disabled={busy} onChange={(e) => setVia(e.target.value)} data-testid="admj-via">
+            <option value="in_person">In person</option>
+            <option value="phone">Phone</option>
+            <option value="email">Email</option>
+            <option value="signed_form">Signed form</option>
+          </select>
+          <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>OTP / e-sign capture can be added later — this records the confirmation event.</div>
+        </div>
+      )}
+      {(action === 'confirm' || action === 'admit') && (
+        <div className="fld"><label htmlFor="adm-note">Note</label>
+          <input id="adm-note" className="ainp" value={note} disabled={busy} placeholder="Optional note" onChange={(e) => setNote(e.target.value)} data-testid="admj-note" />
+        </div>
+      )}
+      {(action === 'approve' || action === 'reject') && (
+        <div className="fld"><label htmlFor="adm-rem">Remarks {action === 'reject' ? <span className="star">*</span> : '(optional)'}</label>
+          <textarea id="adm-rem" className="ainp" rows={3} value={remarks} disabled={busy}
+            placeholder={action === 'reject' ? 'Why is this admission rejected?' : 'Any note for the approval'} onChange={(e) => setRemarks(e.target.value)} data-testid="admj-remarks" />
+        </div>
       )}
     </DetailModal>
   );

@@ -58,7 +58,10 @@ describe('Admissions RBAC census', () => {
   it('the admission module + actions are declared in the catalog', () => {
     const mod = PERMISSION_CATALOG.find((m) => m.module === 'admission');
     expect(mod).toBeDefined();
-    expect(mod!.actions.sort()).toEqual(['delete', 'manage', 'read', 'review']);
+    // 'approve' = the authorized-person admission-journey approval (migration 075), granted to
+    // Academic Admin / Branch Manager / Org / Super Admin. The other four are the online-form
+    // review queue (migration 049).
+    expect(mod!.actions.sort()).toEqual(['approve', 'delete', 'manage', 'read', 'review']);
   });
   it('migration 049 seeds + grants every admission.* permission the catalog declares', () => {
     const sql = readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '049_erp_admission_family.sql'), 'utf8');
