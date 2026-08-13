@@ -69,9 +69,15 @@ export class SyllabusService {
     multi('sy.branch_id', f.branch_id); multi('sy.vertical_id', f.vertical_id);
     const canApprove = await this.canApprove(me?.id);
     if (!canApprove) {
-      where.push(`sy.workflow_status = 'published'`);
-    } else if (f.status && ['draft', 'pending_approval', 'published', 'changes_requested', 'unpublished'].includes(String(f.status))) {
+      // Non-approvers see PUBLISHED items PLUS their OWN non-published items (draft/pending_approval/
+      // changes_requested) so a creator can find, reopen and resubmit their own work. Scope untouched.
+      params.push(me?.id ?? 0); where.push(`(sy.workflow_status = 'published' OR sy.created_by = $${params.length}::bigint)`);
+    }
+    if (f.status && ['draft', 'pending_approval', 'published', 'changes_requested', 'unpublished'].includes(String(f.status))) {
       params.push(String(f.status)); where.push(`sy.workflow_status = $${params.length}::varchar`);
+    }
+    if (f.mine === '1' || f.mine === 1 || f.mine === true || String(f.mine) === 'true') {
+      params.push(me?.id ?? 0); where.push(`sy.created_by = $${params.length}::bigint`);
     }
     if (f.q) { params.push(`%${f.q}%`); where.push(`(sy.title ILIKE $${params.length} OR sy.body ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 300), 1000));
@@ -109,7 +115,7 @@ export class SyllabusService {
 
   async get(id: number, scope: ResolvedScope, me: Me) {
     const r = await this.getRow(id, scope);
-    if (r.workflow_status !== 'published' && !(await this.canApprove(me?.id))) {
+    if (r.workflow_status !== 'published' && Number(r.created_by) !== Number(me?.id) && !(await this.canApprove(me?.id))) {
       throw new NotFoundException('Syllabus not found (or outside your access)');
     }
     let file_url: string | null = null;

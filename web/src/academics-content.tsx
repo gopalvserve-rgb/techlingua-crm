@@ -51,7 +51,7 @@ function useBatches(branchIds: number[], verticalIds: number[]) {
 }
 
 /** Branch + Vertical + Course + Status FilterMulti row shared by both screens. */
-function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, status, setStatus, canApprove, range, setRange, idPrefix }: any) {
+function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, status, setStatus, canApprove, canSubmit, mine, setMine, range, setRange, idPrefix }: any) {
   const vOpts = rd.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
   const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.vertical_id))) && (!fB.length || fB.includes(Number(c.branch_id))));
   return (
@@ -60,11 +60,19 @@ function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, status, setStatus, 
         onChange={(v: number[]) => { setFB(v); setFV((cur: number[]) => cur.filter((id: number) => rd.verticals.some((vt: any) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
       <FilterMulti label="Vertical" icon="grid" value={fV} options={vOpts} onChange={setFV} />
       <FilterMulti label="Course" icon="doc" value={fC} options={cOpts} onChange={setFC} />
-      {canApprove && (
-        <label className="fchip"><Ic k="shield" />
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
-            <option value="">All statuses</option>{WF_OPTS.map((s) => <option key={s} value={s}>{WF_LABEL[s]}</option>)}
-          </select></label>
+      {/* Status filter is available to everyone: a non-approver now gets their OWN draft/pending/
+          changes_requested rows back from the API, so the status filter is meaningful for them too. */}
+      <label className="fchip"><Ic k="shield" />
+        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
+          <option value="">All statuses</option>{WF_OPTS.map((s) => <option key={s} value={s}>{WF_LABEL[s]}</option>)}
+        </select></label>
+      {/* Creator-focused quick views: "Mine" + a one-click "Needs changes" (rejected-with-remarks) list. */}
+      {canSubmit && !canApprove && setMine && (
+        <>
+          <button type="button" className={'fchip' + (mine ? ' on' : '')} onClick={() => setMine((m: boolean) => !m)}><Ic k="users" />Mine</button>
+          <button type="button" className={'fchip' + (status === 'changes_requested' ? ' on' : '')}
+            onClick={() => { setMine(true); setStatus(status === 'changes_requested' ? '' : 'changes_requested'); }}><Ic k="flag" />Needs changes</button>
+        </>
       )}
       <DateRange value={range} onChange={setRange} idPrefix={idPrefix} style={{ marginLeft: 'auto' }} />
     </div>
@@ -101,10 +109,12 @@ export function CourseContentScreen() {
   const { scope: gScope } = useScope();
   const { can } = useAuth();
   const canApprove = can('course_content.approve');
+  const canSubmit = can('course_content.submit');
   const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [fC, setFC] = useState<number[]>([]);
   const [status, setStatus] = useState('');
+  const [mine, setMine] = useState(false);
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [tick, setTick] = useState(0);
   const [add, setAdd] = useState(false);
@@ -117,6 +127,7 @@ export function CourseContentScreen() {
   if (fV.length) qs.set('vertical_id', fV.join(','));
   if (fC.length) qs.set('course_id', fC.join(','));
   if (status) qs.set('status', status);
+  if (mine) qs.set('mine', '1');
   const list = useFetch<any[]>(`/course-contents?${qs.toString()}`, [qs.toString(), tick]);
   const after = () => setTick((t) => t + 1);
   const rows = list.data ?? [];
@@ -130,7 +141,7 @@ export function CourseContentScreen() {
   return (
     <>
       {can('course_content.create') && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New content</button></div>}
-      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC} status={status} setStatus={setStatus} canApprove={canApprove} range={range} setRange={setRange} idPrefix="cc-dr" />
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC} status={status} setStatus={setStatus} canApprove={canApprove} canSubmit={canSubmit} mine={mine} setMine={setMine} range={range} setRange={setRange} idPrefix="cc-dr" />
       <BulkBar count={count} entityLabel="Course content" onDelete={() => openBulk(selected)} onClear={clear} />
       <TableCard fill title="Course content" icon="doc"
         select={can('course_content.delete') ? tableSelect : undefined}
@@ -167,10 +178,12 @@ export function SyllabusScreen() {
   const { scope: gScope } = useScope();
   const { can } = useAuth();
   const canApprove = can('syllabus.approve');
+  const canSubmit = can('syllabus.submit');
   const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [fC, setFC] = useState<number[]>([]);
   const [status, setStatus] = useState('');
+  const [mine, setMine] = useState(false);
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [tick, setTick] = useState(0);
   const [add, setAdd] = useState(false);
@@ -183,6 +196,7 @@ export function SyllabusScreen() {
   if (fV.length) qs.set('vertical_id', fV.join(','));
   if (fC.length) qs.set('course_id', fC.join(','));
   if (status) qs.set('status', status);
+  if (mine) qs.set('mine', '1');
   const list = useFetch<any[]>(`/syllabi?${qs.toString()}`, [qs.toString(), tick]);
   const after = () => setTick((t) => t + 1);
   const rows = list.data ?? [];
@@ -196,7 +210,7 @@ export function SyllabusScreen() {
   return (
     <>
       {can('syllabus.create') && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New syllabus</button></div>}
-      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC} status={status} setStatus={setStatus} canApprove={canApprove} range={range} setRange={setRange} idPrefix="sy-dr" />
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC} status={status} setStatus={setStatus} canApprove={canApprove} canSubmit={canSubmit} mine={mine} setMine={setMine} range={range} setRange={setRange} idPrefix="sy-dr" />
       <BulkBar count={count} entityLabel="Syllabus" onDelete={() => openBulk(selected)} onClear={clear} />
       <TableCard fill title="Syllabus" icon="list"
         select={can('syllabus.delete') ? tableSelect : undefined}

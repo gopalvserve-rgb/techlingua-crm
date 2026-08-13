@@ -84,11 +84,13 @@ export function StudyMaterialScreen() {
   const { scope: gScope } = useScope();
   const { can } = useAuth();
   const canApprove = can('material.approve');
+  const canSubmit = can('material.submit');
   const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [fC, setFC] = useState<number[]>([]);
   const [ftype, setFtype] = useState('');
   const [fstat, setFstat] = useState('');
+  const [mine, setMine] = useState(false);
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [tick, setTick] = useState(0);
   const [add, setAdd] = useState(false);
@@ -101,6 +103,7 @@ export function StudyMaterialScreen() {
   if (fC.length) qs.set('course_id', fC.join(','));
   if (ftype) qs.set('material_type', ftype);
   if (fstat) qs.set('status', fstat);
+  if (mine) qs.set('mine', '1');
   if (range.from) qs.set('from', range.from);
   if (range.to) qs.set('to', range.to);
   const list = useFetch<any[]>(`/learning/materials?${qs.toString()}`, [qs.toString(), tick]);
@@ -134,10 +137,17 @@ export function StudyMaterialScreen() {
             <select value={ftype} onChange={(e) => setFtype(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
               <option value="">All types</option>{MAT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select></label>
-          {canApprove && <label className="fchip"><Ic k="shield" />
+          {/* Status filter is available to everyone: a non-approver now gets their OWN
+              draft/pending/changes_requested items back, so the filter is meaningful for them too. */}
+          <label className="fchip"><Ic k="shield" />
             <select value={fstat} onChange={(e) => setFstat(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
               <option value="">All statuses</option>{MAT_WF.map((t) => <option key={t} value={t}>{MAT_WF_LABEL[t]}</option>)}
-            </select></label>}
+            </select></label>
+          {canSubmit && !canApprove && <>
+            <button type="button" className={'fchip' + (mine ? ' on' : '')} onClick={() => setMine((m) => !m)}><Ic k="users" />Mine</button>
+            <button type="button" className={'fchip' + (fstat === 'changes_requested' ? ' on' : '')}
+              onClick={() => { setMine(true); setFstat(fstat === 'changes_requested' ? '' : 'changes_requested'); }}><Ic k="flag" />Needs changes</button>
+          </>}
           <DateRange value={range} onChange={setRange} idPrefix="mat-dr" style={{ marginLeft: 'auto' }} />
         </>} />
       <BulkBar count={count} entityLabel="Material" onDelete={() => openBulk(selected)} onClear={clear} />

@@ -75,9 +75,18 @@ export class CourseContentService {
     multi('cc.branch_id', f.branch_id); multi('cc.vertical_id', f.vertical_id);
     const canApprove = await this.canApprove(me?.id);
     if (!canApprove) {
-      where.push(`cc.workflow_status = 'published'`);
-    } else if (f.status && ['draft', 'pending_approval', 'published', 'changes_requested', 'unpublished'].includes(String(f.status))) {
+      // Non-approvers see PUBLISHED items PLUS their OWN non-published items (draft/pending_approval/
+      // changes_requested) so a creator can find, reopen and resubmit their own work — without ever
+      // seeing anyone else's non-published rows. Scope enforcement above is untouched.
+      params.push(me?.id ?? 0); where.push(`(cc.workflow_status = 'published' OR cc.created_by = $${params.length}::bigint)`);
+    }
+    // Status filter: an approver may filter any status; a creator narrows to their own rows of that status.
+    if (f.status && ['draft', 'pending_approval', 'published', 'changes_requested', 'unpublished'].includes(String(f.status))) {
       params.push(String(f.status)); where.push(`cc.workflow_status = $${params.length}::varchar`);
+    }
+    // "Mine" quick filter — restrict to the caller's own items (actionable-items view).
+    if (f.mine === '1' || f.mine === 1 || f.mine === true || String(f.mine) === 'true') {
+      params.push(me?.id ?? 0); where.push(`cc.created_by = $${params.length}::bigint`);
     }
     if (f.q) { params.push(`%${f.q}%`); where.push(`(cc.title ILIKE $${params.length} OR cc.description ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 300), 1000));
@@ -115,8 +124,8 @@ export class CourseContentService {
 
   async get(id: number, scope: ResolvedScope, me: Me) {
     const r = await this.getRow(id, scope);
-    // Non-approvers may only open a published item.
-    if (r.workflow_status !== 'published' && !(await this.canApprove(me?.id))) {
+    // Non-approvers may open a published item OR their OWN non-published item (to read remarks/reopen).
+    if (r.workflow_status !== 'published' && Number(r.created_by) !== Number(me?.id) && !(await this.canApprove(me?.id))) {
       throw new NotFoundException('Course content not found (or outside your access)');
     }
     let file_url: string | null = null;

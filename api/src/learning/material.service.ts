@@ -81,12 +81,18 @@ export class MaterialService {
     if (TYPES.includes(String(f.material_type))) { params.push(f.material_type); where.push(`m.material_type = $${params.length}::varchar`); }
     const canApprove = await this.canApprove(me?.id);
     if (!canApprove) {
-      where.push(`m.workflow_status = 'published'`);
-    } else if (f.status && WF.includes(String(f.status))) {
+      // Non-approvers see PUBLISHED items PLUS their OWN non-published items (draft/pending_approval/
+      // changes_requested) so a creator can find, reopen and resubmit their own work. Scope untouched.
+      params.push(me?.id ?? 0); where.push(`(m.workflow_status = 'published' OR m.created_by = $${params.length}::bigint)`);
+    }
+    if (f.status && WF.includes(String(f.status))) {
       params.push(String(f.status)); where.push(`m.workflow_status = $${params.length}::varchar`);
     } else if (['draft', 'published'].includes(String(f.visibility))) {
-      // legacy filter still honoured for approvers
+      // legacy filter still honoured
       params.push(f.visibility === 'published' ? 'published' : 'draft'); where.push(`m.workflow_status = $${params.length}::varchar`);
+    }
+    if (f.mine === '1' || f.mine === 1 || f.mine === true || String(f.mine) === 'true') {
+      params.push(me?.id ?? 0); where.push(`m.created_by = $${params.length}::bigint`);
     }
     const dr = assertDateRange(f.from, f.to);
     if (dr.from) { params.push(dr.from); where.push(`m.created_at >= $${params.length}::date`); }
@@ -95,7 +101,7 @@ export class MaterialService {
     params.push(Math.min(Number(f.limit ?? 300), 1000));
     return this.db.query<any>(
       `SELECT m.id, m.title, m.description, m.material_type, m.url, m.external_url, m.file_r2_key, m.body, m.tags,
-              m.access_level, m.visibility, m.workflow_status, m.review_remarks, m.allow_parents, m.created_at,
+              m.access_level, m.visibility, m.workflow_status, m.review_remarks, m.allow_parents, m.created_at, m.created_by,
               m.branch_id, m.vertical_id, m.course_id, m.batch_id,
               b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, bt.name AS batch_name,
               u.name AS created_by_name
@@ -127,7 +133,7 @@ export class MaterialService {
 
   async get(id: number, scope: ResolvedScope, me: Me) {
     const m = await this.getRow(id, scope);
-    if (m.workflow_status !== 'published' && !(await this.canApprove(me?.id))) {
+    if (m.workflow_status !== 'published' && Number(m.created_by) !== Number(me?.id) && !(await this.canApprove(me?.id))) {
       throw new NotFoundException('Material not found (or outside your access)');
     }
     let file_url: string | null = null;
