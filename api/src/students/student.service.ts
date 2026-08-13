@@ -1071,6 +1071,45 @@ export class StudentService {
     return { deleted, skipped: this.idList(raw).length - deleted };
   }
 
+  /* -------------------------------------------------- bulk convert (leads -> students) */
+
+  /**
+   * BULK CONVERT leads -> students. REUSES the single-lead `convert()` per lead — same
+   * mapping, dedupe, scope enforcement, lead-win and side effects — inside its OWN
+   * transaction, so one bad lead never rolls back the others. Idempotent: a lead already
+   * converted is SKIPPED ("already converted") with no duplicate student; an id outside the
+   * caller's scope (or missing) is reported under `failed`. Returns a structured per-lead
+   * report + counts. Guarded by student.create (the exact key the single Convert uses).
+   */
+  async bulkConvert(raw: unknown, me: { id: number }, scope: ResolvedScope) {
+    const ids = this.idList(raw);
+    const converted: Array<{ lead_id: number; student_id: number; student_no: string }> = [];
+    const skipped: Array<{ lead_id: number; reason: string; student_id?: number }> = [];
+    const failed: Array<{ lead_id: number; error: string }> = [];
+    // de-dupe the incoming ids so the same lead isn't attempted twice in one call
+    for (const id of Array.from(new Set(ids))) {
+      try {
+        const r: any = await this.convert({ lead_id: id }, me, scope);
+        if (r?.already) {
+          skipped.push({ lead_id: id, reason: 'already converted', student_id: Number(r.id) });
+        } else {
+          converted.push({ lead_id: id, student_id: Number(r.id), student_no: r.student_no });
+        }
+      } catch (e) {
+        failed.push({ lead_id: id, error: (e as Error)?.message ?? 'Conversion failed' });
+      }
+    }
+    return {
+      converted, skipped, failed,
+      counts: {
+        requested: ids.length,
+        converted: converted.length,
+        skipped: skipped.length,
+        failed: failed.length,
+      },
+    };
+  }
+
   /* ------------------------------------------------------------------ helpers */
 
   private async winLead(

@@ -33,7 +33,7 @@ import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
 import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelete, BulkBar, downloadObjectsCsv } from './listtools';
 import { RedFlagModal } from './leadsheet';
-import { ConvertStudentModal } from './convertstudent';
+import { ConvertStudentModal, BulkConvertStudentsModal } from './convertstudent';
 import { AdmissionsScreen } from './admissions';
 import { CustomFieldsAdmin, fetchCfDefs, coerceCf, collectCf, type CfDef } from './customfields';
 import StartCalling from './calling';
@@ -1172,7 +1172,7 @@ function LeadsAll() {
   const canConvert = can('student.create');
   const [convertLead, setConvertLead] = useState<{ id: number; name?: string } | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume' | 'delete'>(null);
+  const [bulk, setBulk] = useState<null | 'transfer' | 'reassign' | 'pause' | 'resume' | 'delete' | 'convert'>(null);
   const [transferLead, setTransferLead] = useState<{ id: number; name?: string } | null>(null);
   const [selCap, setSelCap] = useState<number | null>(null);
   // changing the filter (or a refresh) clears the selection — it can no longer be trusted to
@@ -1326,6 +1326,7 @@ function LeadsAll() {
             {canAssign && <button className="btn" onClick={() => setBulk('reassign')}><Ic k="users" />Reassign</button>}
             {canEditLead && <button className="btn" onClick={() => setBulk('pause')}><Ic k="clock" />Pause</button>}
             {canEditLead && <button className="btn" onClick={() => setBulk('resume')}><Ic k="check" />Resume</button>}
+            {canConvert && <button className="btn" data-testid="bulk-convert" onClick={() => setBulk('convert')}><Ic k="students" />Convert to students</button>}
             {canDeleteLead && <button className="btn" data-testid="bulk-delete" onClick={() => setBulk('delete')}
               style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' }}><Ic k="trash" />Delete</button>}
             <button className="btn" onClick={clearSel}>Clear</button>
@@ -1376,6 +1377,7 @@ function LeadsAll() {
       {bulk === 'transfer' && <BulkTransferModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {bulk === 'reassign' && <BulkReassignModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {(bulk === 'pause' || bulk === 'resume') && <BulkPauseModal ids={selectedIds} action={bulk} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
+      {bulk === 'convert' && <BulkConvertStudentsModal ids={selectedIds} onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}
       {bulk === 'delete' && <BulkDeleteModal entityLabel="Lead" ids={selectedIds} idKey="lead_ids"
         impactPath="/leads/bulk/delete-impact" deletePath="/leads/bulk/delete"
         onClose={() => setBulk(null)} onDone={() => { clearSel(); bump(); }} />}

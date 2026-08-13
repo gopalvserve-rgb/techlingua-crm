@@ -111,6 +111,64 @@ describe('StudentService.convert', () => {
   });
 });
 
+describe('StudentService.bulkConvert (Leads-list multi-select)', () => {
+  // A mock keyed by lead id so we can exercise a MIX in one call:
+  //   10 -> convertible, 11 -> already a student (skip), 12 -> out of scope (lead not found).
+  function makeBulk() {
+    const inserts: number[] = [];
+    let seq = 500;
+    const db = {
+      one: async (sql: string, params: unknown[] = []) => {
+        if (/FROM organisation/.test(sql)) return { id: 1 };
+        if (/FROM lead l\s+WHERE l\.id/.test(sql)) {
+          const id = Number(params[0]);
+          if (id === 12) return null;                 // outside scope -> NotFound
+          return LEAD({ id });
+        }
+        if (/FROM student WHERE lead_id/.test(sql)) {
+          const id = Number(params[0]);
+          if (id === 11) return { id: 999, student_no: 'STU-00999', full_name: 'Asha Rao', status: 'active' };
+          return null;
+        }
+        if (/FROM enrolment\s+WHERE lead_id/.test(sql)) return null;
+        return null;
+      },
+      query: async () => [],
+      tx: async (fn: any) => fn({
+        query: async (sql: string) => {
+          if (/INSERT INTO student/.test(sql)) { inserts.push(++seq); return { rows: [{ id: seq }] }; }
+          if (/FROM pipeline_stage/.test(sql)) return { rows: [{ id: 77, name: 'Won' }] };
+          return { rows: [] };
+        },
+      }),
+    };
+    const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001') };
+    const svc = new StudentService(db as never, resolver as never, numbering as never);
+    return { svc, inserts };
+  }
+
+  it('reports per-lead outcomes (converted / already-converted / out-of-scope) with NO cross-lead rollback', async () => {
+    const { svc, inserts } = makeBulk();
+    // failing id (12) sits in the MIDDLE, so proving 10 still converts after it proves no abort.
+    const r: any = await svc.bulkConvert([11, 12, 10], { id: 5 }, scopeAll);
+
+    expect(r.counts).toEqual({ requested: 3, converted: 1, skipped: 1, failed: 1 });
+    expect(r.converted).toEqual([{ lead_id: 10, student_id: 501, student_no: 'STU-0001' }]);
+    expect(r.skipped[0]).toMatchObject({ lead_id: 11, reason: 'already converted' });
+    expect(r.failed[0].lead_id).toBe(12);
+    // exactly ONE student row created (only lead 10) — 11 skipped, 12 failed, no duplicates.
+    expect(inserts.length).toBe(1);
+  });
+
+  it('de-dupes repeated ids and tolerates junk ids', async () => {
+    const { svc, inserts } = makeBulk();
+    const r: any = await svc.bulkConvert([10, 10, '10', 0, null], { id: 5 }, scopeAll);
+    expect(r.counts.requested).toBe(3);   // idList keeps 10,10,10 (0/null dropped)
+    expect(r.counts.converted).toBe(1);   // Set() collapses to a single lead 10
+    expect(inserts.length).toBe(1);
+  });
+});
+
 describe('StudentService.create (direct Add — the Admission form)', () => {
   const FULL = {
     full_name: 'Neha Verma', branch_id: 9, vertical_id: 3, course_id: 100,

@@ -115,6 +115,16 @@ export class StudentController {
     return this.svc.convert(dto, me, scope);
   }
 
+  /** BULK "Convert to students" — the Leads-list multi-select action. Takes { ids:number[] }
+   *  and reuses the single-convert per lead (own transaction each) so behaviour/dedupe/scope
+   *  are identical; returns a per-lead {converted,skipped,failed} report + counts. Same
+   *  student.create guard as the single Convert; scope enforced per lead inside the service. */
+  @Post('bulk-convert')
+  @RequirePermission('student.create')
+  bulkConvert(@Body() b: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.bulkConvert(b?.ids, me, scope);
+  }
+
   /** ADD a student directly (the Admission form) — lead-less, full profile, auto Student ID +
    *  Enrollment No. Guarded by student.create (the same key Convert uses). */
   @Post()
