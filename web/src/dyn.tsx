@@ -4510,7 +4510,17 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const reloadJourney = () => { journeyData.reload(); loadProfile(); onChanged(); };
   const enrolData = useFetch<any>(tab === 'enrollments' ? `/students/${student.id}/enrolments` : null, [student.id, tab]);
   const learnData = useFetch<any>(tab === 'learning' ? `/students/${student.id}/learning` : null, [student.id, tab]);
-  const idCardData = useFetch<any>(tab === 'idcard' ? `/students/${student.id}/id-card/url` : null, [student.id, tab]);
+  const [idCardVert, setIdCardVert] = useState<number | null>(null);
+  const vidData = useFetch<any>(tab === 'idcard' ? `/students/${student.id}/vertical-ids` : null, [student.id, tab]);
+  const idCardUrlPath = `/students/${student.id}/id-card/url`;
+  const idCardData = useFetch<any>(
+    tab === 'idcard' ? (idCardVert != null ? `${idCardUrlPath}?vertical_id=${idCardVert}` : idCardUrlPath) : null,
+    [student.id, tab, idCardVert]);
+  useEffect(() => {
+    const vs = (vidData.data?.verticals ?? []) as any[];
+    if (tab === 'idcard' && vs.length && idCardVert == null) setIdCardVert(Number(vs[0].vertical_id));
+    if (tab !== 'idcard' && idCardVert != null) setIdCardVert(null);
+  }, [vidData.data, tab]);
   const reloadEnrol = () => { enrolData.reload(); loadProfile(); onChanged(); };
   const statusHist = useFetch<any[]>(tab === 'status' ? `/students/${student.id}/status-history` : null, [student.id, tab]);
   const [lms, setLms] = useState<any>(null);
@@ -4558,10 +4568,15 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
     .filter((e: any) => !['cancelled', 'withdrawn', 'dropped_out'].includes(String(e.course_status ?? '')))
     .map((e: any) => String(e.course_name ?? '').trim()).filter(Boolean)));
   if (!activeCourses.length && full.course_name) activeCourses.push(String(full.course_name));
-  const openIdCard = async () => {
+  const openIdCard = async (vid?: number | null) => {
     try {
-      const res = await fetch(`/api/students/${student.id}/id-card`, { headers: { Authorization: `Bearer ${getToken()}` } });
-      if (!res.ok) { toast('Could not open the ID card', true); return; }
+      const idCardApi = `/api/students/${student.id}/id-card`;
+      const res = await fetch(vid != null ? `${idCardApi}?vertical_id=${vid}` : idCardApi, { headers: { Authorization: `Bearer ${getToken()}` } });
+      if (!res.ok) {
+        let msg = 'Could not open the ID card';
+        try { const j = await res.json(); if (j?.message) msg = String(j.message); } catch { /* non-JSON */ }
+        toast(msg, true); return;
+      }
       const url = URL.createObjectURL(await res.blob());
       window.open(url, '_blank', 'noopener');
       setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -4596,7 +4611,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               <span className="fbp-tag"><Ic k="cal" />Admitted {dmy(full.admission_date)}</span>
             </div>
             <div className="fbp-btns">
-              <button className="btn" onClick={openIdCard} data-testid="stu-id-card"><Ic k="award" />Student ID Card</button>
+              <button className="btn" onClick={() => { const vids = (prof?.vertical_ids ?? []) as any[]; if (vids.length > 1) { setTab('idcard'); } else { openIdCard(vids[0]?.vertical_id ?? null); } }} data-testid="stu-id-card"><Ic k="award" />Student ID Card</button>
               {canEdit && <button className="btn" onClick={() => setShowStatus(true)} data-testid="stu-change-status"><Ic k="flag" />Change status</button>}
               {canEdit && <button className="btn" onClick={() => setShowTransfer(true)}><Ic k="swap" />Transfer student</button>}
               {onEdit && <button className="btn" onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>}
@@ -4702,13 +4717,34 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
         </>
       )}
 
-      {tab === 'idcard' && (
+      {tab === 'idcard' && (() => {
+        const verts = (vidData.data?.verticals ?? []) as any[];
+        const multi = verts.length > 1;
+        const selected = verts.find((v: any) => Number(v.vertical_id) === Number(idCardVert)) ?? verts[0];
+        return (
         <Section title="Student ID Card">
           <div className="notice" style={{ marginBottom: 10 }}>
-            <Ic k="award" /><div>A printable identity card with the student photo, Student ID, course(s) and Branch › Vertical. Upload a photo from the header to have it appear on the card.</div>
+            <Ic k="award" /><div>A printable identity card with the student photo, the <b>vertical-wise Student ID</b>, the course(s) enrolled <b>in that vertical</b> and Branch › Vertical. {multi ? 'This student is enrolled across multiple verticals — pick a vertical to produce its own card (a distinct card + ID per vertical).' : 'Upload a photo from the header to have it appear on the card.'}</div>
           </div>
+          {verts.length ? (
+            <div className="min-row" style={{ marginBottom: 12, gap: 8, flexWrap: 'wrap' }} data-testid="idcard-vert-picker">
+              {verts.map((v: any) => (
+                <button key={v.vertical_id} className={`btn${Number(idCardVert) === Number(v.vertical_id) ? ' primary' : ''}`}
+                  onClick={() => setIdCardVert(Number(v.vertical_id))} data-testid={`idcard-vert-${v.vertical_id}`}>
+                  <Ic k="grid" />{[v.branch_name, v.vertical_name].filter(Boolean).join(' › ')}
+                  <span className="sub mono" style={{ marginLeft: 6 }}>{v.student_vertical_no ?? '—'}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {selected ? (
+            <div className="sub" style={{ marginBottom: 8 }}>
+              Card for <b>{[selected.branch_name, selected.vertical_name].filter(Boolean).join(' › ')}</b> — Student ID <b className="mono">{selected.student_vertical_no ?? '—'}</b>
+              {selected.courses?.length ? <> · Courses: {selected.courses.join(', ')}</> : null}
+            </div>
+          ) : null}
           <div className="fbp-btns" style={{ marginBottom: 12 }}>
-            <button className="btn primary" onClick={openIdCard} data-testid="idcard-open"><Ic k="award" />Preview / Download PDF</button>
+            <button className="btn primary" onClick={() => openIdCard(idCardVert)} data-testid="idcard-open"><Ic k="award" />Preview / Download PDF</button>
             <button className="btn" onClick={() => idCardData.reload()}><Ic k="refresh" />Regenerate</button>
           </div>
           {idCardData.data?.url ? (
@@ -4717,7 +4753,8 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             <div className="empty-note">Click <b>Preview / Download PDF</b> to open the ID card, or Regenerate to build a fresh preview here.</div>
           )}
         </Section>
-      )}
+        );
+      })()}
 
       {tab === 'education' && (
         <Section title="Education">
@@ -4902,14 +4939,24 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
       {tab === 'enrollments' && (
         <Section title="Course Enrollment">
           <div className="notice" style={{ marginBottom: 10 }}>
-            <Ic k="grid" /><div>Overall student status: <b>{statusMeta(full.status).label}</b>. Each course enrollment carries its <b>own</b> status — completing or cancelling one course does <b>not</b> change the others or the overall student status.</div>
+            <Ic k="grid" /><div>Overall student status: <b>{statusMeta(full.status).label}</b>. Each course enrollment carries its <b>own</b> status — completing or cancelling one course does <b>not</b> change the others or the overall student status. The <b>Student ID is generated per vertical</b>: each enrollment shows its <b>Branch › Vertical › Course</b> and the vertical-wise Student ID.</div>
           </div>
+          {(enrolData.data?.vertical_ids ?? []).length ? (
+            <div className="min-row" style={{ marginBottom: 10, gap: 8, flexWrap: 'wrap' }} data-testid="enrol-vertical-ids">
+              {(enrolData.data.vertical_ids as any[]).map((v: any) => (
+                <span key={v.vertical_id} className="bdg b-indigo">
+                  {[v.branch_name, v.vertical_name].filter(Boolean).join(' › ')}: <b className="mono">{v.student_vertical_no ?? '—'}</b>
+                </span>
+              ))}
+            </div>
+          ) : null}
           {canEdit && <button className="btn primary" style={{ marginBottom: 10 }} onClick={() => setAddEnrol(true)} data-testid="enrol-add"><Ic k="plus" />Enroll in another course</button>}
           {(enrolData.data?.enrolments ?? []).length ? (
-            <table className="minitbl"><thead><tr><th>Course</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
+            <table className="minitbl"><thead><tr><th>Branch › Vertical › Course</th><th>Vertical Student ID</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
               <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => (
                 <tr key={e.id} data-testid={`enrol-row-${e.id}`}>
-                  <td><b className="nm">{e.course_name ?? '—'}</b><div className="sub mono">{e.enrolment_no}</div></td>
+                  <td><b className="nm">{e.course_name ?? '—'}</b><div className="sub" data-testid={`enrol-path-${e.id}`}>{e.path || [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' › ')}</div><div className="sub mono">{e.enrolment_no}</div></td>
+                  <td><b className="mono" data-testid={`enrol-vid-${e.id}`}>{e.student_vertical_no ?? '—'}</b></td>
                   <td>{e.batch_name ?? '—'}</td>
                   <td>{e.start_date ? dmy(e.start_date) : dmy(e.created_at)}</td>
                   <td>

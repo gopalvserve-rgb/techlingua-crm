@@ -37,9 +37,23 @@ function make(over: { photoRow?: any } = {}) {
     },
     query: async (sql: string, params: unknown[] = []) => {
       q.push({ sql, params });
+      // resolveIdCardVertical — the distinct verticals this student has enrolments in
+      if (/FROM enrolment e/.test(sql) && /GROUP BY e\.vertical_id/.test(sql)) {
+        return [{ vertical_id: 3, branch_id: 9, vertical_name: 'BCL', branch_name: 'Vikaspuri' }];
+      }
+      // courses enrolled in the chosen vertical
+      if (/SELECT DISTINCT co\.name FROM enrolment/.test(sql)) return [{ name: 'French A1' }, { name: 'French A2' }];
       if (/FROM enrolment e/.test(sql)) return [{ name: 'French A1' }, { name: 'French A2' }];
       return [];
     },
+    // transaction — ensureVerticalId runs inside it; return an already-minted vertical-wise id
+    tx: async (fn: (c: any) => Promise<any>) => fn({
+      query: async (sql: string, params: unknown[] = []) => {
+        q.push({ sql, params });
+        if (/FROM student_vertical_id/.test(sql)) return { rows: [{ id: 500, student_vertical_no: 'SID-2026-27/0007' }] };
+        return { rows: [] };
+      },
+    }),
   };
   const storage = {
     studentPhotoKey: (sid: number, fn: string) => `students/${sid}/photo/uuid-${fn}`,
@@ -133,9 +147,9 @@ describe('StudentService — ID card', () => {
     const { buffer, r2_key } = await svc.idCard(55, scopeAll);
     const s = buffer.toString('latin1');
     expect(s.startsWith('%PDF-')).toBe(true);
-    expect(s).toContain('French A1');       // active course
-    expect(s).toContain('Vikaspuri');       // branch
-    expect(s).toContain('STU-0055');        // student id
+    expect(s).toContain('French A1');            // active course in this vertical
+    expect(s).toContain('Vikaspuri');            // branch
+    expect(s).toContain('SID-2026-27/0007');     // VERTICAL-WISE student id (client feedback)
     expect(r2_key).toContain('student_id_card');
   });
 });

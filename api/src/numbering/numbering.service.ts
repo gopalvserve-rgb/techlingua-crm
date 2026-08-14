@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'refund', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog', 'employee', 'assessment_certificate'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'refund', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog', 'employee', 'assessment_certificate', 'student_vertical'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -83,6 +83,11 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   // Phase 2 Assessment Batch D — ACRT-#### exam/course certificate numbers, reset per Indian FY
   // (like invoices). Allocated per branch/vertical if a more specific series row exists.
   assessment_certificate: { prefix: 'ACRT-', reset: 'fy', label: 'Assessment certificates' },
+  // Vertical-wise Student IDs (client feedback) — a SECOND student-number dimension, minted
+  // PER (student, vertical) so a student enrolled across two verticals gets TWO distinct IDs.
+  // Per branch/vertical if a more specific series row exists, org-wide otherwise (MOST-SPECIFIC-WINS),
+  // reset per Indian FY like invoices -> SID-2026-27/0001. Does NOT replace student.student_no (STU-).
+  student_vertical: { prefix: 'SID-', reset: 'fy', label: 'Vertical-wise Student IDs' },
 };
 
 export interface SeriesRow {

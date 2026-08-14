@@ -219,8 +219,8 @@ export class StudentController {
    *          branch>vertical), generated via PdfAssetService → R2 like certificates. -------- */
   @Get(':id/id-card')
   @RequirePermission('student.read')
-  async idCard(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope, @Res() res: Response) {
-    const { buffer, filename } = await this.svc.idCard(id, scope);
+  async idCard(@Param('id', ParseIntPipe) id: number, @Query('vertical_id') verticalId: string | undefined, @CurrentScope() scope: ResolvedScope, @Res() res: Response) {
+    const { buffer, filename } = await this.svc.idCard(id, scope, verticalId != null && verticalId !== '' ? Number(verticalId) : null);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.setHeader('Content-Length', String(buffer.length));
@@ -230,16 +230,24 @@ export class StudentController {
   /** (Re)generate the ID card + persist to R2; returns the stored r2_key. */
   @Post(':id/id-card')
   @RequirePermission('student.read')
-  async regenIdCard(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
-    const { r2_key, filename } = await this.svc.idCard(id, scope);
+  async regenIdCard(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentScope() scope: ResolvedScope) {
+    const vid = dto?.vertical_id != null && dto.vertical_id !== '' ? Number(dto.vertical_id) : null;
+    const { r2_key, filename } = await this.svc.idCard(id, scope, vid);
     return { r2_key, filename, generated: true };
   }
 
   /** A short-lived presigned R2 URL for the ID card (for a preview / download link). */
   @Get(':id/id-card/url')
   @RequirePermission('student.read')
-  idCardUrl(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
-    return this.svc.idCardUrl(id, scope);
+  idCardUrl(@Param('id', ParseIntPipe) id: number, @Query('vertical_id') verticalId: string | undefined, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.idCardUrl(id, scope, verticalId != null && verticalId !== '' ? Number(verticalId) : null);
+  }
+
+  /** LIST the vertical-wise Student IDs (one per vertical) for the ID-card picker. */
+  @Get(':id/vertical-ids')
+  @RequirePermission('student.read')
+  verticalIds(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.verticalIds(id, scope);
   }
 
   /* -------- family / siblings (ERP Batch 3). Read via student.read; link/unlink reuse

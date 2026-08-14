@@ -373,19 +373,42 @@ export class StudentService {
         ORDER BY r.created_at DESC, r.id DESC`, [sid]);
 
     // --- Fees: enrolment(s) + receipts + collection summary -------------------
-    const enrolments = await this.db.query<any>(
+    const enrolmentsRaw = await this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.status, e.net_fee_minor, e.fee_minor, e.discount_minor,
+              e.gross_fee_minor, e.discount_type, e.discount_value, e.discount_amount_minor,
               e.payment_plan, e.start_date, e.created_at, e.course_id, e.batch_id,
+              e.branch_id, e.vertical_id,
               e.course_status, e.course_status_reason, e.course_status_effective_date,
               e.course_status_changed_at, e.admission_stage, co.name AS course_name, bt.name AS batch_name,
+              br.name AS branch_name, vt.name AS vertical_name, svi.student_vertical_no,
               sd.label AS course_status_label, sd.lms_access AS course_lms_access
          FROM enrolment e
          LEFT JOIN m_course co ON co.id = e.course_id
          LEFT JOIN batch bt ON bt.id = e.batch_id
+         LEFT JOIN branch br ON br.id = e.branch_id
+         LEFT JOIN vertical vt ON vt.id = e.vertical_id
+         LEFT JOIN student_vertical_id svi ON svi.student_id = $1::bigint AND svi.vertical_id = e.vertical_id
          LEFT JOIN student_status_def sd ON sd.code = e.course_status
         WHERE e.deleted_at IS NULL
           AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
         ORDER BY e.created_at DESC`, [sid, student.enrolment_id ? Number(student.enrolment_id) : 0]);
+    // Attach a Branch > Vertical > Course breadcrumb per enrolment (client feedback).
+    const enrolments = enrolmentsRaw.map((e: any) => ({
+      ...e,
+      path: [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' \u203a '),
+    }));
+    // Distinct vertical-wise Student IDs (one per vertical) for this student.
+    const vmap = new Map<number, any>();
+    for (const e of enrolments) {
+      const vid = e.vertical_id != null ? Number(e.vertical_id) : null;
+      if (vid == null || vmap.has(vid)) continue;
+      vmap.set(vid, {
+        vertical_id: vid, vertical_name: e.vertical_name ?? null,
+        branch_id: e.branch_id != null ? Number(e.branch_id) : null, branch_name: e.branch_name ?? null,
+        student_vertical_no: e.student_vertical_no ?? null,
+      });
+    }
+    const vertical_ids = Array.from(vmap.values());
     const enrolmentIds = enrolments.map((e: any) => Number(e.id));
     let receipts: any[] = [];
     if (enrolmentIds.length) {
@@ -424,9 +447,11 @@ export class StudentService {
       },
       certificates,
       report_cards,
+      vertical_ids,
       fees: {
         enrolments,
         receipts,
+        vertical_ids,
         summary: {
           net_fee_minor: netFee,
           collected_minor: collected,
@@ -682,17 +707,75 @@ export class StudentService {
   }
 
   /* ----------------------------------------------------- STUDENT ID CARD --- */
-  private async idCardData(id: number, scope: ResolvedScope): Promise<{ doc: StudentIdCardDoc; lh: Letterhead; orgId: number }> {
+  /**
+   * VERTICAL-WISE ID CARD (client feedback). Resolve WHICH vertical the card is for, ensure a
+   * vertical-wise Student ID exists for it (mint on demand), and gather the courses enrolled in
+   * THAT vertical + its Branch > Vertical. A student enrolled in two verticals => two distinct cards.
+   *
+   *  verticalId rules: REQUIRED when the student has enrolments in >1 vertical; defaults to the
+   *  single/primary vertical otherwise (falls back to the student's own vertical if no enrolments).
+   */
+  private async resolveIdCardVertical(id: number, scope: ResolvedScope, verticalId?: number | null): Promise<{
+    student: any; verticalId: number; branchId: number | null; branchName: string | null; verticalName: string | null;
+    courses: string[]; studentVerticalNo: string; svidId: number;
+  }> {
     const st = await this.get(id, scope);
-    const org = await this.db.one<any>(`SELECT id, name FROM organisation ORDER BY id LIMIT 1`);
-    const courses = await this.db.query<any>(
-      `SELECT co.name FROM enrolment e LEFT JOIN m_course co ON co.id = e.course_id
+    const sid = Number(st.id);
+    const vrows = await this.db.query<any>(
+      `SELECT e.vertical_id, MIN(e.branch_id) AS branch_id,
+              MAX(vt.name) AS vertical_name, MAX(br.name) AS branch_name
+         FROM enrolment e
+         LEFT JOIN vertical vt ON vt.id = e.vertical_id
+         LEFT JOIN branch br ON br.id = e.branch_id
         WHERE e.deleted_at IS NULL AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
-          AND (e.course_status IS NULL OR e.course_status NOT IN ('cancelled','withdrawn','dropped_out'))
-        ORDER BY e.created_at ASC`, [id, st.enrolment_id ? Number(st.enrolment_id) : 0]);
+          AND e.vertical_id IS NOT NULL
+        GROUP BY e.vertical_id
+        ORDER BY MIN(e.created_at) ASC`, [sid, st.enrolment_id ? Number(st.enrolment_id) : 0]);
+    let target: any = null;
+    if (verticalId != null) {
+      target = vrows.find((r: any) => Number(r.vertical_id) === Number(verticalId)) || null;
+      if (!target) {
+        // allow the student's OWN vertical even with no enrolments (single-vertical fallback)
+        if (st.vertical_id != null && Number(st.vertical_id) === Number(verticalId)) {
+          target = { vertical_id: Number(st.vertical_id), branch_id: st.branch_id ?? null, vertical_name: st.vertical_name ?? null, branch_name: st.branch_name ?? null };
+        } else {
+          throw new BadRequestException('This student has no enrolment in the chosen vertical.');
+        }
+      }
+    } else if (vrows.length === 1) {
+      target = vrows[0];
+    } else if (vrows.length === 0) {
+      if (st.vertical_id == null) throw new BadRequestException('This student is not attached to any vertical yet.');
+      target = { vertical_id: Number(st.vertical_id), branch_id: st.branch_id ?? null, vertical_name: st.vertical_name ?? null, branch_name: st.branch_name ?? null };
+    } else {
+      throw new BadRequestException('This student is enrolled across multiple verticals — choose a vertical (vertical_id) for the ID card.');
+    }
+    const tVid = Number(target.vertical_id);
+    const tBid = target.branch_id != null ? Number(target.branch_id) : (st.branch_id != null ? Number(st.branch_id) : null);
+    // ensure (mint on demand) the vertical-wise Student ID for this vertical
+    const svid = await this.db.tx(async (c) => this.ensureVerticalId(c, sid, tBid, tVid, null));
+    // courses enrolled in THIS vertical (non-cancelled)
+    const courses = await this.db.query<any>(
+      `SELECT DISTINCT co.name FROM enrolment e LEFT JOIN m_course co ON co.id = e.course_id
+        WHERE e.deleted_at IS NULL AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
+          AND e.vertical_id = $3::bigint
+          AND (e.course_status IS NULL OR e.course_status NOT IN ('cancelled','withdrawn','dropped_out'))`,
+      [sid, st.enrolment_id ? Number(st.enrolment_id) : 0, tVid]);
     const courseNames = Array.from(new Set(courses.map((r: any) => String(r.name ?? '').trim()).filter(Boolean)));
     if (!courseNames.length && st.course_name) courseNames.push(String(st.course_name));
-    const br = await this.db.one<any>(`SELECT address FROM branch WHERE id = $1::bigint`, [st.branch_id]).catch(() => null);
+    return {
+      student: st, verticalId: tVid, branchId: tBid,
+      branchName: target.branch_name ?? st.branch_name ?? null,
+      verticalName: target.vertical_name ?? st.vertical_name ?? null,
+      courses: courseNames, studentVerticalNo: svid.student_vertical_no, svidId: svid.id,
+    };
+  }
+
+  private async idCardData(id: number, scope: ResolvedScope, verticalId?: number | null): Promise<{ doc: StudentIdCardDoc; lh: Letterhead; orgId: number; refId: number; docNo: string }> {
+    const r = await this.resolveIdCardVertical(id, scope, verticalId);
+    const st = r.student;
+    const org = await this.db.one<any>(`SELECT id, name FROM organisation ORDER BY id LIMIT 1`);
+    const br = await this.db.one<any>(`SELECT address FROM branch WHERE id = $1::bigint`, [r.branchId]).catch(() => null);
     let photo: Buffer | null = null;
     try {
       const ph = await this.db.one<any>(
@@ -702,34 +785,67 @@ export class StudentService {
     const today = new Date();
     const validUntil = new Date(today.getTime()); validUntil.setFullYear(validUntil.getFullYear() + 1);
     const doc: StudentIdCardDoc = {
-      student_name: st.full_name, student_no: st.student_no, enrollment_no: st.enrollment_no,
-      courses: courseNames, batch_name: st.batch_name, branch_name: st.branch_name, vertical_name: st.vertical_name,
+      // The card shows the VERTICAL-WISE Student ID (client feedback) as the Student ID.
+      student_name: st.full_name, student_no: r.studentVerticalNo, enrollment_no: st.enrollment_no,
+      courses: r.courses, batch_name: st.batch_name, branch_name: r.branchName, vertical_name: r.verticalName,
       dob: st.dob, phone: st.phone,
       issue_date: today.toISOString(), valid_until: validUntil.toISOString(), photo,
     };
     const lh: Letterhead = {
-      org_name: org?.name || 'Tech Lingua LLP', vertical_name: st.vertical_name, branch_name: st.branch_name,
+      org_name: org?.name || 'Tech Lingua LLP', vertical_name: r.verticalName, branch_name: r.branchName,
       branch_address: br?.address ?? null, branch_email: null, branch_phone: null,
     };
-    return { doc, lh, orgId: Number(org?.id ?? 0) };
+    return { doc, lh, orgId: Number(org?.id ?? 0), refId: r.svidId, docNo: r.studentVerticalNo };
   }
 
-  /** Generate the ID-card PDF, persist to R2 (kind `student_id_card`), return the bytes. */
-  async idCard(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string; r2_key: string | null }> {
-    const { doc, lh, orgId } = await this.idCardData(id, scope);
+  /** Generate the per-vertical ID-card PDF, persist to R2 (kind `student_id_card`, keyed by the
+   *  vertical-wise Student ID so the two verticals' cards never overwrite each other). */
+  async idCard(id: number, scope: ResolvedScope, verticalId?: number | null): Promise<{ buffer: Buffer; filename: string; r2_key: string | null }> {
+    const { doc, lh, orgId, refId, docNo } = await this.idCardData(id, scope, verticalId);
     const buffer = studentIdCardPdf(doc, lh);
     let key: string | null = null;
-    try { key = (await this.pdfAssets?.persist('student_id_card', id, doc.student_no ? String(doc.student_no) : null, buffer, orgId)) ?? null; } catch { /* R2 off — stream anyway */ }
-    return { buffer, filename: `id-card-${String(doc.student_no ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`, r2_key: key };
+    try { key = (await this.pdfAssets?.persist('student_id_card', refId, docNo, buffer, orgId)) ?? null; } catch { /* R2 off — stream anyway */ }
+    return { buffer, filename: `id-card-${String(docNo ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`, r2_key: key };
   }
 
-  /** A short-lived presigned R2 URL for the ID card (generates + persists it if needed). */
-  async idCardUrl(id: number, scope: ResolvedScope): Promise<{ url: string | null }> {
-    const st = await this.get(id, scope);
-    const name = `id-card-${String(st.student_no ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`;
-    let url = this.pdfAssets ? await this.pdfAssets.presignedUrl('student_id_card', id, name) : null;
-    if (!url) { try { await this.idCard(id, scope); } catch { /* R2 off */ } url = this.pdfAssets ? await this.pdfAssets.presignedUrl('student_id_card', id, name) : null; }
-    return { url };
+  /** A short-lived presigned R2 URL for the per-vertical ID card (generates + persists if needed). */
+  async idCardUrl(id: number, scope: ResolvedScope, verticalId?: number | null): Promise<{ url: string | null; vertical_id?: number; student_vertical_no?: string }> {
+    const r = await this.resolveIdCardVertical(id, scope, verticalId);
+    const name = `id-card-${String(r.studentVerticalNo ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`;
+    let url = this.pdfAssets ? await this.pdfAssets.presignedUrl('student_id_card', r.svidId, name) : null;
+    if (!url) { try { await this.idCard(id, scope, verticalId); } catch { /* R2 off */ } url = this.pdfAssets ? await this.pdfAssets.presignedUrl('student_id_card', r.svidId, name) : null; }
+    return { url, vertical_id: r.verticalId, student_vertical_no: r.studentVerticalNo };
+  }
+
+  /** LIST the vertical-wise Student IDs for a student (one per vertical) — the ID-card picker. */
+  async verticalIds(id: number, scope: ResolvedScope) {
+    const student = await this.get(id, scope);
+    const sid = Number(student.id);
+    const rows = await this.db.query<any>(
+      `SELECT e.vertical_id, MIN(e.branch_id) AS branch_id,
+              MAX(vt.name) AS vertical_name, MAX(br.name) AS branch_name,
+              MAX(svi.student_vertical_no) AS student_vertical_no,
+              array_remove(array_agg(DISTINCT co.name) FILTER (
+                WHERE e.course_status IS NULL OR e.course_status NOT IN ('cancelled','withdrawn','dropped_out')), NULL) AS courses
+         FROM enrolment e
+         LEFT JOIN vertical vt ON vt.id = e.vertical_id
+         LEFT JOIN branch br ON br.id = e.branch_id
+         LEFT JOIN m_course co ON co.id = e.course_id
+         LEFT JOIN student_vertical_id svi ON svi.student_id = $1::bigint AND svi.vertical_id = e.vertical_id
+        WHERE e.deleted_at IS NULL AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
+          AND e.vertical_id IS NOT NULL
+        GROUP BY e.vertical_id
+        ORDER BY MIN(e.created_at) ASC`, [sid, student.enrolment_id ? Number(student.enrolment_id) : 0]);
+    return {
+      student_id: sid, student_name: student.full_name, student_no: student.student_no,
+      verticals: rows.map((r: any) => ({
+        vertical_id: Number(r.vertical_id), vertical_name: r.vertical_name ?? null,
+        branch_id: r.branch_id != null ? Number(r.branch_id) : null, branch_name: r.branch_name ?? null,
+        student_vertical_no: r.student_vertical_no ?? null,
+        path: [r.branch_name, r.vertical_name].filter(Boolean).join(' \u203a '),
+        courses: (r.courses ?? []).filter(Boolean),
+      })),
+    };
   }
 
   /** Has THIS lead already been converted? Drives the leadsheet button state (idempotency). */
@@ -1353,8 +1469,11 @@ export class StudentService {
            VALUES ($1::bigint,$2,$3,$4::bigint,$5::bigint,$6::bigint,NULL,'active',$7,$8::date,$9::bigint,$10::bigint)`,
           [orgId, r.branchId, r.verticalId, eid, studentId, r.courseId,
             `Enrolled in ${r.courseName}`, r.startDate, r.net, me.id]);
+        // VERTICAL-WISE STUDENT ID — mint (or reuse) the per-vertical display ID for THIS enrolment's vertical.
+        const svid = await this.ensureVerticalId(c, studentId, r.branchId, r.verticalId, me.id);
         out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName,
           vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected',
+          student_vertical_no: svid.student_vertical_no,
           gross_fee_minor: r.feeMinor, discount_type: r.discount_type, discount_value: r.discount_value, discount_amount_minor: r.disc });
       }
     });
@@ -1650,6 +1769,42 @@ export class StudentService {
     return row;
   }
 
+  /**
+   * VERTICAL-WISE STUDENT ID (client feedback). Ensure a `student_vertical_id` row exists for
+   * this (student, vertical) — the display Student ID minted PER vertical, from the numbering
+   * series scoped to that branch+vertical (MOST-SPECIFIC-WINS, Indian-FY aware, prefix SID-).
+   * Minted the FIRST time; REUSED (idempotent) for every further enrolment in the same vertical.
+   * MUST run inside the caller's transaction so the number rolls back with the enrolment.
+   * Does NOT touch `student.student_no` (STU-) — that stays the master record identifier.
+   */
+  private async ensureVerticalId(
+    c: any, studentId: number, branchId: number | null, verticalId: number, actorId: number | null,
+  ): Promise<{ id: number; student_vertical_no: string; created: boolean }> {
+    if (!verticalId) throw new BadRequestException('A vertical is required to mint a vertical-wise Student ID.');
+    const existing = await c.query(
+      `SELECT id, student_vertical_no FROM student_vertical_id
+        WHERE student_id = $1::bigint AND vertical_id = $2::bigint LIMIT 1`, [studentId, verticalId]);
+    if (existing.rows[0]) {
+      return { id: Number(existing.rows[0].id), student_vertical_no: String(existing.rows[0].student_vertical_no), created: false };
+    }
+    const orgId = await this.orgId();
+    const no = await this.numbering.allocate('student_vertical', { branch_id: branchId ?? null, vertical_id: verticalId }, c);
+    const ins = await c.query(
+      `INSERT INTO student_vertical_id (org_id, student_id, branch_id, vertical_id, student_vertical_no, created_by)
+       VALUES ($1::bigint,$2::bigint,$3::bigint,$4::bigint,$5::varchar,$6::bigint)
+       ON CONFLICT (student_id, vertical_id) DO NOTHING
+       RETURNING id, student_vertical_no`,
+      [orgId, studentId, branchId ?? null, verticalId, no, actorId ?? null]);
+    if (ins.rows[0]) {
+      return { id: Number(ins.rows[0].id), student_vertical_no: String(ins.rows[0].student_vertical_no), created: true };
+    }
+    // lost a race — the row was inserted concurrently; the number we allocated is unused (rare).
+    const again = await c.query(
+      `SELECT id, student_vertical_no FROM student_vertical_id
+        WHERE student_id = $1::bigint AND vertical_id = $2::bigint LIMIT 1`, [studentId, verticalId]);
+    return { id: Number(again.rows[0].id), student_vertical_no: String(again.rows[0].student_vertical_no), created: false };
+  }
+
   /** LIST a student's course enrolments, each with its OWN status + combined (overall+course)
    *  effective LMS access + last-change metadata. Scope-enforced via get(). */
   async listEnrolments(id: number, scope: ResolvedScope) {
@@ -1659,16 +1814,22 @@ export class StudentService {
       `SELECT e.id, e.enrolment_no, e.status, e.course_id, e.batch_id, e.net_fee_minor, e.fee_minor,
               e.discount_minor, e.gross_fee_minor, e.discount_type, e.discount_value, e.discount_amount_minor,
               e.payment_plan, e.start_date, e.created_at,
+              e.branch_id, e.vertical_id,
               e.course_status, e.course_status_reason, e.course_status_last_attendance_date,
               e.course_status_effective_date, e.course_status_outstanding_minor,
               e.course_status_approved_by, e.course_status_changed_by, e.course_status_changed_at,
               e.admission_stage,
               co.name AS course_name, bt.name AS batch_name,
+              br.name AS branch_name, vt.name AS vertical_name,
+              svi.student_vertical_no,
               sd.label AS course_status_label, sd.is_terminal AS course_status_is_terminal,
               ap.name AS course_status_approved_by_name, ch.name AS course_status_changed_by_name
          FROM enrolment e
          LEFT JOIN m_course co ON co.id = e.course_id
          LEFT JOIN batch bt ON bt.id = e.batch_id
+         LEFT JOIN branch br ON br.id = e.branch_id
+         LEFT JOIN vertical vt ON vt.id = e.vertical_id
+         LEFT JOIN student_vertical_id svi ON svi.student_id = $1::bigint AND svi.vertical_id = e.vertical_id
          LEFT JOIN student_status_def sd ON sd.code = e.course_status
          LEFT JOIN "user" ap ON ap.id = e.course_status_approved_by
          LEFT JOIN "user" ch ON ch.id = e.course_status_changed_by
@@ -1676,22 +1837,37 @@ export class StudentService {
         ORDER BY e.created_at DESC, e.id DESC`,
       [sid, student.enrolment_id ? Number(student.enrolment_id) : 0]);
     const overall = studentLmsAccess(student.status);
+    const enrolments = rows.map((e: any) => {
+      const courseAccess = studentLmsAccess(e.course_status);
+      const effective = combineAccess(overall, courseAccess);
+      return {
+        ...e,
+        // Branch > Vertical > Course breadcrumb for THIS enrolment (client feedback).
+        path: [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' \u203a '),
+        course_lms_access: courseAccess,
+        effective_lms_access: effective,
+        effective_can_view: canViewMaterial(effective),
+        effective_can_attempt: canAttempt(effective),
+      };
+    });
+    // The distinct vertical-wise Student IDs across this student's enrolments (one per vertical).
+    const vseen = new Map<number, any>();
+    for (const e of enrolments) {
+      const vid = e.vertical_id != null ? Number(e.vertical_id) : null;
+      if (vid == null || vseen.has(vid)) continue;
+      vseen.set(vid, {
+        vertical_id: vid, vertical_name: e.vertical_name ?? null,
+        branch_id: e.branch_id != null ? Number(e.branch_id) : null, branch_name: e.branch_name ?? null,
+        student_vertical_no: e.student_vertical_no ?? null,
+      });
+    }
     return {
       student_id: sid,
       overall_status: student.status,
       overall_status_label: student.status_label ?? student.status,
       overall_lms_access: overall,
-      enrolments: rows.map((e: any) => {
-        const courseAccess = studentLmsAccess(e.course_status);
-        const effective = combineAccess(overall, courseAccess);
-        return {
-          ...e,
-          course_lms_access: courseAccess,
-          effective_lms_access: effective,
-          effective_can_view: canViewMaterial(effective),
-          effective_can_attempt: canAttempt(effective),
-        };
-      }),
+      vertical_ids: Array.from(vseen.values()),
+      enrolments,
     };
   }
 
@@ -1766,9 +1942,14 @@ export class StudentService {
          VALUES ($1::bigint,$2,$3,$4::bigint,$5::bigint,$6::bigint,NULL,'active',$7,$8::date,$9::bigint,$10::bigint)`,
         [orgId, student.branch_id ?? null, student.vertical_id ?? null, eid, id, courseId,
           `Enrolled in ${course.name}`, startDate, net, me.id]);
-      return { id: eid, enrolment_no: enrolmentNo };
+      // VERTICAL-WISE STUDENT ID — mint (or reuse) the per-vertical display ID for this enrolment's vertical.
+      const svid = await this.ensureVerticalId(
+        c, id, student.branch_id != null ? Number(student.branch_id) : null, Number(student.vertical_id), me.id);
+      return { id: eid, enrolment_no: enrolmentNo, student_vertical_no: svid.student_vertical_no };
     });
     return { ...out, course_id: courseId, course_name: course.name, status: 'active', course_status: 'active',
+      vertical_id: student.vertical_id != null ? Number(student.vertical_id) : null,
+      branch_id: student.branch_id != null ? Number(student.branch_id) : null,
       gross_fee_minor: dsc.gross_fee_minor, discount_type: dsc.discount_type, discount_value: dsc.discount_value,
       discount_amount_minor: dsc.discount_amount_minor, net_fee_minor: dsc.net_fee_minor };
   }
