@@ -19,7 +19,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, HBars, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
-import { LeadLookup } from './forms';
+import { LeadLookup, MasterQuickAdd } from './forms';
 import {
   DiscountType, LineDraft, computeTotals, fmtINR, minorToInput, parseRupees,
 } from './money';
@@ -230,7 +230,7 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
                 <div key={i} style={{ borderTop: i ? '1px solid var(--line)' : 'none', paddingTop: i ? 12 : 0, marginTop: i ? 12 : 0 }}>
                   <div className="form-grid">
                     <div className="fld">
-                      <label htmlFor={`q-course-${i}`}>Course</label>
+                      <label htmlFor={`q-course-${i}`}>Course</label><MasterQuickAdd type="course" onAdded={(row) => setLine(i, { course_id: Number(row.id) })} />
                       <select id={`q-course-${i}`} className="ainp" value={l.course_id ?? ''}
                         onChange={(e) => pickCourse(i, e.target.value)}>
                         <option value="">Custom line (no course)</option>
@@ -779,7 +779,7 @@ export function EnrolmentModal({ initial, prefill, onClose, onSaved }: {
               <div className="fhint">Branch, vertical and campaign come from the lead. Closing the sale moves the lead to its pipeline's Won stage.</div>
             </div>
             <div className="fld">
-              <label htmlFor="e-course">Course</label>
+              <label htmlFor="e-course">Course</label><MasterQuickAdd type="course" onAdded={(row) => setCourseId(String(row.id))} />
               <select id="e-course" className="ainp" value={courseId} onChange={(e) => pickCourse(e.target.value)}>
                 <option value="">—</option>
                 {ref.courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}

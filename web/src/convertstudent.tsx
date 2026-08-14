@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { Ic } from './icons';
 import { toast, useRef_ } from './refdata';
+import { MasterQuickAdd } from './forms';
 import { enrolDiscount, fmtINR, EnrolDiscountType } from './money';
 
 interface ExistingStudent { id: number; student_no: string; full_name: string; status: string }
@@ -169,6 +170,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                           <option value="">— Course —</option>
                           {coursesFor(r.vertical_id).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
+                        <div style={{ marginTop: 4 }}><MasterQuickAdd type="course" onAdded={(row) => chooseCourse(i, String(row.id))} /></div>
                       </td>
                       <td><input className="ainp" type="number" style={{ width: 80 }} value={r.fee}
                         onChange={(e) => setRow(i, { fee: e.target.value })} placeholder="0" data-testid={`conv-fee-${i}`} /></td>

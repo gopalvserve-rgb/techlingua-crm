@@ -13,6 +13,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { MasterQuickAdd } from './forms';
 import { rowActions, fmtFull, ConfirmModal, DetailModal } from './rowactions';
 import { DateRange } from './daterange';
 import { useScope } from './scope';
@@ -265,7 +266,7 @@ function MaterialModal({ initial, onClose, onSaved, ref_ }: { initial?: any; onC
                 <option value="">— Select vertical —</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select></div>
             {level === 'course' && (
-              <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Course <span className="star">*</span></label>
+              <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Course <span className="star">*</span></label><MasterQuickAdd type="course" onAdded={(row) => setCourseId(String(row.id))} />
                 <select className="ainp" value={courseId} onChange={(e) => setCourseId(e.target.value)}>
                   <option value="">— Select course —</option>{cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select></div>

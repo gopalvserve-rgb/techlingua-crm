@@ -11,7 +11,7 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
-import { AddModal, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow } from './forms';
+import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
@@ -4283,7 +4283,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
               </select>
             </div>
             <div className="fld">
-              <label htmlFor="st-course">Course</label>
+              <label htmlFor="st-course">Course</label><MasterQuickAdd type="course" onAdded={(row) => up('course_id', String(row.id))} />
               <select id="st-course" className="ainp" value={f.course_id} disabled={!f.vertical_id}
                 onChange={(e) => up('course_id', e.target.value)}>
                 <option value="">{f.vertical_id ? '— Select course —' : 'Choose a vertical first'}</option>
@@ -4324,7 +4324,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
             {Txt('Landmark', 'landmark')}
             {Txt('Country', 'country', { ph: 'India' })}
             <div className="fld">
-              <label htmlFor="st-state">State</label>
+              <label htmlFor="st-state">State</label><MasterQuickAdd type="state" onAdded={(row) => up('state_id', String(row.id))} />
               <select id="st-state" className="ainp" value={f.state_id}
                 onChange={(e) => setF((s: any) => ({ ...s, state_id: e.target.value, city_id: '' }))}>
                 <option value="">— Select state —</option>
@@ -4332,7 +4332,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
               </select>
             </div>
             <div className="fld">
-              <label htmlFor="st-city">City</label>
+              <label htmlFor="st-city">City</label><MasterQuickAdd type="city" onAdded={(row) => up('city_id', String(row.id))} />
               <select id="st-city" className="ainp" value={f.city_id} disabled={!f.state_id}
                 onChange={(e) => up('city_id', e.target.value)}>
                 <option value="">{f.state_id ? '— Select city —' : 'Choose a state first'}</option>
@@ -5416,7 +5416,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
         <div className="fld"><label>Branch</label><input className="ainp" value={branchName} disabled readOnly /></div>
         <div className="fld"><label>Vertical</label><input className="ainp" value={verticalName} disabled readOnly /></div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
-          <label htmlFor="ae-course">Course <span className="star">*</span></label>
+          <label htmlFor="ae-course">Course <span className="star">*</span></label><MasterQuickAdd type="course" onAdded={(row) => chooseCourse(String(row.id))} />
           <select id="ae-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => chooseCourse(e.target.value)} data-testid="enrol-course">
             <option value="">— Choose course —</option>
             {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -5752,7 +5752,7 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
               </select>
             </div>
             <div className="fld">
-              <label htmlFor="b-course">Course <span className="star">*</span></label>
+              <label htmlFor="b-course">Course <span className="star">*</span></label><MasterQuickAdd type="course" onAdded={(row) => setCourseId(String(row.id))} />
               <select id="b-course" className="ainp" value={courseId} disabled={!verticalId}
                 onChange={(e) => setCourseId(e.target.value)}>
                 <option value="">{verticalId ? '— Select course —' : 'Choose a vertical first'}</option>

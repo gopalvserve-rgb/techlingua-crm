@@ -16,6 +16,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { MasterQuickAdd } from './forms';
 import { rowActions, ConfirmModal, DetailModal, Section, KV } from './rowactions';
 import { DateRange } from './daterange';
 import { useScope } from './scope';
@@ -222,7 +223,7 @@ function AdmissionEdit({ a, rd, onClose, onSaved }: { a: any; rd: any; onClose: 
     <DetailModal title={`Edit admission — ${a.full_name}`} icon="pencil" onClose={onClose} width={620}
       footer={<div style={{ display: 'flex', gap: 8 }}><button className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" onClick={save} disabled={busy}><Ic k="check" />Save</button></div>}>
       <div className="form-grid">
-        <div className="fld"><label>Course</label>
+        <div className="fld"><label>Course</label><MasterQuickAdd type="course" onAdded={(row) => set('course_id', String(row.id))} />
           <select className="ainp" value={form.course_id ?? ''} onChange={(e) => set('course_id', e.target.value)}>
             <option value="">— Not chosen —</option>
             {cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -276,7 +277,7 @@ function FormLinksModal({ onClose, rd }: { onClose: () => void; rd: any }) {
             <select className="ainp" value={vertical} onChange={(e) => { setVertical(e.target.value); setCourse(''); }} disabled={!branch}>
               <option value="">Applicant chooses</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select></div>
-          <div className="fld"><label>Course (optional)</label>
+          <div className="fld"><label>Course (optional)</label><MasterQuickAdd type="course" onAdded={(row) => setCourse(String(row.id))} />
             <select className="ainp" value={course} onChange={(e) => setCourse(e.target.value)} disabled={!vertical}>
               <option value="">Applicant chooses</option>{cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select></div>

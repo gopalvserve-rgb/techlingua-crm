@@ -15,6 +15,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { MasterQuickAdd } from './forms';
 import { rowActions, ConfirmModal } from './rowactions';
 import { DateRange } from './daterange';
 import { useScope } from './scope';
@@ -305,7 +306,7 @@ function ContentModal({ kind, base, initial, onClose, onSaved, ref_ }: { kind: '
               <select className="ainp" value={verticalId} onChange={(e) => { setVerticalId(e.target.value); setCourseId(''); setBatchId(''); }}>
                 <option value="">— Select vertical —</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select></div>
-            <div className="fld"><label>Course <span className="star">*</span></label>
+            <div className="fld"><label>Course <span className="star">*</span></label><MasterQuickAdd type="course" onAdded={(row) => setCourseId(String(row.id))} />
               <select className="ainp" value={courseId} onChange={(e) => setCourseId(e.target.value)}>
                 <option value="">— Select course —</option>{cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>

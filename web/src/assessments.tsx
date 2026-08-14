@@ -19,6 +19,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { MasterQuickAdd } from './forms';
 import { rowActions, ConfirmModal, DetailModal, Section, KV, fmtFull } from './rowactions';
 import { useScope } from './scope';
 import { FilterMulti, EnumMulti } from './dyn';
@@ -774,7 +775,7 @@ function TestBuilder({ test, rd, onClose, onSaved }: { test: any; rd: any; onClo
         <div className="fld"><label>Language (optional)</label><input className="ainp" value={f.language} onChange={(e) => set('language', e.target.value)} placeholder="English, Hindi…" /></div>
         <div className="fld"><label>Branch</label><select className="ainp" value={f.branch_id} onChange={(e) => { set('branch_id', e.target.value); set('vertical_id', ''); set('batch_id', ''); }}><option value="">— org-wide —</option>{rd.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
         <div className="fld"><label>Vertical</label><select className="ainp" value={f.vertical_id} onChange={(e) => { set('vertical_id', e.target.value); set('batch_id', ''); }} disabled={!f.branch_id}><option value="">—</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></div>
-        <div className="fld"><label>Course</label><select className="ainp" value={f.course_id} onChange={(e) => set('course_id', e.target.value)}><option value="">—</option>{rd.courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+        <div className="fld"><label>Course</label><MasterQuickAdd type="course" onAdded={(row) => set('course_id', String(row.id))} /><select className="ainp" value={f.course_id} onChange={(e) => set('course_id', e.target.value)}><option value="">—</option>{rd.courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
         <div className="fld"><label>Batch</label><select className="ainp" value={f.batch_id} onChange={(e) => set('batch_id', e.target.value)}><option value="">—</option>{batchList.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Description</label><input className="ainp" value={f.description} onChange={(e) => set('description', e.target.value)} /></div>
       </div></Section>

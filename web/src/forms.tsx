@@ -4,6 +4,7 @@
  * Unwired forms render exactly but tell the user which project phase makes them live.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -1689,5 +1690,29 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           onSavedRow={(row) => onQuickAdded(quickAdd.field, row)} />
       )}
     </div>
+  );
+}
+
+/* -------------------- Reusable ＋ Master quick-add (Students & Academics) --------------------
+ * The SAME ＋ Master affordance the Leads add/edit form + lead sheet use: a generic master
+ * opens <AddMasterModal>, a Course opens the full Courses management form (students.courses) —
+ * both gated by master.create. On add, RefData is refreshed so the new value is immediately
+ * selectable, and onAdded(row) lets the host auto-select the just-created row. Drop
+ * <MasterQuickAdd type="course|status|source|qualification|budget|tag|state|city" .../> inside
+ * a field <label>, exactly beside its master-backed <select>. */
+export function MasterQuickAdd({ type, onAdded }: { type: string; onAdded?: (row: Named) => void }) {
+  const auth = useAuth();
+  const can = auth?.can ?? (() => false); // hidden outside an AuthProvider (e.g. isolated unit tests)
+  const ref = useRef_();
+  const [open, setOpen] = useState(false);
+  if (!can('master.create')) return null;
+  const done = (row: Named) => { onAdded?.(row); ref.reload(); setOpen(false); };
+  return (
+    <>
+      <a className="mlink" onClick={(e) => { e.preventDefault(); setOpen(true); }}>＋ Master</a>
+      {open && createPortal(type === 'course'
+        ? <AddModal formKey="students.courses" onClose={() => setOpen(false)} onSavedRow={done} />
+        : <AddMasterModal type={type} onClose={() => setOpen(false)} onCreated={done} />, document.body)}
+    </>
   );
 }
