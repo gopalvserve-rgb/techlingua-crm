@@ -4872,13 +4872,21 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           </div>
           {canEdit && <button className="btn primary" style={{ marginBottom: 10 }} onClick={() => setAddEnrol(true)} data-testid="enrol-add"><Ic k="plus" />Enroll in another course</button>}
           {(enrolData.data?.enrolments ?? []).length ? (
-            <table className="minitbl"><thead><tr><th>Course</th><th>Batch</th><th>Enrolled</th><th>Net Fee</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
+            <table className="minitbl"><thead><tr><th>Course</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
               <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => (
                 <tr key={e.id} data-testid={`enrol-row-${e.id}`}>
                   <td><b className="nm">{e.course_name ?? '—'}</b><div className="sub mono">{e.enrolment_no}</div></td>
                   <td>{e.batch_name ?? '—'}</td>
                   <td>{e.start_date ? dmy(e.start_date) : dmy(e.created_at)}</td>
-                  <td>{money(e.net_fee_minor)}</td>
+                  <td>
+                    <b>{money(e.net_fee_minor)}</b>
+                    {Number(e.discount_amount_minor ?? e.discount_minor ?? 0) > 0 && (
+                      <div className="sub" style={{ fontSize: 10 }}>
+                        {money(e.gross_fee_minor ?? e.fee_minor)} − {money(e.discount_amount_minor ?? e.discount_minor)}
+                        {e.discount_type === 'percent' ? ` (${Number(e.discount_value)}%)` : ''}
+                      </div>
+                    )}
+                  </td>
                   <td>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</td>
                   <td><span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span></td>
                   <td style={{ whiteSpace: 'nowrap' }}>

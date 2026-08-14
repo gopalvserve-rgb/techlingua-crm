@@ -1523,7 +1523,8 @@ export class StudentService {
     const sid = Number(student.id);
     const rows = await this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.status, e.course_id, e.batch_id, e.net_fee_minor, e.fee_minor,
-              e.discount_minor, e.payment_plan, e.start_date, e.created_at,
+              e.discount_minor, e.gross_fee_minor, e.discount_type, e.discount_value, e.discount_amount_minor,
+              e.payment_plan, e.start_date, e.created_at,
               e.course_status, e.course_status_reason, e.course_status_last_attendance_date,
               e.course_status_effective_date, e.course_status_outstanding_minor,
               e.course_status_approved_by, e.course_status_changed_by, e.course_status_changed_at,
