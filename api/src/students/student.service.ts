@@ -1900,16 +1900,29 @@ export class StudentService {
     if (!courseId) throw new BadRequestException('Choose a course to enrol into.');
     const course = await this.db.one<any>(`SELECT id, name FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
     if (!course) throw new BadRequestException('Unknown course.');
+    // A student may be enrolled into ANOTHER vertical (the Branch>Vertical>Course cascade). Default
+    // to the student's own branch/vertical; honour an explicit vertical_id/branch_id when given.
+    let enrolVerticalId = student.vertical_id != null ? Number(student.vertical_id) : null;
+    let enrolBranchId = student.branch_id != null ? Number(student.branch_id) : null;
+    if (dto?.vertical_id != null && String(dto.vertical_id).trim() !== '') {
+      const vv = await this.db.one<any>(`SELECT id, branch_id FROM vertical WHERE id = $1::bigint AND deleted_at IS NULL`, [Number(dto.vertical_id)]);
+      if (!vv) throw new BadRequestException('Unknown vertical for this enrolment.');
+      enrolVerticalId = Number(vv.id);
+      enrolBranchId = dto?.branch_id != null && String(dto.branch_id).trim() !== '' ? Number(dto.branch_id) : Number(vv.branch_id);
+    } else if (dto?.branch_id != null && String(dto.branch_id).trim() !== '') {
+      enrolBranchId = Number(dto.branch_id);
+    }
+    if (enrolVerticalId == null) throw new BadRequestException('A vertical is required for this enrolment.');
     const batchId = dto?.batch_id != null && String(dto.batch_id).trim() !== '' ? Number(dto.batch_id) : null;
     if (batchId != null) {
       const b = await this.db.one<any>(
         `SELECT id FROM batch WHERE id = $1::bigint AND deleted_at IS NULL AND vertical_id = $2::bigint`,
-        [batchId, student.vertical_id]);
-      if (!b) throw new BadRequestException("That batch is not in this student's vertical.");
+        [batchId, enrolVerticalId]);
+      if (!b) throw new BadRequestException("That batch is not in this enrolment's vertical.");
     }
     const fee = Number(dto?.fee_minor ?? 0);
     if (!Number.isFinite(fee) || fee < 0) throw new BadRequestException('Fee must be a non-negative amount.');
-    const dsc = await this.resolveDiscount(fee, dto, student.vertical_id != null ? Number(student.vertical_id) : null, me.id);
+    const dsc = await this.resolveDiscount(fee, dto, enrolVerticalId, me.id);
     const disc = dsc.discount_amount_minor;
     const net = dsc.net_fee_minor;
     const plan = String(dto?.payment_plan ?? 'full');
@@ -1920,7 +1933,7 @@ export class StudentService {
 
     const out = await this.db.tx(async (c) => {
       const enrolmentNo = await this.numbering.allocate(
-        'enrolment', { branch_id: Number(student.branch_id), vertical_id: Number(student.vertical_id) }, c);
+        'enrolment', { branch_id: enrolBranchId, vertical_id: enrolVerticalId }, c);
       const r = await c.query<{ id: string }>(
         `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
                                 course_id, batch_id, student_profile_id, fee_minor, discount_minor,
@@ -1931,7 +1944,7 @@ export class StudentService {
                  $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
                  $17::bigint,$18::varchar,$19::numeric,$20::bigint)
          RETURNING id`,
-        [orgId, enrolmentNo, student.lead_id ?? null, student.branch_id, student.vertical_id,
+        [orgId, enrolmentNo, student.lead_id ?? null, enrolBranchId, enrolVerticalId,
           student.owner_id ?? me.id, courseId, batchId, id, fee, disc, net, plan, startDate,
           dto?.remarks ?? null, me.id,
           dsc.gross_fee_minor, dsc.discount_type, dsc.discount_value, dsc.discount_amount_minor]);
@@ -1940,16 +1953,14 @@ export class StudentService {
         `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
              from_status, to_status, reason, effective_date, outstanding_minor, changed_by)
          VALUES ($1::bigint,$2,$3,$4::bigint,$5::bigint,$6::bigint,NULL,'active',$7,$8::date,$9::bigint,$10::bigint)`,
-        [orgId, student.branch_id ?? null, student.vertical_id ?? null, eid, id, courseId,
+        [orgId, enrolBranchId, enrolVerticalId, eid, id, courseId,
           `Enrolled in ${course.name}`, startDate, net, me.id]);
       // VERTICAL-WISE STUDENT ID — mint (or reuse) the per-vertical display ID for this enrolment's vertical.
-      const svid = await this.ensureVerticalId(
-        c, id, student.branch_id != null ? Number(student.branch_id) : null, Number(student.vertical_id), me.id);
+      const svid = await this.ensureVerticalId(c, id, enrolBranchId, enrolVerticalId, me.id);
       return { id: eid, enrolment_no: enrolmentNo, student_vertical_no: svid.student_vertical_no };
     });
     return { ...out, course_id: courseId, course_name: course.name, status: 'active', course_status: 'active',
-      vertical_id: student.vertical_id != null ? Number(student.vertical_id) : null,
-      branch_id: student.branch_id != null ? Number(student.branch_id) : null,
+      vertical_id: enrolVerticalId, branch_id: enrolBranchId,
       gross_fee_minor: dsc.gross_fee_minor, discount_type: dsc.discount_type, discount_value: dsc.discount_value,
       discount_amount_minor: dsc.discount_amount_minor, net_fee_minor: dsc.net_fee_minor };
   }

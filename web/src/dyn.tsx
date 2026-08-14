@@ -5371,6 +5371,7 @@ export function ChangeStatusModal({ student, outstandingMinor, canManageSensitiv
 export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; onClose: () => void; onDone: () => void }) {
   const ref = useRef_();
   const [courseId, setCourseId] = useState('');
+  const [vertId, setVertId] = useState(String(student.vertical_id ?? ''));
   const [batchId, setBatchId] = useState('');
   const [fee, setFee] = useState('');                       // gross fee (₹), from master, editable
   const [discType, setDiscType] = useState<EnrolDiscountType>('none');
@@ -5387,17 +5388,19 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
   // filter the Course list to that vertical (the app models course-under-vertical via meta).
   const coursesAll = (ref.courses ?? []) as any[];
   const courses = coursesAll.filter((c: any) =>
-    String((c.meta as any)?.vertical_id ?? '') === String(student.vertical_id ?? '') ||
+    String((c.meta as any)?.vertical_id ?? '') === String(vertId ?? '') ||
     !((c.meta as any)?.vertical_id));   // courses not scoped to a vertical stay selectable
+  // Verticals the student may enrol into — those under the student's branch (default = own vertical).
+  const branchVerticals = ((ref.verticals ?? []) as any[]).filter((v: any) => Number(v.branch_id) === Number(student.branch_id));
   const branchName = student.branch_name ?? ref.branches?.find((b: any) => Number(b.id) === Number(student.branch_id))?.name ?? '—';
   const verticalName = student.vertical_name ?? ref.verticals?.find((v: any) => Number(v.id) === Number(student.vertical_id))?.name ?? '—';
 
   useEffect(() => {
     if (!courseId) { setBatches([]); return; }
-    api.get<any[]>(`/batches?vertical_id=${student.vertical_id}&status=active`)
+    api.get<any[]>(`/batches?vertical_id=${vertId}&status=active`)
       .then((bs) => setBatches((bs ?? []).filter((b: any) => Number(b.course_id) === Number(courseId))))
       .catch(() => setBatches([]));
-  }, [courseId, student.vertical_id]);
+  }, [courseId, vertId]);
 
   // Choosing a course auto-fills the fee from the Course master (editable).
   const chooseCourse = (cid: string) => {
@@ -5433,6 +5436,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
       // 1) create the enrolment (discount computed + capped server-side; net is authoritative)
       const enr = await api.post<any>(`/students/${student.id}/enrolments`, {
         course_id: Number(courseId), batch_id: batchId ? Number(batchId) : null,
+        vertical_id: vertId ? Number(vertId) : undefined, branch_id: student.branch_id ? Number(student.branch_id) : undefined,
         fee_minor: grossMinor, discount_type: discType, discount_value: dv,
         payment_plan: planIntent, start_date: start || null,
       });
@@ -5461,7 +5465,15 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
       <div className="form-grid">
         {/* BRANCH -> VERTICAL -> COURSE */}
         <div className="fld"><label>Branch</label><input className="ainp" value={branchName} disabled readOnly /></div>
-        <div className="fld"><label>Vertical</label><input className="ainp" value={verticalName} disabled readOnly /></div>
+        <div className="fld"><label htmlFor="ae-vert">Vertical <span className="star">*</span></label>
+          <select id="ae-vert" className="ainp" value={vertId} disabled={busy}
+            onChange={(e) => { setVertId(e.target.value); setCourseId(''); setBatchId(''); setFee(''); }} data-testid="enrol-vertical">
+            {branchVerticals.length
+              ? branchVerticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)
+              : <option value={String(student.vertical_id ?? '')}>{verticalName}</option>}
+          </select>
+          <div className="sub" style={{ fontSize: 11 }}>The Student ID is generated per vertical — enrolling in another vertical mints its own vertical-wise ID.</div>
+        </div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
           <label htmlFor="ae-course">Course <span className="star">*</span></label><MasterQuickAdd type="course" onAdded={(row) => chooseCourse(String(row.id))} />
           <select id="ae-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => chooseCourse(e.target.value)} data-testid="enrol-course">
