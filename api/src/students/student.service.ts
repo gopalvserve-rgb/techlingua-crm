@@ -7,6 +7,8 @@ import { normalizePhone } from '../common/phone.util';
 import { NumberingService } from '../numbering/numbering.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { StorageService } from '../storage/storage.service';
+import { PdfAssetService } from '../storage/pdf-asset.service';
+import { studentIdCardPdf, StudentIdCardDoc, Letterhead } from '../pdf/documents';
 import { RbacDataService } from '../rbac/rbac-data.service';
 import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVENUE_CANCELLING_STATUSES, lmsBlockedMessage, combineAccess, ENROLMENT_STATUSES } from './lms-access';
 import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
@@ -69,6 +71,8 @@ export class StudentService {
     private readonly rbacData?: RbacDataService,
     /** Finance caps — enforce the discount capping (%/₹) on enrolment discounts (item 4). */
     private readonly finance?: FinanceSettingsService,
+    /** Generated PDFs to R2 (+ generated_document index) — powers the printable ID card. */
+    private readonly pdfAssets?: PdfAssetService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -596,6 +600,136 @@ export class StudentService {
     if (!row.r2_key || !this.storage) throw new BadRequestException('This document predates R2 storage — use the direct download.');
     const url = await this.storage.presignGet(String(row.r2_key), 300, String(row.file_name));
     return { url, expires_in: 300 };
+  }
+
+  /* ------------------------------------------------- photo (profile avatar) */
+  private static IMG_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+
+  /** Presigned PUT for the student's profile photo. Returns the R2 key the client PUTs the
+   *  bytes to, then POSTs back to /photo to attach. Image types only; R2-only (no DB blob). */
+  async photoUploadUrl(id: number, dto: { file_name?: string; content_type?: string }, scope: ResolvedScope) {
+    await this.get(id, scope);
+    if (!this.storage) throw new BadRequestException('File storage is not configured.');
+    const ct = String(dto?.content_type ?? '').toLowerCase();
+    if (ct && !StudentService.IMG_MIME.has(ct)) throw new BadRequestException('The photo must be a JPG, PNG or WEBP image.');
+    const key = this.storage.studentPhotoKey(id, String(dto?.file_name ?? 'photo.jpg'));
+    const url = await this.storage.presignPut(key, ct || 'image/jpeg', 300);
+    return { url, r2_key: key, expires_in: 300 };
+  }
+
+  /** Attach an uploaded photo: supersedes any prior 'photo' document with the new R2 key and
+   *  returns a fresh presigned photo_url (the FB-style header avatar reads profile.photo_url). */
+  async attachPhoto(id: number, dto: { r2_key?: string; file_name?: string; mime?: string; size_bytes?: number }, me: { id: number }, scope: ResolvedScope) {
+    await this.get(id, scope);
+    const key = String(dto?.r2_key ?? '').trim();
+    if (!key || !key.startsWith(`students/${id}/photo/`)) throw new BadRequestException('Upload the photo first (missing or invalid r2_key).');
+    const ct = String(dto?.mime ?? '').toLowerCase();
+    if (ct && !StudentService.IMG_MIME.has(ct)) throw new BadRequestException('The photo must be a JPG, PNG or WEBP image.');
+    const orgId = await this.orgId();
+    await this.db.query(
+      `UPDATE student_document SET deleted_at = now(), deleted_by = $2::bigint
+        WHERE student_id = $1::bigint AND doc_type = 'photo' AND deleted_at IS NULL`, [id, me.id]);
+    const r = await this.db.one<any>(
+      `INSERT INTO student_document (org_id, student_id, doc_type, file_name, mime, size_bytes, content, r2_key, uploaded_by)
+       VALUES ($1::bigint,$2::bigint,'photo',$3,$4,$5,NULL,$6,$7::bigint) RETURNING id`,
+      [orgId, id, String(dto?.file_name ?? 'photo.jpg'), ct || 'image/jpeg', Number(dto?.size_bytes ?? 0), key, me.id]);
+    let photo_url: string | null = null;
+    try { if (this.storage) photo_url = await this.storage.presignGet(key, 300, String(dto?.file_name ?? 'photo')); } catch { /* avatar falls back to initials */ }
+    return { id: Number(r.id), photo_url };
+  }
+
+  /* -------------------------------------------- documents (upload / delete) */
+  private static DOC_MIME = new Set(['application/pdf', 'image/jpeg', 'image/jpg', 'image/png']);
+  private static DOC_TYPES = new Set(['photo', 'aadhaar', 'pan', 'qualification', 'education', 'kyc', 'address_proof', 'other', 'misc']);
+
+  /** Presigned PUT for a KYC / education / misc document (R2-only; the row stores just the key). */
+  async documentUploadUrl(id: number, dto: { file_name?: string; content_type?: string }, scope: ResolvedScope) {
+    await this.get(id, scope);
+    if (!this.storage) throw new BadRequestException('File storage is not configured.');
+    const ct = String(dto?.content_type ?? '').toLowerCase();
+    if (ct && !StudentService.DOC_MIME.has(ct)) throw new BadRequestException('The document must be a PDF, JPG or PNG.');
+    const key = this.storage.studentDocKey({ studentId: id, fileName: String(dto?.file_name ?? 'document') });
+    const url = await this.storage.presignPut(key, ct || 'application/octet-stream', 300);
+    return { url, r2_key: key, expires_in: 300 };
+  }
+
+  /** Attach an uploaded document (metadata + r2_key only; the bytes stay in R2). */
+  async attachDocument(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    await this.get(id, scope);
+    const key = String(dto?.r2_key ?? '').trim();
+    if (!key || !key.startsWith(`students/${id}/docs/`)) throw new BadRequestException('Upload the file first (missing or invalid r2_key).');
+    const docType = String(dto?.doc_type ?? 'other').toLowerCase();
+    const finalType = StudentService.DOC_TYPES.has(docType) ? docType : 'other';
+    const ct = String(dto?.mime ?? '').toLowerCase();
+    if (ct && !StudentService.DOC_MIME.has(ct)) throw new BadRequestException('The document must be a PDF, JPG or PNG.');
+    const orgId = await this.orgId();
+    const r = await this.db.one<any>(
+      `INSERT INTO student_document (org_id, student_id, doc_type, file_name, mime, size_bytes, content, r2_key, uploaded_by)
+       VALUES ($1::bigint,$2::bigint,$3,$4,$5,$6,NULL,$7,$8::bigint) RETURNING id`,
+      [orgId, id, finalType, String(dto?.file_name ?? 'document'), ct || 'application/octet-stream', Number(dto?.size_bytes ?? 0), key, me.id]);
+    return { id: Number(r.id), doc_type: finalType };
+  }
+
+  /** Delete a document by PK — soft-delete the row + purge the R2 object (no orphans). */
+  async removeDocument(id: number, docId: number, me: { id: number }, scope: ResolvedScope) {
+    await this.get(id, scope);
+    const row = await this.db.one<any>(
+      `SELECT id, r2_key FROM student_document WHERE id=$1::bigint AND student_id=$2::bigint AND deleted_at IS NULL`, [docId, id]);
+    if (!row) throw new NotFoundException('Document not found.');
+    await this.db.query(`UPDATE student_document SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint`, [docId, me.id]);
+    if (row.r2_key && this.storage) { try { await this.storage.deleteObject(String(row.r2_key)); } catch { /* orphan-free is best-effort */ } }
+    return { id: Number(docId), deleted: true };
+  }
+
+  /* ----------------------------------------------------- STUDENT ID CARD --- */
+  private async idCardData(id: number, scope: ResolvedScope): Promise<{ doc: StudentIdCardDoc; lh: Letterhead; orgId: number }> {
+    const st = await this.get(id, scope);
+    const org = await this.db.one<any>(`SELECT id, name FROM organisation ORDER BY id LIMIT 1`);
+    const courses = await this.db.query<any>(
+      `SELECT co.name FROM enrolment e LEFT JOIN m_course co ON co.id = e.course_id
+        WHERE e.deleted_at IS NULL AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
+          AND (e.course_status IS NULL OR e.course_status NOT IN ('cancelled','withdrawn','dropped_out'))
+        ORDER BY e.created_at ASC`, [id, st.enrolment_id ? Number(st.enrolment_id) : 0]);
+    const courseNames = Array.from(new Set(courses.map((r: any) => String(r.name ?? '').trim()).filter(Boolean)));
+    if (!courseNames.length && st.course_name) courseNames.push(String(st.course_name));
+    const br = await this.db.one<any>(`SELECT address FROM branch WHERE id = $1::bigint`, [st.branch_id]).catch(() => null);
+    let photo: Buffer | null = null;
+    try {
+      const ph = await this.db.one<any>(
+        `SELECT r2_key FROM student_document WHERE student_id=$1::bigint AND doc_type='photo' AND deleted_at IS NULL AND r2_key IS NOT NULL ORDER BY id DESC LIMIT 1`, [id]);
+      if (ph?.r2_key && this.storage) { const obj = await this.storage.getObject(String(ph.r2_key)); photo = obj.body; }
+    } catch { /* placeholder initials when no/failed photo */ }
+    const today = new Date();
+    const validUntil = new Date(today.getTime()); validUntil.setFullYear(validUntil.getFullYear() + 1);
+    const doc: StudentIdCardDoc = {
+      student_name: st.full_name, student_no: st.student_no, enrollment_no: st.enrollment_no,
+      courses: courseNames, batch_name: st.batch_name, branch_name: st.branch_name, vertical_name: st.vertical_name,
+      dob: st.dob, phone: st.phone,
+      issue_date: today.toISOString(), valid_until: validUntil.toISOString(), photo,
+    };
+    const lh: Letterhead = {
+      org_name: org?.name || 'Tech Lingua LLP', vertical_name: st.vertical_name, branch_name: st.branch_name,
+      branch_address: br?.address ?? null, branch_email: null, branch_phone: null,
+    };
+    return { doc, lh, orgId: Number(org?.id ?? 0) };
+  }
+
+  /** Generate the ID-card PDF, persist to R2 (kind `student_id_card`), return the bytes. */
+  async idCard(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string; r2_key: string | null }> {
+    const { doc, lh, orgId } = await this.idCardData(id, scope);
+    const buffer = studentIdCardPdf(doc, lh);
+    let key: string | null = null;
+    try { key = (await this.pdfAssets?.persist('student_id_card', id, doc.student_no ? String(doc.student_no) : null, buffer, orgId)) ?? null; } catch { /* R2 off — stream anyway */ }
+    return { buffer, filename: `id-card-${String(doc.student_no ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`, r2_key: key };
+  }
+
+  /** A short-lived presigned R2 URL for the ID card (generates + persists it if needed). */
+  async idCardUrl(id: number, scope: ResolvedScope): Promise<{ url: string | null }> {
+    const st = await this.get(id, scope);
+    const name = `id-card-${String(st.student_no ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`;
+    let url = this.pdfAssets ? await this.pdfAssets.presignedUrl('student_id_card', id, name) : null;
+    if (!url) { try { await this.idCard(id, scope); } catch { /* R2 off */ } url = this.pdfAssets ? await this.pdfAssets.presignedUrl('student_id_card', id, name) : null; }
+    return { url };
   }
 
   /** Has THIS lead already been converted? Drives the leadsheet button state (idempotency). */

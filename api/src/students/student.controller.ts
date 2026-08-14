@@ -183,6 +183,65 @@ export class StudentController {
     return this.svc.downloadDocumentUrl(id, docId, scope);
   }
 
+  /* -------- PHOTO (profile avatar) — presigned R2 upload then attach. student.update. -------- */
+  @Post(':id/photo/upload-url')
+  @RequirePermission('student.update')
+  photoUploadUrl(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.photoUploadUrl(id, dto, scope);
+  }
+
+  @Post(':id/photo')
+  @RequirePermission('student.update')
+  attachPhoto(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.attachPhoto(id, dto, me, scope);
+  }
+
+  /* -------- DOCUMENT UPLOAD (KYC / education / misc) — presigned R2 then attach; delete by PK. -------- */
+  @Post(':id/documents/upload-url')
+  @RequirePermission('student.update')
+  documentUploadUrl(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.documentUploadUrl(id, dto, scope);
+  }
+
+  @Post(':id/documents')
+  @RequirePermission('student.update')
+  attachDocument(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.attachDocument(id, dto, me, scope);
+  }
+
+  @Delete(':id/documents/:docId')
+  @RequirePermission('student.update')
+  removeDocument(@Param('id', ParseIntPipe) id: number, @Param('docId', ParseIntPipe) docId: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.removeDocument(id, docId, me, scope);
+  }
+
+  /* -------- STUDENT ID CARD — a printable branded PDF (photo + name + Student ID + course +
+   *          branch>vertical), generated via PdfAssetService → R2 like certificates. -------- */
+  @Get(':id/id-card')
+  @RequirePermission('student.read')
+  async idCard(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope, @Res() res: Response) {
+    const { buffer, filename } = await this.svc.idCard(id, scope);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    res.end(buffer);
+  }
+
+  /** (Re)generate the ID card + persist to R2; returns the stored r2_key. */
+  @Post(':id/id-card')
+  @RequirePermission('student.read')
+  async regenIdCard(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    const { r2_key, filename } = await this.svc.idCard(id, scope);
+    return { r2_key, filename, generated: true };
+  }
+
+  /** A short-lived presigned R2 URL for the ID card (for a preview / download link). */
+  @Get(':id/id-card/url')
+  @RequirePermission('student.read')
+  idCardUrl(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.idCardUrl(id, scope);
+  }
+
   /* -------- family / siblings (ERP Batch 3). Read via student.read; link/unlink reuse
    *          student.update, mirroring how batch transfer/waitlist reuse it. -------- */
   @Get(':id/siblings')

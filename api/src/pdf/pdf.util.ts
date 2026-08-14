@@ -35,6 +35,38 @@ export const rgb = (hex: string): Rgb => {
   };
 };
 
+export interface JpegInfo { width: number; height: number; components: number }
+/**
+ * Read width/height/components from a JPEG's Start-Of-Frame marker WITHOUT decoding it — a JPEG
+ * can be embedded in a PDF verbatim as a /DCTDecode image XObject, so we only need its size.
+ * Returns null for anything that is not a JPEG (PNG etc.), so the caller can fall back.
+ */
+export function parseJpeg(buf: Buffer): JpegInfo | null {
+  if (!buf || buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  let o = 2;
+  while (o + 1 < buf.length) {
+    if (buf[o] !== 0xff) { o += 1; continue; }
+    let marker = buf[o + 1];
+    o += 2;
+    while (marker === 0xff && o < buf.length) { marker = buf[o]; o += 1; }
+    if (marker === 0xd8 || marker === 0xd9) continue;              // SOI/EOI (no length)
+    if (marker >= 0xd0 && marker <= 0xd7) continue;                // RSTn (no length)
+    if (o + 1 >= buf.length) break;
+    const len = buf.readUInt16BE(o);
+    // SOF0..SOF15 carry the frame geometry, except DHT(C4)/JPG(C8)/DAC(CC).
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      if (o + 7 >= buf.length) break;
+      const height = buf.readUInt16BE(o + 3);
+      const width = buf.readUInt16BE(o + 5);
+      const components = buf[o + 7];
+      if (width > 0 && height > 0) return { width, height, components };
+      break;
+    }
+    o += len;
+  }
+  return null;
+}
+
 export type FontName = 'Helvetica' | 'Helvetica-Bold' | 'Helvetica-Oblique';
 const FONT_KEY: Record<FontName, string> = {
   'Helvetica': 'F1', 'Helvetica-Bold': 'F2', 'Helvetica-Oblique': 'F3',
@@ -146,6 +178,7 @@ export class PdfPage {
   static readonly LANDSCAPE_HEIGHT = 595.28;
 
   private ops: string[] = [];
+  private imgs: Array<{ name: string; data: Buffer; w: number; h: number; gray: boolean }> = [];
 
   /** Page size is now PER PAGE, not a global constant.
    *  It defaults to A4 portrait, so `new PdfPage()` behaves exactly as it did before —
@@ -210,6 +243,25 @@ export class PdfPage {
     return `${out}...`;
   }
 
+  /**
+   * Embed a JPEG at (x,y) with box (w,h) in the page's top-left coordinate space. Returns
+   * false when the bytes are not a JPEG (the caller then draws a placeholder). Only baseline /
+   * progressive JPEG (DCTDecode) is supported by this dependency-free writer — a passport photo
+   * off a phone is a JPEG, which is exactly the case an ID card needs.
+   */
+  image(jpeg: Buffer, x: number, y: number, w: number, h: number): boolean {
+    const info = parseJpeg(jpeg);
+    if (!info) return false;
+    const name = `Im${this.imgs.length}`;
+    this.imgs.push({ name, data: jpeg, w: info.width, h: info.height, gray: info.components === 1 });
+    // PDF image space is a 1x1 unit square mapped by the cm matrix; origin bottom-left.
+    this.ops.push(`q ${f(w)} 0 0 ${f(h)} ${f(x)} ${f(this.y(y + h))} cm /${name} Do Q`);
+    return true;
+  }
+
+  /** The JPEG XObjects placed on this page (consumed by buildPdf). */
+  get images(): Array<{ name: string; data: Buffer; w: number; h: number; gray: boolean }> { return this.imgs; }
+
   get content(): string { return this.ops.join('\n'); }
 }
 
@@ -222,25 +274,36 @@ export function buildPdf(pages: PdfPage[], meta: { title?: string; author?: stri
   for (const [name, key] of Object.entries(FONT_KEY)) {
     fontIds[key] = add(`<< /Type /Font /Subtype /Type1 /BaseFont /${name} /Encoding /WinAnsiEncoding >>`);
   }
-  const resources = `<< /Font << ${Object.entries(fontIds).map(([k, id]) => `/${k} ${id} 0 R`).join(' ')} >> >>`;
+  const fontDict = `/Font << ${Object.entries(fontIds).map(([k, id]) => `/${k} ${id} 0 R`).join(' ')} >>`;
 
-  const pagesId = objs.length + 1 + pages.length * 2 + 1;   // reserved; filled below
+  // The page /Parent is a forward reference — write a token and back-fill it once the /Pages
+  // object number is known, so image XObjects (which make the per-page object count vary) can
+  // never desync the reference.
+  const PARENT = '__PAGES_PARENT_REF__';
   const pageIds: number[] = [];
   for (const p of pages) {
+    // Each JPEG becomes its own /DCTDecode image XObject; the raw bytes are embedded verbatim
+    // (as latin1, which round-trips 1:1 through the final latin1 Buffer).
+    const xobjRefs: string[] = [];
+    for (const img of p.images) {
+      const dict = `<< /Type /XObject /Subtype /Image /Width ${img.w} /Height ${img.h} `
+        + `/ColorSpace ${img.gray ? '/DeviceGray' : '/DeviceRGB'} /BitsPerComponent 8 `
+        + `/Filter /DCTDecode /Length ${img.data.length} >>`;
+      const id = add(`${dict}\nstream\n${img.data.toString('latin1')}\nendstream`);
+      xobjRefs.push(`/${img.name} ${id} 0 R`);
+    }
+    const resources = `<< ${fontDict}${xobjRefs.length ? ` /XObject << ${xobjRefs.join(' ')} >>` : ''} >>`;
     const stream = p.content;
     const contentId = add(`<< /Length ${Buffer.byteLength(stream, 'latin1')} >>\nstream\n${stream}\nendstream`);
     // MediaBox reads the PAGE's own size, not the class constant — a landscape report
     // and a portrait receipt can now live in the same writer.
     pageIds.push(add(
-      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${f(p.width)} ${f(p.height)}] ` +
+      `<< /Type /Page /Parent ${PARENT} /MediaBox [0 0 ${f(p.width)} ${f(p.height)}] ` +
       `/Resources ${resources} /Contents ${contentId} 0 R >>`,
     ));
   }
   const realPagesId = add(`<< /Type /Pages /Kids [${pageIds.map((i) => `${i} 0 R`).join(' ')}] /Count ${pageIds.length} >>`);
-  // the /Parent forward reference must be right — assert rather than ship a broken file
-  if (realPagesId !== pagesId) {
-    for (let i = 0; i < objs.length; i++) objs[i] = objs[i].split(`${pagesId} 0 R`).join(`${realPagesId} 0 R`);
-  }
+  for (let i = 0; i < objs.length; i++) objs[i] = objs[i].split(PARENT).join(`${realPagesId} 0 R`);
   const infoId = add(
     `<< /Title (${esc(toWinAnsi(meta.title ?? 'Document'))}) /Producer (Tech Lingua CRM) ` +
     `/Author (${esc(toWinAnsi(meta.author ?? 'Tech Lingua LLP'))}) >>`,

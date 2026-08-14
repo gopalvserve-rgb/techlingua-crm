@@ -93,6 +93,11 @@ export class StorageService {
     return `students/${owner}/docs/${randomUUID()}-${this.safeName(opts.fileName)}`;
   }
 
+  /** students/<sid>/photo/<uuid>-<filename> — the student profile photo (private, presigned). */
+  studentPhotoKey(studentId: number, fileName: string): string {
+    return `students/${studentId}/photo/${randomUUID()}-${this.safeName(fileName)}`;
+  }
+
   /** documents/<kind>/<docNo>.pdf — the generated business PDFs. */
   pdfKey(kind: string, docNo: string | number): string {
     const safeKind = this.safeName(kind).toLowerCase();

@@ -4,7 +4,7 @@
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { api } from './api';
+import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
 import {
@@ -19,7 +19,7 @@ import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, RowMenu, RowMenuItem, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
 import { UserPicker } from './userpicker';
-import { DocumentList } from './documents';
+import { StudentDocuments, StudentPhotoUpload } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
@@ -4510,6 +4510,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const reloadJourney = () => { journeyData.reload(); loadProfile(); onChanged(); };
   const enrolData = useFetch<any>(tab === 'enrollments' ? `/students/${student.id}/enrolments` : null, [student.id, tab]);
   const learnData = useFetch<any>(tab === 'learning' ? `/students/${student.id}/learning` : null, [student.id, tab]);
+  const idCardData = useFetch<any>(tab === 'idcard' ? `/students/${student.id}/id-card/url` : null, [student.id, tab]);
   const reloadEnrol = () => { enrolData.reload(); loadProfile(); onChanged(); };
   const statusHist = useFetch<any[]>(tab === 'status' ? `/students/${student.id}/status-history` : null, [student.id, tab]);
   const [lms, setLms] = useState<any>(null);
@@ -4547,12 +4548,25 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const fees = prof?.fees;
   const TABS: Array<[string, string, string]> = [
     ['fees', 'Fee Management', 'rupee'], ['overview', 'Overview', 'eye'], ['contact', 'Contact', 'phone'],
-    ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'],
+    ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'], ['idcard', 'ID Card', 'award'],
     ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
     ['status', 'Status & LMS', 'flag'], ['enrollments', 'Course Enrollment', 'grid'], ['learning', 'Syllabus', 'book'],
     ['admission', 'Admission Journey', 'check'],
     ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
   ];
+  const activeCourses: string[] = Array.from(new Set(((prof?.fees?.enrolments ?? []) as any[])
+    .filter((e: any) => !['cancelled', 'withdrawn', 'dropped_out'].includes(String(e.course_status ?? '')))
+    .map((e: any) => String(e.course_name ?? '').trim()).filter(Boolean)));
+  if (!activeCourses.length && full.course_name) activeCourses.push(String(full.course_name));
+  const openIdCard = async () => {
+    try {
+      const res = await fetch(`/api/students/${student.id}/id-card`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      if (!res.ok) { toast('Could not open the ID card', true); return; }
+      const url = URL.createObjectURL(await res.blob());
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch { toast('Could not open the ID card', true); }
+  };
   const photo = prof?.photo_url as string | undefined;
   const initials = String(full.full_name ?? '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w: string) => w[0]?.toUpperCase() ?? '').join('') || '?';
   const attPct = att?.summary?.present_pct;
@@ -4577,10 +4591,12 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             </div>
             <div className="fbp-path">{[full.branch_name, full.vertical_name, full.course_name].filter(Boolean).join(' › ') || '—'}</div>
             <div className="fbp-tags">
+              <span className="fbp-tag"><Ic k="book" />{activeCourses.length ? activeCourses.join(', ') : 'No course'}</span>
               <span className="fbp-tag"><Ic k="grid" />{ac?.current_batch?.name ?? full.batch_name ?? 'No batch'}</span>
               <span className="fbp-tag"><Ic k="cal" />Admitted {dmy(full.admission_date)}</span>
             </div>
             <div className="fbp-btns">
+              <button className="btn" onClick={openIdCard} data-testid="stu-id-card"><Ic k="award" />Student ID Card</button>
               {canEdit && <button className="btn" onClick={() => setShowStatus(true)} data-testid="stu-change-status"><Ic k="flag" />Change status</button>}
               {canEdit && <button className="btn" onClick={() => setShowTransfer(true)}><Ic k="swap" />Transfer student</button>}
               {onEdit && <button className="btn" onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>}
@@ -4588,6 +4604,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           </div>
           <div className="fbp-avatar" aria-hidden={false} title={full.full_name}>
             {photo ? <img src={photo} alt={full.full_name} /> : <span>{initials}</span>}
+            {canEdit && <StudentPhotoUpload studentId={Number(student.id)} onDone={() => { loadProfile(); onChanged(); }} />}
           </div>
         </div>
         <div className="fbp-stats">
@@ -4680,9 +4697,26 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             ]} />
           </Section>
           <Section title="Uploaded documents">
-            <DocumentList basePath={`/students/${student.id}`} />
+            <StudentDocuments studentId={Number(student.id)} canManage={canEdit} />
           </Section>
         </>
+      )}
+
+      {tab === 'idcard' && (
+        <Section title="Student ID Card">
+          <div className="notice" style={{ marginBottom: 10 }}>
+            <Ic k="award" /><div>A printable identity card with the student photo, Student ID, course(s) and Branch › Vertical. Upload a photo from the header to have it appear on the card.</div>
+          </div>
+          <div className="fbp-btns" style={{ marginBottom: 12 }}>
+            <button className="btn primary" onClick={openIdCard} data-testid="idcard-open"><Ic k="award" />Preview / Download PDF</button>
+            <button className="btn" onClick={() => idCardData.reload()}><Ic k="refresh" />Regenerate</button>
+          </div>
+          {idCardData.data?.url ? (
+            <iframe title="Student ID Card" src={idCardData.data.url} style={{ width: '100%', height: 620, border: '1px solid var(--border)', borderRadius: 8 }} />
+          ) : (
+            <div className="empty-note">Click <b>Preview / Download PDF</b> to open the ID card, or Regenerate to build a fresh preview here.</div>
+          )}
+        </Section>
       )}
 
       {tab === 'education' && (

@@ -5,8 +5,9 @@
  * and the student profile ID & Documents tab (list + download). Kept in its OWN module so
  * both admissions.tsx and dyn.tsx can import it without a circular dependency.
  */
+import { useRef, useState } from 'react';
 import { Ic } from './icons';
-import { getToken } from './api';
+import { getToken, api } from './api';
 import { toast, useFetch } from './refdata';
 
 /* --------- education + KYC: client-side guard + helpers -------- */
@@ -94,3 +95,112 @@ export function DocumentList({ basePath }: { basePath: string }) {
     </>
   );
 }
+
+
+/* ============================================================================
+ * STUDENT PROFILE — upload + manage documents, and change the profile photo.
+ * All assets go straight to Cloudflare R2 via a presigned PUT; the row stores only the
+ * r2_key (never a DB blob). Delete is by PK and also purges the R2 object.
+ * ==========================================================================*/
+
+/** Presign, PUT the file to R2, and return the stored r2_key. */
+async function uploadToR2(base: string, file: File): Promise<{ r2_key: string; file: File }> {
+  const { url, r2_key } = await api.post<{ url: string; r2_key: string }>(`${base}/upload-url`, {
+    file_name: file.name, content_type: file.type || 'application/octet-stream',
+  });
+  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  if (!res.ok) throw new Error('Upload to storage failed');
+  return { r2_key, file };
+}
+
+const UPLOAD_TYPES: Array<[string, string]> = [
+  ['aadhaar', 'Aadhaar'], ['pan', 'PAN'], ['qualification', 'Qualification / marksheet'],
+  ['address_proof', 'Address proof'], ['kyc', 'KYC'], ['education', 'Education'], ['other', 'Other document'],
+];
+
+/** The student profile ID & Documents manager: upload (KYC/education/misc) + list + download + delete. */
+export function StudentDocuments({ studentId, canManage }: { studentId: number; canManage: boolean }) {
+  const base = `/students/${studentId}`;
+  const { data, reload } = useFetch<any[]>(`${base}/documents`, [studentId]);
+  const docs = (data ?? []).filter((d: any) => d.doc_type !== 'photo'); // the photo is the avatar, not a listed doc
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [docType, setDocType] = useState('aadhaar');
+  const [busy, setBusy] = useState(false);
+
+  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (fileRef.current) fileRef.current.value = '';
+    if (!f) return;
+    const err = docError(f); if (err) { toast(err, true); return; }
+    setBusy(true);
+    try {
+      const { r2_key } = await uploadToR2(`${base}/documents`, f);
+      await api.post(`${base}/documents`, { r2_key, file_name: f.name, mime: f.type || 'application/octet-stream', size_bytes: f.size, doc_type: docType });
+      toast('Document uploaded'); reload();
+    } catch (ex) { toast((ex as Error).message || 'Upload failed', true); } finally { setBusy(false); }
+  };
+  const del = async (doc: any) => {
+    if (!window.confirm(`Delete "${doc.file_name}"? This cannot be undone.`)) return;
+    try { await api.del(`${base}/documents/${doc.id}`); toast('Document deleted'); reload(); }
+    catch (ex) { toast((ex as Error).message || 'Delete failed', true); }
+  };
+
+  return (
+    <>
+      {canManage && (
+        <div className="lrow" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="inp sm" value={docType} onChange={(e) => setDocType(e.target.value)} data-testid="stu-doc-type" style={{ maxWidth: 220 }}>
+            {UPLOAD_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <input ref={fileRef} type="file" accept={DOC_ACCEPT} style={{ display: 'none' }} onChange={onPick} data-testid="stu-doc-file" />
+          <button className="btn primary sm" disabled={busy} onClick={() => fileRef.current?.click()} data-testid="stu-doc-upload">
+            <Ic k="export" />{busy ? 'Uploading…' : 'Upload document'}
+          </button>
+          <span className="sub" style={{ fontSize: 11 }}>PDF, JPG or PNG · up to 5 MB</span>
+        </div>
+      )}
+      {docs.length === 0 ? <div className="empty-note">No documents uploaded.</div> : docs.map((doc: any) => (
+        <div className="lrow" key={doc.id}>
+          <div className="gr" style={{ minWidth: 0 }}>
+            <div className="t1"><b>{DOC_LABELS[doc.doc_type] ?? doc.doc_type}</b> <span className="sub">· {doc.file_name}</span></div>
+            <div className="t2 sub">{fmtSizePub(Number(doc.size_bytes ?? 0))} · {doc.mime}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn sm" data-testid={`doc-dl-${doc.id}`} onClick={() => openDocument(base, doc)}><Ic k="doc" />Download</button>
+            {canManage && <button className="btn sm danger" data-testid={`doc-del-${doc.id}`} onClick={() => del(doc)}><Ic k="trash" />Delete</button>}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** Change the student profile photo: presigned image upload to R2, then attach. Calls onDone
+ *  (reload the profile) so the header avatar reflects the new photo. */
+export function StudentPhotoUpload({ studentId, onDone, className }: { studentId: number; onDone: () => void; className?: string }) {
+  const base = `/students/${studentId}`;
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const IMG_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (fileRef.current) fileRef.current.value = '';
+    if (!f) return;
+    if (f.type && !IMG_MIME.has(f.type.toLowerCase())) { toast('Choose a JPG, PNG or WEBP image.', true); return; }
+    if (f.size > 5 * 1024 * 1024) { toast('The photo must be under 5 MB.', true); return; }
+    setBusy(true);
+    try {
+      const { r2_key } = await uploadToR2(`${base}/photo`, f);
+      await api.post(`${base}/photo`, { r2_key, file_name: f.name, mime: f.type || 'image/jpeg', size_bytes: f.size });
+      toast('Photo updated'); onDone();
+    } catch (ex) { toast((ex as Error).message || 'Upload failed', true); } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPick} data-testid="stu-photo-file" />
+      <button type="button" className={className ?? 'fbp-photo-edit'} title="Change photo" disabled={busy} onClick={() => fileRef.current?.click()} data-testid="stu-photo-upload">
+        <Ic k="pencil" />{busy ? '…' : ''}
+      </button>
+    </>
+  );
+}
+
+const fmtSizePub = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
