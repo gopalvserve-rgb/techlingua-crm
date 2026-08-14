@@ -17,8 +17,10 @@ import { useScope } from './scope';
 import { FilterMulti } from './dyn';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { CollectModal } from './sprint5';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const openPdf = (path: string) => { window.open(`/api${path}`, '_blank', 'noopener'); };
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
 
 const PLAN_TYPE_LABEL: Record<string, string> = { full: 'Full', installment: 'Installment', emi: 'EMI', custom: 'Custom' };
@@ -299,7 +301,29 @@ export function FeeDuesScreen() {
   const [fCourses, setFCourses] = useState<number[]>([]);
   const [fOwners, setFOwners] = useState<number[]>([]);
   const [cfg, setCfg] = useState(false);
+  // client feedback item 5 — row Actions (fee setup / edit / reminder / collect / receipt)
+  const [planFor, setPlanFor] = useState<number | null>(null);       // Fee setup → create a payment plan
+  const [planEditFor, setPlanEditFor] = useState<number | null>(null); // Edit → the plan schedule
+  const [collectFor, setCollectFor] = useState<number | null>(null);   // Collect fee → the collect modal
   const after = () => setTick((t) => t + 1);
+
+  const remind = async (r: any) => {
+    try {
+      const res = await api.post<any>('/fee-dues/remind', { enrolment_id: Number(r.enrolment_id) });
+      if (res?.already) toast('A reminder was already sent to this student today.');
+      else if (res?.skipped === 'no_outstanding') toast('Nothing outstanding — no reminder sent.');
+      else if (res?.sent) toast(`Reminder queued on ${(res.channels ?? []).join(', ').toUpperCase()}.`);
+      else toast('Reminder recorded — no reachable channel is configured yet.');
+    } catch (e) { toast((e as Error).message, true); }
+  };
+  const downloadReceipt = async (r: any) => {
+    try {
+      const recs = await api.get<any[]>(`/fees/receipts?enrolment_id=${Number(r.enrolment_id)}`);
+      const latest = (recs ?? [])[0];
+      if (!latest) { toast('No receipt yet for this enrolment.', true); return; }
+      openPdf(`/fees/receipts/${latest.id}/pdf`);
+    } catch (e) { toast((e as Error).message, true); }
+  };
 
   const qs = new URLSearchParams();
   if (q) qs.set('q', q);
@@ -351,15 +375,15 @@ export function FeeDuesScreen() {
         <FilterMulti label="Course" icon="book" value={fCourses} options={(ref.courses ?? []) as any} onChange={setFCourses} />
         <FilterMulti label="Owner" icon="users" value={fOwners} options={owners as any} onChange={setFOwners} />
       </div>
-      <TableCard fill title="Fee Dues" icon="clock"
-        more={<ListActions onExport={() => downloadObjectsCsv('fee-dues.csv', rows.map((r) => ({
+      <TableCard fill title="Fee Management" icon="clock"
+        more={<ListActions onExport={() => downloadObjectsCsv('fee-management.csv', rows.map((r) => ({
           student: r.student_name, enrolment: r.enrolment_no, course: r.course_name || '',
           due_date: dt(r.due_date), amount: (Number(r.amount_minor) / 100).toFixed(2),
           paid: (Number(r.paid_minor) / 100).toFixed(2), outstanding: (Number(r.outstanding_minor) / 100).toFixed(2),
           ageing: (BUCKET_BADGE[r.bucket]?.[0]) ?? r.bucket, days_overdue: r.overdue_days,
           source: r.source, owner: r.owner_name || '', branch: r.branch_name, vertical: r.vertical_name,
         })))} onRefresh={after} />}
-        cols={['Student', 'Enrolment', 'Course', 'Due date', 'Outstanding', 'Ageing', 'Days overdue', 'Owner', 'Branch']}
+        cols={['Student', 'Enrolment', 'Course', 'Due date', 'Outstanding', 'Ageing', 'Days overdue', 'Owner', 'Branch \u203a Vertical', 'Actions']}
         empty="No outstanding dues — every active enrolment is paid up."
         rows={rows.map((r): Cell[] => [
           { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div> : <div className="sub">Installment {r.seq_no}</div>}</div> },
@@ -370,9 +394,21 @@ export function FeeDuesScreen() {
           { b: BUCKET_BADGE[r.bucket] ?? [r.bucket, 'b-gray'] },
           Number(r.overdue_days) > 0 ? String(r.overdue_days) : '—',
           r.owner_name || '—',
-          r.branch_name,
+          { node: <span>{[r.branch_name, r.vertical_name].filter(Boolean).join(' \u203a ') || '—'}</span> },
+          {
+            node: <RowBtns items={[
+              ...(can('payment_plan.create') ? [['cfg', 'Fee setup (payment plan)', () => setPlanFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
+              ...(r.plan_id ? [['pencil', 'Edit plan / schedule', () => setPlanEditFor(Number(r.plan_id))] as [string, string, () => void]] : []),
+              ['bell', 'Send fee reminder', () => void remind(r)],
+              ...(can('fee.collect') ? [['rupee', 'Collect fee', () => setCollectFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
+              ['doc', 'Download latest receipt', () => void downloadReceipt(r)],
+            ]} />,
+          },
         ])} />
       {cfg && <ReminderConfigModal onClose={() => setCfg(false)} />}
+      {planFor != null && <PlanCreateModal enrolmentId={planFor} onClose={() => setPlanFor(null)} onSaved={() => { setPlanFor(null); after(); }} />}
+      {planEditFor != null && <PlanDetailModal id={planEditFor} onClose={() => setPlanEditFor(null)} onChanged={after} />}
+      {collectFor != null && <CollectModal enrolmentId={collectFor} onClose={() => setCollectFor(null)} onSaved={() => { setCollectFor(null); after(); }} />}
     </>
   );
 }

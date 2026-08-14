@@ -4546,7 +4546,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const att = ac?.attendance;
   const fees = prof?.fees;
   const TABS: Array<[string, string, string]> = [
-    ['fees', 'Fees Payment', 'rupee'], ['overview', 'Overview', 'eye'], ['contact', 'Contact', 'phone'],
+    ['fees', 'Fee Management', 'rupee'], ['overview', 'Overview', 'eye'], ['contact', 'Contact', 'phone'],
     ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'],
     ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
     ['status', 'Status & LMS', 'flag'], ['enrollments', 'Course Enrollment', 'grid'], ['learning', 'Syllabus', 'book'],

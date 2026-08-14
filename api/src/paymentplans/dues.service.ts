@@ -1,8 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { PLAN_SCOPE_COLS } from './plan.service';
+import { MessagingService } from '../messaging/messaging.service';
+import { SettingsService } from '../common/settings.service';
+import { formatINR } from '../common/money.util';
+import { DEFAULT_FEE_REMINDER, FeeReminderConfig } from './reminder.worker';
+
+interface Me { id: number; name: string }
 
 /**
  * FEE DUES & AGEING (Phase 3 Batch 2). Outstanding fee per student / enrolment /
@@ -40,6 +46,8 @@ export class DuesService {
   constructor(
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
+    private readonly messaging: MessagingService,
+    private readonly settings: SettingsService,
   ) {}
 
   /** The CTE of every outstanding due (installment + unplanned), scoped, in IST. */
@@ -167,5 +175,75 @@ export class DuesService {
       by_branch: byBranch.map((r) => ({ label: r.label, total_minor: Number(r.total_minor) })),
       by_vertical: byVertical.map((r) => ({ label: r.label, total_minor: Number(r.total_minor) })),
     };
+  }
+  /**
+   * MANUAL FEE REMINDER (client feedback item 5) — the "Reminder" action icon on the Fee
+   * Management (dues) list. Fires the SAME channel-agnostic reminder the automatic sweep
+   * uses (WhatsApp / SMS / Email via MessagingService.queue, guarded → honours opt-out &
+   * business hours, degrades cleanly to a failed/not_configured log row when a channel has
+   * no credentials — never throws). Scope-enforced (the enrolment must be in the caller's
+   * scope) and IDEMPOTENT: at most one manual reminder per enrolment per IST day
+   * (fee_manual_reminder, migration 077) so repeated clicks never spam the student.
+   */
+  async remind(scope: ResolvedScope, enrolmentId: number, me: Me): Promise<{ sent: number; already: boolean; skipped?: string; channels: string[] }> {
+    if (!Number.isInteger(enrolmentId) || enrolmentId <= 0) throw new BadRequestException('enrolment_id is required');
+    const params: unknown[] = [enrolmentId];
+    const scopeWhere = this.resolver.buildScopeWhere(scope, PLAN_SCOPE_COLS, params);
+    const rows = await this.db.query<any>(
+      `SELECT e.id, e.enrolment_no, e.net_fee_minor, e.branch_id, e.vertical_id, e.lead_id,
+              l.full_name AS student_name, l.phone AS student_phone, l.email AS student_email,
+              c.name AS course_name,
+              COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
+                         WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0) AS paid_minor
+         FROM enrolment e
+         JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN m_course c ON c.id = e.course_id
+        WHERE e.id = $1 AND e.deleted_at IS NULL AND ${scopeWhere}
+        LIMIT 1`,
+      params,
+    );
+    const e = rows[0];
+    if (!e) throw new NotFoundException('Enrolment not found');
+    const outstanding = Number(e.net_fee_minor) - Number(e.paid_minor);
+    if (outstanding <= 0) return { sent: 0, already: false, skipped: 'no_outstanding', channels: [] };
+
+    const cfg = await this.settings.get('fee_reminder_config', DEFAULT_FEE_REMINDER as unknown as Record<string, unknown>) as unknown as FeeReminderConfig;
+    const channels = (Array.isArray(cfg?.channels) ? cfg.channels : DEFAULT_FEE_REMINDER.channels)
+      .filter((x) => ['whatsapp', 'sms', 'email'].includes(x));
+
+    return this.db.tx(async (client) => {
+      // THE CLAIM — exactly one manual reminder per (enrolment, IST day).
+      const claim = await client.query(
+        `INSERT INTO fee_manual_reminder (enrolment_id, ymd, created_by)
+         VALUES ($1, (now() AT TIME ZONE 'Asia/Kolkata')::date, $2)
+         ON CONFLICT (enrolment_id, ymd) DO NOTHING RETURNING id`,
+        [enrolmentId, me?.id ?? null],
+      );
+      if (!claim.rowCount) return { sent: 0, already: true, channels: [] };
+      const rid = Number(claim.rows[0].id);
+
+      const amount = formatINR(outstanding);
+      const course = e.course_name ? ` for ${e.course_name}` : '';
+      const body = `Dear ${e.student_name}, this is a reminder that a fee amount of ${amount}${course} (${e.enrolment_no}) is outstanding on your account. Kindly arrange the payment at the earliest. Thank you.`;
+
+      let firstLogId: number | null = null;
+      const used: string[] = [];
+      for (const ch of channels) {
+        const to = ch === 'email' ? e.student_email : e.student_phone;
+        if (!to) continue; // not reachable on this channel — skip, not an error
+        const res = await this.messaging.queue({
+          channel: ch as 'whatsapp' | 'sms' | 'email',
+          to: String(to),
+          subject: ch === 'email' ? `Fee reminder — ${e.enrolment_no}` : null,
+          body: ch === 'email' ? `<p>${body}</p>` : body,
+          lead_id: Number(e.lead_id), vertical_id: Number(e.vertical_id), branch_id: Number(e.branch_id),
+          guarded: true,
+        });
+        used.push(ch);
+        if (firstLogId == null && res?.id) firstLogId = Number(res.id);
+      }
+      await client.query(`UPDATE fee_manual_reminder SET channels = $2, message_log_id = $3 WHERE id = $1`, [rid, used, firstLogId]);
+      return { sent: used.length, already: false, channels: used };
+    });
   }
 }

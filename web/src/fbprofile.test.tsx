@@ -1,7 +1,7 @@
 /**
  * STUDENT PROFILE — creative Facebook-style shell (docs/dev/59). Proves on StudentDetailModal:
  *   1. the enlarged modal carries the FB shell (cover, avatar, KPI stats, left rail);
- *   2. the left rail lists the tabs and DEFAULTS to "Fees Payment";
+ *   2. the left rail lists the tabs and DEFAULTS to "Fee Management";
  *   3. the header shows the student name + avatar initials + attendance/fees stat chips;
  *   4. a "Transfer student" action is offered; the Academics tab shows Branch Transfers.
  */
@@ -75,11 +75,11 @@ describe('Student profile — creative FB-style shell', () => {
     expect(within(stats).getByText('Outstanding')).toBeTruthy();
   });
 
-  it('defaults to the Fees Payment tab (first in the rail)', async () => {
+  it('defaults to the Fee Management tab (first in the rail)', async () => {
     render(<StudentDetailModal student={PROFILE.student} onClose={() => undefined} onChanged={() => undefined} />);
     await waitFor(() => expect(get).toHaveBeenCalled());
     await flush();
-    const fees = railBtn('Fees Payment');
+    const fees = railBtn('Fee Management');
     expect(fees).toBeTruthy();
     expect(fees!.className).toContain('on');
     expect(screen.getByText('Collection Summary')).toBeTruthy();

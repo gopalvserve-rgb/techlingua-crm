@@ -1,7 +1,9 @@
-import { Controller, Get, Query } from '@nestjs/common';
-import { CurrentScope, RequirePermission } from '../rbac/rbac.decorators';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { DuesService } from './dues.service';
+
+interface Me { id: number; name: string }
 
 function many(v?: string | string[]): number[] | undefined {
   if (v == null) return undefined;
@@ -37,5 +39,13 @@ export class DuesController {
     return this.svc.summary(scope, {
       branch_ids: many(q?.branch_ids ?? q?.branch_id), vertical_ids: many(q?.vertical_ids ?? q?.vertical_id),
     });
+  }
+
+  /** Manual fee reminder for an enrolment's outstanding (client feedback item 5). Scope +
+   *  permission enforced; idempotent per enrolment per IST day; degrades cleanly. */
+  @Post('remind')
+  @RequirePermission('fee_dues.read')
+  remind(@CurrentScope() scope: ResolvedScope, @Body() dto: any, @CurrentUser() me: Me) {
+    return this.svc.remind(scope, Number(dto?.enrolment_id), me);
   }
 }

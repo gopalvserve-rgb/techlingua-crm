@@ -1294,6 +1294,38 @@ export function CollectModal({ enrolmentId, onClose, onSaved }: {
   );
 }
 
+/**
+ * FEE RECEIPT — a read-only details popup (client feedback item 5, the "View" action on the
+ * Fee Receipt Records list). Shows the receipt with its Branch > Vertical > Course path; the
+ * PDF is downloaded from the separate "Download receipt PDF" action (R2/streamed by the API).
+ */
+export function ReceiptViewModal({ r, onClose }: { r: any; onClose: () => void }) {
+  const path = [r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '\u2014';
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 520 }}>
+        <div className="ah"><h3><Ic k="rupee" />Receipt {r.receipt_no}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="kv-grid">
+            <div><span className="kl">Student</span><span className="kvv">{r.lead_name}</span></div>
+            <div><span className="kl">Enrolment</span><span className="kvv">{r.enrolment_no}</span></div>
+            <div><span className="kl">Amount</span><span className="kvv">{fmtINR(r.amount_minor)}</span></div>
+            <div><span className="kl">Mode</span><span className="kvv">{String(r.mode).toUpperCase()}</span></div>
+            <div><span className="kl">Reference</span><span className="kvv">{r.reference || '\u2014'}</span></div>
+            <div><span className="kl">Received</span><span className="kvv">{dt(r.received_at)}</span></div>
+            <div className="span2"><span className="kl">Branch › Vertical › Course</span><span className="kvv">{path}</span></div>
+            {r.note ? <div className="span2"><span className="kl">Note</span><span className="kvv">{r.note}</span></div> : null}
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Close</button>
+          <button className="btn primary" onClick={() => openPdf(`/fees/receipts/${r.id}/pdf`)}><Ic k="doc" />Download PDF</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function FeeCollection() {
   const { can } = useAuth();
   // SHARED date range on the receipt date (received_at). Default All time.
@@ -1307,6 +1339,7 @@ export function FeeCollection() {
   const [modal, setModal] = useState(false);
   const rows = data ?? [];
   const s = summary.data;
+  const [viewRec, setViewRec] = useState<any | null>(null);
   const bump = () => { reload(); summary.reload(); };
 
   const del = async (r: any) => {
@@ -1347,8 +1380,8 @@ export function FeeCollection() {
         }))}
         empty="No payments recorded yet" />
       <TableCard
-        title="Recent collections" icon="rupee"
-        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Branch', '']}
+        title="Fee Receipt Records" icon="rupee"
+        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Branch \u203a Vertical \u203a Course', 'Actions']}
         empty="No payments recorded yet"
         rows={rows.map((r): Cell[] => [
           { node: <b className="mono">{r.receipt_no}</b> },
@@ -1358,16 +1391,18 @@ export function FeeCollection() {
           { b: [r.mode.toUpperCase(), 'b-indigo'] },
           r.reference ? { mono: r.reference } : '—',
           dt(r.received_at),
-          r.branch_name,
+          { node: <span>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '—'}</span> },
           {
             node: <RowBtns items={[
-              ['doc', 'Receipt PDF', () => openPdf(`/fees/receipts/${r.id}/pdf`)],
+              ['eye', 'View receipt', () => setViewRec(r)],
+              ['doc', 'Download receipt PDF', () => openPdf(`/fees/receipts/${r.id}/pdf`)],
               ...(can('fee.delete') ? [['trash', 'Delete', () => void del(r)] as [string, string, () => void]] : []),
             ]} />,
           },
         ])}
       />
       {modal && <CollectModal onClose={() => setModal(false)} onSaved={bump} />}
+      {viewRec && <ReceiptViewModal r={viewRec} onClose={() => setViewRec(null)} />}
     </>
   );
 }

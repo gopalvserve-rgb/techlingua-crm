@@ -285,7 +285,7 @@ export const APP: ModuleItem[] = [
       sub: 'Razorpay online collection PER VERTICAL. Mint a payment link for a fee due / installment (amount in paise, partial allowed) using that enrolment\'s vertical\'s Razorpay key. On payment the webhook (HMAC-verified, idempotent) captures it, records the fee collection (oldest-due first) and auto-generates the receipt + PDF. A vertical with no key degrades to a clean message until the client enters it in Settings. Full list treatment; RBAC payment.*.' } },
     { id: 'plans', label: 'Payment Plans', spec: { dyn: 'paymentPlans',
       sub: 'Installment plans on an enrolment — Full / Installment / EMI / Custom. Generates a due-dated schedule that sums EXACTLY to the net fee (₹ paise). Collections apply oldest-due first, updating each installment\'s paid / outstanding / status. Full list treatment.' } },
-    { id: 'dues', label: 'Fee Dues', spec: { dyn: 'feeDues',
+    { id: 'dues', label: 'Fee Management', spec: { dyn: 'feeDues',
       sub: 'Outstanding per student / enrolment / installment with ageing buckets (Not due / 0–30 / 31–60 / 61–90 / 90+ days) computed in IST. Filter by ageing / branch / vertical / course / owner, export, refresh. Automatic due reminders (WhatsApp / SMS / Email) with configurable offsets — idempotent, degrade cleanly.' } },
     { id: 'scholar', label: 'Scholarships', spec: {
       sub: 'Percentage or fixed. Approval workflow at manager level. Scholarship reason mandatory.',
