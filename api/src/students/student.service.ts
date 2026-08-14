@@ -381,13 +381,15 @@ export class StudentService {
               e.course_status, e.course_status_reason, e.course_status_effective_date,
               e.course_status_changed_at, e.admission_stage, co.name AS course_name, bt.name AS batch_name,
               br.name AS branch_name, vt.name AS vertical_name, svi.student_vertical_no,
-              sd.label AS course_status_label, sd.lms_access AS course_lms_access
+              sd.label AS course_status_label, sd.lms_access AS course_lms_access,
+              pp.id AS plan_id
          FROM enrolment e
          LEFT JOIN m_course co ON co.id = e.course_id
          LEFT JOIN batch bt ON bt.id = e.batch_id
          LEFT JOIN branch br ON br.id = e.branch_id
          LEFT JOIN vertical vt ON vt.id = e.vertical_id
          LEFT JOIN student_vertical_id svi ON svi.student_id = $1::bigint AND svi.vertical_id = e.vertical_id
+         LEFT JOIN payment_plan pp ON pp.enrolment_id = e.id AND pp.status = 'active' AND pp.deleted_at IS NULL
          LEFT JOIN student_status_def sd ON sd.code = e.course_status
         WHERE e.deleted_at IS NULL
           AND (e.student_profile_id = $1::bigint OR e.id = $2::bigint)
@@ -412,12 +414,21 @@ export class StudentService {
     const enrolmentIds = enrolments.map((e: any) => Number(e.id));
     let receipts: any[] = [];
     if (enrolmentIds.length) {
+      // dev/80 — carry Branch > Vertical > Course + the enrolment/student name so the profile
+      // Fees tab can print the breadcrumb and the reused ReceiptViewModal has everything it needs.
       receipts = await this.db.query<any>(
         `SELECT fr.id, fr.receipt_no, fr.amount_minor, fr.mode, fr.reference, fr.received_at,
-                fr.note, u.name AS received_by_name
-           FROM fee_receipt fr LEFT JOIN "user" u ON u.id = fr.received_by
+                fr.note, u.name AS received_by_name, e.enrolment_no,
+                br.name AS branch_name, vt.name AS vertical_name, co.name AS course_name
+           FROM fee_receipt fr
+           LEFT JOIN "user" u ON u.id = fr.received_by
+           LEFT JOIN enrolment e ON e.id = fr.enrolment_id
+           LEFT JOIN branch br ON br.id = e.branch_id
+           LEFT JOIN vertical vt ON vt.id = e.vertical_id
+           LEFT JOIN m_course co ON co.id = e.course_id
           WHERE fr.enrolment_id = ANY($1::bigint[]) AND fr.deleted_at IS NULL
           ORDER BY fr.received_at DESC`, [enrolmentIds]);
+      receipts = receipts.map((r: any) => ({ ...r, lead_name: student.full_name ?? null }));
     }
     const netFee = enrolments.reduce((s: number, e: any) => s + Number(e.net_fee_minor ?? 0), 0);
     const collected = receipts.reduce((s: number, r: any) => s + Number(r.amount_minor ?? 0), 0);

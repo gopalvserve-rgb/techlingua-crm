@@ -42,7 +42,7 @@ import {
   BulkWhatsApp, Journeys, Settings, SmsTemplates, Templates,
 } from './sprint4';
 import {
-  CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure,
+  CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure, CollectModal, ReceiptViewModal,
 } from './sprint5';
 import { fmtINR, enrolDiscount, previewSchedule, EnrolDiscountType } from './money';
 import {
@@ -58,7 +58,7 @@ import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './le
 import { CourseContentScreen, SyllabusScreen } from './academics-content';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { InvoicesScreen, FinanceDashboard } from './invoices';
-import { PaymentPlansScreen, FeeDuesScreen } from './paymentplans';
+import { PaymentPlansScreen, FeeDuesScreen, PlanCreateModal, PlanDetailModal } from './paymentplans';
 import { PaymentsScreen } from './payments';
 import { RefundsScreen } from './refunds';
 import { RevenueScreen, CollectionReportsScreen } from './revenue';
@@ -4503,6 +4503,11 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const [addEnrol, setAddEnrol] = useState(false);
   const [enrolStatusFor, setEnrolStatusFor] = useState<any | null>(null);
   const [enrolHistFor, setEnrolHistFor] = useState<any | null>(null);
+  // client refinement (dev/80) — Fee Management actions on the profile Fees tab (reuse standalone components)
+  const [feePlanFor, setFeePlanFor] = useState<number | null>(null);        // fee setup -> PlanCreateModal
+  const [feePlanEditFor, setFeePlanEditFor] = useState<number | null>(null); // edit -> PlanDetailModal
+  const [feeCollectFor, setFeeCollectFor] = useState<number | null>(null);   // collect -> CollectModal
+  const [feeReceiptView, setFeeReceiptView] = useState<any | null>(null);    // view -> ReceiptViewModal
   const canStatusManage = can('student.status_manage');
   const canApproveAdm = can('admission.approve');
   const journeyData = useFetch<any>(tab === 'admission' ? `/students/${student.id}/admission-journey` : null, [student.id, tab]);
@@ -4552,6 +4557,26 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const dash = (v: any) => (v == null || v === '' ? '—' : v);
   const dmy = (v: any) => fmtDMYIST(v);
   const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
+  // Fee Management row actions — same endpoints as the standalone Fee Management screen (dev/76).
+  const canFeeCollect = can('fee.collect');
+  const canPlanCreate = can('payment_plan.create');
+  const feeRemind = async (enrolmentId: number) => {
+    try {
+      const res = await api.post<any>('/fee-dues/remind', { enrolment_id: enrolmentId });
+      if (res?.already) toast('A reminder was already sent to this student today.');
+      else if (res?.skipped === 'no_outstanding') toast('Nothing outstanding — no reminder sent.');
+      else if (res?.sent) toast(`Reminder queued on ${(res.channels ?? []).join(', ').toUpperCase()}.`);
+      else toast('Reminder recorded — no reachable channel is configured yet.');
+    } catch (e) { toast((e as Error).message, true); }
+  };
+  const feeDownloadReceipt = async (enrolmentId: number) => {
+    try {
+      const recs = await api.get<any[]>(`/fees/receipts?enrolment_id=${enrolmentId}`);
+      const latest = (recs ?? [])[0];
+      if (!latest) { toast('No receipt yet for this enrolment.', true); return; }
+      window.open(`/api/fees/receipts/${latest.id}/pdf`, '_blank', 'noopener');
+    } catch (e) { toast((e as Error).message, true); }
+  };
 
   const ac = prof?.academics;
   const att = ac?.attendance;
@@ -5074,20 +5099,51 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               ['Receipts', String(fees?.summary?.receipt_count ?? 0)],
             ]} />
           </Section>
-          <Section title="Enrolments">
+          {/* dev/80 — Fee Management: Branch > Vertical + Actions (fee setup / edit / reminder /
+              collect / download receipt), reusing the standalone Fee Management components (dev/76). */}
+          <Section title="Fee Management">
             {fees?.enrolments?.length ? (
-              <table className="minitbl"><thead><tr><th>Enrolment</th><th>Course</th><th>Net Fee</th><th>Plan</th><th>Status</th></tr></thead>
+              <table className="minitbl"><thead><tr>
+                <th>Enrolment</th><th>Course</th><th>Branch &rsaquo; Vertical</th><th>Net Fee</th><th>Plan</th><th>Status</th><th>Actions</th>
+              </tr></thead>
                 <tbody>{fees.enrolments.map((e: any) => (
-                  <tr key={e.id}><td className="mono">{e.enrolment_no}</td><td>{e.course_name ?? '—'}</td><td>{money(e.net_fee_minor)}</td>
-                    <td>{e.payment_plan}</td><td>{e.status}</td></tr>
+                  <tr key={e.id}>
+                    <td className="mono">{e.enrolment_no}</td>
+                    <td>{e.course_name ?? '—'}</td>
+                    <td>{[e.branch_name, e.vertical_name].filter(Boolean).join(' \u203a ') || '—'}</td>
+                    <td>{money(e.net_fee_minor)}</td>
+                    <td>{e.payment_plan}</td>
+                    <td>{e.status}</td>
+                    <td><div className="rowacts">
+                      {canPlanCreate && <button className="icon-btn sm" title="Fee setup (payment plan)" onClick={() => setFeePlanFor(Number(e.id))}><Ic k="cfg" /></button>}
+                      {e.plan_id ? <button className="icon-btn sm" title="Edit plan / schedule" onClick={() => setFeePlanEditFor(Number(e.plan_id))}><Ic k="pencil" /></button> : null}
+                      <button className="icon-btn sm" title="Send fee reminder" onClick={() => void feeRemind(Number(e.id))}><Ic k="bell" /></button>
+                      {canFeeCollect && <button className="icon-btn sm" title="Collect fee" onClick={() => setFeeCollectFor(Number(e.id))}><Ic k="rupee" /></button>}
+                      <button className="icon-btn sm" title="Download latest receipt" onClick={() => void feeDownloadReceipt(Number(e.id))}><Ic k="doc" /></button>
+                    </div></td>
+                  </tr>
                 ))}</tbody></table>
             ) : <Empty t="Not linked to an enrolment yet." />}
           </Section>
-          <Section title="Fee Receipts">
+          {/* dev/80 — Fee Receipt Records: Branch > Vertical > Course + Actions (view / download),
+              reusing ReceiptViewModal + the receipt-PDF endpoint from the standalone screen. */}
+          <Section title="Fee Receipt Records">
             {fees?.receipts?.length ? (
-              <table className="minitbl"><thead><tr><th>Receipt</th><th>Amount</th><th>Mode</th><th>Received</th></tr></thead>
+              <table className="minitbl"><thead><tr>
+                <th>Receipt</th><th>Amount</th><th>Mode</th><th>Received</th><th>Branch &rsaquo; Vertical &rsaquo; Course</th><th>Actions</th>
+              </tr></thead>
                 <tbody>{fees.receipts.map((r: any) => (
-                  <tr key={r.id}><td className="mono">{r.receipt_no}</td><td>{money(r.amount_minor)}</td><td>{r.mode}</td><td>{dmy(r.received_at)}</td></tr>
+                  <tr key={r.id}>
+                    <td className="mono">{r.receipt_no}</td>
+                    <td>{money(r.amount_minor)}</td>
+                    <td>{r.mode}</td>
+                    <td>{dmy(r.received_at)}</td>
+                    <td>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '—'}</td>
+                    <td><div className="rowacts">
+                      <button className="icon-btn sm" title="View receipt" onClick={() => setFeeReceiptView({ ...r, lead_name: r.lead_name ?? full.full_name })}><Ic k="eye" /></button>
+                      <button className="icon-btn sm" title="Download receipt PDF" onClick={() => window.open(`/api/fees/receipts/${r.id}/pdf`, '_blank', 'noopener')}><Ic k="doc" /></button>
+                    </div></td>
+                  </tr>
                 ))}</tbody></table>
             ) : <Empty t="No fee receipts yet." />}
           </Section>
@@ -5112,6 +5168,11 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           onClose={() => setAddEnrol(false)}
           onDone={() => { setAddEnrol(false); reloadEnrol(); }} />
       )}
+      {/* dev/80 — Fee Management actions on the Fees tab reuse the standalone modals + endpoints. */}
+      {feePlanFor != null && <PlanCreateModal enrolmentId={feePlanFor} onClose={() => setFeePlanFor(null)} onSaved={() => { setFeePlanFor(null); loadProfile(); }} />}
+      {feePlanEditFor != null && <PlanDetailModal id={feePlanEditFor} onClose={() => setFeePlanEditFor(null)} onChanged={loadProfile} />}
+      {feeCollectFor != null && <CollectModal enrolmentId={feeCollectFor} onClose={() => setFeeCollectFor(null)} onSaved={() => { setFeeCollectFor(null); loadProfile(); }} />}
+      {feeReceiptView && <ReceiptViewModal r={feeReceiptView} onClose={() => setFeeReceiptView(null)} />}
       {enrolStatusFor && (
         <ChangeEnrolmentStatusModal student={full} enrolment={enrolStatusFor} canManageSensitive={canStatusManage}
           onClose={() => setEnrolStatusFor(null)}
@@ -5371,6 +5432,7 @@ export function ChangeStatusModal({ student, outstandingMinor, canManageSensitiv
 export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; onClose: () => void; onDone: () => void }) {
   const ref = useRef_();
   const [courseId, setCourseId] = useState('');
+  const [branchId, setBranchId] = useState(String(student.branch_id ?? ''));
   const [vertId, setVertId] = useState(String(student.vertical_id ?? ''));
   const [batchId, setBatchId] = useState('');
   const [fee, setFee] = useState('');                       // gross fee (₹), from master, editable
@@ -5390,10 +5452,17 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
   const courses = coursesAll.filter((c: any) =>
     String((c.meta as any)?.vertical_id ?? '') === String(vertId ?? '') ||
     !((c.meta as any)?.vertical_id));   // courses not scoped to a vertical stay selectable
-  // Verticals the student may enrol into — those under the student's branch (default = own vertical).
-  const branchVerticals = ((ref.verticals ?? []) as any[]).filter((v: any) => Number(v.branch_id) === Number(student.branch_id));
-  const branchName = student.branch_name ?? ref.branches?.find((b: any) => Number(b.id) === Number(student.branch_id))?.name ?? '—';
-  const verticalName = student.vertical_name ?? ref.verticals?.find((v: any) => Number(v.id) === Number(student.vertical_id))?.name ?? '—';
+  // BRANCH -> VERTICAL cascade: the enroll target DEFAULTS to the student's own branch/vertical
+  // (the common case is one click) but EITHER can be changed to enrol into another branch/vertical.
+  const branches = (ref.branches ?? []) as any[];
+  const branchVerticals = ((ref.verticals ?? []) as any[]).filter((v: any) => Number(v.branch_id) === Number(branchId));
+  // Changing the Branch clears the downstream Vertical/Course/Batch/fee (a stale vertical from
+  // another branch must never be submitted); defaults to that branch's sole vertical if unique.
+  const chooseBranch = (bid: string) => {
+    setBranchId(bid); setCourseId(''); setBatchId(''); setFee('');
+    const vs = ((ref.verticals ?? []) as any[]).filter((v: any) => Number(v.branch_id) === Number(bid));
+    setVertId(vs.length === 1 ? String(vs[0].id) : '');
+  };
 
   useEffect(() => {
     if (!courseId) { setBatches([]); return; }
@@ -5429,6 +5498,8 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
     : 'custom';
 
   const save = async () => {
+    if (!branchId) { toast('Choose a branch.', true); return; }
+    if (!vertId) { toast('Choose a vertical.', true); return; }
     if (!courseId) { toast('Choose a course.', true); return; }
     if (plan !== 'full' && !sched.balances) { toast(sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
@@ -5436,7 +5507,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
       // 1) create the enrolment (discount computed + capped server-side; net is authoritative)
       const enr = await api.post<any>(`/students/${student.id}/enrolments`, {
         course_id: Number(courseId), batch_id: batchId ? Number(batchId) : null,
-        vertical_id: vertId ? Number(vertId) : undefined, branch_id: student.branch_id ? Number(student.branch_id) : undefined,
+        vertical_id: vertId ? Number(vertId) : undefined, branch_id: branchId ? Number(branchId) : undefined,
         fee_minor: grossMinor, discount_type: discType, discount_value: dv,
         payment_plan: planIntent, start_date: start || null,
       });
@@ -5463,14 +5534,19 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
     <DetailModal title={`Enroll in another course — ${student.full_name}`} icon="grid" onClose={onClose} width={620}
       footer={<button className="btn primary" onClick={save} disabled={busy || !courseId} data-testid="enrol-add-save"><Ic k="plus" />Add enrollment</button>}>
       <div className="form-grid">
-        {/* BRANCH -> VERTICAL -> COURSE */}
-        <div className="fld"><label>Branch</label><input className="ainp" value={branchName} disabled readOnly /></div>
+        {/* BRANCH -> VERTICAL -> COURSE cascade — all selectable; defaults to the student's own */}
+        <div className="fld"><label htmlFor="ae-branch">Branch <span className="star">*</span></label>
+          <select id="ae-branch" className="ainp" value={branchId} disabled={busy}
+            onChange={(e) => chooseBranch(e.target.value)} data-testid="enrol-branch">
+            <option value="">— Choose branch —</option>
+            {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
         <div className="fld"><label htmlFor="ae-vert">Vertical <span className="star">*</span></label>
-          <select id="ae-vert" className="ainp" value={vertId} disabled={busy}
+          <select id="ae-vert" className="ainp" value={vertId} disabled={busy || !branchId}
             onChange={(e) => { setVertId(e.target.value); setCourseId(''); setBatchId(''); setFee(''); }} data-testid="enrol-vertical">
-            {branchVerticals.length
-              ? branchVerticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)
-              : <option value={String(student.vertical_id ?? '')}>{verticalName}</option>}
+            <option value="">{branchId ? '— Choose vertical —' : '— Choose branch first —'}</option>
+            {branchVerticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
           <div className="sub" style={{ fontSize: 11 }}>The Student ID is generated per vertical — enrolling in another vertical mints its own vertical-wise ID.</div>
         </div>

@@ -139,6 +139,24 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   /** Master-bound select options + any value just added via ＋ Master (pre-reload). */
   const withExtra = (k: string, opts: Named[]) =>
     [...opts, ...(extra[k] ?? []).filter((e) => !opts.some((o) => Number(o.id) === Number(e.id)))];
+  /** Course options FILTERED to the lead's Branch > Vertical path (client refinement, dev/80):
+   *  only courses under the lead's vertical show — the same rule the enrol/convert selectors use
+   *  (m_course.meta.vertical_id === the lead's vertical). LEGACY SAFETY: if the lead already has a
+   *  course stored that is out-of-path (a value saved before this filter, or a re-parented lead),
+   *  that course is still shown so a saved value is never silently dropped. */
+  const courseOpts = (): Named[] => {
+    const all = withExtra('course_id', ref.courses);
+    const vid = lead.vertical_id;
+    let list = vid != null
+      ? all.filter((c: any) => String((c.meta as any)?.vertical_id ?? '') === String(vid))
+      : all;
+    const cur = ed('course_id');
+    if (cur != null && !list.some((c: any) => Number(c.id) === Number(cur))) {
+      const kept = all.find((c: any) => Number(c.id) === Number(cur));
+      if (kept) list = [kept, ...list];
+    }
+    return list;
+  };
   /** ＋ Master link on master-bound lead fields — hidden without master.create.
    *  Course opens the full Courses-screen form (all fields), not the generic name/code modal. */
   const mlink = (type: string, k: string) => (canUpdate && can('master.create')
@@ -262,7 +280,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
               </div>
               <div className="f"><label>Source</label><div className="iv">{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">
-                {ref.courses.length || extra['course_id']?.length ? sel('course_id', withExtra('course_id', ref.courses)) : <span>{lead.course_name || '—'}</span>}
+                {ref.courses.length || extra['course_id']?.length ? sel('course_id', courseOpts()) : <span>{lead.course_name || '—'}</span>}
               </div>
                 {(() => { // client update #3 — course fee auto-fetched from the Course master
                   const cid = ed('course_id');
