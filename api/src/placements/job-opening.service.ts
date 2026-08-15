@@ -260,6 +260,7 @@ export class JobOpeningService {
        WHERE e.deleted_at IS NULL AND e.course_id IS NOT NULL
          AND (e.student_profile_id = $${sidP}::bigint OR e.id = $${enrP}::bigint)
          AND (e.course_status IS NULL OR e.course_status <> ALL($${exP}::text[]))
+         AND (e.status IS NULL OR e.status <> ALL($${exP}::text[]))
          AND (COALESCE(array_length(${jobAlias}.eligible_course_ids, 1), 0) = 0 OR e.course_id = ANY(${jobAlias}.eligible_course_ids))
          AND (COALESCE(array_length(${jobAlias}.eligible_vertical_ids, 1), 0) = 0 OR e.vertical_id = ANY(${jobAlias}.eligible_vertical_ids))
          AND (${jobAlias}.min_status IS NULL OR e.course_status = ${jobAlias}.min_status)

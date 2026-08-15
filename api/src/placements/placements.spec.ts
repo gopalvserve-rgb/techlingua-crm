@@ -65,6 +65,8 @@ describe('Placement Support — eligibility rule (SQL wiring)', () => {
     expect(captured).toMatch(/j\.min_status IS NULL OR e\.course_status = j\.min_status/);
     // cancelled/withdrawn/dropped-out enrolments must not count toward eligibility
     expect(captured).toMatch(/course_status <> ALL/);
+    // DEF-PLC-01: exclusion must ALSO key on the enrolment-level cancellation status
+    expect(captured).toMatch(/e\.status IS NULL OR e\.status <> ALL/);
   });
 
   it('student-facing list is scope-enforced on the student (buildScopeWhere invoked)', async () => {
@@ -72,6 +74,72 @@ describe('Placement Support — eligibility rule (SQL wiring)', () => {
     const svc = new JobOpeningService(h.db, h.resolver, h.storage);
     await svc.studentPlacements(11, scope);
     expect(h.buildScopeWhere).toHaveBeenCalled();
+  });
+});
+
+/**
+ * DEF-PLC-01 — a student whose only enrolment in the eligible course has been CANCELLED
+ * (enrolment-level `status` in cancelled/withdrawn/dropped_out) must be neither offered the
+ * opening (list) nor allowed to apply (apply -> 400). An ACTIVE enrolment IS eligible.
+ * The harness models the EXISTS(...) gate: it honours the enrolment-status predicate iff the
+ * generated SQL actually contains it — so removing the fix flips these assertions and fails.
+ */
+describe('Placement Support — DEF-PLC-01 cancelled enrolments are ineligible', () => {
+  const EXCLUDED = ['cancelled', 'withdrawn', 'dropped_out'];
+  const student = { id: 20, full_name: 'Meera', enrolment_id: 32, vertical_id: 3, branch_id: 2 };
+
+  // Given the enrolment's status, model what the (fixed) SQL EXISTS returns for an opening whose
+  // eligible course matches this enrolment: eligible unless the status gate excludes it.
+  const eligibleForSql = (sql: string, enrolStatus: string) => {
+    const hasStatusGate = /e\.status IS NULL OR e\.status <> ALL/.test(sql);
+    return !(hasStatusGate && EXCLUDED.includes(enrolStatus));
+  };
+
+  const runList = async (enrolStatus: string) => {
+    const h = harness(
+      (sql) => (/FROM student/.test(sql) ? student : null),
+      (sql) => (/FROM job_opening/.test(sql)
+        ? (eligibleForSql(sql, enrolStatus) ? [{ id: 5, title: 'ZZTEST Opening', eligible_course_ids: [12] }] : [])
+        : []),
+    );
+    const svc = new JobOpeningService(h.db, h.resolver, h.storage);
+    return (await svc.studentPlacements(20, scope)) as any;
+  };
+
+  it('list EXCLUDES the opening when the matching enrolment is cancelled', async () => {
+    const res = await runList('cancelled');
+    expect(res.openings.length).toBe(0);
+  });
+
+  it('list INCLUDES the opening when the matching enrolment is active', async () => {
+    const res = await runList('active');
+    expect(res.openings.length).toBe(1);
+  });
+
+  const runApply = async (enrolStatus: string) => {
+    const one = (sql: string) => {
+      if (/FROM student/.test(sql)) return student;
+      if (/SELECT j\.\*, b\.name/.test(sql)) return { id: 5, status: 'open' };      // getRow
+      if (/SELECT 1 FROM job_opening j\s+WHERE j\.id/.test(sql)) return eligibleForSql(sql, enrolStatus) ? { one: 1 } : null; // isEligible
+      if (/FROM organisation/.test(sql)) return { id: '1' };
+      return null;
+    };
+    const h = harness(one, (sql) => (/INSERT INTO placement_application/.test(sql) ? [{ id: '77' }] : []));
+    const svc = new JobOpeningService(h.db, h.resolver, h.storage);
+    return { svc, h };
+  };
+
+  it('apply is REFUSED (400) when the matching enrolment is cancelled — no insert', async () => {
+    const { svc, h } = await runApply('cancelled');
+    await expect(svc.apply(20, 5, {}, me, scope)).rejects.toThrow(/not eligible/i);
+    expect(h.queries.find((q) => /INSERT INTO placement_application/.test(q.sql))).toBeUndefined();
+  });
+
+  it('apply SUCCEEDS when the matching enrolment is active', async () => {
+    const { svc } = await runApply('active');
+    const res: any = await svc.apply(20, 5, {}, me, scope);
+    expect(res.created).toBe(true);
+    expect(res.id).toBe(77);
   });
 });
 
