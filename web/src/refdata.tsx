@@ -33,6 +33,11 @@ export interface RefData {
   walkinStatuses: Named[]; // #19 Walk-in status
   /** Support & Tickets — Ticket Category master (m_ticket_category). */
   ticketCategories: Named[];
+  /** Course catalogs (client feedback #13) — seeded dropdown sets for Course Type / Level /
+   *  Delivery Mode (GET /courses/*-catalog). id == code == label (human-readable). */
+  courseTypes: Named[];
+  courseLevels: Named[];
+  deliveryModes: Named[];
   /** DEF-2 — Branch City/State are real masters, so the Branch form can select them. */
   states: Named[];
   cities: Named[];
@@ -44,6 +49,7 @@ const EMPTY: RefData = {
   branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], masterSources: [], stages: [],
   users: [], statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
   trainings: [], visitPurposes: [], walkinStatuses: [], ticketCategories: [],
+  courseTypes: [], courseLevels: [], deliveryModes: [],
   states: [], cities: [],
   loaded: false, reload: () => undefined,
 };
@@ -75,7 +81,8 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
     (async () => {
       const [branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
-        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages] = await Promise.all([
+        trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
+        courseTypes, courseLevels, deliveryModes] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
@@ -95,12 +102,17 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), () => api.get<Named[]>('/masters/city'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/ticket_category'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/stages'), []),
+        // Course catalogs (client feedback #13) — Course Type / Level / Delivery Mode dropdowns.
+        safe(can('master.read'), async () => (await api.get<any[]>('/courses/type-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
+        safe(can('master.read'), async () => (await api.get<any[]>('/courses/level-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
+        safe(can('master.read'), async () => (await api.get<any[]>('/courses/delivery-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
       ]);
       if (dead) return;
       setData({
         branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
         trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
+        courseTypes, courseLevels, deliveryModes,
         loaded: true, reload: () => setTick((t) => t + 1),
       });
     })();

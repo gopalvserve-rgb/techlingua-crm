@@ -49,13 +49,19 @@ export class MastersService {
     return def.table; // whitelisted — safe to interpolate
   }
 
-  list(type: string, includeInactive = false, filter?: { branchIds?: string[]; verticalIds?: string[]; q?: string }) {
+  list(type: string, includeInactive = false, filter?: { branchIds?: string[]; verticalIds?: string[]; courseIds?: string[]; statuses?: string[]; courseTypes?: string[]; deliveryModes?: string[]; q?: string }) {
     const t = this.table(type);
     const parent = MASTER_TYPES[type].parent ? this.table(MASTER_TYPES[type].parent!) : t;
     const params: unknown[] = [];
     const where: string[] = ['m.deleted_at IS NULL'];
-    if (!includeInactive) where.push('m.is_active');
-    // name / code search + Branch/Vertical (stored in meta on the Course master; multi-select IN).
+    // STATUS filter (client, Aug 2026): active/inactive multi-select on the Course list. Default
+    // (no status picked, all!=1) stays "only active" for back-compat with every other master.
+    const statuses = [...new Set((filter?.statuses ?? []).map((x) => String(x).trim().toLowerCase()).filter(Boolean))];
+    const wantActive = statuses.includes('active');
+    const wantInactive = statuses.includes('inactive');
+    if (statuses.length && !(wantActive && wantInactive)) where.push(wantInactive ? 'm.is_active = FALSE' : 'm.is_active');
+    else if (!includeInactive && !wantInactive) where.push('m.is_active');
+    // name / code search + Branch/Vertical/Type/Delivery (stored in meta on the Course master; multi-select IN).
     if (filter?.q && String(filter.q).trim()) { params.push(`%${String(filter.q).trim()}%`); where.push(`(m.name ILIKE $${params.length} OR m.code ILIKE $${params.length})`); }
     const metaIn = (key: string, arr?: string[]) => {
       const vals = [...new Set((arr ?? []).map((x) => String(x).trim()).filter(Boolean))];
@@ -65,6 +71,11 @@ export class MastersService {
     };
     metaIn('branch_id', filter?.branchIds);
     metaIn('vertical_id', filter?.verticalIds);
+    metaIn('course_type', filter?.courseTypes);
+    metaIn('delivery_mode', filter?.deliveryModes);
+    // COURSE filter — the master's own id (multi-select), used by the Course list "Course" filter.
+    const courseIds = [...new Set((filter?.courseIds ?? []).map((x) => Number(String(x).trim())).filter((n) => Number.isFinite(n) && n > 0))];
+    if (courseIds.length) { const ph = courseIds.map((v) => { params.push(v); return `$${params.length}`; }); where.push(`m.id IN (${ph.join(',')})`); }
     return this.db.query(
       `SELECT m.*, p.name AS parent_name FROM ${t} m LEFT JOIN ${parent} p ON p.id = m.parent_id
         WHERE ${where.join(' AND ')}

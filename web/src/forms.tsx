@@ -51,6 +51,14 @@ export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: st
 /** Label used for the current user inside Task-module user dropdowns. */
 export const SELF_LABEL = 'Myself';
 
+// Course master catalogs (client feedback #13, Aug 2026) — the dropdown sets for the Course
+// Type / Level / Delivery Mode fields. Values match the seeded *_def catalogs (migration 082,
+// code == label) and the GET /courses/*-catalog endpoints; a course stores the picked text in
+// m_course.meta (course_type / level / delivery_mode), consistent with fee / vertical_id.
+export const COURSE_TYPES = ['Diploma', 'Certificate', 'Foundation', 'Crash Course', 'Advanced Diploma', 'Workshop'];
+export const COURSE_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'Beginner', 'Intermediate', 'Advanced', 'Expert'];
+export const DELIVERY_MODES = ['Offline', 'Online', 'Hybrid'];
+
 const _BR = ['—'], _VERT = ['—'], _PIPE = ['—'], _COURSE = ['—'], _USERS = ['—'];
 const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
 
@@ -227,7 +235,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   'students.courses': { title: 'Add Course', fields: [
     F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline', 'select', 0, 0, 'optional \u2014 filtered by Vertical', 'pipelines'), F('Campaign', 'select', 0, 0, 'optional \u2014 filtered by Pipeline', 'campaigns'),
-    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
+    // Course descriptors (client feedback #13, Aug 2026) — Level / Type / Delivery Mode / Description.
+    F('Course Level', 'select', 0, COURSE_LEVELS, 'e.g. A1, A2 \u2014 optional'), F('Course Type', 'select', 0, COURSE_TYPES, 'e.g. Diploma, Certificate'),
+    F('Delivery Mode', 'select', 0, DELIVERY_MODES, 'Offline / Online / Hybrid', undefined, 0, 'Offline'), F('Description', 'textarea', 0, 0, 'optional \u2014 short course description'),
+    F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
     F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
     F('Start Date', 'date', 1), F('End Date', 'date', 1), F('Class Timing', 'text', 1), F('Capacity (Max Seats)', 'number', 1),
@@ -566,6 +578,11 @@ SAVERS['students.courses'] = async (vals, ids) => {
       pipeline_id: ids['Pipeline'] || undefined,
       campaign_id: ids['Campaign'] || undefined,
       eligibility: vals['Eligibility Criteria'] || undefined,
+      // Course descriptors (client feedback #13) — stored in meta like fee/vertical_id.
+      level: vals['Course Level'] || undefined,
+      course_type: vals['Course Type'] || undefined,
+      delivery_mode: vals['Delivery Mode'] || 'Offline',
+      description: vals['Description'] || undefined,
     },
     is_active: vals['Status'] !== 'Inactive',
   });

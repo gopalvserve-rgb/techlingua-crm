@@ -11,7 +11,7 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
-import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow } from './forms';
+import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
@@ -2614,6 +2614,11 @@ const courseEditSpec = (edit: any): EditSpec => ({
     'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
     'Standard Fee': (edit.meta as any)?.fee ?? '',
     'Eligibility Criteria': (edit.meta as any)?.eligibility ?? '',
+    // Course descriptors (client feedback #13) — prefill so an Edit reopens fully.
+    'Course Level': (edit.meta as any)?.level ?? '',
+    'Course Type': (edit.meta as any)?.course_type ?? '',
+    'Delivery Mode': (edit.meta as any)?.delivery_mode ?? '',
+    'Description': (edit.meta as any)?.description ?? '',
     'Status': edit.is_active === false ? 'Inactive' : 'Active',
   },
   initialIds: {
@@ -2641,6 +2646,11 @@ const courseEditSpec = (edit: any): EditSpec => ({
         pipeline_id: ids['Pipeline'] ?? null,
         campaign_id: ids['Campaign'] ?? null,
         eligibility: vals['Eligibility Criteria'] || undefined,
+        // Course descriptors (client feedback #13) — persisted in meta; override the spread above.
+        level: vals['Course Level'] || undefined,
+        course_type: vals['Course Type'] || undefined,
+        delivery_mode: vals['Delivery Mode'] || undefined,
+        description: vals['Description'] || undefined,
       },
       is_active: vals['Status'] !== 'Inactive',
     });
@@ -2656,12 +2666,30 @@ function Courses() {
   // Course master list filters (client, Aug 2026): Branch/Vertical (cascade, multi-select) + name search.
   const [fBranches, setFBranches] = useState<number[]>([]);
   const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [fCourses, setFCourses] = useState<number[]>([]);
+  const [fStatuses, setFStatuses] = useState<string[]>([]);
+  const [fTypes, setFTypes] = useState<string[]>([]);
+  const [fModes, setFModes] = useState<string[]>([]);
   const [q, setQ] = useState('');
   const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
+  // Course filter options cascade off Branch/Vertical (a course's meta carries branch_id/vertical_id).
+  const cCourseOpts = ref.courses.filter((c: any) =>
+    (!fBranches.length || fBranches.includes(Number((c.meta as any)?.branch_id))) &&
+    (!fVerticals.length || fVerticals.includes(Number((c.meta as any)?.vertical_id))));
+  // Course Type / Delivery Mode filter options come from the seeded catalogs (RefData →
+  // GET /courses/*-catalog); fall back to the bundled constants offline / in unit tests.
+  const typeFilterOpts = (ref.courseTypes.length ? ref.courseTypes : COURSE_TYPES.map((t) => ({ id: t, name: t }))).map((o: any) => ({ id: String(o.id ?? o.name), name: String(o.name) }));
+  const modeFilterOpts = (ref.deliveryModes.length ? ref.deliveryModes : DELIVERY_MODES.map((m) => ({ id: m, name: m }))).map((o: any) => ({ id: String(o.id ?? o.name), name: String(o.name) }));
   const cparams = new URLSearchParams();
-  if (inc) cparams.set('all', '1');
+  // Status filter (client, Aug 2026): active/inactive. include-inactive chip OR an 'inactive' pick
+  // must surface inactive rows, so pass all=1 whenever inactive could be in the result set.
+  if (inc || fStatuses.includes('inactive')) cparams.set('all', '1');
   if (fBranches.length) cparams.set('branch_ids', fBranches.join(','));
   if (fVerticals.length) cparams.set('vertical_ids', fVerticals.join(','));
+  if (fCourses.length) cparams.set('course_ids', fCourses.join(','));
+  if (fStatuses.length) cparams.set('statuses', fStatuses.join(','));
+  if (fTypes.length) cparams.set('course_types', fTypes.join(','));
+  if (fModes.length) cparams.set('delivery_modes', fModes.join(','));
   if (q.trim()) cparams.set('q', q.trim());
   const list = useFetch<any[]>(`/masters/course?${cparams.toString()}`, [refreshTick, cparams.toString()]);
   const rows = list.data ?? [];
@@ -2676,20 +2704,30 @@ function Courses() {
   return (
     <>
       <div className="filters">
-        {/* Course master filters (client, Aug 2026): Branch > Vertical cascade, name search, active/inactive. */}
+        {/* Course master filters (client, Aug 2026): Branch > Vertical > Course, Status, Course Type,
+            Delivery Mode (all multi-select) + name search. Each genuinely narrows the server query. */}
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
-          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
-        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); setFCourses((cur) => cur.filter((id) => ref.courses.some((c: any) => Number(c.id) === id && v.includes(Number((c.meta as any)?.branch_id))))); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts}
+          onChange={(v) => { setFVerticals(v); setFCourses((cur) => cur.filter((id) => !v.length || ref.courses.some((c: any) => Number(c.id) === id && v.includes(Number((c.meta as any)?.vertical_id))))); }} />
+        <FilterMulti label="Course" icon="book" value={fCourses} options={cCourseOpts} onChange={setFCourses} />
+        <EnumMulti label="Status" icon="check" value={fStatuses}
+          options={[{ id: 'active', name: 'Active' }, { id: 'inactive', name: 'Inactive' }]} onChange={setFStatuses} />
+        <EnumMulti label="Course Type" icon="award" value={fTypes} options={typeFilterOpts} onChange={setFTypes} />
+        <EnumMulti label="Delivery Mode" icon="grid" value={fModes} options={modeFilterOpts} onChange={setFModes} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search course name / code\u2026" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Course" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
+      <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Type', 'Level', 'Delivery Mode', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => [
           { mono: String(c.code ?? '\u2014') } as Cell,
           { node: <span className="nm">{c.name}</span> } as Cell,
           String(nameOf(ref.verticals, (c.meta as any)?.vertical_id) ?? (c.meta as any)?.vertical ?? '\u2014'),
+          String((c.meta as any)?.course_type ?? '\u2014'),
+          String((c.meta as any)?.level ?? '\u2014'),
+          String((c.meta as any)?.delivery_mode ?? '\u2014'),
           String((c.meta as any)?.mode ?? '\u2014'),
           String((c.meta as any)?.duration ?? '\u2014'),
           String((c.meta as any)?.fee ?? '\u2014'),
@@ -2713,9 +2751,13 @@ function Courses() {
               ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
               ['Branch', nameOf(ref.branches, (view.meta as any)?.branch_id) ?? '\u2014'],
               ['Vertical', nameOf(ref.verticals, (view.meta as any)?.vertical_id) ?? '\u2014'],
+              ['Course type', String((view.meta as any)?.course_type ?? '\u2014')],
+              ['Course level', String((view.meta as any)?.level ?? '\u2014')],
+              ['Delivery mode', String((view.meta as any)?.delivery_mode ?? '\u2014')],
               ['Training mode', String((view.meta as any)?.mode ?? '\u2014')],
               ['Duration', String((view.meta as any)?.duration ?? '\u2014')],
               ['Standard fee', String((view.meta as any)?.fee ?? '\u2014')],
+              ['Description', String((view.meta as any)?.description ?? '\u2014')],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
             ]} />
           </Section>

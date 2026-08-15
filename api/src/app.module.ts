@@ -9,6 +9,7 @@ import { RolesModule } from './roles/roles.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { HierarchyModule } from './hierarchy/hierarchy.module';
 import { MastersModule } from './masters/masters.module';
+import { CoursesModule } from './courses/courses.module';
 import { AuditModule } from './audit/audit.module';
 import { ErrorLogModule } from './errorlog/error-log.module';
 import { LeadsModule } from './leads/leads.module';
@@ -73,6 +74,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     AssignmentsModule,
     HierarchyModule,
     MastersModule,
+    CoursesModule,
     AuditModule,
     ErrorLogModule,
     LeadsModule,

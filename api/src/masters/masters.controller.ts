@@ -23,6 +23,9 @@ export class MastersController {
     const all = query.all === '1' || query.all === 'true';
     return this.masters.list(type, all, {
       branchIds: csv(query.branch_ids), verticalIds: csv(query.vertical_ids),
+      // Course list (client, Aug 2026): Course (own id) / Status / Course Type / Delivery Mode.
+      courseIds: csv(query.course_ids), statuses: csv(query.statuses),
+      courseTypes: csv(query.course_types), deliveryModes: csv(query.delivery_modes),
       q: typeof query.q === 'string' ? query.q : undefined,
     });
   }
