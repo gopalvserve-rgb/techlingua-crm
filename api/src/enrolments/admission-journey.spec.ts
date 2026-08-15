@@ -123,6 +123,23 @@ describe('EnrolmentService — admission transitions + gates', () => {
     expect(r.admission_stage).toBe('student_confirmed');
   });
 
+  // dev/84 item 5 — MANUAL confirmation override: when the student's confirmation cannot be
+  // captured (technical issue), staff record student_confirmed_via='manual' + a reason; the
+  // note is stored and the confirming staff user is stamped (confirmation_captured_by=me.id),
+  // so the journey can advance to admit. The confirm endpoint already accepts any method.
+  it('records a MANUAL confirmation with a reason + captured_by, and advances to student_confirmed', async () => {
+    const ok = makeDb({ enrol: { id: 5, enrolment_no: 'ENR-1', org_id: 1, admission_stage: 'approved' } });
+    const r = await svc(ok.db).confirmAdmission(5,
+      { student_confirmed_via: 'manual', note: 'Confirmed manually — OTP channel down' }, me, scope);
+    expect(r.admission_stage).toBe('student_confirmed');
+    const upd = ok.issued.find((q) => /admission_stage = 'student_confirmed'/.test(q.sql))!;
+    expect(upd).toBeTruthy();
+    expect(upd.params).toEqual([5, 'manual', 'Confirmed manually — OTP channel down', 42]); // id, via, note, captured_by=me.id
+    const ev = ok.issued.find((q) => /INSERT INTO admission_event/.test(q.sql))!;
+    expect(ev).toBeTruthy();
+    expect(JSON.stringify(ev.params)).toMatch(/manual/i);
+  });
+
   it('admit is only allowed from student_confirmed', async () => {
     const bad = makeDb({ enrol: { id: 5, enrolment_no: 'ENR-1', org_id: 1, admission_stage: 'approved' } });
     await expect(svc(bad.db).admitAdmission(5, {}, me, scope)).rejects.toThrow(/after student confirmation/i);

@@ -108,12 +108,18 @@ const LEAD_SORTS: Record<string, string> = {
   score_asc: 'l.score ASC NULLS LAST, l.created_at DESC',
   name: 'l.full_name ASC',
   followup: 'l.next_follow_up_at ASC NULLS LAST',
+  status: 'ms.name ASC NULLS LAST, l.created_at DESC',
+  created_asc: 'l.created_at ASC',
 };
 
 export interface CreateLeadDto {
   full_name: string; phone: string; email?: string; alt_phone?: string; whatsapp_phone?: string; dob?: string;
   campaign_id: number; source_id: number;
   owner_id?: number; stage_id?: number; status_id?: number;
+  /** dev/84 item 3 — round-robin on a MANUAL lead: when true, any picked owner_id is
+   *  ignored and the campaign distribution engine assigns the owner (reuses the walk-in /
+   *  campaign round-robin — no re-implementation). */
+  round_robin?: boolean;
   priority?: 'low' | 'med' | 'high'; temperature?: 'hot' | 'warm' | 'cold'; score?: number;
   state_id?: number; city_id?: number; course_id?: number; qualification_id?: number; budget_id?: number;
   next_follow_up_at?: string; custom_fields?: Record<string, unknown>; note?: string;
@@ -442,7 +448,12 @@ export class LeadsService {
     // (out-of-scope -> 404, consistent with the by-ID policy).
     await this.enforcer.assertRefInScope(scope, 'campaign', dto.campaign_id, actorId);
     await this.enforcer.assertRefInScope(scope, 'source', dto.source_id, actorId);
-    await this.enforcer.assertRefInScope(scope, 'user', dto.owner_id, actorId);
+    // dev/84 item 3 — round-robin on a manual lead: when the user ticks "Assign via
+    // round-robin" we DROP any picked owner and let the campaign distribution engine
+    // (equal round-robin / conditional) assign the owner, exactly like a walk-in with
+    // round_robin=true or a CSV/webhook lead. No re-implementation — the same engine.
+    const forcedOwner = dto.round_robin ? null : (dto.owner_id ?? null);
+    await this.enforcer.assertRefInScope(scope, 'user', forcedOwner ?? undefined, actorId);
 
     const payload: IngestPayload = {
       full_name: dto.full_name, phone: dto.phone, email: dto.email, alt_phone: dto.alt_phone,
@@ -457,7 +468,7 @@ export class LeadsService {
     };
     const { outcome, lead } = await this.ingestion.ingestAndReturn(payload, {
       channel: 'manual', campaign_id: dto.campaign_id, source_id: dto.source_id,
-      actor_id: actorId, owner_id: dto.owner_id ?? null, duplicate_policy: 'always_create',
+      actor_id: actorId, owner_id: forcedOwner, duplicate_policy: 'always_create',
     });
     if (!lead) throw new BadRequestException(outcome.reason ?? 'lead could not be created');
 

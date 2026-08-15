@@ -46,11 +46,14 @@ function activityTitle(a: Activity, sourceName?: string): { tt: string; td: stri
   }
 }
 
-export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onClose: () => void; onChanged?: () => void }) {
+export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChanged }: { leadId: number; mode?: 'view' | 'edit'; onClose: () => void; onChanged?: () => void }) {
   const { can } = useAuth();
   const ref = useRef_();
   const [lead, setLead] = useState<any>(null);
   const [tab, setTab] = useState<'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp'>('activity');
+  // dev/84 item 1 — the lead sheet opens READ-ONLY (view) or editable (edit). View shows
+  // every field display-only with no Save; an Edit button flips to edit mode (lead.update).
+  const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
   const [saved, setSaved] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [noteText, setNoteText] = useState('');
@@ -70,6 +73,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
   const loadRedFlags = () => api.get<any[]>(`/leads/${leadId}/red-flags`).then(setRfList).catch(() => setRfList([]));
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [leadId]);
+  useEffect(() => { setMode(initialMode); }, [leadId, initialMode]);
   useEffect(() => { let live = true; fetchLeadCfDefs().then((d) => { if (live) setCfDefs(d); }); return () => { live = false; }; }, []);
   useEffect(() => { if (tab === 'redflag') loadRedFlags(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, leadId]);
 
@@ -86,7 +90,9 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
 
   const stages: Stage[] = lead.stages || [];
   const curIdx = stages.findIndex((s) => Number(s.id) === Number(lead.stage_id));
-  const canUpdate = can('lead.update');
+  const editing = mode === 'edit';           // dev/84 item 1 — edit vs read-only view
+  const canEditLead = can('lead.update');
+  const canUpdate = editing && canEditLead;  // every field/save keys off this → disabled in view
 
   const setStage = async (s: Stage) => {
     if (!canUpdate || Number(s.id) === Number(lead.stage_id)) return;
@@ -199,21 +205,23 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           <a className="qa call" href={`tel:${lead.phone}`}><Ic k="calls" />Call</a>
           <a className="qa wa" href={`https://wa.me/${String(lead.whatsapp_phone || lead.phone).replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer"><Ic k="wa" />WhatsApp</a>
           <a className="qa" href={lead.email ? `mailto:${lead.email}` : undefined} onClick={(e) => { if (!lead.email) { e.preventDefault(); toast('No email on this lead', true); } }}><Ic k="mail" />Email</a>
-          <button className="qa" onClick={() => setTab('notes')}><Ic k="note" />Edit</button>
+          {/* dev/84 item 1 — in VIEW mode the only control is Edit (read-only otherwise). */}
+          {!editing && canEditLead && <button className="qa" onClick={() => setMode('edit')}><Ic k="pencil" />Edit</button>}
+          {editing && <button className="qa" onClick={() => setTab('notes')}><Ic k="note" />Add note</button>}
           {/* UAT-R3 #23 — reassign the lead's owner to another (active, in-scope) user. */}
-          {can('lead.assign') && <button className="qa" onClick={() => setReassign(true)}><Ic k="users" />Reassign</button>}
+          {editing && can('lead.assign') && <button className="qa" onClick={() => setReassign(true)}><Ic k="users" />Reassign</button>}
           {/* Jul 2026 — transfer the lead to another Branch / Vertical / Campaign (re-parents its path). */}
-          {can('lead.transfer') && <button className="qa" onClick={() => setTransfer(true)}><Ic k="swap" />Transfer</button>}
+          {editing && can('lead.transfer') && <button className="qa" onClick={() => setTransfer(true)}><Ic k="swap" />Transfer</button>}
           {/* Aug 2026 — RED FLAG: type a remark; records a red-flag entry + timeline + flag state. */}
-          {canFlag && <button className="qa" onClick={() => setRedFlag(true)}
+          {editing && canFlag && <button className="qa" onClick={() => setRedFlag(true)}
             style={lead.is_red_flagged ? { color: 'var(--red)' } : undefined}>
             <Ic k="flag" />{lead.is_red_flagged ? 'Red flag' : 'Red flag'}</button>}
           {/* Phase 2 — convert this lead to a STUDENT (creates the student record + marks the lead WON). */}
-          {can('student.create') && <button className="qa" onClick={() => setConvert(true)}><Ic k="students" />Convert to Student</button>}
+          {editing && can('student.create') && <button className="qa" onClick={() => setConvert(true)}><Ic k="students" />Convert to Student</button>}
         </div>
         <div className="sheet-body">
           <div className="sheet-sec">
-            <h5>Pipeline stage — tap to update</h5>
+            <h5>{editing ? 'Pipeline stage — tap to update' : 'Pipeline stage'}</h5>
             <div className="stepper">
               {stages.map((s, i) => (
                 <span key={s.id} style={{ display: 'contents' }}>
@@ -259,7 +267,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             <h5>Lead details</h5>
             <div className="kv">
               <div className="f"><label>Owner</label><div className="iv">
-                {ref.users.length && can('lead.assign') ? sel('owner_id', selectableUsers(ref.users, ed('owner_id') ?? lead.owner_id)) : <span>{lead.owner_name || 'Unassigned'}</span>}
+                {editing && ref.users.length && can('lead.assign') ? sel('owner_id', selectableUsers(ref.users, ed('owner_id') ?? lead.owner_id)) : <span>{lead.owner_name || 'Unassigned'}</span>}
               </div></div>
               <div className="f"><label>Phone</label>
                 {canUpdate
@@ -392,14 +400,14 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             )}
             {tab === 'notes' && (
               <>
-                <div className="kv"><div className="f s2"><label>Add note</label>
+                {editing && <div className="kv"><div className="f s2"><label>Add note</label>
                   <div className="iv">
                     <input placeholder="Type a note…" value={noteText}
                       onChange={(e) => setNoteText(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') addNote(); }} />
                     <button className="bdg b-indigo" onClick={addNote} style={{ cursor: 'pointer' }}>Save</button>
                   </div>
-                </div></div>
+                </div></div>}
                 <div className="tl" style={{ marginTop: 14 }}>
                   {notes.length === 0 && <div className="empty-note">No notes yet</div>}
                   {notes.map((a) => (
@@ -414,7 +422,7 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
             )}
             {tab === 'redflag' && (
               <>
-                {canFlag && (
+                {editing && canFlag && (
                   <div className="kv"><div className="f s2"><label>Add a red-flag remark</label>
                     <div className="iv">
                       <input placeholder="Why is this lead red-flagged\u2026" value={rfText}
@@ -444,8 +452,10 @@ export function LeadSheet({ leadId, onClose, onChanged }: { leadId: number; onCl
           </div>
         </div>
         <div className="sheet-foot">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={saveEdits} disabled={busy || !canUpdate}>{checkS}Save changes</button>
+          <button className="btn ghost" onClick={onClose}>Close</button>
+          {/* dev/84 item 1 — no Save in view mode; an Edit button flips to editable. */}
+          {!editing && canEditLead && <button className="btn primary" onClick={() => setMode('edit')}><Ic k="pencil" />Edit</button>}
+          {editing && <button className="btn primary" onClick={saveEdits} disabled={busy || !canUpdate}>{checkS}Save changes</button>}
         </div>
       </div>
       {masterAdd && (

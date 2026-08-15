@@ -131,7 +131,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'),
     F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'), F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course', 'select', 0, 0, 'master', 'courses'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Course Fee', 'number'), F('City / Location', 'text'),
-    F('Lead Owner / Assigned Counsellor', 'select', 0, 0, 'Users', 'users'), F('Lead Status', 'select', 0, 0, 'default: New', 'statuses'),
+    F('Lead Owner / Assigned Counsellor', 'select', 0, 0, 'Users \u00b7 optional \u2014 leave blank and tick Round-Robin', 'users'),
+    // dev/84 item 3 \u2014 round-robin on a MANUAL lead: tick to auto-assign the owner via the
+    // campaign distribution engine (reuses the walk-in / campaign round-robin), counsellor optional.
+    { ...F('Assign via Round-Robin', 'checkbox', 0, 0, 'auto-assign the lead via the campaign round-robin \u2014 counsellor can be left blank'), addOnly: true },
+    F('Lead Status', 'select', 0, 0, 'default: New', 'statuses'),
     F('Next Follow-up Date', 'datetime'), F('Created On', 'auto', 0, 0, 'Auto-stamped · edit permission by Admin'), F('Remarks / Notes', 'textarea')] },
   // Sprint 3 — a walk-in creates a REAL lead, and every lead carries the FULL path
   // (Org > Branch > Vertical > Pipeline > Campaign > Source). The prototype's walk-in form
@@ -146,7 +150,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     { ...F('Purpose of Visit', 'select', 1, 0, 'master'), mopts: 'visitPurposes' }, F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
     // DEF-S34-02 — these three RENDERED but were never SENT and had no columns (migration 027).
     F('Course Fee', 'number', 0, 0, 'auto-filled from the Course master \u00b7 editable'),
-    F('How did you hear about us?', 'select', 0, 0, 'Lead Source master', 'masterSources'),
+    F('How did you hear about us?', 'select', 0, 0, 'Source channel master (how they heard)', 'masterSources'),
     // Client UAT (Aug 2026): Assign Counsellor is now OPTIONAL. Leave it blank and tick
     // Round-Robin to auto-assign the lead via the campaign's distribution engine.
     F('Counsellor Assigned', 'select', 0, 0, 'Users \u00b7 owns the lead immediately (optional)', 'users'),
@@ -443,6 +447,9 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
       course_id: ids['Course'],
       owner_id: ids['Lead Owner / Assigned Counsellor'],
+      // dev/84 item 3 \u2014 when ticked, the API ignores owner_id and the campaign round-robin
+      // engine assigns the owner (same flag shape as the walk-in round-robin).
+      round_robin: vals['Assign via Round-Robin'] === '1',
       status_id: ids['Lead Status'],
       next_follow_up_at: vals['Next Follow-up Date'] || undefined,
       note: vals['Remarks / Notes'] || undefined,

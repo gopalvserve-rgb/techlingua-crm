@@ -71,7 +71,7 @@ export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
   // unassigned, created_from/to, sla_breached, …) so a KPI card opens its list pre-filtered.
   go: (m: string, s: string, params?: Record<string, string | number | undefined>) => void;
-  openLead: (id: number) => void;
+  openLead: (id: number, mode?: 'view' | 'edit') => void;
   openAdd: (formKey: string) => void;
   refreshTick: number;
   bump: () => void;
@@ -133,7 +133,7 @@ const fmtDate = (v?: string | null) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Owner', 'Stage', 'Next follow-up'];
+const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Owner', 'Stage', 'Status', 'Next follow-up', 'Created on'];
 
 /* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
 const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
@@ -213,7 +213,11 @@ function leadRow(l: any): Cell[] {
       </span>) },
     l.owner_name || 'Unassigned',
     { b: [l.stage_name || '—', l.stage_type === 'won' ? 'b-green' : l.stage_type === 'lost' ? 'b-rose' : 'b-cyan'] },
+    // dev/84 item 9 — Lead Status (status master value) column, sortable + exported (names).
+    { b: [l.status_name || '—', 'b-gray'] },
     { node: <span className="mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span> },
+    // dev/84 item 9 — Lead creation date (DD-MM-YYYY IST), sortable (Newest/Oldest) + exported.
+    { node: <span className="mono sub">{fmtDMYIST(l.created_at)}</span> },
   ];
 }
 
@@ -253,7 +257,7 @@ function funnelRows(byStage: Summary['by_stage']) {
   }));
 }
 
-function fuRow(f: any, openLead: (id: number) => void): { row: Cell[]; leadId: number } {
+function fuRow(f: any, openLead: (id: number, mode?: 'view' | 'edit') => void): { row: Cell[]; leadId: number } {
   const overdue = f.status === 'pending' && new Date(f.scheduled_at) < new Date();
   return { leadId: f.lead_id, row: [
     { node: <span className="nm">{f.lead_name}</span> },
@@ -965,7 +969,7 @@ function QuickContact() {
                 <label className="qc-src" key={nm}><input type="checkbox" />{nm}</label>
               ))}
               <a className="mlink" style={{ marginLeft: 4, display: 'inline-block', marginTop: 6 }}
-                onClick={() => toast('More sources connect under Marketing › Lead Sources')}>View More…</a>
+                onClick={() => toast('More sources connect under Marketing › Lead Source Master')}>View More…</a>
             </div></div>
         </div>
       </div>
@@ -1316,6 +1320,7 @@ function LeadsAll() {
             <option value="score">Score: high to low</option>
             <option value="score_asc">Score: low to high</option>
             <option value="followup">Next follow-up</option>
+            <option value="status">Status (A–Z)</option>
             <option value="name">Name (A–Z)</option>
             <option value="oldest">Oldest first</option>
           </select>
@@ -1371,8 +1376,8 @@ function LeadsAll() {
             onToggleAll: toggleAllLoaded,
           }}
           rows={rows.map((l) => [...leadRow(l), rowActions({
-            onView: () => openLead(Number(l.id)),
-            onEdit: canEditLead ? () => openLead(Number(l.id)) : undefined,
+            onView: () => openLead(Number(l.id), 'view'),
+            onEdit: canEditLead ? () => openLead(Number(l.id), 'edit') : undefined,
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
             extra: [
               ...(canTransfer ? [{ k: 'swap', title: 'Transfer', onClick: () => setTransferLead({ id: Number(l.id), name: l.full_name }) }] : []),
@@ -1424,7 +1429,7 @@ function LeadsAll() {
  * ======================================================================== */
 type LeadsViewProps = {
   rows: any[];
-  openLead: (id: number) => void;
+  openLead: (id: number, mode?: 'view' | 'edit') => void;
   canEditLead: boolean;
   canDeleteLead: boolean;
   del: { openDelete: (id: number, name: string) => void };
@@ -1462,8 +1467,8 @@ function ModernLeads({ rows, total, openLead, canEditLead, canDeleteLead, del }:
                 </div>
               </div>
               <div className="lv-card-act" onClick={(e) => e.stopPropagation()}>
-                <button className="ract" title="View" onClick={() => openLead(Number(l.id))}><Ic k="eye" w={2.1} /></button>
-                {canEditLead && <button className="ract" title="Edit" onClick={() => openLead(Number(l.id))}><Ic k="pencil" w={2.1} /></button>}
+                <button className="ract" title="View" onClick={() => openLead(Number(l.id), 'view')}><Ic k="eye" w={2.1} /></button>
+                {canEditLead && <button className="ract" title="Edit" onClick={() => openLead(Number(l.id), 'edit')}><Ic k="pencil" w={2.1} /></button>}
                 {canDeleteLead && <button className="ract" title="Delete" style={{ color: 'var(--danger)' }} onClick={() => del.openDelete(Number(l.id), l.full_name)}><Ic k="trash" w={2.1} /></button>}
               </div>
             </div>
@@ -1542,8 +1547,8 @@ function InboxDetail({ lead, openLead, canEditLead, canDeleteLead, del }: { lead
           </div>
         </div>
         <div className="acts">
-          <button className="btn primary" onClick={() => openLead(Number(lead.id))}><Ic k="eye" />Open full</button>
-          {canEditLead && <button className="btn" onClick={() => openLead(Number(lead.id))}><Ic k="pencil" />Edit</button>}
+          <button className="btn primary" onClick={() => openLead(Number(lead.id), 'view')}><Ic k="eye" />Open full</button>
+          {canEditLead && <button className="btn" onClick={() => openLead(Number(lead.id), 'edit')}><Ic k="pencil" />Edit</button>}
           {canDeleteLead && <button className="btn" style={{ color: 'var(--danger)' }} onClick={() => del.openDelete(Number(lead.id), lead.full_name)}><Ic k="trash" />Delete</button>}
         </div>
       </div>
@@ -1813,7 +1818,7 @@ function Sources() {
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard fill title="Connected sources" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
+      <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((so) => {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
@@ -5243,6 +5248,7 @@ export function AdmissionActionModal({ enrolment, action, onClose, onDone }:
 
   const submit = async () => {
     if (action === 'reject' && !remarks.trim()) { toast('Remarks are required to reject.', true); return; }
+    if (action === 'confirm' && via === 'manual' && !note.trim()) { toast('A reason is required for a manual confirmation.', true); return; }
     setBusy(true);
     try {
       if (action === 'approve') await api.post(`/enrolments/${eid}/admission/approve`, { remarks: remarks.trim() || null });
@@ -5265,13 +5271,19 @@ export function AdmissionActionModal({ enrolment, action, onClose, onDone }:
             <option value="phone">Phone</option>
             <option value="email">Email</option>
             <option value="signed_form">Signed form</option>
+            {/* dev/84 item 5 — manual override when the student\u2019s confirmation cannot be captured (technical issue). */}
+            <option value="manual">Manual confirmation (technical issue)</option>
           </select>
-          <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>OTP / e-sign capture can be added later — this records the confirmation event.</div>
+          <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>{via === 'manual'
+            ? 'Manual override \u2014 record a reason below; it is stamped with your name as the person who confirmed.'
+            : 'OTP / e-sign capture can be added later \u2014 this records the confirmation event.'}</div>
         </div>
       )}
       {(action === 'confirm' || action === 'admit') && (
-        <div className="fld"><label htmlFor="adm-note">Note</label>
-          <input id="adm-note" className="ainp" value={note} disabled={busy} placeholder="Optional note" onChange={(e) => setNote(e.target.value)} data-testid="admj-note" />
+        <div className="fld"><label htmlFor="adm-note">{action === 'confirm' && via === 'manual' ? <>Reason <span className="star">*</span></> : 'Note'}</label>
+          <input id="adm-note" className="ainp" value={note} disabled={busy}
+            placeholder={action === 'confirm' && via === 'manual' ? 'e.g. Confirmed manually \u2014 OTP/e-sign channel down' : 'Optional note'}
+            onChange={(e) => setNote(e.target.value)} data-testid="admj-note" />
         </div>
       )}
       {(action === 'approve' || action === 'reject') && (

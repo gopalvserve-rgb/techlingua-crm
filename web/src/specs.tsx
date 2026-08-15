@@ -134,8 +134,8 @@ export const APP: ModuleItem[] = [
       actions: [['filter', 'Filters', 'ghost'], ['plus', 'Add lead', 'primary']] } },
     { id: 'scoring', label: 'Lead Scoring', spec: { dyn: 'scoring',
       sub: 'Rule-based scoring you configure yourself — source, budget, course, engagement, recency. Bands for Hot / Warm / Cold.' } },
-    { id: 'sources', label: 'Lead Sources', spec: { dyn: 'sources',
-      sub: 'Auto-capture via API/webhook from every source. Cost per source tracked for ROI.' } },
+    { id: 'sources', label: 'Lead Source Master', spec: { dyn: 'sources',
+      sub: 'The manageable master list of Lead Sources (per Campaign). Auto-capture via API/webhook; cost per source tracked for ROI. The lead form\u2019s \u201cLead Source\u201d field picks from this master.' } },
     // Client (Aug 2026): the Lead Status master was hard to find under Administration › Masters,
     // so it's surfaced here in the Leads area too. Opens the SAME masters screen on Lead Status.
     { id: 'leadstatus', label: 'Lead Status', spec: { dyn: 'leadStatusMaster',
