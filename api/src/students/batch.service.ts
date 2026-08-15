@@ -32,6 +32,52 @@ export type BatchStatus = (typeof BATCH_STATUS_CODES)[number];
 /** The four MANUAL statuses — set by a user and never overridden by the date logic. */
 export const BATCH_MANUAL_STATUSES = new Set<string>(['completed', 'cancelled', 'suspended', 'archived']);
 
+/**
+ * BATCH TYPE + CLASS DAYS + FREQUENCY (migration 081, client feedback).
+ *
+ * batch_type — a seeded catalog code (batch_type_def). class_days — ISO weekday numbers the
+ * batch meets (Mon=1 … Sun=7). frequency — daily|weekdays|weekends|custom, which DERIVES
+ * class_days server-side (both are stored explicitly). Empty class_days = unrestricted (legacy
+ * back-compat): attendance may then be marked on any day.
+ */
+export const BATCH_TYPE_CODES = [
+  'regular', 'fast_track', 'weekend', 'weekday', 'intensive',
+  'crash_course', 'online', 'corporate', 'customized',
+] as const;
+export type BatchType = (typeof BATCH_TYPE_CODES)[number];
+
+/** The 4 frequency codes. A NON-custom frequency DERIVES the class_days set. */
+export const BATCH_FREQUENCIES = ['daily', 'weekdays', 'weekends', 'custom'] as const;
+export type BatchFrequency = (typeof BATCH_FREQUENCIES)[number];
+
+/**
+ * Resolve the class_days (ISO weekday numbers Mon=1 … Sun=7) a batch meets, from its frequency.
+ *   daily → [1..7] · weekdays → [1..5] · weekends → [6,7] · custom → the user-selected set,
+ * sanitised to ⊆ [1..7], de-duplicated + sorted. This is the ONE rule that ties frequency and
+ * class_days together (create/update call it; the front-end auto-checks the same days).
+ */
+export function normaliseClassDays(frequency: string, custom: unknown): number[] {
+  if (frequency === 'daily') return [1, 2, 3, 4, 5, 6, 7];
+  if (frequency === 'weekdays') return [1, 2, 3, 4, 5];
+  if (frequency === 'weekends') return [6, 7];
+  const arr = Array.isArray(custom) ? custom : [];       // custom (or anything unexpected)
+  const set = new Set<number>();
+  for (const x of arr) { const n = Number(x); if (Number.isInteger(n) && n >= 1 && n <= 7) set.add(n); }
+  return [...set].sort((a, b) => a - b);
+}
+
+/** Normalise/validate a batch_type code — anything unknown falls back to 'regular'. */
+export function normaliseBatchType(v: unknown): BatchType {
+  const s = String(v ?? '').trim();
+  return (BATCH_TYPE_CODES as readonly string[]).includes(s) ? (s as BatchType) : 'regular';
+}
+
+/** Normalise/validate a frequency code — anything unknown falls back to 'custom'. */
+export function normaliseFrequency(v: unknown): BatchFrequency {
+  const s = String(v ?? '').trim();
+  return (BATCH_FREQUENCIES as readonly string[]).includes(s) ? (s as BatchFrequency) : 'custom';
+}
+
 /** Today (YYYY-MM-DD) in the app timezone (IST) — the day all derivation buckets against. */
 export function istTodayStr(): string {
   // en-CA renders YYYY-MM-DD; the timeZone option pins it to IST regardless of server TZ.
@@ -113,6 +159,7 @@ export class BatchService {
     return this.db.query<any>(
       `SELECT bt.id, bt.batch_code, bt.name, bt.status, bt.status_is_manual, bt.status_reason,
               sd.label AS status_label, sd.meaning AS status_meaning, sd.is_manual AS status_is_terminalable,
+              bt.batch_type, td.label AS batch_type_label, bt.class_days, bt.frequency,
               bt.capacity, bt.room, bt.schedule,
               bt.start_date, bt.end_date, bt.branch_id, bt.vertical_id, bt.course_id, bt.trainer_id,
               bt.created_at,
@@ -124,6 +171,7 @@ export class BatchService {
          LEFT JOIN m_course c ON c.id = bt.course_id
          LEFT JOIN "user"  u  ON u.id = bt.trainer_id
          LEFT JOIN batch_status_def sd ON sd.code = bt.status
+         LEFT JOIN batch_type_def   td ON td.code = bt.batch_type
         WHERE ${where.join(' AND ')}
         ORDER BY bt.created_at DESC, bt.id DESC
         LIMIT $${params.length}`,
@@ -137,13 +185,14 @@ export class BatchService {
     const w = this.resolver.buildScopeWhere(scope, BATCH_SCOPE_COLS, params);
     const row = await this.db.one<any>(
       `SELECT bt.*, b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, u.name AS trainer_name,
-              sd.label AS status_label, sd.meaning AS status_meaning
+              sd.label AS status_label, sd.meaning AS status_meaning, td.label AS batch_type_label
          FROM batch bt
          LEFT JOIN branch b ON b.id = bt.branch_id
          LEFT JOIN vertical v ON v.id = bt.vertical_id
          LEFT JOIN m_course c ON c.id = bt.course_id
          LEFT JOIN "user" u ON u.id = bt.trainer_id
          LEFT JOIN batch_status_def sd ON sd.code = bt.status
+         LEFT JOIN batch_type_def   td ON td.code = bt.batch_type
         WHERE bt.id = $1::bigint AND bt.deleted_at IS NULL AND ${w}`,
       params,
     );
@@ -193,17 +242,25 @@ export class BatchService {
     if (reqStatus && BATCH_MANUAL_STATUSES.has(reqStatus)) { status = reqStatus; isManual = true; }
     else { status = deriveBatchStatus(start, end) ?? 'upcoming'; }
 
+    // Batch type + frequency + class_days (081). Frequency DERIVES class_days when non-custom;
+    // for 'custom' the supplied list is sanitised to ISO weekdays 1..7. Both are stored.
+    const batchType = normaliseBatchType(dto?.batch_type);
+    const frequency = normaliseFrequency(dto?.frequency);
+    const classDays = normaliseClassDays(frequency, dto?.class_days);
+
     return this.db.tx(async (c) => {
       const ins = await c.query<{ id: string }>(
         `INSERT INTO batch (org_id, name, branch_id, vertical_id, course_id, trainer_id,
                             capacity, room, schedule, start_date, end_date, status, status_is_manual,
-                            status_changed_by, status_changed_at, remarks, created_by)
+                            status_changed_by, status_changed_at, remarks, created_by,
+                            batch_type, frequency, class_days)
          VALUES ($1::bigint, $2, $3::bigint, $4::bigint, $5::bigint, $6::bigint,
-                 $7::int, $8, $9, $10::date, $11::date, $12, $13, $14::bigint, now(), $15, $16::bigint)
+                 $7::int, $8, $9, $10::date, $11::date, $12, $13, $14::bigint, now(), $15, $16::bigint,
+                 $17, $18, $19::int[])
          RETURNING id`,
         [orgId, name, branchId, verticalId, courseId, trainerId, capacity,
           dto?.room ?? null, dto?.schedule ?? null, start, end, status, isManual, me.id,
-          dto?.remarks ?? null, me.id],
+          dto?.remarks ?? null, me.id, batchType, frequency, classDays],
       );
       const id = Number(ins.rows[0].id);
       const code = wanted ?? `BAT-${String(id).padStart(4, '0')}`;
@@ -236,6 +293,16 @@ export class BatchService {
     if (dto?.start_date !== undefined) set('start_date', this.date(dto.start_date));
     if (dto?.end_date !== undefined) set('end_date', this.date(dto.end_date));
     if (dto?.remarks !== undefined) set('remarks', dto.remarks ?? null);
+    // Batch type (081) — validated against the catalog (unknown -> 'regular').
+    if (dto?.batch_type !== undefined) set('batch_type', normaliseBatchType(dto.batch_type));
+    // Frequency + class_days (081) — a change to EITHER re-resolves the pair via the one rule.
+    // A non-custom frequency derives class_days; 'custom' keeps the (sanitised) supplied list.
+    if (dto?.frequency !== undefined || dto?.class_days !== undefined) {
+      const freq = dto?.frequency !== undefined ? normaliseFrequency(dto.frequency) : normaliseFrequency(cur.frequency);
+      const days = normaliseClassDays(freq, dto?.class_days !== undefined ? dto.class_days : cur.class_days);
+      set('frequency', freq);
+      params.push(days); sets.push(`class_days = $${params.length}::int[]`);
+    }
     // NOTE: `status` is deliberately NOT settable via a plain PATCH — the lifecycle transition
     // (manual sticky vs auto re-derive + history) goes through POST /batches/:id/status.
     params.push(id);
@@ -254,6 +321,12 @@ export class BatchService {
       `UPDATE batch SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint AND deleted_at IS NULL`,
       [id, me.id]);
     return { id, deleted: true };
+  }
+
+  /** The 9-value batch-type catalog (code + label) — powers the Batch Type dropdown on the form. */
+  async typeCatalog() {
+    return this.db.query<any>(
+      `SELECT code, label, ordering FROM batch_type_def ORDER BY ordering, code`);
   }
 
   /* ------------------------------------------------------ status lifecycle */

@@ -101,6 +101,26 @@ export function toIsoString(v: unknown): string | null | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
+/** Human weekday names indexed by ISO weekday (1=Mon … 7=Sun). Index 0 is unused. */
+export const ISO_WEEKDAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+/**
+ * ISO weekday (Mon=1 … Sun=7) of a `YYYY-MM-DD` calendar day, or null for a non-date.
+ *
+ * A bare calendar date has a FIXED weekday independent of timezone (2026-08-15 is a Saturday
+ * everywhere), so we read it via `Date.UTC` — no offset/DST drift, and it matches the IST day
+ * the rest of the app buckets against (session_date is stored as a plain `date`). Used to check
+ * a batch's class_days: attendance is expected only on the batch's weekdays.
+ */
+export function isoWeekday(v: unknown): number | null {
+  const s = toDateString(v);
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay(); // 0=Sun … 6=Sat
+  return dow === 0 ? 7 : dow;
+}
+
 /**
  * `toDateString` with a caller-supplied 400. The two money modules (quotations,
  * enrolments) each want their own sentence — "The validity date must be a date." vs

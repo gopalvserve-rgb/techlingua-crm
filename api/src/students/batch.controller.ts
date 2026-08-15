@@ -18,6 +18,13 @@ export class BatchController {
     return this.svc.statusCatalog();
   }
 
+  /** The BATCH TYPE catalog (9 codes) — powers the Batch Type dropdown. Declared BEFORE :id. */
+  @Get('type-catalog')
+  @RequirePermission('batch.read')
+  typeCatalog() {
+    return this.svc.typeCatalog();
+  }
+
   @Get()
   @RequirePermission('batch.read')
   list(@CurrentScope() scope: ResolvedScope, @Query() q: any) {

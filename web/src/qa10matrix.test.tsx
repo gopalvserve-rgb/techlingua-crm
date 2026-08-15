@@ -878,6 +878,9 @@ const bespokeCases: Case[] = [
     // one must change the POST body, or clear a required child and refuse to submit.
     name: 'New batch  [students.batches]',
     render: () => render(<BatchModal onClose={() => undefined} onSaved={() => undefined} />),
+    allow: {
+      'Class days': "coupled to Frequency (081): a non-custom frequency (Daily/Weekdays/Weekends) DERIVES and LOCKS the class-day checkboxes — exactly the 'Current Address ↔ Same as Permanent' shape — so the generic single-field probe cannot toggle them once fillAll picks a non-custom frequency. class_days IS sent on every save (see the request body) and the server re-derives it from the frequency; the Frequency field itself is probed and proven to change the body.",
+    },
     path: /^\/batches$/,
   },
 

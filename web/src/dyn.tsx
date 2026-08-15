@@ -5876,8 +5876,38 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
   const [startDate, setStartDate] = useState<string>(initial?.start_date ? String(initial.start_date).slice(0, 10) : '');
   const [endDate, setEndDate] = useState<string>(initial?.end_date ? String(initial.end_date).slice(0, 10) : '');
   const [status, setStatus] = useState<string>(initial?.status ? String(initial.status) : '');
+  // Batch Type + Frequency + Class Days (081, client feedback). Frequency DERIVES class_days
+  // (Daily→all · Weekdays→Mon–Fri · Weekends→Sat–Sun · Custom→pick days). The checkboxes are
+  // locked to the derived set unless the frequency is Custom.
+  const typeCatalog = useFetch<any[]>(`/batches/type-catalog`, []);
+  const [batchType, setBatchType] = useState<string>(initial?.batch_type ? String(initial.batch_type) : 'regular');
+  const [frequency, setFrequency] = useState<string>(initial?.frequency ? String(initial.frequency) : 'custom');
+  const [classDays, setClassDays] = useState<number[]>(
+    Array.isArray(initial?.class_days) ? initial.class_days.map(Number).filter((n: number) => n >= 1 && n <= 7) : []);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+
+  const WEEKDAYS: Array<{ n: number; lab: string }> = [
+    { n: 1, lab: 'Mon' }, { n: 2, lab: 'Tue' }, { n: 3, lab: 'Wed' }, { n: 4, lab: 'Thu' },
+    { n: 5, lab: 'Fri' }, { n: 6, lab: 'Sat' }, { n: 7, lab: 'Sun' },
+  ];
+  // The 9 seeded batch types — used as a fallback if the /batches/type-catalog fetch is empty
+  // (offline/test), so the dropdown always offers the full choice and never silently degrades.
+  const BATCH_TYPE_FALLBACK: Array<{ code: string; label: string }> = [
+    { code: 'regular', label: 'Regular' }, { code: 'fast_track', label: 'Fast Track' },
+    { code: 'weekend', label: 'Weekend' }, { code: 'weekday', label: 'Weekday' },
+    { code: 'intensive', label: 'Intensive' }, { code: 'crash_course', label: 'Crash Course' },
+    { code: 'online', label: 'Online' }, { code: 'corporate', label: 'Corporate' },
+    { code: 'customized', label: 'Customized' },
+  ];
+  const deriveDays = (f: string): number[] =>
+    f === 'daily' ? [1, 2, 3, 4, 5, 6, 7] : f === 'weekdays' ? [1, 2, 3, 4, 5] : f === 'weekends' ? [6, 7] : classDays;
+  const onFrequency = (f: string) => { setFrequency(f); if (f !== 'custom') setClassDays(deriveDays(f)); };
+  const toggleDay = (n: number) => {
+    if (frequency !== 'custom') return;                 // locked unless Custom
+    setClassDays((prev) => prev.includes(n) ? prev.filter((x) => x !== n) : [...prev, n].sort((a, b) => a - b));
+  };
+  const daysLocked = frequency !== 'custom';
 
   const vOpts = ref.verticals.filter((vt) => !branchId || Number(vt.branch_id) === Number(branchId));
   const cOpts = ref.courses.filter((c: any) =>
@@ -5898,6 +5928,11 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
       capacity: capacity === '' ? 0 : Number(capacity),
       room: room || null, schedule: schedule || null,
       start_date: startDate || null, end_date: endDate || null,
+      // Batch Type + Frequency + Class Days (081) — persisted on BOTH create and edit. The
+      // server re-derives class_days from a non-custom frequency, so it is authoritative.
+      batch_type: batchType || 'regular',
+      frequency: frequency || 'custom',
+      class_days: classDays,
     };
     // Status is only set on CREATE (an explicit manual status pins it; otherwise the server
     // DERIVES upcoming/active/expired from the dates). On EDIT the status is changed via the
@@ -5970,6 +6005,46 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
             <div className="fld">
               <label htmlFor="b-sched">Schedule</label>
               <input id="b-sched" className="ainp" value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="e.g. Mon-Fri 9–11am" />
+            </div>
+            <div className="fld">
+              <label htmlFor="b-type">Batch type</label>
+              <select id="b-type" className="ainp" value={batchType} onChange={(e) => setBatchType(e.target.value)}>
+                {(typeCatalog.data?.length ? typeCatalog.data : BATCH_TYPE_FALLBACK).map((t: any) => (
+                  <option key={t.code} value={t.code}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="b-freq">Frequency</label>
+              <select id="b-freq" className="ainp" value={frequency} onChange={(e) => onFrequency(e.target.value)}>
+                <option value="daily">Daily</option>
+                <option value="weekdays">Weekdays (Mon–Fri)</option>
+                <option value="weekends">Weekends (Sat–Sun)</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div className="fld" style={{ gridColumn: '1 / -1' }}>
+              <label>Class days</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} role="group" aria-label="Class days">
+                {WEEKDAYS.map((d) => {
+                  const on = classDays.includes(d.n);
+                  return (
+                    <label key={d.n} className={`chip${on ? ' on' : ''}`} data-testid={`b-day-${d.n}`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 999,
+                        border: '1px solid var(--line)', cursor: daysLocked ? 'not-allowed' : 'pointer',
+                        opacity: daysLocked ? 0.75 : 1, background: on ? 'var(--accent-soft, rgba(99,102,241,.15))' : 'transparent' }}>
+                      <input type="checkbox" checked={on} disabled={daysLocked} onChange={() => toggleDay(d.n)}
+                        style={{ margin: 0 }} />
+                      {d.lab}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>
+                {daysLocked
+                  ? 'Set by the frequency — choose Custom to edit individual days.'
+                  : 'Student attendance can be marked only on these days (leave all unticked for no restriction).'}
+              </div>
             </div>
             <div className="fld">
               <label htmlFor="b-start">Start date</label>

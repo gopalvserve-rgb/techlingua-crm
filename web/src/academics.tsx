@@ -90,8 +90,15 @@ export function AttendanceScreen() {
   if (range.to) listQs.set('to', range.to);
   const list = useFetch<any[]>(`/academics/attendance?${listQs.toString()}`, [listQs.toString(), tick]);
 
+  // Class days (081): a batch with a class_days set only meets on those weekdays, and the API
+  // rejects marking on any other day. Surface it here so the trainer sees it before saving.
+  const classDays: number[] = roster.data?.batch?.class_days ?? [];
+  const notClassDay = roster.data ? roster.data.is_class_day === false : false;
+  const WD_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
   const save = async () => {
     if (!batchId || !date) { toast('Pick a batch and a date first.', true); return; }
+    if (notClassDay) { toast('This date is not a class day for this batch.', true); return; }
     const entries = rosterRows.map((r: any) => ({ student_id: r.student_id, status: marks[r.student_id] ?? 'present' }));
     try {
       const res = await api.post<any>('/academics/attendance/mark', { batch_id: Number(batchId), date, mode, entries });
@@ -133,9 +140,20 @@ export function AttendanceScreen() {
         { lab: 'Parent alerts', val: String(k?.parent_alerts ?? 0), ic: 'wa' },
       ]} />
 
+      {batchId && classDays.length > 0 && (
+        <div className={`notice${notClassDay ? ' warn' : ''}`} style={{ marginBottom: 8 }}>
+          <Ic k="cal" />
+          <div>
+            Class days for this batch: <b>{classDays.map((n: number) => WD_NAMES[n]).join(', ')}</b>.
+            {notClassDay
+              ? ' The selected date is NOT a class day — attendance cannot be marked.'
+              : ' Attendance is tracked only on these days.'}
+          </div>
+        </div>
+      )}
       {batchId ? (
         <TableCard title={`Mark session — ${roster.data?.batch?.name ?? ''} · ${date}`} icon="check"
-          more={canMark ? <button className="btn primary" onClick={save} data-testid="att-save"><Ic k="check" />Save attendance</button> : null}
+          more={canMark && !notClassDay ? <button className="btn primary" onClick={save} data-testid="att-save"><Ic k="check" />Save attendance</button> : null}
           cols={['Student', 'Status', 'Guardian']}
           empty="No students in this batch yet."
           rows={rosterRows.map((r: any) => [

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from '@n
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
-import { assertDateRange, requireDateString } from '../common/date.util';
+import { assertDateRange, requireDateString, isoWeekday, ISO_WEEKDAY_NAMES } from '../common/date.util';
 import { MessagingService } from '../messaging/messaging.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
 
@@ -44,7 +44,7 @@ export class AttendanceService {
     const params: unknown[] = [id];
     const w = this.resolver.buildScopeWhere(scope, BATCH_SCOPE_COLS, params);
     const b = await this.db.one<any>(
-      `SELECT bt.id, bt.name, bt.branch_id, bt.vertical_id FROM batch bt
+      `SELECT bt.id, bt.name, bt.branch_id, bt.vertical_id, bt.class_days FROM batch bt
         WHERE bt.id = $1::bigint AND bt.deleted_at IS NULL AND ${w}`, params);
     if (!b) throw new NotFoundException('Batch not found (or outside your access)');
     return b;
@@ -52,6 +52,22 @@ export class AttendanceService {
 
   private day(v: unknown): string {
     return requireDateString(v, () => { throw new BadRequestException('That session date is not a valid date.'); }) as string;
+  }
+
+  /**
+   * ATTENDANCE ↔ CLASS DAYS (081). A batch with a non-empty class_days set only meets on those
+   * ISO weekdays (Mon=1 … Sun=7), so a session on any other weekday is rejected with a 400 that
+   * names the day. An EMPTY class_days set (legacy batches) is UNRESTRICTED — any day is fine,
+   * so nothing breaks for batches created before this feature. The whole session shares one
+   * date, so a bulk mark is rejected as a unit (one 400) rather than skipping per-entry.
+   */
+  private assertClassDay(batch: any, date: string) {
+    const days: number[] = Array.isArray(batch?.class_days) ? batch.class_days.map(Number) : [];
+    if (!days.length) return;                       // unrestricted (back-compat)
+    const wd = isoWeekday(date);
+    if (wd && !days.includes(wd)) {
+      throw new BadRequestException(`${ISO_WEEKDAY_NAMES[wd]} is not a class day for this batch`);
+    }
   }
 
   /** The marking sheet: the batch's students, each with their existing mark for the date. */
@@ -66,7 +82,12 @@ export class AttendanceService {
                                AND a.session_date = $2::date AND a.deleted_at IS NULL
         WHERE s.batch_id = $1::bigint AND s.deleted_at IS NULL
         ORDER BY s.full_name`, [batchId, d]);
-    return { batch: b, date: d, roster: rows };
+    // Surface the batch's class_days + whether the picked date is a class day, so the marking
+    // UI can indicate/guard the date (empty class_days => unrestricted, always a class day).
+    const classDays: number[] = Array.isArray(b.class_days) ? b.class_days.map(Number) : [];
+    const wd = isoWeekday(d);
+    const isClassDay = !classDays.length || (wd != null && classDays.includes(wd));
+    return { batch: { ...b, class_days: classDays }, date: d, is_class_day: isClassDay, roster: rows };
   }
 
   /** Upsert a whole session's marks. Absent -> parent-notify attempt. */
@@ -75,6 +96,7 @@ export class AttendanceService {
     if (!batchId) throw new BadRequestException('Choose a batch.');
     const b = await this.batchInScope(batchId, scope);
     const date = this.day(dto?.date);
+    this.assertClassDay(b, date);                   // 400 if the batch does not meet this weekday
     const mode = MODES.includes(String(dto?.mode)) ? String(dto.mode) : 'staff';
     const entries: any[] = Array.isArray(dto?.entries) ? dto.entries : [];
     if (!entries.length) throw new BadRequestException('No attendance entries to mark.');
