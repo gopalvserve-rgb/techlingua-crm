@@ -296,7 +296,7 @@ export class InvoiceService {
   async issue(id: number, me: { id: number }, scope: ResolvedScope) {
     const gi = await this.get(id, scope);
     if (gi.status !== 'draft') throw new BadRequestException(`${gi.invoice_no || 'This invoice'} is already ${gi.status}.`);
-    if (!gi.seller_gstin) throw new BadRequestException('Set the branch GSTIN before issuing a tax invoice (Administration › Branches › Edit).');
+    if (!gi.seller_gstin) throw new BadRequestException('Set the GSTIN on this invoice\u2019s Vertical (Administration \u203a Verticals \u203a Edit) or its Branch before issuing a tax invoice.');
     const out = await this.db.tx(async (c) => {
       const invoiceNo = await this.numbering.allocate('invoice', { branch_id: Number(gi.branch_id), vertical_id: Number(gi.vertical_id) }, c);
       await c.query(
@@ -393,11 +393,19 @@ export class InvoiceService {
               e.fee_minor, e.discount_minor, e.net_fee_minor,
               l.full_name AS lead_name, l.phone AS lead_phone, l.email AS lead_email, l.state_id AS lead_state_id,
               c.name AS course_name,
-              b.legal_name AS seller_legal_name, b.gstin AS seller_gstin, b.pan AS seller_pan,
-              b.name AS branch_name, b.address AS seller_address, b.state_id AS seller_state_id
+              -- dev/88: prefer the VERTICAL's billing identity (GST at vertical granularity),
+              -- falling back to the branch (055) per field. seller_state_id stays on the branch
+              -- (the GST intra/inter split needs a state MASTER id; billing_address is free text).
+              COALESCE(NULLIF(vv.display_name, ''), b.legal_name) AS seller_legal_name,
+              COALESCE(NULLIF(vv.gstin, ''), b.gstin) AS seller_gstin,
+              b.pan AS seller_pan,
+              b.name AS branch_name,
+              COALESCE(NULLIF(vv.billing_address, ''), b.address) AS seller_address,
+              b.state_id AS seller_state_id
          FROM enrolment e
          JOIN lead l ON l.id = e.lead_id
          JOIN branch b ON b.id = e.branch_id
+         LEFT JOIN vertical vv ON vv.id = e.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id
         WHERE e.id = $1::bigint AND e.deleted_at IS NULL AND ${ew}`,
       params,
@@ -428,8 +436,12 @@ export class InvoiceService {
     const bw = this.resolver.buildScopeWhere(scope, { branch: 'b.id', vertical: 'v.id' }, params);
     const b = await this.db.one<any>(
       `SELECT b.id AS branch_id, v.id AS vertical_id,
-              b.legal_name AS seller_legal_name, b.gstin AS seller_gstin, b.pan AS seller_pan,
-              b.address AS seller_address, b.state_id AS seller_state_id
+              -- dev/88: prefer the VERTICAL's billing identity, per field, else branch (055).
+              COALESCE(NULLIF(v.display_name, ''), b.legal_name) AS seller_legal_name,
+              COALESCE(NULLIF(v.gstin, ''), b.gstin) AS seller_gstin,
+              b.pan AS seller_pan,
+              COALESCE(NULLIF(v.billing_address, ''), b.address) AS seller_address,
+              b.state_id AS seller_state_id
          FROM branch b JOIN vertical v ON v.branch_id = b.id
         WHERE b.id = $1::bigint AND v.id = $2::bigint AND b.deleted_at IS NULL AND ${bw}`,
       params,

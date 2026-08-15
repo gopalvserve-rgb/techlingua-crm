@@ -5,6 +5,7 @@ import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { validateDistributionConfig, validateDuplicacyConfig } from './campaign-config.validator';
 import { requireDateString } from '../common/date.util';
+import { StorageService } from '../storage/storage.service';
 
 /**
  * Hierarchy CRUD: Branch > Vertical > Pipeline (+stages) > Campaign > Source.
@@ -40,7 +41,55 @@ export class HierarchyService {
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
     private readonly enforcer: ScopeEnforcerService,
+    private readonly storage?: StorageService,
   ) {}
+
+  /* ---- vertical billing-identity validation (India-first, loose) — dev/88 ---- */
+  private static IMG_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/svg+xml']);
+
+  /** GSTIN: 15 chars, 2-digit state code + 10-char PAN + 3 more (loose upper-case check). */
+  static normGstin(v?: string | null): string | null {
+    const t = HierarchyService.text(v, 15);
+    if (t === null) return null;
+    const g = t.toUpperCase();
+    if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}[Z]{1}[0-9A-Z]{1}$/.test(g)) {
+      throw new BadRequestException('GSTIN must be a valid 15-character India GSTIN (e.g. 27AAPFU0939F1ZV).');
+    }
+    return g;
+  }
+
+  /** Email: a loose shape check (blank clears the field). */
+  static normEmail(v?: string | null): string | null {
+    const t = HierarchyService.text(v, 255);
+    if (t === null) return null;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) throw new BadRequestException('Enter a valid email address.');
+    return t;
+  }
+
+  /** Phone: Indian 10-digit or E.164 (digits, +, spaces, hyphens; 6–15 digits). */
+  static normPhone(v?: string | null): string | null {
+    const t = HierarchyService.text(v, 24);
+    if (t === null) return null;
+    const digits = t.replace(/[^0-9]/g, '');
+    if (digits.length < 6 || digits.length > 15) throw new BadRequestException('Enter a valid phone number (Indian mobile or E.164).');
+    return t;
+  }
+
+  /** Normalise & validate the vertical billing/identity DTO fields into a column map. */
+  private normVerticalIdentity(dto: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if ('gstin' in dto) out.gstin = HierarchyService.normGstin(dto.gstin as string | null);
+    if ('email' in dto) out.email = HierarchyService.normEmail(dto.email as string | null);
+    if ('phone' in dto) out.phone = HierarchyService.normPhone(dto.phone as string | null);
+    if ('billing_address' in dto) out.billing_address = HierarchyService.text(dto.billing_address as string | null, 2000);
+    if ('display_name' in dto) out.display_name = HierarchyService.text(dto.display_name as string | null, 200);
+    if ('bank_name' in dto) out.bank_name = HierarchyService.text(dto.bank_name as string | null, 160);
+    if ('bank_account_no' in dto) out.bank_account_no = HierarchyService.text(dto.bank_account_no as string | null, 40);
+    if ('bank_ifsc' in dto) { const f = HierarchyService.text(dto.bank_ifsc as string | null, 15); out.bank_ifsc = f ? f.toUpperCase() : f; }
+    if ('bank_branch' in dto) out.bank_branch = HierarchyService.text(dto.bank_branch as string | null, 160);
+    if ('bank_account_holder' in dto) out.bank_account_holder = HierarchyService.text(dto.bank_account_holder as string | null, 200);
+    return out;
+  }
 
   /**
    * Agent-pool referential check (user picker): every user id referenced by a
@@ -173,30 +222,92 @@ export class HierarchyService {
                 WHERE ${where} AND v.deleted_at IS NULL${HierarchyService.activeFilter('v', includeInactive)}`;
     { const c = this.inCol('v.branch_id', branchId, opts?.branchIds, params); if (c) sql += ` AND ${c}`; }
     if (q && q.trim()) { params.push(`%${q.trim()}%`); sql += ` AND (v.name ILIKE $${params.length} OR v.code ILIKE $${params.length})`; }
-    return this.db.query(sql + ` ORDER BY v.name`, params);
+    return this.withLogoUrls(this.db.query(sql + ` ORDER BY v.name`, params));
   }
 
-  async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object; head_user_id?: number | null; description?: string | null; is_active?: boolean }, actorId: number) {
+  /** dev/88 — attach a short-lived presigned logo_url to every vertical row that has a
+   *  logo_r2_key (R2-only; the raw key never leaves as a URL). Degrades to null if R2 is off. */
+  private async withLogoUrls(rowsP: Promise<any[]>): Promise<any[]> {
+    const rows = await rowsP;
+    if (!this.storage) return rows;
+    await Promise.all(rows.map(async (r) => {
+      if (r && r.logo_r2_key) {
+        try { r.logo_url = await this.storage!.presignGet(String(r.logo_r2_key), 300, 'logo'); }
+        catch { r.logo_url = null; }
+      }
+    }));
+    return rows;
+  }
+
+  async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object; head_user_id?: number | null; description?: string | null; is_active?: boolean;
+    gstin?: string | null; billing_address?: string | null; phone?: string | null; email?: string | null; display_name?: string | null;
+    bank_name?: string | null; bank_account_no?: string | null; bank_ifsc?: string | null; bank_branch?: string | null; bank_account_holder?: string | null }, actorId: number) {
     if (!dto?.branch_id || !dto?.name || !dto?.code) throw new BadRequestException('branch_id, name and code are required');
     const branch = await this.db.one<{ org_id: string }>(`SELECT org_id FROM branch WHERE id = $1 AND deleted_at IS NULL`, [dto.branch_id]);
     if (!branch) throw new NotFoundException('branch not found');
+    // dev/88 — the billing / identity fields (GSTIN, billing address, phone, email, display
+    // name, bank details) are validated (India-first, loose) and stored on the vertical so the
+    // vertical's GST invoices can snapshot them as the seller identity (055 fallback: branch).
+    const idn = this.normVerticalIdentity(dto as Record<string, unknown>);
     // DEF-S2-04: Vertical Head + Description are on the Add form and MUST be in the
     // INSERT (they were only in the PATCH whitelist, so Add silently dropped them).
     const rows = await this.db.query(
       `INSERT INTO vertical (org_id, branch_id, name, code, smtp_config, gateway_config,
-                             head_user_id, description, is_active, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, TRUE),$10) RETURNING *`,
+                             head_user_id, description, is_active,
+                             gstin, billing_address, phone, email, display_name,
+                             bank_name, bank_account_no, bank_ifsc, bank_branch, bank_account_holder, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, TRUE),
+               $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
       [Number(branch.org_id), dto.branch_id, dto.name.trim(), dto.code.trim().toUpperCase(),
         JSON.stringify(dto.smtp_config ?? {}), JSON.stringify(dto.gateway_config ?? {}),
         dto.head_user_id ?? null, dto.description?.trim() ? dto.description.trim() : null,
-        dto.is_active ?? null, actorId],
+        dto.is_active ?? null,
+        idn.gstin ?? null, idn.billing_address ?? null, idn.phone ?? null, idn.email ?? null, idn.display_name ?? null,
+        idn.bank_name ?? null, idn.bank_account_no ?? null, idn.bank_ifsc ?? null, idn.bank_branch ?? null, idn.bank_account_holder ?? null,
+        actorId],
     );
     return rows[0];
   }
 
   updateVertical(id: number, dto: Record<string, unknown>) {
-    return this.genericUpdate('vertical', id, dto,
-      ['name', 'code', 'smtp_config', 'gateway_config', 'head_user_id', 'description', 'is_active']);
+    // dev/88 — validate + normalise the billing/identity fields before they hit the whitelist.
+    const clean = { ...dto, ...this.normVerticalIdentity(dto) };
+    return this.genericUpdate('vertical', id, clean,
+      ['name', 'code', 'smtp_config', 'gateway_config', 'head_user_id', 'description', 'is_active',
+        'gstin', 'billing_address', 'phone', 'email', 'display_name',
+        'bank_name', 'bank_account_no', 'bank_ifsc', 'bank_branch', 'bank_account_holder']);
+  }
+
+  /* ---- vertical logo (R2, presigned) — mirrors the student photo flow (dev/77) ---- */
+
+  /** Presigned PUT for the vertical logo. Returns the R2 key the client PUTs the bytes to,
+   *  then POSTs back to /logo to attach. Image types only; R2-only (no DB blob). */
+  async logoUploadUrl(id: number, dto: { file_name?: string; content_type?: string }) {
+    const v = await this.db.one<{ id: string }>(`SELECT id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!v) throw new NotFoundException('vertical not found');
+    if (!this.storage) throw new BadRequestException('File storage is not configured.');
+    const ct = String(dto?.content_type ?? '').toLowerCase();
+    if (ct && !HierarchyService.IMG_MIME.has(ct)) throw new BadRequestException('The logo must be a JPG, PNG, WEBP or SVG image.');
+    const key = this.storage.verticalLogoKey(id, String(dto?.file_name ?? 'logo.png'));
+    const url = await this.storage.presignPut(key, ct || 'image/png', 300);
+    return { url, r2_key: key, expires_in: 300 };
+  }
+
+  /** Attach an uploaded logo: stores the new R2 key on the vertical and returns a fresh
+   *  presigned logo_url. R2-only — the previous object is simply superseded by the key. */
+  async attachLogo(id: number, dto: { r2_key?: string; content_type?: string }) {
+    const v = await this.db.one<{ id: string }>(`SELECT id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!v) throw new NotFoundException('vertical not found');
+    const key = String(dto?.r2_key ?? '').trim();
+    if (!key || !key.startsWith(`verticals/${id}/logo/`)) throw new BadRequestException('Upload the logo first (missing or invalid r2_key).');
+    const ct = String(dto?.content_type ?? '').toLowerCase();
+    if (ct && !HierarchyService.IMG_MIME.has(ct)) throw new BadRequestException('The logo must be a JPG, PNG, WEBP or SVG image.');
+    const rows = await this.db.query(
+      `UPDATE vertical SET logo_r2_key = $1, updated_at = now() WHERE id = $2 AND deleted_at IS NULL RETURNING id, logo_r2_key`, [key, id]);
+    if (!rows.length) throw new NotFoundException('vertical not found');
+    let logo_url: string | null = null;
+    try { if (this.storage) logo_url = await this.storage.presignGet(key, 300, 'logo'); } catch { /* R2 off — key persists */ }
+    return { id, logo_r2_key: key, logo_url };
   }
 
   // ---- pipelines + stages -------------------------------------------------

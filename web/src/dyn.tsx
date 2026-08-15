@@ -19,7 +19,7 @@ import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, RowMenu, RowMenuItem, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
 import { UserPicker } from './userpicker';
-import { StudentDocuments, StudentPhotoUpload } from './documents';
+import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
@@ -2097,6 +2097,25 @@ function Verticals() {
               ['Gateway', Object.keys((view.gateway_config as any) ?? {}).length ? 'Configured' : 'Not configured'],
             ]} />
           </Section>
+          <Section title="Billing & Identity">
+            <KV rows={[
+              ['Display name', view.display_name ?? '\u2014'],
+              ['GSTIN', <span className="mono">{view.gstin ?? '\u2014'}</span>],
+              ['Billing address', view.billing_address ?? '\u2014'],
+              ['Phone', <span className="mono">{view.phone ?? '\u2014'}</span>],
+              ['Email', view.email ?? '\u2014'],
+              ['Logo', view.logo_url ? renderCell({ node: <img src={view.logo_url} alt="logo" style={{ height: 32, maxWidth: 96, objectFit: 'contain' }} /> } as any) : '\u2014'],
+            ]} />
+          </Section>
+          <Section title="Bank Details">
+            <KV rows={[
+              ['Bank name', view.bank_name ?? '\u2014'],
+              ['Account no.', <span className="mono">{view.bank_account_no ?? '\u2014'}</span>],
+              ['IFSC', <span className="mono">{view.bank_ifsc ?? '\u2014'}</span>],
+              ['Branch', view.bank_branch ?? '\u2014'],
+              ['Account holder', view.bank_account_holder ?? '\u2014'],
+            ]} />
+          </Section>
           <Section title="Record">
             <KV rows={[
               ['Created', fmtFull(view.created_at)],
@@ -2114,17 +2133,40 @@ function Verticals() {
               'Vertical Name': edit.name ?? '', 'Vertical Code': edit.code ?? '',
               'Branch': edit.branch_name ?? '', 'Vertical Head': edit.head_name ?? '',
               'Description': edit.description ?? '',
+              // dev/88 — billing / document identity + bank details.
+              'Display Name': edit.display_name ?? '', 'GST Number': edit.gstin ?? '',
+              'Billing Address': edit.billing_address ?? '', 'Phone': edit.phone ?? '', 'Email': edit.email ?? '',
+              'Bank Name': edit.bank_name ?? '', 'Bank Account No.': edit.bank_account_no ?? '',
+              'IFSC Code': edit.bank_ifsc ?? '', 'Bank Branch': edit.bank_branch ?? '', 'Account Holder Name': edit.bank_account_holder ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
             initialIds: { 'Vertical Head': edit.head_user_id ? Number(edit.head_user_id) : undefined },
             // only the parent link is immutable — the rest is editable (DEF-2)
             lock: ['Branch'],
+            // dev/88 — the LOGO uploader (R2, presigned, live preview) lives in the edit form,
+            // where the vertical id exists (upload targets /verticals/:id/logo).
+            extra: (
+              <div className="fld span2" style={{ marginTop: 4 }}>
+                <label>Logo <span className="fhint">image \u00b7 R2 \u00b7 shown on this vertical\u2019s documents</span></label>
+                <VerticalLogoUpload verticalId={Number(edit.id)} initialUrl={edit.logo_url ?? null} />
+              </div>
+            ),
             submit: async (vals, ids) => {
               await api.patch(`/verticals/${edit.id}`, {
                 name: need(vals['Vertical Name'], 'Vertical name is required'),
                 code: need(vals['Vertical Code'], 'Vertical code is required'),
                 head_user_id: ids['Vertical Head'] ?? null,
                 description: vals['Description'] || null,
+                display_name: vals['Display Name'] || null,
+                gstin: vals['GST Number'] ? String(vals['GST Number']).trim().toUpperCase() : null,
+                billing_address: vals['Billing Address'] || null,
+                phone: vals['Phone'] || null,
+                email: vals['Email'] || null,
+                bank_name: vals['Bank Name'] || null,
+                bank_account_no: vals['Bank Account No.'] || null,
+                bank_ifsc: vals['IFSC Code'] ? String(vals['IFSC Code']).trim().toUpperCase() : null,
+                bank_branch: vals['Bank Branch'] || null,
+                bank_account_holder: vals['Account Holder Name'] || null,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Vertical updated';

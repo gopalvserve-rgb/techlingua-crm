@@ -203,4 +203,42 @@ export function StudentPhotoUpload({ studentId, onDone, className }: { studentId
   );
 }
 
+/** dev/88 — Vertical LOGO uploader (image → Cloudflare R2, presigned PUT, live preview).
+ *  Mirrors the student-photo flow: request a presigned url, PUT the bytes, then attach the
+ *  r2_key. The vertical row stores only logo_r2_key; the parent re-reads to get logo_url. */
+export function VerticalLogoUpload({ verticalId, initialUrl, onDone }: { verticalId: number; initialUrl?: string | null; onDone?: (logoUrl: string | null) => void }) {
+  const base = `/verticals/${verticalId}/logo`;
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [url, setUrl] = useState<string | null>(initialUrl ?? null);
+  const IMG_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/svg+xml']);
+  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (fileRef.current) fileRef.current.value = '';
+    if (!f) return;
+    if (f.type && !IMG_MIME.has(f.type.toLowerCase())) { toast('Choose a JPG, PNG, WEBP or SVG image.', true); return; }
+    if (f.size > 5 * 1024 * 1024) { toast('The logo must be under 5 MB.', true); return; }
+    setBusy(true);
+    try {
+      const { r2_key } = await uploadToR2(base, f);
+      const out = await api.post<{ logo_url: string | null }>(base, { r2_key, content_type: f.type || 'image/png' });
+      setUrl(out.logo_url ?? null);
+      toast('Logo updated'); onDone?.(out.logo_url ?? null);
+    } catch (ex) { toast((ex as Error).message || 'Upload failed', true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="lrow" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ width: 64, height: 64, borderRadius: 10, border: '1px solid var(--line)', background: 'var(--panel2, #f4f5f7)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }} data-testid="vert-logo-preview">
+        {url ? <img src={url} alt="Vertical logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} /> : <Ic k="grid" />}
+      </div>
+      <div>
+        <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPick} data-testid="vert-logo-file" />
+        <button type="button" className="btn sm" disabled={busy} onClick={() => fileRef.current?.click()} data-testid="vert-logo-upload">
+          <Ic k="export" />{busy ? 'Uploading…' : (url ? 'Change logo' : 'Upload logo')}
+        </button>
+        <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>JPG, PNG, WEBP or SVG · up to 5 MB · shown on this vertical\u2019s invoices</div>
+      </div>
+    </div>
+  );
+}
+
 const fmtSizePub = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);

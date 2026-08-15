@@ -98,6 +98,11 @@ export class StorageService {
     return `students/${studentId}/photo/${randomUUID()}-${this.safeName(fileName)}`;
   }
 
+  /** verticals/<vid>/logo/<uuid>-<filename> — the vertical brand logo (private, presigned). */
+  verticalLogoKey(verticalId: number, fileName: string): string {
+    return `verticals/${verticalId}/logo/${randomUUID()}-${this.safeName(fileName)}`;
+  }
+
   /** documents/<kind>/<docNo>.pdf — the generated business PDFs. */
   pdfKey(kind: string, docNo: string | number): string {
     const safeKind = this.safeName(kind).toLowerCase();

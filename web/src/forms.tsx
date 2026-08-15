@@ -3,7 +3,7 @@
  * with live master/hierarchy dropdowns and wired saves where APIs exist.
  * Unwired forms render exactly but tell the user which project phase makes them live.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from './api';
 import { useAuth } from './auth';
@@ -281,7 +281,20 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('PAN', 'text', 0, 0, 'branch PAN'),
     F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.verticals': { title: 'Add Vertical', fields: [
-    F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Vertical Name', 'text', 1), F('Vertical Code', 'text', 1, 0, 'e.g. TLA'), F('Branch', 'select', 1, 0, 'master · parent link', 'branches'), F('Vertical Head', 'select', 0, 0, 'Employee master', 'users'), F('Description', 'textarea'),
+    // dev/88 (client) — the vertical's billing / document identity. These feed the vertical's
+    // GST invoices / receipts (seller GSTIN + legal/display name + billing address).
+    F('Display Name', 'text', 0, 0, 'brand / legal name shown on invoices & receipts'),
+    F('GST Number', 'text', 0, 0, '15-char GSTIN of this vertical (seller)'),
+    F('Billing Address', 'textarea', 0, 0, 'printed on the vertical\u2019s GST invoices & receipts'),
+    F('Phone', 'tel', 0, 0, 'vertical contact number'),
+    F('Email', 'email', 0, 0, 'vertical contact email'),
+    F('Bank Name', 'text', 0, 0, 'for fee remittance details'),
+    F('Bank Account No.', 'text'),
+    F('IFSC Code', 'text', 0, 0, 'e.g. HDFC0000123'),
+    F('Bank Branch', 'text'),
+    F('Account Holder Name', 'text'),
+    F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.users': { title: 'Add User', fields: [
     F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
     F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'multipick', 0, 0, 'select branch(es)', 'branches'),
@@ -518,6 +531,17 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       code: need(vals['Vertical Code'], 'Vertical code is required'),
       head_user_id: ids['Vertical Head'] ?? undefined,
       description: vals['Description'] || undefined,
+      // dev/88 — billing / document identity + bank details.
+      display_name: vals['Display Name'] || undefined,
+      gstin: vals['GST Number'] ? String(vals['GST Number']).trim().toUpperCase() : undefined,
+      billing_address: vals['Billing Address'] || undefined,
+      phone: vals['Phone'] || undefined,
+      email: vals['Email'] || undefined,
+      bank_name: vals['Bank Name'] || undefined,
+      bank_account_no: vals['Bank Account No.'] || undefined,
+      bank_ifsc: vals['IFSC Code'] ? String(vals['IFSC Code']).trim().toUpperCase() : undefined,
+      bank_branch: vals['Bank Branch'] || undefined,
+      bank_account_holder: vals['Account Holder Name'] || undefined,
       is_active: vals['Status'] !== 'Inactive',
     });
     return { msg: 'Vertical created', row };
@@ -763,6 +787,9 @@ export interface EditSpec {
   lock?: string[];
   /** labels whose "required" star is dropped in edit mode (e.g. Password = leave blank to keep) */
   optional?: string[];
+  /** dev/88 — an arbitrary node rendered below the form grid (e.g. the vertical logo uploader,
+   *  which needs the record id and the presigned-R2 flow that a plain field type can't do). */
+  extra?: ReactNode;
   submit: (vals: Vals, ids: Ids) => Promise<string>;
 }
 
@@ -1346,6 +1373,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
               );
             })}
           </div>
+          {edit?.extra}
         </div>
         <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
