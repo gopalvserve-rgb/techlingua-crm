@@ -4173,7 +4173,12 @@ function StudentsList() {
         rows={rows.map((st) => [
           { node: <div><b className="nm">{st.full_name}</b><div className="sub mono">{st.student_no ?? '—'}</div></div> } as Cell,
           { mono: st.phone ?? '—' } as Cell,
-          st.course_name ?? '—',
+          // Item 7 (client feedback): show the CONVERTED course(s) — every enrolment course
+          // (single OR multiple, across verticals) — not the stale lead course. `courses` is the
+          // comma-joined names from the API; fall back to the legacy single course_name.
+          { node: (st.courses || st.course_name)
+            ? <span title={st.courses || st.course_name}>{st.courses || st.course_name}</span>
+            : <span>—</span> } as Cell,
           { node: <span>{st.branch_name ?? '—'}<div className="sub">{st.vertical_name ?? '—'}</div></span> } as Cell,
           st.owner_name ?? '—',
           st.batch_name ?? '—',
@@ -4594,6 +4599,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const [addEnrol, setAddEnrol] = useState(false);
   const [enrolStatusFor, setEnrolStatusFor] = useState<any | null>(null);
   const [enrolHistFor, setEnrolHistFor] = useState<any | null>(null);
+  const [enrolXferFor, setEnrolXferFor] = useState<any | null>(null);
   // client refinement (dev/80) — Fee Management actions on the profile Fees tab (reuse standalone components)
   const [feePlanFor, setFeePlanFor] = useState<number | null>(null);        // fee setup -> PlanCreateModal
   const [feePlanEditFor, setFeePlanEditFor] = useState<number | null>(null); // edit -> PlanDetailModal
@@ -5088,6 +5094,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                   <td><span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span></td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button>}
+                    {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolXferFor(e)} data-testid={`enrol-xfer-${e.id}`}><Ic k="swap" />Transfer course</button></>}
                     {' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolHistFor(e)}><Ic k="list" />History</button>
                   </td>
                 </tr>
@@ -5268,6 +5275,11 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
         <ChangeEnrolmentStatusModal student={full} enrolment={enrolStatusFor} canManageSensitive={canStatusManage}
           onClose={() => setEnrolStatusFor(null)}
           onDone={() => { setEnrolStatusFor(null); reloadEnrol(); }} />
+      )}
+      {enrolXferFor && (
+        <TransferEnrolmentCourseModal student={full} enrolment={enrolXferFor}
+          onClose={() => setEnrolXferFor(null)}
+          onDone={() => { setEnrolXferFor(null); reloadEnrol(); loadProfile(); }} />
       )}
       {enrolHistFor && (
         <EnrolmentHistoryModal student={full} enrolment={enrolHistFor} onClose={() => setEnrolHistFor(null)} />
@@ -5826,6 +5838,116 @@ export function ChangeEnrolmentStatusModal({ student, enrolment, canManageSensit
 }
 
 /** The per-enrolment status transition trail. */
+/** COURSE TRANSFER (client feedback #8) — move ONE enrolment to another course via a
+ *  Branch -> Vertical -> Course cascade (defaults to the enrolment's own branch/vertical).
+ *  The gross fee auto-fills from the target Course master (editable); the server carries the
+ *  existing discount, preserves payments and recomputes the outstanding. Shows the transfer
+ *  history for this enrolment. Gated (parent) by student.update. */
+export function TransferEnrolmentCourseModal({ student, enrolment, onClose, onDone }: { student: any; enrolment: any; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const [branchId, setBranchId] = useState(String(enrolment.branch_id ?? student.branch_id ?? ''));
+  const [vertId, setVertId] = useState(String(enrolment.vertical_id ?? student.vertical_id ?? ''));
+  const [courseId, setCourseId] = useState('');
+  const [fee, setFee] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const hist = useFetch<any[]>(`/students/${student.id}/enrolments/${enrolment.id}/course-transfer-history`, [enrolment.id]);
+
+  const branches = (ref.branches ?? []) as any[];
+  const branchVerticals = ((ref.verticals ?? []) as any[]).filter((v: any) => Number(v.branch_id) === Number(branchId));
+  const coursesAll = (ref.courses ?? []) as any[];
+  // BRANCH -> VERTICAL -> COURSE cascade; the current course is excluded (nothing to transfer to itself).
+  const courses = coursesAll.filter((c: any) =>
+    (String((c.meta as any)?.vertical_id ?? '') === String(vertId ?? '') || !((c.meta as any)?.vertical_id))
+    && Number(c.id) !== Number(enrolment.course_id));
+
+  const chooseBranch = (bid: string) => {
+    setBranchId(bid); setCourseId(''); setFee('');
+    const vs = ((ref.verticals ?? []) as any[]).filter((v: any) => Number(v.branch_id) === Number(bid));
+    setVertId(vs.length === 1 ? String(vs[0].id) : '');
+  };
+  const chooseCourse = (cid: string) => {
+    setCourseId(cid);
+    const c = coursesAll.find((x: any) => Number(x.id) === Number(cid));
+    setFee(c ? String((c.meta as any)?.fee ?? '') : '');
+  };
+  const grossMinor = Math.round(Number(fee || 0) * 100);
+
+  const save = async () => {
+    if (!branchId) { toast('Choose a target branch.', true); return; }
+    if (!vertId) { toast('Choose a target vertical.', true); return; }
+    if (!courseId) { toast('Choose a target course.', true); return; }
+    setBusy(true);
+    try {
+      const res = await api.post<any>(`/students/${student.id}/enrolments/${enrolment.id}/course-transfer`, {
+        to_course_id: Number(courseId), to_branch_id: Number(branchId), to_vertical_id: Number(vertId),
+        fee_minor: grossMinor, reason: reason.trim() || null,
+      });
+      toast(`Course transferred to ${res?.to_course_name ?? 'the new course'}.`);
+      onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+
+  const rows = hist.data ?? [];
+  return (
+    <DetailModal title={`Transfer course — ${enrolment.course_name ?? enrolment.enrolment_no}`} icon="swap" onClose={onClose} width={640}
+      footer={<button className="btn primary" onClick={save} disabled={busy || !courseId} data-testid="enrol-xfer-save"><Ic k="swap" />Transfer course</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}>
+        <Ic k="grid" />
+        <div>Currently on <b>{enrolment.course_name ?? '—'}</b> ({[enrolment.branch_name, enrolment.vertical_name].filter(Boolean).join(' › ') || '—'}).
+          The gross fee auto-fills from the target course master (editable); the current discount carries over, payments already made are kept and the outstanding recomputes. The batch is cleared on transfer — re-assign one afterwards.</div>
+      </div>
+      <div className="form-grid">
+        <div className="fld"><label htmlFor="ex-branch">Target Branch <span className="star">*</span></label>
+          <select id="ex-branch" className="ainp" value={branchId} disabled={busy}
+            onChange={(e) => chooseBranch(e.target.value)} data-testid="enrol-xfer-branch">
+            <option value="">— Choose branch —</option>
+            {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+        <div className="fld"><label htmlFor="ex-vert">Target Vertical <span className="star">*</span></label>
+          <select id="ex-vert" className="ainp" value={vertId} disabled={busy || !branchId}
+            onChange={(e) => { setVertId(e.target.value); setCourseId(''); setFee(''); }} data-testid="enrol-xfer-vertical">
+            <option value="">{branchId ? '— Choose vertical —' : '— Choose branch first —'}</option>
+            {branchVerticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="ex-course">Target Course <span className="star">*</span></label>
+          <select id="ex-course" className="ainp" value={courseId} disabled={busy || !vertId} onChange={(e) => chooseCourse(e.target.value)} data-testid="enrol-xfer-course">
+            <option value="">{vertId ? '— Choose course —' : '— Choose vertical first —'}</option>
+            {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="fld"><label htmlFor="ex-fee">Gross fee (₹, from master — editable)</label>
+          <input id="ex-fee" className="ainp" type="number" min={0} value={fee} disabled={busy}
+            onChange={(e) => setFee(e.target.value)} data-testid="enrol-xfer-fee" />
+        </div>
+        <div className="fld"><label htmlFor="ex-reason">Reason</label>
+          <input id="ex-reason" className="ainp" value={reason} disabled={busy}
+            placeholder="Why is the course changing?" onChange={(e) => setReason(e.target.value)} />
+        </div>
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <div className="sub" style={{ fontWeight: 600, marginBottom: 6 }}>Course transfer history</div>
+        {rows.length ? (
+          <table className="minitbl" data-testid="enrol-xfer-hist"><thead><tr><th>When</th><th>From</th><th>To</th><th>Net fee</th><th>Reason</th><th>By</th></tr></thead>
+            <tbody>{rows.map((h: any) => (
+              <tr key={h.id}>
+                <td>{fmtFull(h.created_at)}</td>
+                <td>{h.from_course_name ?? '—'}</td>
+                <td><b>{h.to_course_name ?? '—'}</b>{h.to_vertical_name ? <div className="sub">{[h.to_branch_name, h.to_vertical_name].filter(Boolean).join(' › ')}</div> : null}</td>
+                <td>{h.to_net_fee_minor != null ? fmtINR(Number(h.to_net_fee_minor), { symbol: true }) : '—'}</td>
+                <td>{h.reason ?? '—'}</td>
+                <td>{h.transferred_by_name ?? '—'}</td>
+              </tr>
+            ))}</tbody></table>
+        ) : <div className="sub">No course transfers yet.</div>}
+      </div>
+    </DetailModal>
+  );
+}
+
 export function EnrolmentHistoryModal({ student, enrolment, onClose }: { student: any; enrolment: any; onClose: () => void }) {
   const hist = useFetch<any[]>(`/students/${student.id}/enrolments/${enrolment.id}/status-history`, [enrolment.id]);
   const rows = hist.data ?? [];

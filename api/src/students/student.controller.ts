@@ -149,6 +149,23 @@ export class StudentController {
     return this.svc.enrolmentStatusHistory(eid, scope, id);
   }
 
+  /** COURSE TRANSFER (client feedback #8) — move this enrolment to another course. Reuses
+   *  student.update; scope-enforced on BOTH ends inside the service; re-points the enrolment,
+   *  recomputes the fee from the target Course master (payments preserved → outstanding recomputes),
+   *  mints the target vertical's Student ID when needed, and writes an enrolment_course_transfer row. */
+  @Post(':id/enrolments/:eid/course-transfer')
+  @RequirePermission('student.update')
+  transferEnrolmentCourse(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.transferEnrolmentCourse(eid, dto, me, scope, id);
+  }
+
+  /** The per-enrolment course-transfer history trail. */
+  @Get(':id/enrolments/:eid/course-transfer-history')
+  @RequirePermission('student.read')
+  enrolmentCourseTransferHistory(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.enrolmentCourseTransferHistory(eid, scope, id);
+  }
+
   /** STUDENT SYLLABUS + COURSE CONTENT ACCESS — per enrolled course, published-only, gated by
    *  the combined (overall + per-enrolment) LMS access. Blocks a cancelled/withdrawn course. */
   @Get(':id/learning')

@@ -141,7 +141,15 @@ export class StudentService {
               s.branch_id, s.vertical_id, s.course_id, s.batch_id, s.owner_id,
               s.enrolment_id, s.created_at, s.lead_id,
               b.name AS branch_name, v.name AS vertical_name, c.name AS course_name,
-              u.name AS owner_name, bt.name AS batch_name, e.enrolment_no
+              u.name AS owner_name, bt.name AS batch_name, e.enrolment_no,
+              -- Item 7 (client feedback): the Course column must show the CONVERTED course(s) —
+              -- every course the student is actually enrolled in (created at convert time + any
+              -- added later), across verticals — NOT the stale lead/course_id. Names (comma-
+              -- joined, de-duped) so the column is readable AND exportable.
+              (SELECT string_agg(DISTINCT co.name, ', ' ORDER BY co.name)
+                 FROM enrolment en JOIN m_course co ON co.id = en.course_id
+                WHERE en.deleted_at IS NULL AND co.name IS NOT NULL
+                  AND (en.student_profile_id = s.id OR en.id = s.enrolment_id)) AS courses
          FROM student s
          LEFT JOIN student_status_def sd ON sd.code = s.status
          LEFT JOIN branch  b  ON b.id = s.branch_id
@@ -2057,6 +2065,196 @@ export class StudentService {
       lms_access: def.lms_access, outstanding_minor: outstanding, approved_by: approvedBy,
       revenue_excluded: REVENUE_CANCELLING_STATUSES.has(to),
     };
+  }
+
+  /**
+   * COURSE TRANSFER (client feedback #8) — move ONE enrolment from its current course to a
+   * DIFFERENT course. Mirrors the student BRANCH transfer (branchTransfer / 062 student_transfer)
+   * at the per-enrolment/course level:
+   *   - re-points enrolment.course_id (and, when the target is in another branch/vertical,
+   *     branch_id/vertical_id); the old batch — which belonged to the old course/vertical — is
+   *     CLEARED (re-assign a batch afterwards from the Course Enrollment / batch action);
+   *   - FEE HANDLING: the gross fee is recomputed from the TARGET Course master (m_course.meta.fee,
+   *     ₹→paise), or an explicit fee_minor override; the enrolment's existing discount
+   *     (type/value) is re-applied to the new gross → new net. Payments already made (fee_receipt
+   *     rows, keyed by enrolment_id) are UNTOUCHED, so the outstanding recomputes from the new net;
+   *   - the per-course STATUS + admission STAGE are KEPT (only the course + its fee change) — the
+   *     course change is LOGGED, not a status reset;
+   *   - when the target vertical differs, the target vertical's VERTICAL-WISE Student ID is
+   *     minted/attached (079 ensureVerticalId);
+   *   - writes ONE enrolment_course_transfer history row (from/to course + branch/vertical + fee
+   *     snapshots, reason, who).
+   * RBAC: scope-enforced via enrolmentInScope on the source AND a scope check on the target
+   * branch/vertical. IDEMPOTENT: transferring to the SAME course (same branch/vertical) is refused
+   * with a clear message rather than a no-op row. Guarded by student.update at the controller.
+   */
+  async transferEnrolmentCourse(enrolmentId: number, dto: any, me: { id: number }, scope: ResolvedScope, expectStudentId?: number) {
+    const enr = await this.enrolmentInScope(enrolmentId, scope);
+    if (expectStudentId != null && Number(enr.linked_student_id) !== Number(expectStudentId)) {
+      throw new NotFoundException('Enrolment not found for this student.');
+    }
+    const toCourseId = Number(dto?.to_course_id ?? dto?.course_id);
+    if (!toCourseId) throw new BadRequestException('Choose a course to transfer into.');
+    const course = await this.db.one<any>(
+      `SELECT id, name, meta FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [toCourseId]);
+    if (!course) throw new BadRequestException('Unknown target course.');
+
+    const fromCourseId = enr.course_id != null ? Number(enr.course_id) : null;
+    const fromBranchId = enr.branch_id != null ? Number(enr.branch_id) : null;
+    const fromVerticalId = enr.vertical_id != null ? Number(enr.vertical_id) : null;
+    const fromBatchId = enr.batch_id != null ? Number(enr.batch_id) : null;
+
+    // Target branch/vertical — default to the enrolment's own; honour an explicit choice, both
+    // scope-enforced so a course transfer can never cross a scope boundary.
+    let toVerticalId = fromVerticalId;
+    let toBranchId = fromBranchId;
+    if (dto?.to_vertical_id != null && String(dto.to_vertical_id).trim() !== '') {
+      const vv = await this.db.one<any>(
+        `SELECT id, branch_id FROM vertical WHERE id = $1::bigint AND deleted_at IS NULL`, [Number(dto.to_vertical_id)]);
+      if (!vv) throw new BadRequestException('Unknown vertical for this transfer.');
+      const vp: unknown[] = [Number(vv.id)];
+      const vw = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, vp);
+      const okV = await this.db.one<any>(
+        `SELECT v.id FROM vertical v WHERE v.id = $1::bigint AND v.deleted_at IS NULL AND ${vw}`, vp);
+      if (!okV) throw new BadRequestException('Target vertical is outside your access.');
+      toVerticalId = Number(vv.id);
+      toBranchId = dto?.to_branch_id != null && String(dto.to_branch_id).trim() !== ''
+        ? Number(dto.to_branch_id) : Number(vv.branch_id);
+    } else if (dto?.to_branch_id != null && String(dto.to_branch_id).trim() !== '') {
+      toBranchId = Number(dto.to_branch_id);
+    }
+    if (toVerticalId == null) throw new BadRequestException('A vertical is required for this transfer.');
+    // Only scope-check the target branch when it actually CHANGES — the enrolment's own branch is
+    // already reachable (it was loaded through the scoped enrolmentInScope).
+    if (toBranchId != null && Number(toBranchId) !== Number(fromBranchId ?? 0)) {
+      const bp: unknown[] = [toBranchId];
+      const bw = this.resolver.buildScopeWhere(scope, { branch: 'b.id' }, bp);
+      const okB = await this.db.one<any>(
+        `SELECT b.id FROM branch b WHERE b.id = $1::bigint AND b.deleted_at IS NULL AND ${bw}`, bp);
+      if (!okB) throw new BadRequestException('Target branch is outside your access.');
+    }
+
+    // IDEMPOTENT: same course in the same branch+vertical is a no-op.
+    if (fromCourseId === toCourseId && Number(fromVerticalId ?? 0) === Number(toVerticalId ?? 0)
+        && Number(fromBranchId ?? 0) === Number(toBranchId ?? 0)) {
+      throw new BadRequestException('The enrolment is already on that course.');
+    }
+
+    // Optional target batch — must live in the target branch+vertical AND teach the target course.
+    const rawBatch = dto?.to_batch_id ?? dto?.batch_id;
+    const wantsBatch = rawBatch !== undefined && rawBatch !== null && String(rawBatch).trim() !== '';
+    let toBatchId: number | null = null;
+    if (wantsBatch) {
+      toBatchId = Number(rawBatch);
+      if (!Number.isFinite(toBatchId) || toBatchId <= 0) throw new BadRequestException('Invalid target batch.');
+      const b = await this.db.one<any>(
+        `SELECT id FROM batch WHERE id = $1::bigint AND deleted_at IS NULL AND vertical_id = $2::bigint AND course_id = $3::bigint`,
+        [toBatchId, toVerticalId, toCourseId]);
+      if (!b) throw new BadRequestException("That batch is not in the target vertical for the target course.");
+    }
+
+    // FEE — recompute the gross from the TARGET Course master (or an explicit override), then
+    // re-apply the enrolment's existing discount to derive the new net.
+    let newGross: number;
+    if (dto?.fee_minor != null && String(dto.fee_minor).trim() !== '') {
+      newGross = Math.trunc(Number(dto.fee_minor));
+    } else {
+      const masterFee = Number((course.meta as any)?.fee ?? 0);
+      newGross = Math.round((Number.isFinite(masterFee) ? masterFee : 0) * 100);
+    }
+    if (!Number.isFinite(newGross) || newGross < 0) throw new BadRequestException('Fee must be a non-negative amount.');
+    // Carry the existing discount (type/value) forward; fall back to the stored discount amount.
+    let dType: EnrolmentDiscountType = 'none'; let dValue = 0;
+    const t = String(enr.discount_type ?? '').toLowerCase();
+    if (t === 'percent') { dType = 'percent'; dValue = Number(enr.discount_value ?? 0); }
+    else if (t === 'amount') { dType = 'amount'; dValue = Math.trunc(Number(enr.discount_value ?? enr.discount_amount_minor ?? 0)); }
+    else {
+      const amt = Math.trunc(Number(enr.discount_amount_minor ?? enr.discount_minor ?? 0));
+      if (amt > 0) { dType = 'amount'; dValue = amt; }
+    }
+    let dsc;
+    try { dsc = computeEnrolmentDiscount(newGross, dType, dValue); }
+    catch (e) { throw new BadRequestException((e as Error).message); }
+    const newNet = dsc.net_fee_minor;
+    const fromGross = enr.gross_fee_minor != null ? Number(enr.gross_fee_minor) : (enr.fee_minor != null ? Number(enr.fee_minor) : null);
+    const fromNet = enr.net_fee_minor != null ? Number(enr.net_fee_minor) : null;
+
+    const orgId = await this.orgId();
+    const studentId = enr.linked_student_id != null ? Number(enr.linked_student_id) : null;
+    const reason = dto?.reason != null && String(dto.reason).trim() !== '' ? String(dto.reason).trim() : null;
+
+    const out = await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment
+            SET course_id = $2::bigint, branch_id = $3::bigint, vertical_id = $4::bigint, batch_id = $5,
+                fee_minor = $6::bigint, gross_fee_minor = $6::bigint,
+                discount_type = $7::varchar, discount_value = $8::numeric,
+                discount_amount_minor = $9::bigint, discount_minor = $9::bigint,
+                net_fee_minor = $10::bigint, updated_at = now()
+          WHERE id = $1::bigint`,
+        [enrolmentId, toCourseId, toBranchId, toVerticalId, toBatchId,
+          newGross, dsc.discount_type, dsc.discount_value, dsc.discount_amount_minor, newNet]);
+
+      const th = await c.query<{ id: string }>(
+        `INSERT INTO enrolment_course_transfer
+           (org_id, enrolment_id, student_id, from_course_id, to_course_id,
+            from_branch_id, to_branch_id, from_vertical_id, to_vertical_id, from_batch_id, to_batch_id,
+            from_gross_fee_minor, to_gross_fee_minor, from_net_fee_minor, to_net_fee_minor,
+            reason, transferred_by)
+         VALUES ($1::bigint,$2::bigint,$3,$4,$5::bigint,$6,$7,$8,$9,$10,$11,$12,$13::bigint,$14,$15::bigint,$16,$17::bigint)
+         RETURNING id`,
+        [orgId, enrolmentId, studentId, fromCourseId, toCourseId,
+          fromBranchId, toBranchId, fromVerticalId, toVerticalId, fromBatchId, toBatchId,
+          fromGross, newGross, fromNet, newNet, reason, me.id]);
+
+      // Mint/attach the target vertical's vertical-wise Student ID (idempotent; only if we know
+      // the student — a lead-stage enrolment has none).
+      let svid: any = null;
+      if (studentId != null) svid = await this.ensureVerticalId(c, studentId, toBranchId, toVerticalId, me.id);
+
+      return {
+        id: enrolmentId, transfer_id: Number(th.rows[0].id), transferred: true,
+        from_course_id: fromCourseId, to_course_id: toCourseId, to_course_name: course.name,
+        from_vertical_id: fromVerticalId, to_vertical_id: toVerticalId,
+        from_branch_id: fromBranchId, to_branch_id: toBranchId,
+        batch_cleared: fromBatchId != null && toBatchId == null, to_batch_id: toBatchId,
+        gross_fee_minor: newGross, discount_type: dsc.discount_type, discount_value: dsc.discount_value,
+        discount_amount_minor: dsc.discount_amount_minor, net_fee_minor: newNet,
+        student_vertical_no: svid?.student_vertical_no ?? null,
+      };
+    });
+
+    // Outstanding recomputes from the new net (payments preserved).
+    const outstanding = await this.enrolmentOutstandingMinor(enrolmentId);
+    return { ...out, outstanding_minor: outstanding };
+  }
+
+  /** The per-enrolment COURSE-TRANSFER history trail (client feedback #8). Scope-enforced;
+   *  belongs-to-student optional. Names (courses/branch/vertical/who) so it reads + exports clean. */
+  async enrolmentCourseTransferHistory(enrolmentId: number, scope: ResolvedScope, expectStudentId?: number) {
+    const enr = await this.enrolmentInScope(enrolmentId, scope);
+    if (expectStudentId != null && Number(enr.linked_student_id) !== Number(expectStudentId)) {
+      throw new NotFoundException('Enrolment not found for this student.');
+    }
+    return this.db.query<any>(
+      `SELECT t.id, t.from_course_id, t.to_course_id, t.from_branch_id, t.to_branch_id,
+              t.from_vertical_id, t.to_vertical_id, t.from_batch_id, t.to_batch_id,
+              t.from_gross_fee_minor, t.to_gross_fee_minor, t.from_net_fee_minor, t.to_net_fee_minor,
+              t.reason, t.transferred_by, t.created_at,
+              fc.name AS from_course_name, tc.name AS to_course_name,
+              fb.name AS from_branch_name, tb.name AS to_branch_name,
+              fv.name AS from_vertical_name, tv.name AS to_vertical_name,
+              u.name AS transferred_by_name
+         FROM enrolment_course_transfer t
+         LEFT JOIN m_course fc ON fc.id = t.from_course_id
+         LEFT JOIN m_course tc ON tc.id = t.to_course_id
+         LEFT JOIN branch   fb ON fb.id = t.from_branch_id
+         LEFT JOIN branch   tb ON tb.id = t.to_branch_id
+         LEFT JOIN vertical fv ON fv.id = t.from_vertical_id
+         LEFT JOIN vertical tv ON tv.id = t.to_vertical_id
+         LEFT JOIN "user"   u  ON u.id = t.transferred_by
+        WHERE t.enrolment_id = $1::bigint
+        ORDER BY t.created_at DESC, t.id DESC`, [enrolmentId]);
   }
 
   /** The per-enrolment status transition trail. Scope-enforced; belongs-to-student optional. */
