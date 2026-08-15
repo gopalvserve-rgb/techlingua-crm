@@ -78,6 +78,20 @@ export function normaliseFrequency(v: unknown): BatchFrequency {
   return (BATCH_FREQUENCIES as readonly string[]).includes(s) ? (s as BatchFrequency) : 'custom';
 }
 
+/**
+ * BATCH DELIVERY MODE (migration 083, client feedback) — Offline / Online / Hybrid. Reuses the
+ * SAME seeded catalog the Course uses (course_delivery_def) so the value never drifts. Anything
+ * unknown falls back to 'Offline' (the sensible default, matching the column default + backfill).
+ */
+export const BATCH_DELIVERY_MODES = ['Offline', 'Online', 'Hybrid'] as const;
+export type BatchDeliveryMode = (typeof BATCH_DELIVERY_MODES)[number];
+
+/** Normalise/validate a delivery_mode value — anything unknown falls back to 'Offline'. */
+export function normaliseDeliveryMode(v: unknown): BatchDeliveryMode {
+  const s = String(v ?? '').trim();
+  return (BATCH_DELIVERY_MODES as readonly string[]).includes(s) ? (s as BatchDeliveryMode) : 'Offline';
+}
+
 /** Today (YYYY-MM-DD) in the app timezone (IST) — the day all derivation buckets against. */
 export function istTodayStr(): string {
   // en-CA renders YYYY-MM-DD; the timeZone option pins it to IST regardless of server TZ.
@@ -133,6 +147,7 @@ export class BatchService {
 
   async list(scope: ResolvedScope, f: {
     branch_id?: string; vertical_id?: string; course_id?: string; status?: string; q?: string;
+    trainer_id?: string; owner_id?: string; batch_type?: string; delivery_mode?: string;
     from?: string; to?: string; limit?: number;
   } = {}) {
     await this.refreshBatchStatuses();
@@ -146,10 +161,21 @@ export class BatchService {
     multi('bt.branch_id', f.branch_id);
     multi('bt.vertical_id', f.vertical_id);
     multi('bt.course_id', f.course_id);
+    // Trainer (assigned trainer user) + Owner (created_by) — numeric-id multi-select, each narrows.
+    multi('bt.trainer_id', f.trainer_id);
+    multi('bt.created_by', f.owner_id);
     // Multi-select status filter: ?status=active,upcoming (only the 7 valid codes are honoured).
     const statuses = String(f.status ?? '').split(',').map((x) => x.trim())
       .filter((x) => (BATCH_STATUS_CODES as readonly string[]).includes(x));
     if (statuses.length) { params.push(statuses); where.push(`bt.status = ANY($${params.length}::varchar[])`); }
+    // Multi-select batch-type filter: ?batch_type=weekend,online (only the 9 valid codes honoured).
+    const btypes = String(f.batch_type ?? '').split(',').map((x) => x.trim())
+      .filter((x) => (BATCH_TYPE_CODES as readonly string[]).includes(x));
+    if (btypes.length) { params.push(btypes); where.push(`bt.batch_type = ANY($${params.length}::varchar[])`); }
+    // Multi-select delivery-mode filter: ?delivery_mode=Online,Hybrid (only the 3 valid values).
+    const dmodes = String(f.delivery_mode ?? '').split(',').map((x) => x.trim())
+      .filter((x) => (BATCH_DELIVERY_MODES as readonly string[]).includes(x));
+    if (dmodes.length) { params.push(dmodes); where.push(`bt.delivery_mode = ANY($${params.length}::varchar[])`); }
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`bt.created_at >= $${params.length}::timestamptz`); }
     if (_dr.to) { params.push(_dr.to); where.push(`bt.created_at < ($${params.length}::date + 1)`); }
@@ -160,16 +186,19 @@ export class BatchService {
       `SELECT bt.id, bt.batch_code, bt.name, bt.status, bt.status_is_manual, bt.status_reason,
               sd.label AS status_label, sd.meaning AS status_meaning, sd.is_manual AS status_is_terminalable,
               bt.batch_type, td.label AS batch_type_label, bt.class_days, bt.frequency,
+              bt.delivery_mode, bt.description,
               bt.capacity, bt.room, bt.schedule,
               bt.start_date, bt.end_date, bt.branch_id, bt.vertical_id, bt.course_id, bt.trainer_id,
-              bt.created_at,
+              bt.created_by, bt.created_at,
               b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, u.name AS trainer_name,
+              cu.name AS owner_name,
               (SELECT count(*) FROM student st WHERE st.batch_id = bt.id AND st.deleted_at IS NULL)::int AS enrolled
          FROM batch bt
          LEFT JOIN branch  b  ON b.id = bt.branch_id
          LEFT JOIN vertical v ON v.id = bt.vertical_id
          LEFT JOIN m_course c ON c.id = bt.course_id
          LEFT JOIN "user"  u  ON u.id = bt.trainer_id
+         LEFT JOIN "user"  cu ON cu.id = bt.created_by
          LEFT JOIN batch_status_def sd ON sd.code = bt.status
          LEFT JOIN batch_type_def   td ON td.code = bt.batch_type
         WHERE ${where.join(' AND ')}
@@ -185,12 +214,14 @@ export class BatchService {
     const w = this.resolver.buildScopeWhere(scope, BATCH_SCOPE_COLS, params);
     const row = await this.db.one<any>(
       `SELECT bt.*, b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, u.name AS trainer_name,
+              cu.name AS owner_name,
               sd.label AS status_label, sd.meaning AS status_meaning, td.label AS batch_type_label
          FROM batch bt
          LEFT JOIN branch b ON b.id = bt.branch_id
          LEFT JOIN vertical v ON v.id = bt.vertical_id
          LEFT JOIN m_course c ON c.id = bt.course_id
          LEFT JOIN "user" u ON u.id = bt.trainer_id
+         LEFT JOIN "user" cu ON cu.id = bt.created_by
          LEFT JOIN batch_status_def sd ON sd.code = bt.status
          LEFT JOIN batch_type_def   td ON td.code = bt.batch_type
         WHERE bt.id = $1::bigint AND bt.deleted_at IS NULL AND ${w}`,
@@ -247,20 +278,27 @@ export class BatchService {
     const batchType = normaliseBatchType(dto?.batch_type);
     const frequency = normaliseFrequency(dto?.frequency);
     const classDays = normaliseClassDays(frequency, dto?.class_days);
+    // Delivery mode (083) — Offline/Online/Hybrid; unknown falls back to 'Offline'. A batch of
+    // type 'online' with no explicit delivery mode sensibly defaults to 'Online' (still settable).
+    let deliveryMode = normaliseDeliveryMode(dto?.delivery_mode);
+    if ((dto?.delivery_mode == null || String(dto.delivery_mode).trim() === '') && batchType === 'online') {
+      deliveryMode = 'Online';
+    }
+    const description = dto?.description == null || String(dto.description).trim() === '' ? null : String(dto.description).trim();
 
     return this.db.tx(async (c) => {
       const ins = await c.query<{ id: string }>(
         `INSERT INTO batch (org_id, name, branch_id, vertical_id, course_id, trainer_id,
                             capacity, room, schedule, start_date, end_date, status, status_is_manual,
                             status_changed_by, status_changed_at, remarks, created_by,
-                            batch_type, frequency, class_days)
+                            batch_type, frequency, class_days, delivery_mode, description)
          VALUES ($1::bigint, $2, $3::bigint, $4::bigint, $5::bigint, $6::bigint,
                  $7::int, $8, $9, $10::date, $11::date, $12, $13, $14::bigint, now(), $15, $16::bigint,
-                 $17, $18, $19::int[])
+                 $17, $18, $19::int[], $20, $21)
          RETURNING id`,
         [orgId, name, branchId, verticalId, courseId, trainerId, capacity,
           dto?.room ?? null, dto?.schedule ?? null, start, end, status, isManual, me.id,
-          dto?.remarks ?? null, me.id, batchType, frequency, classDays],
+          dto?.remarks ?? null, me.id, batchType, frequency, classDays, deliveryMode, description],
       );
       const id = Number(ins.rows[0].id);
       const code = wanted ?? `BAT-${String(id).padStart(4, '0')}`;
@@ -295,6 +333,9 @@ export class BatchService {
     if (dto?.remarks !== undefined) set('remarks', dto.remarks ?? null);
     // Batch type (081) — validated against the catalog (unknown -> 'regular').
     if (dto?.batch_type !== undefined) set('batch_type', normaliseBatchType(dto.batch_type));
+    // Delivery mode + description (083). delivery_mode normalises to Offline/Online/Hybrid.
+    if (dto?.delivery_mode !== undefined) set('delivery_mode', normaliseDeliveryMode(dto.delivery_mode));
+    if (dto?.description !== undefined) set('description', dto.description == null || String(dto.description).trim() === '' ? null : String(dto.description).trim());
     // Frequency + class_days (081) — a change to EITHER re-resolves the pair via the one rule.
     // A non-custom frequency derives class_days; 'custom' keeps the (sanitised) supplied list.
     if (dto?.frequency !== undefined || dto?.class_days !== undefined) {

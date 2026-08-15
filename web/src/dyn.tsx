@@ -3971,6 +3971,15 @@ const BATCH_STATUS_META: Record<string, { label: string; cls: string; meaning: s
   archived:  { label: 'Archived',  cls: 'b-gray',   meaning: 'Historical batch retained for records/reporting',        manual: true  },
 };
 const BATCH_STATUS_ORDER = ['upcoming', 'active', 'suspended', 'completed', 'cancelled', 'expired', 'archived'];
+/** The 9 batch-type codes + labels (matches batch_type_def / migration 081) — powers the Batch
+ *  Type list filter (EnumMulti). id == the stored code; name == the human label. */
+const BATCH_TYPE_OPTS: Array<{ id: string; name: string }> = [
+  { id: 'regular', name: 'Regular' }, { id: 'fast_track', name: 'Fast Track' },
+  { id: 'weekend', name: 'Weekend' }, { id: 'weekday', name: 'Weekday' },
+  { id: 'intensive', name: 'Intensive' }, { id: 'crash_course', name: 'Crash Course' },
+  { id: 'online', name: 'Online' }, { id: 'corporate', name: 'Corporate' },
+  { id: 'customized', name: 'Customized' },
+];
 const batchStatusMeta = (status: string) => BATCH_STATUS_META[status] ?? { label: status || '\u2014', cls: 'b-gray', meaning: '', manual: false };
 const batchStatusCell = (status: string): Cell => { const m = batchStatusMeta(status); return { b: [m.label, m.cls] }; };
 
@@ -5843,6 +5852,11 @@ function BatchesList() {
   const { scope: gScope, key: scopeKey } = useScope();
   const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
   const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
+  const [fCourses, setFCourses] = useState<number[]>([]);
+  const [fTrainers, setFTrainers] = useState<number[]>([]);
+  const [fOwners, setFOwners] = useState<number[]>([]);
+  const [fTypes, setFTypes] = useState<string[]>([]);
+  const [fModes, setFModes] = useState<string[]>([]);
   const [q, setQ] = useState('');
   const [fStatus, setFStatus] = useState<string[]>([]);
   useEffect(() => {
@@ -5850,9 +5864,28 @@ function BatchesList() {
     setFVerticals(gScope.verticals);
   }, [scopeKey]);
   const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
+  // Course options cascade off Branch/Vertical (a course's meta carries branch_id/vertical_id).
+  const cCourseOpts = ref.courses.filter((c: any) =>
+    (!fBranches.length || fBranches.includes(Number((c.meta as any)?.branch_id))) &&
+    (!fVerticals.length || fVerticals.includes(Number((c.meta as any)?.vertical_id))));
+  // Trainer filter offers ONLY Trainer-role users (dev/81) — the scoped /users list carries
+  // role_names (comma-joined). Falls back to all selectable users if role data is absent.
+  const trainerOpts = (() => {
+    const trs = selectableUsers(ref.users).filter((u: any) =>
+      String((u as any).role_names ?? '').split(',').map((r) => r.trim().toLowerCase()).includes('trainer'));
+    return trs.length ? trs : selectableUsers(ref.users);
+  })();
+  // Batch Type + Delivery Mode enum options (client feedback #10).
+  const typeOpts = BATCH_TYPE_OPTS;
+  const modeOpts = (ref.deliveryModes?.length ? ref.deliveryModes.map((m: any) => ({ id: String(m.id ?? m.name), name: String(m.name) })) : DELIVERY_MODES.map((m) => ({ id: m, name: m })));
   const params = new URLSearchParams();
   if (fBranches.length) params.set('branch_id', fBranches.join(','));
   if (fVerticals.length) params.set('vertical_id', fVerticals.join(','));
+  if (fCourses.length) params.set('course_id', fCourses.join(','));
+  if (fTrainers.length) params.set('trainer_id', fTrainers.join(','));
+  if (fOwners.length) params.set('owner_id', fOwners.join(','));
+  if (fTypes.length) params.set('batch_type', fTypes.join(','));
+  if (fModes.length) params.set('delivery_mode', fModes.join(','));
   if (fStatus.length) params.set('status', fStatus.join(','));
   if (q.trim()) params.set('q', q.trim());
   const list = useFetch<any[]>(`/batches?${params.toString()}`, [refreshTick, params.toString()]);
@@ -5875,24 +5908,35 @@ function BatchesList() {
         </div>
       )}
       <div className="filters">
+        {/* Batch list filters (client feedback #10): Branch > Vertical > Course > Trainer > Status
+            > Owner > Batch Type > Delivery Mode (all multi-select). Each genuinely narrows the query. */}
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
-          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
-        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); setFCourses((cur) => cur.filter((id) => ref.courses.some((c: any) => Number(c.id) === id && v.includes(Number((c.meta as any)?.branch_id))))); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+          onChange={(v) => { setFVerticals(v); setFCourses((cur) => cur.filter((id) => !v.length || ref.courses.some((c: any) => Number(c.id) === id && v.includes(Number((c.meta as any)?.vertical_id))))); }} options={vOpts} />
+        <FilterMulti label="Course" icon="book" value={fCourses} options={cCourseOpts} onChange={setFCourses} />
+        <FilterMulti label="Trainer" icon="users" value={fTrainers} options={trainerOpts} onChange={setFTrainers} />
         <BatchStatusMultiFilter value={fStatus} onChange={setFStatus} />
+        <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
+        <EnumMulti label="Batch Type" icon="grid" value={fTypes} options={typeOpts} onChange={setFTypes} />
+        <EnumMulti label="Delivery Mode" icon="grid" value={fModes} options={modeOpts} onChange={setFModes} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search batch name / code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
       </div>
       <TableCard fill title="Batches" icon="grid"
         more={<ListActions onExport={() => downloadObjectsCsv('batches.csv', rows)} onRefresh={() => list.reload()} />}
-        cols={['Batch', 'Course', 'Branch · Vertical', 'Trainer', 'Schedule', 'Capacity', 'Enrolled', 'Status', 'Actions']}
+        cols={['Batch', 'Course', 'Branch · Vertical', 'Trainer', 'Type', 'Delivery', 'Schedule', 'Capacity', 'Enrolled', 'Owner', 'Status', 'Actions']}
         empty="No batches yet — create one bound to a Branch → Vertical → Course."
         rows={rows.map((b) => [
           { node: <div><b className="nm">{b.name}</b><div className="sub mono">{b.batch_code ?? '—'}</div></div> } as Cell,
           b.course_name ?? '—',
           { node: <span>{b.branch_name ?? '—'}<div className="sub">{b.vertical_name ?? '—'}</div></span> } as Cell,
           b.trainer_name ?? '—',
+          b.batch_type_label ?? b.batch_type ?? '—',
+          b.delivery_mode ?? '—',
           b.schedule ?? '—',
           String(b.capacity ?? 0),
           String(b.enrolled ?? 0),
+          b.owner_name ?? '—',
           batchStatusCell(b.status),
           rowActions({
             onView: () => setEdit(b),
@@ -5938,6 +5982,10 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
   const [frequency, setFrequency] = useState<string>(initial?.frequency ? String(initial.frequency) : 'custom');
   const [classDays, setClassDays] = useState<number[]>(
     Array.isArray(initial?.class_days) ? initial.class_days.map(Number).filter((n: number) => n >= 1 && n <= 7) : []);
+  // Delivery Mode + Description (083, client feedback). Delivery mode reuses the course catalog
+  // (Offline / Online / Hybrid); both persist on create AND edit.
+  const [deliveryMode, setDeliveryMode] = useState<string>(initial?.delivery_mode ? String(initial.delivery_mode) : 'Offline');
+  const [description, setDescription] = useState<string>(initial?.description ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -5987,6 +6035,9 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
       batch_type: batchType || 'regular',
       frequency: frequency || 'custom',
       class_days: classDays,
+      // Delivery Mode + Description (083) — sent on BOTH create and edit.
+      delivery_mode: deliveryMode || 'Offline',
+      description: description.trim() || null,
     };
     // Status is only set on CREATE (an explicit manual status pins it; otherwise the server
     // DERIVES upcoming/active/expired from the dates). On EDIT the status is changed via the
@@ -6069,6 +6120,14 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
               </select>
             </div>
             <div className="fld">
+              <label htmlFor="b-delivery">Delivery mode</label>
+              <select id="b-delivery" className="ainp" value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)}>
+                {((ref.deliveryModes?.length ? ref.deliveryModes.map((m: any) => String(m.name)) : DELIVERY_MODES)).map((m: string) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div className="fld">
               <label htmlFor="b-freq">Frequency</label>
               <select id="b-freq" className="ainp" value={frequency} onChange={(e) => onFrequency(e.target.value)}>
                 <option value="daily">Daily</option>
@@ -6107,6 +6166,10 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
             <div className="fld">
               <label htmlFor="b-end">End date</label>
               <input id="b-end" className="ainp" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </div>
+            <div className="fld" style={{ gridColumn: '1 / -1' }}>
+              <label htmlFor="b-desc">Description</label>
+              <textarea id="b-desc" className="ainp" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notes about this batch (optional)" />
             </div>
             <div className="fld" style={{ gridColumn: '1 / -1' }}>
               <label htmlFor="b-status">Status</label>
