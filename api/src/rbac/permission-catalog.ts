@@ -171,4 +171,8 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'results', label: 'Results & Grades (release)', actions: ['read', 'publish'] },
   { module: 'course_content', label: 'Course Content', actions: ['read', 'create', 'update', 'delete', 'submit', 'approve'] },
   { module: 'syllabus', label: 'Syllabus', actions: ['read', 'create', 'update', 'delete', 'submit', 'approve'] },
+  // Placement Support — Batch (migration 086). Staff post job openings + track applications;
+  // eligible students access via the student-facing /students/:id/placements path.
+  { module: 'placement', label: 'Placement Support', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'placement_application', label: 'Placement Applications', actions: ['read', 'create', 'update', 'delete'] },
 ];

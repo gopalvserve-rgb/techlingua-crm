@@ -56,6 +56,7 @@ import { FinanceSettings } from './financesettings';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
 import { CourseContentScreen, SyllabusScreen } from './academics-content';
+import { PlacementsScreen, PlacementsTab } from './placements';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { InvoicesScreen, FinanceDashboard } from './invoices';
 import { PaymentPlansScreen, FeeDuesScreen, PlanCreateModal, PlanDetailModal } from './paymentplans';
@@ -4725,6 +4726,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
     ['family', 'Family', 'users'], ['address', 'Address', 'note'], ['ids', 'ID & Documents', 'doc'], ['idcard', 'ID Card', 'award'],
     ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
     ['status', 'Status & LMS', 'flag'], ['enrollments', 'Course Enrollment', 'grid'], ['learning', 'Syllabus', 'book'],
+    ['placements', 'Placements', 'target'],
     ['admission', 'Admission Journey', 'check'],
     ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
   ];
@@ -5143,6 +5145,10 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               ))}</tbody></table>
           ) : <Empty t="No course enrollments yet — use the Enroll in another course button." />}
         </Section>
+      )}
+
+      {tab === 'placements' && (
+        <PlacementsTab studentId={student.id} canApply={can('student.update')} />
       )}
 
       {tab === 'learning' && (
@@ -6537,6 +6543,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   studyMaterial: StudyMaterialScreen,
   courseContent: CourseContentScreen,
   syllabus: SyllabusScreen,
+  placements: PlacementsScreen,
   admissionsList: AdmissionsScreen,
   certificates: CertificatesScreen,
   reportCards: ReportCardsScreen,

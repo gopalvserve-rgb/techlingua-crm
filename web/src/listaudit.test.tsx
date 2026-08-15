@@ -101,6 +101,8 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'StudyMaterialScreen', file: 'learning.tsx', req: FULL },
   { name: 'CourseContentScreen', file: 'academics-content.tsx', req: FULL },
   { name: 'SyllabusScreen', file: 'academics-content.tsx', req: FULL },
+  // ---- Students & Academics · Placement Support (client #14) ----
+  { name: 'PlacementsScreen', file: 'placements.tsx', req: FULL },
   { name: 'CertificatesScreen', file: 'learning.tsx', req: FULL },
   { name: 'ReportCardsScreen', file: 'learning.tsx', req: FULL },
   // ---- ERP · Admissions ----
