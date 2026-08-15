@@ -416,8 +416,8 @@ export class LeadsService {
 
   activities(leadId: number) {
     return this.db.query(
-      `SELECT a.id, a.type, a.from_value, a.to_value, a.note, a.occurred_at, u.name AS actor_name
-         FROM lead_activity a LEFT JOIN "user" u ON u.id = a.actor_id
+      `SELECT a.id, a.type, a.from_value, a.to_value, a.note, a.occurred_at, a.actor_name
+         FROM lead_activity a
         WHERE a.lead_id = $1 ORDER BY a.occurred_at DESC, a.id DESC LIMIT 200`,
       [leadId],
     );

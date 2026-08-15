@@ -26,8 +26,8 @@ export class AuditController {
     if (dr.to) { params.push(dr.to); where.push(`a.occurred_at::date <= $${params.length}::date`); }
     params.push(Math.min(Number(limit) || 100, 500));
     return this.db.query(
-      `SELECT a.*, u.name AS actor_name
-         FROM audit_log a LEFT JOIN "user" u ON u.id = a.actor_id
+      `SELECT a.*
+         FROM audit_log a
         WHERE ${where.join(' AND ')}
         ORDER BY a.occurred_at DESC
         LIMIT $${params.length}`,
