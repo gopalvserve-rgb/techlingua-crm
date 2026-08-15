@@ -3911,8 +3911,43 @@ const LMS_HINT: Record<LmsAccess, string> = {
 };
 const statusMeta = (status: string) => STUDENT_STATUS_META[status] ?? { label: status || '—', cls: 'b-gray', lms: 'full' as LmsAccess };
 const studentStatusCell = (status: string): Cell => { const m = statusMeta(status); return { b: [m.label, m.cls] }; };
-const batchStatusCell = (status: string): Cell =>
-  ({ b: [status === 'active' ? 'Active' : status === 'completed' ? 'Completed' : 'Cancelled', status === 'active' ? 'b-green' : status === 'completed' ? 'b-indigo' : 'b-gray'] });
+/* BATCH STATUS LIFECYCLE (migration 080) — 7 codes with colour-coded badges + meanings.
+ * upcoming/active/expired are date-derived (IST); completed/cancelled/suspended/archived are
+ * MANUAL (set by a user, stick over the date logic). batch_status_def is the source of truth. */
+const BATCH_STATUS_META: Record<string, { label: string; cls: string; meaning: string; manual: boolean }> = {
+  upcoming:  { label: 'Upcoming',  cls: 'b-cyan',   meaning: 'Batch is confirmed but classes have not started',         manual: false },
+  active:    { label: 'Active',    cls: 'b-green',  meaning: 'Classes are currently running',                          manual: false },
+  suspended: { label: 'Suspended', cls: 'b-amber',  meaning: 'Batch temporarily paused',                              manual: true  },
+  completed: { label: 'Completed', cls: 'b-indigo', meaning: 'All scheduled classes/course activities completed',      manual: true  },
+  cancelled: { label: 'Cancelled', cls: 'b-red',    meaning: 'Batch cancelled before or after starting',              manual: true  },
+  expired:   { label: 'Expired',   cls: 'b-rose',   meaning: 'Batch end date passed without formal completion/closure', manual: false },
+  archived:  { label: 'Archived',  cls: 'b-gray',   meaning: 'Historical batch retained for records/reporting',        manual: true  },
+};
+const BATCH_STATUS_ORDER = ['upcoming', 'active', 'suspended', 'completed', 'cancelled', 'expired', 'archived'];
+const batchStatusMeta = (status: string) => BATCH_STATUS_META[status] ?? { label: status || '\u2014', cls: 'b-gray', meaning: '', manual: false };
+const batchStatusCell = (status: string): Cell => { const m = batchStatusMeta(status); return { b: [m.label, m.cls] }; };
+
+/* Multi-select STATUS filter for the Batches list — the 7 lifecycle codes (string-valued, so a
+ * native <details> popover like the students' StatusMultiFilter). */
+function BatchStatusMultiFilter({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const toggle = (code: string) => onChange(value.includes(code) ? value.filter((c) => c !== code) : [...value, code]);
+  const label = value.length ? `${value.length} selected` : 'All statuses';
+  return (
+    <details className="fmulti" data-testid="fm-batch-status" style={{ position: 'relative' }}>
+      <summary className="fmulti-lbl" style={{ cursor: 'pointer', listStyle: 'none' }}><Ic k="check" />Status: {label}</summary>
+      <div style={{ position: 'absolute', zIndex: 40, top: '100%', left: 0, marginTop: 6, minWidth: 210, maxHeight: 320, overflow: 'auto',
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 6, boxShadow: '0 8px 24px rgba(0,0,0,.18)' }}>
+        {BATCH_STATUS_ORDER.map((code) => { const m = BATCH_STATUS_META[code]; return (
+          <label key={code} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 6px', fontSize: 12, cursor: 'pointer' }}>
+            <input type="checkbox" checked={value.includes(code)} onChange={() => toggle(code)} data-testid={`fm-batch-status-${code}`} />
+            <span className={m.cls} style={{ padding: '1px 8px', borderRadius: 999 }}>{m.label}</span>
+          </label>
+        ); })}
+        {value.length ? <button className="btn ghost" style={{ width: '100%', marginTop: 4, fontSize: 12 }} onClick={() => onChange([])}>Clear</button> : null}
+      </div>
+    </details>
+  );
+}
 
 /** THE STUDENT DASHBOARD — real numbers from students/enrolments/fees, RBAC- + scope- +
  *  date-aware. Every KPI card opens the filtered student list (docs/dev/22 pattern). */
@@ -5755,6 +5790,7 @@ function BatchesList() {
   const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
   const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
   const [q, setQ] = useState('');
+  const [fStatus, setFStatus] = useState<string[]>([]);
   useEffect(() => {
     setFBranches(gScope.branches);
     setFVerticals(gScope.verticals);
@@ -5763,6 +5799,7 @@ function BatchesList() {
   const params = new URLSearchParams();
   if (fBranches.length) params.set('branch_id', fBranches.join(','));
   if (fVerticals.length) params.set('vertical_id', fVerticals.join(','));
+  if (fStatus.length) params.set('status', fStatus.join(','));
   if (q.trim()) params.set('q', q.trim());
   const list = useFetch<any[]>(`/batches?${params.toString()}`, [refreshTick, params.toString()]);
   const rows = list.data ?? [];
@@ -5772,6 +5809,8 @@ function BatchesList() {
   const canEdit = can('batch.update');
   const del = useDelete('Batch', '/batches', () => { list.reload(); bump(); });
   const [roster, setRoster] = useState<any | null>(null);
+  const [statusFor, setStatusFor] = useState<any | null>(null);
+  const [historyFor, setHistoryFor] = useState<any | null>(null);
   const after = () => { list.reload(); bump(); };
 
   return (
@@ -5785,6 +5824,7 @@ function BatchesList() {
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
           onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
         <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
+        <BatchStatusMultiFilter value={fStatus} onChange={setFStatus} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search batch name / code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
       </div>
       <TableCard fill title="Batches" icon="grid"
@@ -5804,11 +5844,17 @@ function BatchesList() {
             onView: () => setEdit(b),
             onEdit: canEdit ? () => setEdit(b) : undefined,
             onDelete: can('batch.delete') ? () => del.openDelete(Number(b.id), b.name) : undefined,
-            extra: [{ k: 'grid', title: 'Roster / Transfer / Waitlist', onClick: () => setRoster(b) }],
+            extra: [
+              { k: 'grid', title: 'Roster / Transfer / Waitlist', onClick: () => setRoster(b) },
+              ...(canEdit ? [{ k: 'flag', title: 'Change status', onClick: () => setStatusFor(b) }] : []),
+              { k: 'list', title: 'Status history', onClick: () => setHistoryFor(b) },
+            ],
           }),
         ])} />
       {del.deleteModal}
       {roster && <BatchRosterModal batch={roster} onClose={() => setRoster(null)} onChanged={after} />}
+      {statusFor && <BatchStatusModal batch={statusFor} onClose={() => setStatusFor(null)} onDone={() => { setStatusFor(null); after(); }} />}
+      {historyFor && <BatchStatusHistoryModal batch={historyFor} onClose={() => setHistoryFor(null)} />}
       {modal && <BatchModal onClose={() => setModal(false)} onSaved={after} />}
       {edit && <BatchModal initial={edit} onClose={() => setEdit(null)} onSaved={after} />}
     </>
@@ -5829,7 +5875,7 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
   const [schedule, setSchedule] = useState<string>(initial?.schedule ?? '');
   const [startDate, setStartDate] = useState<string>(initial?.start_date ? String(initial.start_date).slice(0, 10) : '');
   const [endDate, setEndDate] = useState<string>(initial?.end_date ? String(initial.end_date).slice(0, 10) : '');
-  const [status, setStatus] = useState<string>(initial?.status ?? 'active');
+  const [status, setStatus] = useState<string>(initial?.status ? String(initial.status) : '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -5851,8 +5897,12 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
       trainer_id: trainerId ? Number(trainerId) : null,
       capacity: capacity === '' ? 0 : Number(capacity),
       room: room || null, schedule: schedule || null,
-      start_date: startDate || null, end_date: endDate || null, status,
+      start_date: startDate || null, end_date: endDate || null,
     };
+    // Status is only set on CREATE (an explicit manual status pins it; otherwise the server
+    // DERIVES upcoming/active/expired from the dates). On EDIT the status is changed via the
+    // dedicated Change-status action (manual-sticky + history), never a plain save.
+    if (!initial?.id && status) body.status = status;
     try {
       if (initial?.id) await api.patch(`/batches/${initial.id}`, body);
       else await api.post('/batches', body);
@@ -5929,13 +5979,29 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
               <label htmlFor="b-end">End date</label>
               <input id="b-end" className="ainp" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
             </div>
-            <div className="fld">
+            <div className="fld" style={{ gridColumn: '1 / -1' }}>
               <label htmlFor="b-status">Status</label>
-              <select id="b-status" className="ainp" value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="active">Active</option>
-                <option value="completed">Completed</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
+              {initial?.id ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className={batchStatusMeta(String(initial.status)).cls} style={{ padding: '2px 10px', borderRadius: 999 }}>{batchStatusMeta(String(initial.status)).label}</span>
+                  <span className="sub" style={{ fontSize: 11 }}>Use the <b>Change status</b> action on the list to move a batch through its lifecycle.</span>
+                </div>
+              ) : (
+                <>
+                  <select id="b-status" className="ainp" value={status} onChange={(e) => setStatus(e.target.value)}>
+                    <option value="">Auto — derive from dates (Upcoming / Active / Expired)</option>
+                    <option value="upcoming">Upcoming</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                  <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>
+                    {status ? batchStatusMeta(status).meaning : 'Before start → Upcoming · within start–end → Active · after end → Expired (IST).'}
+                  </div>
+                </>
+              )}
             </div>
           </div>
           {err && <div className="form-err" style={{ marginTop: 8 }}>{err}</div>}
@@ -5946,6 +6012,83 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
         </div>
       </div>
     </div>
+  );
+}
+
+
+/** CHANGE BATCH STATUS — the lifecycle transition (migration 080). Choosing a MANUAL status
+ *  (Completed / Cancelled / Suspended / Archived) pins it (it sticks over the date logic);
+ *  choosing an AUTO status (Upcoming / Active / Expired) — i.e. RESUMING a suspended batch —
+ *  clears the pin and re-derives from the dates. Guarded server-side by batch.update. */
+export function BatchStatusModal({ batch, onClose, onDone }: { batch: any; onClose: () => void; onDone: () => void }) {
+  const catalog = useFetch<any[]>(`/batches/status-catalog`, []);
+  const all = catalog.data ?? [];
+  const cur = batchStatusMeta(String(batch.status));
+  const [toStatus, setToStatus] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const def = all.find((o) => o.code === toStatus);
+  const post = async (code: string) => {
+    if (!code) { toast('Choose a status.', true); return; }
+    setBusy(true);
+    try {
+      const res = await api.post<any>(`/batches/${batch.id}/status`, { to_status: code, reason: reason.trim() || null });
+      toast(res?.unchanged ? 'Status unchanged.' : (res?.resumed ? `Batch resumed → ${batchStatusMeta(res?.status).label}.` : `Batch set to ${batchStatusMeta(res?.to_status ?? code).label}.`));
+      onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+  const isSuspended = String(batch.status) === 'suspended';
+  return (
+    <DetailModal title={`Change status — ${batch.name}`} icon="flag" onClose={onClose} width={560}
+      footer={<button className="btn primary" onClick={() => post(toStatus)} disabled={busy || !toStatus} data-testid="batch-status-save"><Ic k="flag" />Update status</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}>
+        <Ic k="flag" /><div>Currently <span className={cur.cls} style={{ padding: '1px 8px', borderRadius: 999 }}>{cur.label}</span>{batch.status_is_manual ? ' · manually set (sticks over dates)' : ' · auto (derived from dates, IST)'}.</div>
+      </div>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label>Quick actions</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {isSuspended && <button className="btn" disabled={busy} onClick={() => post('active')} data-testid="batch-status-resume">Resume</button>}
+            <button className="btn" disabled={busy} onClick={() => post('suspended')}>Suspend</button>
+            <button className="btn" disabled={busy} onClick={() => post('completed')}>Complete</button>
+            <button className="btn" disabled={busy} onClick={() => post('cancelled')}>Cancel</button>
+            <button className="btn" disabled={busy} onClick={() => post('archived')}>Archive</button>
+          </div>
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="bs-status">Or pick a status</label>
+          <select id="bs-status" className="ainp" value={toStatus} disabled={busy} onChange={(e) => setToStatus(e.target.value)} data-testid="batch-status-select">
+            <option value="">— Choose status —</option>
+            {(all.length ? all : BATCH_STATUS_ORDER.map((c) => ({ code: c, ...BATCH_STATUS_META[c] }))).map((o: any) => (
+              <option key={o.code} value={o.code}>{o.label}{o.is_manual || BATCH_STATUS_META[o.code]?.manual ? ' (manual)' : ' (auto)'}</option>
+            ))}
+          </select>
+          {def ? <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>{def.meaning}</div> : (toStatus ? <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>{batchStatusMeta(toStatus).meaning}</div> : null)}
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="bs-reason">Reason (optional)</label>
+          <input id="bs-reason" className="ainp" value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Trainer on leave — paused for 2 weeks" />
+        </div>
+      </div>
+    </DetailModal>
+  );
+}
+
+/** The batch status transition trail. */
+export function BatchStatusHistoryModal({ batch, onClose }: { batch: any; onClose: () => void }) {
+  const hist = useFetch<any[]>(`/batches/${batch.id}/status-history`, [batch.id]);
+  const rows = hist.data ?? [];
+  return (
+    <DetailModal title={`Status history — ${batch.name}`} icon="list" onClose={onClose} width={640}>
+      {rows.length ? (
+        <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Set</th><th>Reason</th><th>By</th></tr></thead>
+          <tbody>{rows.map((h: any) => (
+            <tr key={h.id}><td>{fmtFull(h.changed_at)}</td><td>{h.from_label ?? h.from_status ?? '—'}</td>
+              <td>{renderCell(batchStatusCell(h.to_status))}</td><td>{h.is_manual ? 'Manual' : 'Auto'}</td>
+              <td>{h.reason ?? '—'}</td><td>{h.changed_by_name ?? '—'}</td></tr>
+          ))}</tbody></table>
+      ) : <div className="empty-note">No status changes yet.</div>}
+    </DetailModal>
   );
 }
 

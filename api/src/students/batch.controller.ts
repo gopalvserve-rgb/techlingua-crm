@@ -5,10 +5,18 @@ import { BatchService } from './batch.service';
 
 interface Me { id: number; name: string }
 
-/** Students & Academics › Batches. A batch is bound to Branch -> Vertical -> Course. */
+/** Students & Academics › Batches. A batch is bound to Branch -> Vertical -> Course and carries
+ *  a 7-code lifecycle status (upcoming/active/completed/cancelled/expired/archived/suspended). */
 @Controller('batches')
 export class BatchController {
   constructor(private readonly svc: BatchService) {}
+
+  /** The batch-status lifecycle CATALOG (labels + meanings) — powers the Change-Status UI. */
+  @Get('status-catalog')
+  @RequirePermission('batch.read')
+  statusCatalog() {
+    return this.svc.statusCatalog();
+  }
 
   @Get()
   @RequirePermission('batch.read')
@@ -32,6 +40,21 @@ export class BatchController {
   @RequirePermission('batch.update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     return this.svc.update(id, dto, me, scope);
+  }
+
+  /** CHANGE STATUS — manual statuses stick; auto statuses re-derive from dates (resume). Guarded
+   *  by batch.update (same gate as create/update) and scope-enforced inside the service. */
+  @Post(':id/status')
+  @RequirePermission('batch.update')
+  changeStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.changeStatus(id, dto, me, scope);
+  }
+
+  /** The status transition trail (who / when / from → to / manual? / reason). */
+  @Get(':id/status-history')
+  @RequirePermission('batch.read')
+  statusHistory(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.statusHistory(id, scope);
   }
 
   @Delete(':id')
