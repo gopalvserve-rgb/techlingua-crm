@@ -38,6 +38,12 @@ export interface FormField {
   /** Custom-field mapping (client, Aug 2026): when set, this field is a lead custom field —
    *  its VALUE persists into lead.custom_fields under this `cfKey` (see customfields.tsx). */
   cfKey?: string;
+  /** Restrict a `src:'users'` picker to users who hold a given system role by NAME
+   *  (e.g. 'Trainer' on the batch Trainer/Faculty field). Filters on the `role_names`
+   *  already returned by the scoped /users list, so it stays branch/vertical-scoped;
+   *  a value already stored on the record (edit prefill) is kept even if the user no
+   *  longer holds that role (legacy passthrough). */
+  role?: string;
 }
 export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src'], self?: 0 | 1 | boolean, def?: string): FormField =>
   ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src, self: !!self, def });
@@ -220,7 +226,9 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
     F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
-    F('Start Date', 'date', 1), F('End Date', 'date', 1), F('Class Timing', 'text', 1), F('Capacity (Max Seats)', 'number', 1), F('Trainer / Faculty Assigned', 'select', 0, 0, 'Employee master', 'users'),
+    F('Start Date', 'date', 1), F('End Date', 'date', 1), F('Class Timing', 'text', 1), F('Capacity (Max Seats)', 'number', 1),
+    // Client feedback: offer ONLY Trainer-role users here, not every user.
+    { ...F('Trainer / Faculty Assigned', 'select', 0, 0, 'Trainer-role users only', 'users'), role: 'Trainer' },
     F('Mode', 'select', 1, ['Online', 'Offline', 'Hybrid']), F('Status', 'select', 1, ['Upcoming', 'Ongoing', 'Completed', 'Cancelled'])] },
   'finance.invoices': { title: 'Add Invoice', fields: [
     F('Invoice Number', 'auto', 1, 0, 'Auto-generated'), F('Student', 'lookup', 1, 0, 'Student master'), F('Branch', 'auto', 1, 0, 'Auto-filled from Admission'), F('Vertical', 'select', 1, 0, 'invoice created & numbered per vertical', 'verticals'), F('Course / Batch', 'auto', 1, 0, 'Auto-filled from Admission'),
@@ -960,6 +968,17 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     let list: Named[] = (ref as any)[f.src!] ?? [];
     // DEF-1: never offer a deactivated user — but keep the one already selected (edit/prefill).
     if (f.src === 'users') list = selectableUsers(list, ids[f.label] ?? null);
+    // Role-restricted user picker (e.g. batch Trainer/Faculty → Trainer role only). The scoped
+    // /users list already carries `role_names` (comma-joined), so this stays branch/vertical-scoped.
+    // A value already stored on the record (edit prefill) is kept even if that user isn't a Trainer
+    // any more, so an existing batch's assigned trainer never drops out of the dropdown.
+    if (f.src === 'users' && f.role) {
+      const want = f.role.trim().toLowerCase();
+      const keep = ids[f.label] ?? null;
+      const holdsRole = (u: Named) => String((u as any).role_names ?? '')
+        .split(',').map((r) => r.trim().toLowerCase()).includes(want);
+      list = list.filter((u) => holdsRole(u) || (keep != null && Number(u.id) === Number(keep)));
+    }
     // cascade by parent selection where the hierarchy applies. A child is filtered to its
     // parent's choice; where the parent select is present on THIS form but not yet chosen,
     // the child is EMPTY (you can't pick a Vertical before its Branch). Forms that carry a

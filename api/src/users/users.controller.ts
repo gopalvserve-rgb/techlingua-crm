@@ -7,12 +7,12 @@ import { ResolvedScope } from '../rbac/rbac.types';
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 
-  /** UAT filters: ?q= (name/email) &role_id= &branch_id= &status=active|disabled — all scope-safe. */
+  /** UAT filters: ?q= (name/email) &role_id= &role=<name> &branch_id= &status=active|disabled — all scope-safe. */
   @Get()
   @RequirePermission('user.read')
   list(
     @CurrentScope() scope: ResolvedScope, @CurrentUser() user: { id: number },
-    @Query('q') q?: string, @Query('role_id') roleId?: string,
+    @Query('q') q?: string, @Query('role_id') roleId?: string, @Query('role') role?: string,
     @Query('branch_id') branchId?: string, @Query('status') status?: string,
     @Query('role_ids') roleIds?: string | string[], @Query('branch_ids') branchIds?: string | string[],
   ) {
@@ -25,6 +25,7 @@ export class UsersController {
     return this.users.list(scope, user.id, {
       q,
       role_id: roleId ? Number(roleId) : undefined,
+      role: role || undefined,
       branch_id: branchId ? Number(branchId) : undefined,
       role_ids: nums(roleIds),
       branch_ids: nums(branchIds),

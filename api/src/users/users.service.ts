@@ -15,6 +15,10 @@ export interface UserListFilters {
   // Multi-select (client, Aug 2026): OR within a filter -> EXISTS ... IN (...); singular kept.
   role_ids?: number[];
   branch_ids?: number[];
+  /** filter to users who hold a role by NAME (e.g. ?role=Trainer) — case-insensitive,
+   *  matches "has at least one active assignment with that role". Used by the batch
+   *  Trainer/Faculty picker so only Trainer-role users are offered. */
+  role?: string;
 }
 
 /**
@@ -34,6 +38,11 @@ export function buildUserFilters(f: UserListFilters, params: unknown[]): string 
   if (roleIds.length) {
     const ph = roleIds.map((v) => { params.push(v); return `$${params.length}`; });
     sql += ` AND EXISTS (SELECT 1 FROM user_assignment fa WHERE fa.user_id = u.id AND fa.is_active AND fa.role_id IN (${ph.join(',')}))`;
+  }
+  if (f.role?.trim()) {
+    params.push(f.role.trim());
+    sql += ` AND EXISTS (SELECT 1 FROM user_assignment fr JOIN role rr ON rr.id = fr.role_id`
+        + ` WHERE fr.user_id = u.id AND fr.is_active AND rr.name ILIKE $${params.length})`;
   }
   const branchIds = ids(f.branch_id, f.branch_ids);
   if (branchIds.length) {

@@ -30,6 +30,28 @@ describe('buildUserFilters (UAT users-list filters)', () => {
     expect(params).toEqual(['x', 7]);
   });
 
+  it('role (by name) filters to users holding that active role, case-insensitively', () => {
+    const params: unknown[] = ['scope'];
+    const sql = buildUserFilters({ role: 'Trainer' }, params);
+    // EXISTS over an active assignment joined to role, matched by name (ILIKE = case-insensitive exact)
+    expect(sql).toContain('JOIN role rr ON rr.id = fr.role_id');
+    expect(sql).toContain('fr.is_active');
+    expect(sql).toContain('rr.name ILIKE $2');
+    expect(params).toEqual(['scope', 'Trainer']);
+  });
+
+  it('blank role is ignored (no clause, no param)', () => {
+    const params: unknown[] = [];
+    expect(buildUserFilters({ role: '   ' }, params)).toBe('');
+    expect(params).toEqual([]);
+  });
+
+  it('role trims surrounding whitespace before matching', () => {
+    const params: unknown[] = [];
+    buildUserFilters({ role: '  Trainer  ' }, params);
+    expect(params).toEqual(['Trainer']);
+  });
+
   it('branch_id filters via active assignments', () => {
     const params: unknown[] = [];
     const sql = buildUserFilters({ branch_id: 3 }, params);
