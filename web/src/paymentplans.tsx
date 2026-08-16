@@ -14,7 +14,7 @@ import { Ic } from './icons';
 import { Cell, Kpis, HBars, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { useScope } from './scope';
-import { FilterMulti, EnrolmentFeeSetupModal } from './dyn';
+import { FilterMulti, EnumMulti, EnrolmentFeeSetupModal } from './dyn';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 import { CollectModal } from './sprint5';
@@ -387,7 +387,7 @@ export function FeeDuesScreen() {
         <FilterMulti label="Vertical" icon="ops" value={fVerticals} options={(ref.verticals ?? []) as any} onChange={setFVerticals} />
         <FilterMulti label="Course" icon="book" value={fCourses} options={(ref.courses ?? []) as any} onChange={setFCourses} />
         <FilterMulti label="Trainer" icon="users" value={fTrainers} options={trainerOpts as any} onChange={setFTrainers} />
-        <FilterMulti label="Status" icon="flag" value={fStatus as any} options={statusOpts as any} onChange={setFStatus as any} />
+        <EnumMulti label="Status" icon="flag" value={fStatus} options={statusOpts} onChange={setFStatus} />
         <FilterMulti label="Owner" icon="users" value={fOwners} options={owners as any} onChange={setFOwners} />
       </div>
       <TableCard fill title="Fee Management" icon="clock"
