@@ -6268,6 +6268,8 @@ function BatchesList() {
   const [roster, setRoster] = useState<any | null>(null);
   const [statusFor, setStatusFor] = useState<any | null>(null);
   const [historyFor, setHistoryFor] = useState<any | null>(null);
+  const [msgFor, setMsgFor] = useState<any | null>(null);
+  const [bulkMsgOpen, setBulkMsgOpen] = useState(false);
   const after = () => { list.reload(); bump(); };
   // Select-batch: per-row + select-all checkboxes drive a bulk action bar (bulk STATUS change +
   // bulk delete), reusing the app's useTableSelect + useBulkDelete pattern. Individual row actions
@@ -6306,6 +6308,7 @@ function BatchesList() {
           <button className="btn" type="button" onClick={_sel.clear}>Clear</button>
           <span style={{ flex: 1 }} />
           {canEdit && <button className="btn" type="button" onClick={() => setBulkStatusOpen(true)} data-testid="bulk-batch-status"><Ic k="flag" />Change status</button>}
+          {canEdit && <button className="btn" type="button" onClick={() => setBulkMsgOpen(true)} data-testid="bulk-batch-message"><Ic k="send" />Send message</button>}
           {can('batch.delete') && <button className="btn" type="button" onClick={() => _bd.openBulk(_sel.selected)} data-testid="bulk-delete"
             style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' }}><Ic k="trash" />Delete batches</button>}
         </div>
@@ -6333,6 +6336,7 @@ function BatchesList() {
             onDelete: can('batch.delete') ? () => del.openDelete(Number(b.id), b.name) : undefined,
             extra: [
               { k: 'grid', title: 'Roster / Transfer / Waitlist', onClick: () => setRoster(b) },
+              ...(canEdit ? [{ k: 'send', title: 'Send message to students', onClick: () => setMsgFor(b) }] : []),
               ...(canEdit ? [{ k: 'flag', title: 'Change status', onClick: () => setStatusFor(b) }] : []),
               { k: 'list', title: 'Status history', onClick: () => setHistoryFor(b) },
             ],
@@ -6344,6 +6348,8 @@ function BatchesList() {
         onClose={() => setBulkStatusOpen(false)}
         onDone={() => { setBulkStatusOpen(false); list.reload(); bump(); _sel.clear(); }} />}
       {roster && <BatchRosterModal batch={roster} onClose={() => setRoster(null)} onChanged={after} />}
+      {msgFor && <BatchMessageModal batch={msgFor} onClose={() => setMsgFor(null)} />}
+      {bulkMsgOpen && <BatchMessageModal batchIds={_sel.selected} onClose={() => setBulkMsgOpen(false)} onDone={() => _sel.clear()} />}
       {statusFor && <BatchStatusModal batch={statusFor} onClose={() => setStatusFor(null)} onDone={() => { setStatusFor(null); after(); }} />}
       {historyFor && <BatchStatusHistoryModal batch={historyFor} onClose={() => setHistoryFor(null)} />}
       {modal && <BatchModal onClose={() => setModal(false)} onSaved={after} />}
@@ -6729,6 +6735,113 @@ export function BatchStatusHistoryModal({ batch, onClose }: { batch: any; onClos
               <td>{h.reason ?? '—'}</td><td>{h.changed_by_name ?? '—'}</td></tr>
           ))}</tbody></table>
       ) : <div className="empty-note">No status changes yet.</div>}
+    </DetailModal>
+  );
+}
+
+/**
+ * SEND MESSAGE to a batch's students (client feedback item 9) — bulk or individual.
+ *
+ * Single batch (`batch`): lists the batch's students with checkboxes (all ticked by default);
+ * the user writes a message, picks a channel, and sends to ALL (student_ids omitted) or a
+ * SELECTED subset. Bulk (`batchIds`): messages every student across the selected batches (all).
+ * Uses the same channel-agnostic notifier the fee reminder does — an unconfigured channel is a
+ * logged attempt, not an error, and the result shows sent / skipped. Guarded by batch.update.
+ */
+export function BatchMessageModal({ batch, batchIds, onClose, onDone }:
+  { batch?: any; batchIds?: number[]; onClose: () => void; onDone?: () => void }) {
+  const single = !!batch;
+  const ids = single ? [Number(batch.id)] : (batchIds ?? []);
+  const students = useFetch<any[]>(single ? `/batches/${batch.id}/students` : null, [single ? batch.id : 0]);
+  const roster = students.data ?? [];
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [seeded, setSeeded] = useState(false);
+  useEffect(() => {
+    if (single && !seeded && roster.length) { setSel(new Set(roster.map((s: any) => Number(s.id)))); setSeeded(true); }
+  }, [roster, single, seeded]);
+  const [message, setMessage] = useState('');
+  const [channel, setChannel] = useState('auto');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ sent: number; skipped: number } | null>(null);
+  const toggle = (id: number) => setSel((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allOn = single && roster.length > 0 && sel.size === roster.length;
+  const setAll = (on: boolean) => setSel(on ? new Set(roster.map((s: any) => Number(s.id))) : new Set());
+
+  const send = async () => {
+    if (!message.trim()) { toast('Type a message to send.', true); return; }
+    if (single && sel.size === 0) { toast('Pick at least one student.', true); return; }
+    setBusy(true);
+    try {
+      let sent = 0; let skipped = 0;
+      for (const bid of ids) {
+        // Single: send only the selected students (omit student_ids when ALL are ticked → "all").
+        const body: any = { message: message.trim(), channel };
+        if (single && !allOn) body.student_ids = [...sel];
+        const res = await api.post<any>(`/batches/${bid}/message`, body);
+        sent += Number(res?.sent ?? 0); skipped += Number(res?.skipped ?? 0);
+      }
+      setResult({ sent, skipped });
+      toast(`Message queued — ${sent} sent, ${skipped} skipped.`);
+      onDone?.();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+
+  const title = single ? `Send message — ${batch.name}` : `Send message — ${ids.length} batch${ids.length === 1 ? '' : 'es'}`;
+  return (
+    <DetailModal title={title} icon="send" onClose={onClose} width={620}
+      footer={<button className="btn primary" onClick={send} disabled={busy || !message.trim()} data-testid="batch-message-send"><Ic k="send" />{busy ? 'Sending…' : (single ? `Send to ${allOn ? 'all' : sel.size}` : `Send to all in ${ids.length}`)}</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}><Ic k="send" /><div>
+        {single ? 'Compose an update for this batch. All students are selected by default — untick anyone to send to a subset or a single student.'
+          : `The message goes to every student across the ${ids.length} selected batch${ids.length === 1 ? '' : 'es'}.`}
+        {' '}Delivery uses the configured WhatsApp / SMS / Email channel; an unconfigured channel is logged and skipped (never an error).
+      </div></div>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="bm-msg">Message</label>
+          <textarea id="bm-msg" className="ainp" rows={4} value={message} disabled={busy}
+            onChange={(e) => setMessage(e.target.value)} data-testid="batch-message-text"
+            placeholder="e.g. Reminder: tomorrow's class starts at 6 PM. You can use {name} to greet each student." />
+        </div>
+        <div className="fld">
+          <label htmlFor="bm-ch">Channel</label>
+          <select id="bm-ch" className="ainp" value={channel} disabled={busy} onChange={(e) => setChannel(e.target.value)} data-testid="batch-message-channel">
+            <option value="auto">Auto (best available)</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="sms">SMS</option>
+            <option value="email">Email</option>
+          </select>
+        </div>
+      </div>
+      {single && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <b>Recipients</b><span className="sub">{sel.size} of {roster.length} selected</span>
+            <span style={{ flex: 1 }} />
+            <label className="sub" style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+              <input type="checkbox" checked={allOn} onChange={(e) => setAll(e.target.checked)} data-testid="batch-message-all" /> Select all
+            </label>
+          </div>
+          <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 8 }}>
+            {students.loading ? <div className="empty-note">Loading roster…</div>
+              : roster.length === 0 ? <div className="empty-note">This batch has no enrolled students.</div>
+                : roster.map((s: any) => {
+                  const reach = s.has_phone || s.has_email;
+                  return (
+                    <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--line)', cursor: 'pointer', opacity: reach ? 1 : 0.6 }}>
+                      <input type="checkbox" checked={sel.has(Number(s.id))} onChange={() => toggle(Number(s.id))} data-testid={`batch-msg-stu-${s.id}`} />
+                      <span style={{ flex: 1 }}><b className="nm">{s.full_name}</b> <span className="sub mono">{s.student_no ?? '—'}</span></span>
+                      <span className="sub">{s.has_phone ? (s.phone ?? 'phone') : ''}{s.has_phone && s.has_email ? ' · ' : ''}{s.has_email ? (s.email ?? 'email') : ''}{!reach ? 'no contact' : ''}</span>
+                    </label>
+                  );
+                })}
+          </div>
+        </div>
+      )}
+      {result && (
+        <div className="notice" style={{ marginTop: 10 }} data-testid="batch-message-result">
+          <Ic k="check" /><div><b>{result.sent}</b> message{result.sent === 1 ? '' : 's'} queued, <b>{result.skipped}</b> skipped (no contact / opted out / unconfigured channel). Each attempt is written to the message log.</div>
+        </div>
+      )}
     </DetailModal>
   );
 }

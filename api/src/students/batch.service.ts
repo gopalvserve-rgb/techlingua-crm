@@ -3,6 +3,7 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { assertDateRange, requireDateString, toDateString, SQL_TODAY } from '../common/date.util';
+import { MessagingService } from '../messaging/messaging.service';
 
 /**
  * BATCH — a class bound to Branch -> Vertical -> Course.
@@ -119,6 +120,7 @@ export class BatchService {
   constructor(
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
+    private readonly messaging: MessagingService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -500,5 +502,103 @@ export class BatchService {
          LEFT JOIN "user" ch ON ch.id = h.changed_by
         WHERE h.batch_id = $1::bigint
         ORDER BY h.changed_at DESC, h.id DESC`, [id]);
+  }
+
+  /**
+   * The batch's live student roster — the recipient list the "Send message" compose modal
+   * shows (default all ticked). Scope-enforced (the batch must be in the caller's access).
+   * Reachability flags let the UI grey out a student with no phone/email up-front.
+   */
+  async students(id: number, scope: ResolvedScope) {
+    await this.get(id, scope);   // 404 if the batch is outside the caller's scope
+    return this.db.query<any>(
+      `SELECT s.id, s.full_name, s.student_no, s.phone, s.email,
+              (s.phone IS NOT NULL AND s.phone <> '') AS has_phone,
+              (s.email IS NOT NULL AND s.email <> '') AS has_email
+         FROM student s
+        WHERE s.batch_id = $1::bigint AND s.deleted_at IS NULL
+        ORDER BY s.full_name`, [id]);
+  }
+
+  /**
+   * BATCH MESSAGING (client feedback item 9) — send an update/message to a batch's students,
+   * in BULK (omit student_ids → all live enrolments) or INDIVIDUALLY (student_ids → just those).
+   *
+   * Reuses the channel-agnostic notifier (`MessagingService.queue`) exactly like the manual
+   * fee reminder (dev/76): one `message_log` row per recipient, and a channel with no
+   * credentials DEGRADES to a logged attempt (the worker marks it not_configured) — it never
+   * throws. A human pressing Send is not guarded (never silently deferred).
+   *
+   * `channel`: whatsapp | sms | email | notification | auto (default). `auto`/`notification`
+   * route to the best channel the student is reachable on (WhatsApp → SMS → Email), since a
+   * batch student has no in-app inbox. A student not in the batch is skipped (reason
+   * `not_in_batch`); one with no contact for the chosen channel is skipped (`no_contact`);
+   * an opt-out is honoured and logged. `{name}`/`{student_name}` merge to the student's name.
+   */
+  async messageStudents(
+    id: number,
+    dto: { message?: string; channel?: string; student_ids?: number[] },
+    me: { id: number; name?: string },
+    scope: ResolvedScope,
+  ): Promise<{ sent: number; skipped: number; channel: string; recipients: Array<{ student_id: number; name: string; channel: string | null; status: string; reason?: string }> }> {
+    const batch = await this.get(id, scope);   // scope-enforced; 404 out of scope
+    const message = String(dto?.message ?? '').trim();
+    if (!message) throw new BadRequestException('Type a message to send.');
+
+    const want = String(dto?.channel ?? 'auto').toLowerCase();
+    const channel = ['whatsapp', 'sms', 'email', 'notification', 'auto'].includes(want) ? want : 'auto';
+
+    // The batch's live roster (branch/vertical/lead carried for the send log's scope + threading).
+    const roster = await this.db.query<any>(
+      `SELECT s.id, s.full_name, s.phone, s.email, s.lead_id, s.branch_id, s.vertical_id
+         FROM student s
+        WHERE s.batch_id = $1::bigint AND s.deleted_at IS NULL`, [id]);
+    const byId = new Map<number, any>(roster.map((s) => [Number(s.id), s]));
+
+    // Selection: an explicit non-empty list restricts to those students (individual/subset);
+    // omitted or empty → the WHOLE batch (bulk). Ids outside the batch are skip-logged.
+    const rawSel = Array.isArray(dto?.student_ids) ? dto!.student_ids!.map(Number).filter((n) => Number.isInteger(n)) : null;
+    const recipients: Array<{ student_id: number; name: string; channel: string | null; status: string; reason?: string }> = [];
+
+    const targetIds = rawSel && rawSel.length ? rawSel : roster.map((s) => Number(s.id));
+    let sent = 0;
+    let skipped = 0;
+
+    for (const sid of targetIds) {
+      const s = byId.get(Number(sid));
+      if (!s) { recipients.push({ student_id: Number(sid), name: `#${sid}`, channel: null, status: 'skipped', reason: 'not_in_batch' }); skipped++; continue; }
+
+      // Resolve the channel for THIS student. auto/notification pick the best reachable one.
+      let ch: 'whatsapp' | 'sms' | 'email' | null = null;
+      if (channel === 'email') ch = s.email ? 'email' : null;
+      else if (channel === 'whatsapp') ch = s.phone ? 'whatsapp' : null;
+      else if (channel === 'sms') ch = s.phone ? 'sms' : null;
+      else ch = s.phone ? 'whatsapp' : (s.email ? 'email' : null);   // auto / notification
+
+      if (!ch) { recipients.push({ student_id: Number(sid), name: s.full_name, channel: null, status: 'skipped', reason: 'no_contact' }); skipped++; continue; }
+
+      const body = message.replace(/\{\s*(?:name|student_name|full_name)\s*\}/gi, s.full_name ?? 'Student');
+      const to = ch === 'email' ? s.email : s.phone;
+      try {
+        const res = await this.messaging.queue({
+          channel: ch,
+          to: String(to),
+          subject: ch === 'email' ? `Update from ${batch.name}` : null,
+          body: ch === 'email' ? `<p>${body.replace(/\n/g, '<br/>')}</p>` : body,
+          lead_id: s.lead_id != null ? Number(s.lead_id) : null,
+          vertical_id: s.vertical_id != null ? Number(s.vertical_id) : null,
+          branch_id: s.branch_id != null ? Number(s.branch_id) : null,
+          actor_id: me?.id ?? null,
+          guarded: false,   // a human pressed Send — never silently deferred
+        });
+        if (res.status === 'skipped') { skipped++; recipients.push({ student_id: Number(sid), name: s.full_name, channel: ch, status: 'skipped', reason: res.reason ?? 'opted_out' }); }
+        else { sent++; recipients.push({ student_id: Number(sid), name: s.full_name, channel: ch, status: res.status }); }
+      } catch (e) {
+        // Degrade cleanly: a send that cannot even be queued is logged, not thrown.
+        skipped++;
+        recipients.push({ student_id: Number(sid), name: s.full_name, channel: ch, status: 'skipped', reason: (e as Error).message });
+      }
+    }
+    return { sent, skipped, channel, recipients };
   }
 }

@@ -77,6 +77,22 @@ export class BatchController {
     return this.svc.bulkRemove(b?.ids, me, scope);
   }
 
+  /** The batch's live student roster — powers the "Send message" compose modal (default all). */
+  @Get(':id/students')
+  @RequirePermission('batch.read')
+  students(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.students(id, scope);
+  }
+
+  /** SEND MESSAGE to a batch's students — bulk (omit student_ids) or individual (student_ids).
+   *  Reuses the channel-agnostic notifier + degrades cleanly (mirror of the fee reminder).
+   *  Guarded by batch.update (same gate as the other write actions), scope-enforced inside. */
+  @Post(':id/message')
+  @RequirePermission('batch.update')
+  message(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.messageStudents(id, dto ?? {}, me, scope);
+  }
+
   /** The status transition trail (who / when / from → to / manual? / reason). */
   @Get(':id/status-history')
   @RequirePermission('batch.read')

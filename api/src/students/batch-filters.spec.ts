@@ -27,7 +27,7 @@ function make() {
       query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return { rows: [{ id: 55 }] }; },
     }),
   } as any;
-  return { svc: new BatchService(db, resolver), issued };
+  return { svc: new BatchService(db, resolver, { queue: async () => ({ id: 1, status: 'queued' }) } as any), issued };
 }
 
 const me = { id: 9 };

@@ -40,7 +40,7 @@ function make(opts: { batchRow?: any } = {}) {
       query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return { rows: [{ id: 55 }] }; },
     }),
   } as any;
-  const svc = new BatchService(db, resolver);
+  const svc = new BatchService(db, resolver, { queue: async () => ({ id: 1, status: 'queued' }) } as any);
   return { svc, issued };
 }
 
