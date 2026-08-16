@@ -32,7 +32,7 @@ const STATUS_CELL = (s: string): Cell =>
 /** Branch + Vertical + Course FilterMulti row (local copy of the learning-screen filter). */
 function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, extra }: any) {
   const vOpts = rd.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
-  const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.vertical_id))) && (!fB.length || fB.includes(Number(c.branch_id))));
+  const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.meta?.vertical_id))) && (!fB.length || fB.includes(Number(c.meta?.branch_id))));
   return (
     <div className="filters">
       <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches}
@@ -212,7 +212,7 @@ const EDIT_FIELDS: Array<[string, string]> = [
 function AdmissionEdit({ a, rd, onClose, onSaved }: { a: any; rd: any; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<any>({ ...(a.data ?? {}), course_id: a.course_id ?? '' });
   const [busy, setBusy] = useState(false);
-  const cOpts = rd.courses.filter((c: any) => Number(c.branch_id) === Number(a.branch_id) && Number(c.vertical_id) === Number(a.vertical_id));
+  const cOpts = rd.courses.filter((c: any) => Number(c.meta?.branch_id) === Number(a.branch_id) && Number(c.meta?.vertical_id) === Number(a.vertical_id));
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
   const save = async () => {
     setBusy(true);
@@ -249,7 +249,7 @@ function FormLinksModal({ onClose, rd }: { onClose: () => void; rd: any }) {
   const [busy, setBusy] = useState(false);
   const after = () => setTick((t) => t + 1);
   const vOpts = rd.verticals.filter((vt: any) => !branch || Number(vt.branch_id) === Number(branch));
-  const cOpts = rd.courses.filter((c: any) => (!vertical || Number(c.vertical_id) === Number(vertical)) && (!branch || Number(c.branch_id) === Number(branch)));
+  const cOpts = rd.courses.filter((c: any) => (!vertical || Number(c.meta?.vertical_id) === Number(vertical)) && (!branch || Number(c.meta?.branch_id) === Number(branch)));
 
   const publicUrl = (key: string) => `${window.location.origin}/admit/${key}`;
   const create = async () => {

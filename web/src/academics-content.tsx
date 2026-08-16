@@ -54,7 +54,7 @@ function useBatches(branchIds: number[], verticalIds: number[]) {
 /** Branch + Vertical + Course + Status FilterMulti row shared by both screens. */
 function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, status, setStatus, canApprove, canSubmit, mine, setMine, range, setRange, idPrefix }: any) {
   const vOpts = rd.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
-  const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.vertical_id))) && (!fB.length || fB.includes(Number(c.branch_id))));
+  const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.meta?.vertical_id))) && (!fB.length || fB.includes(Number(c.meta?.branch_id))));
   return (
     <div className="filters">
       <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches}
@@ -260,7 +260,7 @@ function ContentModal({ kind, base, initial, onClose, onSaved, ref_ }: { kind: '
   const [busy, setBusy] = useState(false); const [uploading, setUploading] = useState(false); const [err, setErr] = useState('');
 
   const vOpts = ref_.verticals.filter((v: any) => !branchId || Number(v.branch_id) === Number(branchId));
-  const cOpts = ref_.courses.filter((c: any) => (!verticalId || Number(c.vertical_id) === Number(verticalId)) && (!branchId || Number(c.branch_id) === Number(branchId)));
+  const cOpts = ref_.courses.filter((c: any) => (!verticalId || Number(c.meta?.vertical_id) === Number(verticalId)) && (!branchId || Number(c.meta?.branch_id) === Number(branchId)));
   const batches = useBatches(branchId ? [Number(branchId)] : [], verticalId ? [Number(verticalId)] : []);
 
   const pickFile = async (f?: File | null) => {

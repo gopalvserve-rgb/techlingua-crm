@@ -50,7 +50,7 @@ function useStudents(branchIds: number[], verticalIds: number[]) {
 /** Branch + Vertical + Course FilterMulti row shared by the three screens. */
 function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, extra }: any) {
   const vOpts = rd.verticals.filter((vt: any) => !fB.length || fB.includes(Number(vt.branch_id)));
-  const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.vertical_id))) && (!fB.length || fB.includes(Number(c.branch_id))));
+  const cOpts = rd.courses.filter((c: any) => (!fV.length || fV.includes(Number(c.meta?.vertical_id))) && (!fB.length || fB.includes(Number(c.meta?.branch_id))));
   return (
     <div className="filters">
       <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches}
@@ -198,7 +198,7 @@ function MaterialModal({ initial, onClose, onSaved, ref_ }: { initial?: any; onC
   const [busy, setBusy] = useState(false); const [uploading, setUploading] = useState(false); const [err, setErr] = useState('');
 
   const vOpts = ref_.verticals.filter((v: any) => !branchId || Number(v.branch_id) === Number(branchId));
-  const cOpts = ref_.courses.filter((c: any) => (!verticalId || Number(c.vertical_id) === Number(verticalId)));
+  const cOpts = ref_.courses.filter((c: any) => (!verticalId || Number(c.meta?.vertical_id) === Number(verticalId)));
   const batches = useBatches(branchId ? [Number(branchId)] : [], verticalId ? [Number(verticalId)] : []);
   const isLinkType = type === 'link' || type === 'video';
 
