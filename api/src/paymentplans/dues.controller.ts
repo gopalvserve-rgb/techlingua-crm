@@ -29,6 +29,8 @@ export class DuesController {
       bucket: manyStr(q?.bucket ?? q?.buckets), source: manyStr(q?.source),
       branch_ids: many(q?.branch_ids ?? q?.branch_id), vertical_ids: many(q?.vertical_ids ?? q?.vertical_id),
       course_ids: many(q?.course_ids ?? q?.course_id), owner_ids: many(q?.owner_ids ?? q?.owner_id),
+      trainer_ids: many(q?.trainer_ids ?? q?.trainer_id),
+      course_status: manyStr(q?.course_status ?? q?.status),
       q: q?.q, limit: q?.limit ? Number(q.limit) : undefined,
     });
   }

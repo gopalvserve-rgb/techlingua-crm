@@ -63,6 +63,8 @@ export class DuesService {
              e.course_id, c.name AS course_name,
              e.branch_id, b.name AS branch_name, e.vertical_id, v.name AS vertical_name,
              e.counsellor_id AS owner_id, u.name AS owner_name,
+             e.batch_id, bt.name AS batch_name, bt.trainer_id, tr.name AS trainer_name,
+             e.course_status, ssd.label AS course_status_label,
              i.due_date, i.amount_minor, i.paid_minor,
              (i.amount_minor - i.paid_minor) AS outstanding_minor,
              ((SELECT d FROM today) - i.due_date) AS days_overdue
@@ -74,6 +76,9 @@ export class DuesService {
         JOIN vertical v ON v.id = e.vertical_id
         LEFT JOIN m_course c ON c.id = e.course_id
         LEFT JOIN "user" u ON u.id = e.counsellor_id
+        LEFT JOIN batch bt ON bt.id = e.batch_id
+        LEFT JOIN "user" tr ON tr.id = bt.trainer_id
+        LEFT JOIN student_status_def ssd ON ssd.code = e.course_status
        WHERE e.deleted_at IS NULL AND e.status = 'active'
          AND i.status <> 'waived' AND (i.amount_minor - i.paid_minor) > 0 AND ${w1}
       UNION ALL
@@ -84,6 +89,8 @@ export class DuesService {
              e.course_id, c.name AS course_name,
              e.branch_id, b.name AS branch_name, e.vertical_id, v.name AS vertical_name,
              e.counsellor_id AS owner_id, u.name AS owner_name,
+             e.batch_id, bt.name AS batch_name, bt.trainer_id, tr.name AS trainer_name,
+             e.course_status, ssd.label AS course_status_label,
              COALESCE(e.start_date, e.created_at::date) AS due_date,
              e.net_fee_minor AS amount_minor,
              COALESCE(pr.paid_minor, 0) AS paid_minor,
@@ -95,6 +102,9 @@ export class DuesService {
         JOIN vertical v ON v.id = e.vertical_id
         LEFT JOIN m_course c ON c.id = e.course_id
         LEFT JOIN "user" u ON u.id = e.counsellor_id
+        LEFT JOIN batch bt ON bt.id = e.batch_id
+        LEFT JOIN "user" tr ON tr.id = bt.trainer_id
+        LEFT JOIN student_status_def ssd ON ssd.code = e.course_status
         LEFT JOIN LATERAL (SELECT COALESCE(sum(fr.amount_minor),0) AS paid_minor
                              FROM fee_receipt fr WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL) pr ON TRUE
        WHERE e.deleted_at IS NULL AND e.status = 'active'
@@ -104,7 +114,7 @@ export class DuesService {
     )`;
   }
 
-  async list(scope: ResolvedScope, f: { bucket?: string[]; branch_ids?: number[]; vertical_ids?: number[]; course_ids?: number[]; owner_ids?: number[]; source?: string[]; q?: string; limit?: number } = {}) {
+  async list(scope: ResolvedScope, f: { bucket?: string[]; branch_ids?: number[]; vertical_ids?: number[]; course_ids?: number[]; owner_ids?: number[]; trainer_ids?: number[]; course_status?: string[]; source?: string[]; q?: string; limit?: number } = {}) {
     const params: unknown[] = [];
     const cte = this.duesCte(scope, params);
     const conds: string[] = [];
@@ -113,6 +123,10 @@ export class DuesService {
     if (f.vertical_ids?.length) { params.push(f.vertical_ids); conds.push(`d.vertical_id = ANY($${params.length}::bigint[])`); }
     if (f.course_ids?.length) { params.push(f.course_ids); conds.push(`d.course_id = ANY($${params.length}::bigint[])`); }
     if (f.owner_ids?.length) { params.push(f.owner_ids); conds.push(`d.owner_id = ANY($${params.length}::bigint[])`); }
+    // TRAINER = the trainer of the student's batch (dev/81 Trainer-role user) on this due's enrolment.
+    if (f.trainer_ids?.length) { params.push(f.trainer_ids); conds.push(`d.trainer_id = ANY($${params.length}::bigint[])`); }
+    // STATUS = the per-course enrolment status (dev/72 course_status: active/completed/on-hold/…).
+    if (f.course_status?.length) { params.push(f.course_status); conds.push(`d.course_status = ANY($${params.length}::varchar[])`); }
     if (f.source?.length) { params.push(f.source); conds.push(`d.source = ANY($${params.length}::varchar[])`); }
     if (f.q) { params.push(`%${f.q}%`); conds.push(`(d.enrolment_no ILIKE $${params.length} OR d.student_name ILIKE $${params.length})`); }
     const where = conds.length ? ` WHERE ${conds.join(' AND ')}` : '';

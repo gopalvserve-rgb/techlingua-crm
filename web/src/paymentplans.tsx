@@ -14,7 +14,7 @@ import { Ic } from './icons';
 import { Cell, Kpis, HBars, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { useScope } from './scope';
-import { FilterMulti } from './dyn';
+import { FilterMulti, EnrolmentFeeSetupModal } from './dyn';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 import { CollectModal } from './sprint5';
@@ -300,6 +300,10 @@ export function FeeDuesScreen() {
   const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals ?? []);
   const [fCourses, setFCourses] = useState<number[]>([]);
   const [fOwners, setFOwners] = useState<number[]>([]);
+  // client feedback item 3 — Trainer (batch trainer) + Status (per-course enrolment status) filters
+  const [fTrainers, setFTrainers] = useState<number[]>([]);
+  const [fStatus, setFStatus] = useState<string[]>([]);
+  const statusCat = useFetch<any[]>('/students/enrolment-status-catalog', []);
   const [cfg, setCfg] = useState(false);
   // client feedback item 5 — row Actions (fee setup / edit / reminder / collect / receipt)
   const [planFor, setPlanFor] = useState<number | null>(null);       // Fee setup → create a payment plan
@@ -332,6 +336,8 @@ export function FeeDuesScreen() {
   if (fVerticals.length) qs.set('vertical_ids', fVerticals.join(','));
   if (fCourses.length) qs.set('course_ids', fCourses.join(','));
   if (fOwners.length) qs.set('owner_ids', fOwners.join(','));
+  if (fTrainers.length) qs.set('trainer_ids', fTrainers.join(','));
+  if (fStatus.length) qs.set('course_status', fStatus.join(','));
   const key = `${qs.toString()}~${tick}`;
   const list = useFetch<any[]>(`/fee-dues?${qs.toString()}`, [key]);
   const sQs = new URLSearchParams();
@@ -342,6 +348,13 @@ export function FeeDuesScreen() {
   const s = summary.data;
 
   const owners = selectableUsers(ref.users ?? []);
+  // Trainer filter offers ONLY Trainer-role users (dev/81); falls back to all if role data absent.
+  const trainerOpts = (() => {
+    const trs = selectableUsers(ref.users ?? []).filter((u: any) =>
+      String((u as any).role_names ?? '').split(',').map((r) => r.trim().toLowerCase()).includes('trainer'));
+    return trs.length ? trs : selectableUsers(ref.users ?? []);
+  })();
+  const statusOpts = (statusCat.data ?? []).map((s: any) => ({ id: String(s.code), name: String(s.label ?? s.code) }));
   const bucketBar = (s?.by_bucket ?? []).map((b: any) => ({
     label: `${b.label} — ${b.n}`, val: fmtINR(b.total_minor),
     pct: s && s.outstanding_minor > 0 ? Math.round((b.total_minor * 100) / s.outstanding_minor) : 0,
@@ -373,6 +386,8 @@ export function FeeDuesScreen() {
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={(ref.branches ?? []) as any} onChange={setFBranches} />
         <FilterMulti label="Vertical" icon="ops" value={fVerticals} options={(ref.verticals ?? []) as any} onChange={setFVerticals} />
         <FilterMulti label="Course" icon="book" value={fCourses} options={(ref.courses ?? []) as any} onChange={setFCourses} />
+        <FilterMulti label="Trainer" icon="users" value={fTrainers} options={trainerOpts as any} onChange={setFTrainers} />
+        <FilterMulti label="Status" icon="flag" value={fStatus as any} options={statusOpts as any} onChange={setFStatus as any} />
         <FilterMulti label="Owner" icon="users" value={fOwners} options={owners as any} onChange={setFOwners} />
       </div>
       <TableCard fill title="Fee Management" icon="clock"
@@ -381,14 +396,17 @@ export function FeeDuesScreen() {
           due_date: dt(r.due_date), amount: (Number(r.amount_minor) / 100).toFixed(2),
           paid: (Number(r.paid_minor) / 100).toFixed(2), outstanding: (Number(r.outstanding_minor) / 100).toFixed(2),
           ageing: (BUCKET_BADGE[r.bucket]?.[0]) ?? r.bucket, days_overdue: r.overdue_days,
+          status: r.course_status_label || r.course_status || '', trainer: r.trainer_name || '',
           source: r.source, owner: r.owner_name || '', branch: r.branch_name, vertical: r.vertical_name,
         })))} onRefresh={after} />}
-        cols={['Student', 'Enrolment', 'Course', 'Due date', 'Outstanding', 'Ageing', 'Days overdue', 'Owner', 'Branch \u203a Vertical', 'Actions']}
+        cols={['Student', 'Enrolment', 'Course', 'Status', 'Trainer', 'Due date', 'Outstanding', 'Ageing', 'Days overdue', 'Owner', 'Branch \u203a Vertical', 'Actions']}
         empty="No outstanding dues — every active enrolment is paid up."
         rows={rows.map((r): Cell[] => [
           { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div> : <div className="sub">Installment {r.seq_no}</div>}</div> },
           { mono: r.enrolment_no },
           r.course_name || '—',
+          { node: <span className="bdg b-gray">{r.course_status_label || r.course_status || '—'}</span> },
+          r.trainer_name || '—',
           dt(r.due_date),
           { mono: fmtINR(r.outstanding_minor) },
           { b: BUCKET_BADGE[r.bucket] ?? [r.bucket, 'b-gray'] },
@@ -406,7 +424,7 @@ export function FeeDuesScreen() {
           },
         ])} />
       {cfg && <ReminderConfigModal onClose={() => setCfg(false)} />}
-      {planFor != null && <PlanCreateModal enrolmentId={planFor} onClose={() => setPlanFor(null)} onSaved={() => { setPlanFor(null); after(); }} />}
+      {planFor != null && <EnrolmentFeeSetupModal enrolmentId={planFor} onClose={() => setPlanFor(null)} onSaved={() => { setPlanFor(null); after(); }} />}
       {planEditFor != null && <PlanDetailModal id={planEditFor} onClose={() => setPlanEditFor(null)} onChanged={after} />}
       {collectFor != null && <CollectModal enrolmentId={collectFor} onClose={() => setCollectFor(null)} onSaved={() => { setCollectFor(null); after(); }} />}
     </>

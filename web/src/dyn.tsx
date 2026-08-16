@@ -59,7 +59,7 @@ import { CourseContentScreen, SyllabusScreen } from './academics-content';
 import { PlacementsScreen, PlacementsTab } from './placements';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { InvoicesScreen, FinanceDashboard } from './invoices';
-import { PaymentPlansScreen, FeeDuesScreen, PlanCreateModal, PlanDetailModal } from './paymentplans';
+import { PaymentPlansScreen, FeeDuesScreen, PlanDetailModal } from './paymentplans';
 import { PaymentsScreen } from './payments';
 import { RefundsScreen } from './refunds';
 import { RevenueScreen, CollectionReportsScreen } from './revenue';
@@ -4645,6 +4645,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const [enrolStatusFor, setEnrolStatusFor] = useState<any | null>(null);
   const [enrolHistFor, setEnrolHistFor] = useState<any | null>(null);
   const [enrolXferFor, setEnrolXferFor] = useState<any | null>(null);
+  const [enrolEditFor, setEnrolEditFor] = useState<any | null>(null); // client feedback item 6 — Edit enrolment
   // client refinement (dev/80) — Fee Management actions on the profile Fees tab (reuse standalone components)
   const [feePlanFor, setFeePlanFor] = useState<number | null>(null);        // fee setup -> PlanCreateModal
   const [feePlanEditFor, setFeePlanEditFor] = useState<number | null>(null); // edit -> PlanDetailModal
@@ -5139,7 +5140,8 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                   <td>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</td>
                   <td><span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span></td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button>}
+                    {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolEditFor(e)} data-testid={`enrol-edit-${e.id}`}><Ic k="pencil" />Edit</button>}
+                    {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button></>}
                     {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolXferFor(e)} data-testid={`enrol-xfer-${e.id}`}><Ic k="swap" />Transfer course</button></>}
                     {' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolHistFor(e)}><Ic k="list" />History</button>
                   </td>
@@ -5317,7 +5319,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           onDone={() => { setAddEnrol(false); reloadEnrol(); }} />
       )}
       {/* dev/80 — Fee Management actions on the Fees tab reuse the standalone modals + endpoints. */}
-      {feePlanFor != null && <PlanCreateModal enrolmentId={feePlanFor} onClose={() => setFeePlanFor(null)} onSaved={() => { setFeePlanFor(null); loadProfile(); }} />}
+      {feePlanFor != null && <EnrolmentFeeSetupModal enrolmentId={feePlanFor} onClose={() => setFeePlanFor(null)} onSaved={() => { setFeePlanFor(null); loadProfile(); }} />}
       {feePlanEditFor != null && <PlanDetailModal id={feePlanEditFor} onClose={() => setFeePlanEditFor(null)} onChanged={loadProfile} />}
       {feeCollectFor != null && <CollectModal enrolmentId={feeCollectFor} onClose={() => setFeeCollectFor(null)} onSaved={() => { setFeeCollectFor(null); loadProfile(); }} />}
       {feeReceiptView && <ReceiptViewModal r={feeReceiptView} onClose={() => setFeeReceiptView(null)} />}
@@ -5325,6 +5327,11 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
         <ChangeEnrolmentStatusModal student={full} enrolment={enrolStatusFor} canManageSensitive={canStatusManage}
           onClose={() => setEnrolStatusFor(null)}
           onDone={() => { setEnrolStatusFor(null); reloadEnrol(); }} />
+      )}
+      {enrolEditFor && (
+        <EditEnrolmentModal student={full} enrolment={enrolEditFor} canManageSensitive={canStatusManage}
+          onClose={() => setEnrolEditFor(null)}
+          onDone={() => { setEnrolEditFor(null); reloadEnrol(); loadProfile(); }} />
       )}
       {enrolXferFor && (
         <TransferEnrolmentCourseModal student={full} enrolment={enrolXferFor}
@@ -5585,6 +5592,154 @@ export function ChangeStatusModal({ student, outstandingMinor, canManageSensitiv
 }
 
 /**
+ * SHARED FEE CONFIGURATION (client feedback items 6 & 7) — the ONE discount + payment-plan
+ * control used identically by (a) Enroll-in-another-course, (b) Fee Management → Fee setup,
+ * and (c) Edit enrollment. Discount by amount ₹ / percentage %, live Gross · Discount · Net,
+ * payment plan Full / Installments / Custom + down payment, and a schedule preview that sums
+ * to the net. Owning the state in a hook keeps the three surfaces byte-for-byte the same.
+ */
+type FeePlanKind = 'full' | 'installment' | 'custom';
+export interface FeeConfig {
+  fee: string; setFee: (v: string) => void;
+  discType: EnrolDiscountType; setDiscType: (v: EnrolDiscountType) => void;
+  discValue: string; setDiscValue: (v: string) => void;
+  plan: FeePlanKind; setPlan: (v: FeePlanKind) => void;
+  count: string; setCount: (v: string) => void;
+  down: string; setDown: (v: string) => void;
+  rows: Array<{ amount: string; date: string }>; setRows: React.Dispatch<React.SetStateAction<Array<{ amount: string; date: string }>>>;
+  start: string; setStart: (v: string) => void;
+  grossMinor: number; dv: number; discount_minor: number; net_minor: number;
+  downMinor: number; customAmounts: number[]; customDates: string[];
+  sched: ReturnType<typeof previewSchedule>; planIntent: string;
+}
+export function useFeeConfig(init?: {
+  fee?: string; discType?: EnrolDiscountType; discValue?: string; plan?: FeePlanKind;
+  count?: string; down?: string; start?: string;
+}): FeeConfig {
+  const [fee, setFee] = useState(init?.fee ?? '');
+  const [discType, setDiscType] = useState<EnrolDiscountType>(init?.discType ?? 'none');
+  const [discValue, setDiscValue] = useState(init?.discValue ?? '');
+  const [plan, setPlan] = useState<FeePlanKind>(init?.plan ?? 'full');
+  const [count, setCount] = useState(init?.count ?? '3');
+  const [down, setDown] = useState(init?.down ?? '');
+  const [rows, setRows] = useState<Array<{ amount: string; date: string }>>([{ amount: '', date: '' }]);
+  const [start, setStart] = useState(init?.start ?? '');
+  const grossMinor = Math.round(Number(fee || 0) * 100);
+  const dv = discType === 'percent' ? Number(discValue || 0) : Math.round(Number(discValue || 0) * 100);
+  const { discount_minor, net_minor } = enrolDiscount(grossMinor, discType, dv);
+  const downMinor = Math.round(Number(down || 0) * 100);
+  const customAmounts = rows.map((r) => Math.round(Number(r.amount || 0) * 100));
+  const customDates = rows.map((r) => r.date).filter(Boolean);
+  const sched = previewSchedule({
+    plan_type: plan, net_minor, down_minor: downMinor,
+    num_installments: Math.max(1, Number(count) || 1), start_date: start || undefined,
+    custom_amounts_minor: plan === 'custom' ? customAmounts : undefined,
+    custom_dates: plan === 'custom' && customDates.length === rows.length ? rows.map((r) => r.date) : undefined,
+  });
+  const planIntent = plan === 'full' ? 'full'
+    : plan === 'installment' ? (Number(count) === 3 ? 'emi_3' : Number(count) === 6 ? 'emi_6' : 'custom')
+    : 'custom';
+  return { fee, setFee, discType, setDiscType, discValue, setDiscValue, plan, setPlan, count, setCount,
+    down, setDown, rows, setRows, start, setStart, grossMinor, dv, discount_minor, net_minor, downMinor,
+    customAmounts, customDates, sched, planIntent };
+}
+/** Build the POST /payment-plans body from a FeeConfig (shared by all three surfaces). */
+export function feePlanBody(cfg: FeeConfig, enrolmentId: number) {
+  return {
+    enrolment_id: enrolmentId, plan_type: cfg.plan, frequency: cfg.plan === 'full' ? 'once' : 'monthly',
+    down_payment_minor: cfg.downMinor,
+    num_installments: cfg.plan === 'installment' ? Math.max(1, Number(cfg.count) || 1) : undefined,
+    custom_amounts_minor: cfg.plan === 'custom' ? cfg.customAmounts : undefined,
+    custom_dates: cfg.plan === 'custom' && cfg.customDates.length === cfg.rows.length ? cfg.rows.map((r) => r.date) : undefined,
+    start_date: cfg.start || null,
+  };
+}
+/** The discount + payment-plan + net + schedule preview fields. `showFee` renders the editable
+ *  gross-fee input (Enroll + Edit); Fee setup on the dues list shows the fee read-only above). */
+export function FeeConfigFields({ cfg, disabled, showFee = true }: { cfg: FeeConfig; disabled?: boolean; showFee?: boolean }) {
+  const setRow = (i: number, patch: Partial<{ amount: string; date: string }>) =>
+    cfg.setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  return (
+    <>
+      {showFee && (
+        <div className="fld"><label htmlFor="ae-fee">Course fee (₹) — from master</label>
+          <input id="ae-fee" className="ainp" type="number" value={cfg.fee} disabled={disabled} onChange={(e) => cfg.setFee(e.target.value)} placeholder="e.g. 20000" data-testid="enrol-fee" /></div>
+      )}
+      {/* DISCOUNT — amount OR percent */}
+      <div className="fld"><label htmlFor="ae-dtype">Discount</label>
+        <select id="ae-dtype" className="ainp" value={cfg.discType} disabled={disabled} onChange={(e) => { cfg.setDiscType(e.target.value as EnrolDiscountType); cfg.setDiscValue(''); }} data-testid="enrol-disc-type">
+          <option value="none">No discount</option>
+          <option value="amount">By amount (₹)</option>
+          <option value="percent">By percentage (%)</option>
+        </select>
+      </div>
+      <div className="fld"><label htmlFor="ae-dval">{cfg.discType === 'percent' ? 'Discount %' : 'Discount ₹'}</label>
+        <input id="ae-dval" className="ainp" type="number" value={cfg.discValue} disabled={disabled || cfg.discType === 'none'}
+          onChange={(e) => cfg.setDiscValue(e.target.value)} placeholder={cfg.discType === 'percent' ? 'e.g. 10' : 'e.g. 2000'} data-testid="enrol-disc-value" /></div>
+      {/* GROSS / DISCOUNT / NET */}
+      <div className="fld" style={{ gridColumn: '1 / -1' }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', padding: '8px 10px', background: 'var(--surface-2, #f8fafc)', borderRadius: 8, fontSize: 13 }}>
+          <div>Gross fee: <b data-testid="enrol-gross">{fmtINR(cfg.grossMinor)}</b></div>
+          <div>Discount: <b style={{ color: 'var(--red, #b91c1c)' }} data-testid="enrol-discamt">− {fmtINR(cfg.discount_minor)}</b></div>
+          <div>Net fee after discount: <b style={{ color: 'var(--green, #15803d)' }} data-testid="enrol-net">{fmtINR(cfg.net_minor)}</b></div>
+        </div>
+      </div>
+      {/* PAYMENT PLAN */}
+      <div className="fld"><label htmlFor="ae-plan">Payment plan</label>
+        <select id="ae-plan" className="ainp" value={cfg.plan} disabled={disabled} onChange={(e) => cfg.setPlan(e.target.value as FeePlanKind)} data-testid="enrol-plan">
+          <option value="full">Full payment</option>
+          <option value="installment">Installments (fixed count)</option>
+          <option value="custom">Custom (own amounts)</option>
+        </select>
+      </div>
+      {cfg.plan === 'installment' && (
+        <div className="fld"><label htmlFor="ae-count">Number of installments</label>
+          <input id="ae-count" className="ainp" type="number" min={1} value={cfg.count} disabled={disabled} onChange={(e) => cfg.setCount(e.target.value)} data-testid="enrol-count" /></div>
+      )}
+      {cfg.plan !== 'full' && (
+        <div className="fld"><label htmlFor="ae-down">Down payment (₹, optional)</label>
+          <input id="ae-down" className="ainp" type="number" value={cfg.down} disabled={disabled} onChange={(e) => cfg.setDown(e.target.value)} placeholder="0" data-testid="enrol-down" /></div>
+      )}
+      <div className="fld"><label htmlFor="ae-start">Start / first due date</label>
+        <input id="ae-start" className="ainp" type="date" value={cfg.start} disabled={disabled} onChange={(e) => cfg.setStart(e.target.value)} /></div>
+      {cfg.plan === 'custom' && (
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label>Custom installments (amounts + due dates must total the payable after down payment)</label>
+          <table className="minitbl" style={{ width: '100%' }}>
+            <thead><tr><th>#</th><th>Amount (₹)</th><th>Due date</th><th /></tr></thead>
+            <tbody>{cfg.rows.map((r, i) => (
+              <tr key={i}>
+                <td>{i + 1}</td>
+                <td><input className="ainp" type="number" style={{ width: 110 }} value={r.amount} onChange={(e) => setRow(i, { amount: e.target.value })} data-testid={`enrol-crow-amt-${i}`} /></td>
+                <td><input className="ainp" type="date" value={r.date} onChange={(e) => setRow(i, { date: e.target.value })} /></td>
+                <td>{cfg.rows.length > 1 && <button className="ax" title="Remove" onClick={() => cfg.setRows((rs) => rs.filter((_, idx) => idx !== i))}><Ic k="x" /></button>}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <button className="btn" style={{ marginTop: 6 }} onClick={() => cfg.setRows((rs) => [...rs, { amount: '', date: '' }])}><Ic k="plus" />Add installment</button>
+        </div>
+      )}
+      {cfg.plan !== 'full' && (
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label>Schedule preview</label>
+          <table className="minitbl" style={{ width: '100%' }} data-testid="enrol-schedule">
+            <thead><tr><th>#</th><th>Due</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+            <tbody>{cfg.sched.rows.map((r) => (
+              <tr key={r.seq_no}><td>{r.label}</td><td>{r.due_date}</td><td style={{ textAlign: 'right' }}>{fmtINR(r.amount_minor)}</td></tr>
+            ))}</tbody>
+            <tfoot><tr>
+              <td colSpan={2} style={{ fontWeight: 700 }}>Total</td>
+              <td style={{ textAlign: 'right', fontWeight: 700, color: cfg.sched.balances ? 'var(--green,#15803d)' : 'var(--red,#b91c1c)' }} data-testid="enrol-sched-total">{fmtINR(cfg.sched.sum_minor)}</td>
+            </tr></tfoot>
+          </table>
+          {!cfg.sched.balances && <div className="form-err" style={{ marginTop: 4 }}>{cfg.sched.error || `The schedule must total the net fee ${fmtINR(cfg.net_minor)}.`}</div>}
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
  * ADD ENROLMENT — enrol an existing student into ANOTHER course (course / batch / fee picker).
  * POSTs /students/:id/enrolments; the new enrolment starts active / course_status active. This
  * is what lets a student hold MULTIPLE course enrollments from the Course Enrollment section.
@@ -5595,14 +5750,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
   const [branchId, setBranchId] = useState(String(student.branch_id ?? ''));
   const [vertId, setVertId] = useState(String(student.vertical_id ?? ''));
   const [batchId, setBatchId] = useState('');
-  const [fee, setFee] = useState('');                       // gross fee (₹), from master, editable
-  const [discType, setDiscType] = useState<EnrolDiscountType>('none');
-  const [discValue, setDiscValue] = useState('');           // ₹ (amount) or % (percent)
-  const [plan, setPlan] = useState<'full' | 'installment' | 'custom'>('full');
-  const [count, setCount] = useState('3');                  // installments count
-  const [down, setDown] = useState('');                     // down payment (₹)
-  const [rows, setRows] = useState<Array<{ amount: string; date: string }>>([{ amount: '', date: '' }]);
-  const [start, setStart] = useState('');
+  const cfg = useFeeConfig();                               // shared discount + payment-plan + net config
   const [batches, setBatches] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -5619,7 +5767,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
   // Changing the Branch clears the downstream Vertical/Course/Batch/fee (a stale vertical from
   // another branch must never be submitted); defaults to that branch's sole vertical if unique.
   const chooseBranch = (bid: string) => {
-    setBranchId(bid); setCourseId(''); setBatchId(''); setFee('');
+    setBranchId(bid); setCourseId(''); setBatchId(''); cfg.setFee('');
     const vs = ((ref.verticals ?? []) as any[]).filter((v: any) => Number(v.branch_id) === Number(bid));
     setVertId(vs.length === 1 ? String(vs[0].id) : '');
   };
@@ -5635,56 +5783,28 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
   const chooseCourse = (cid: string) => {
     setCourseId(cid); setBatchId('');
     const c = coursesAll.find((x: any) => Number(x.id) === Number(cid));
-    setFee(c ? String((c.meta as any)?.fee ?? '') : '');
+    cfg.setFee(c ? String((c.meta as any)?.fee ?? '') : '');
   };
-
-  const grossMinor = Math.round(Number(fee || 0) * 100);
-  const dv = discType === 'percent' ? Number(discValue || 0) : Math.round(Number(discValue || 0) * 100);
-  const { discount_minor, net_minor } = enrolDiscount(grossMinor, discType, discType === 'percent' ? Number(discValue || 0) : Math.round(Number(discValue || 0) * 100));
-  const downMinor = Math.round(Number(down || 0) * 100);
-  const customAmounts = rows.map((r) => Math.round(Number(r.amount || 0) * 100));
-  const customDates = rows.map((r) => r.date).filter(Boolean);
-  const sched = previewSchedule({
-    plan_type: plan, net_minor, down_minor: downMinor,
-    num_installments: Math.max(1, Number(count) || 1), start_date: start || undefined,
-    custom_amounts_minor: plan === 'custom' ? customAmounts : undefined,
-    custom_dates: plan === 'custom' && customDates.length === rows.length ? rows.map((r) => r.date) : undefined,
-  });
-
-  const setRow = (i: number, patch: Partial<{ amount: string; date: string }>) =>
-    setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const planIntent = plan === 'full' ? 'full'
-    : plan === 'installment' ? (Number(count) === 3 ? 'emi_3' : Number(count) === 6 ? 'emi_6' : 'custom')
-    : 'custom';
 
   const save = async () => {
     if (!branchId) { toast('Choose a branch.', true); return; }
     if (!vertId) { toast('Choose a vertical.', true); return; }
     if (!courseId) { toast('Choose a course.', true); return; }
-    if (plan !== 'full' && !sched.balances) { toast(sched.error || 'The installments must sum to the net fee.', true); return; }
+    if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
     try {
       // 1) create the enrolment (discount computed + capped server-side; net is authoritative)
       const enr = await api.post<any>(`/students/${student.id}/enrolments`, {
         course_id: Number(courseId), batch_id: batchId ? Number(batchId) : null,
         vertical_id: vertId ? Number(vertId) : undefined, branch_id: branchId ? Number(branchId) : undefined,
-        fee_minor: grossMinor, discount_type: discType, discount_value: dv,
-        payment_plan: planIntent, start_date: start || null,
+        fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
+        payment_plan: cfg.planIntent, start_date: cfg.start || null,
       });
       // 2) build the payment plan as part of enrollment (Full / Installments / Custom + down
       //    payment). A missing payment_plan.create permission never fails the enrollment.
       if (enr?.id) {
-        try {
-          await api.post('/payment-plans', {
-            enrolment_id: Number(enr.id),
-            plan_type: plan, frequency: plan === 'full' ? 'once' : 'monthly',
-            down_payment_minor: downMinor,
-            num_installments: plan === 'installment' ? Math.max(1, Number(count) || 1) : undefined,
-            custom_amounts_minor: plan === 'custom' ? customAmounts : undefined,
-            custom_dates: plan === 'custom' && customDates.length === rows.length ? rows.map((r) => r.date) : undefined,
-            start_date: start || null,
-          });
-        } catch (pe) { toast(`Enrollment added; payment plan not created — ${(pe as Error).message}`, true); }
+        try { await api.post('/payment-plans', feePlanBody(cfg, Number(enr.id))); }
+        catch (pe) { toast(`Enrollment added; payment plan not created — ${(pe as Error).message}`, true); }
       }
       toast('Course enrollment added.'); onDone();
     } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
@@ -5704,7 +5824,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
         </div>
         <div className="fld"><label htmlFor="ae-vert">Vertical <span className="star">*</span></label>
           <select id="ae-vert" className="ainp" value={vertId} disabled={busy || !branchId}
-            onChange={(e) => { setVertId(e.target.value); setCourseId(''); setBatchId(''); setFee(''); }} data-testid="enrol-vertical">
+            onChange={(e) => { setVertId(e.target.value); setCourseId(''); setBatchId(''); cfg.setFee(''); }} data-testid="enrol-vertical">
             <option value="">{branchId ? '— Choose vertical —' : '— Choose branch first —'}</option>
             {branchVerticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
@@ -5724,84 +5844,156 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
             {batches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
-        <div className="fld"><label htmlFor="ae-fee">Course fee (₹) — from master</label>
-          <input id="ae-fee" className="ainp" type="number" value={fee} disabled={busy} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 20000" data-testid="enrol-fee" /></div>
+        {/* DISCOUNT · NET · PAYMENT PLAN · SCHEDULE — shared with Fee setup + Edit enrollment */}
+        <FeeConfigFields cfg={cfg} disabled={busy} />
+      </div>
+    </DetailModal>
+  );
+}
 
-        {/* DISCOUNT — amount OR percent */}
-        <div className="fld"><label htmlFor="ae-dtype">Discount</label>
-          <select id="ae-dtype" className="ainp" value={discType} disabled={busy} onChange={(e) => { setDiscType(e.target.value as EnrolDiscountType); setDiscValue(''); }} data-testid="enrol-disc-type">
-            <option value="none">No discount</option>
-            <option value="amount">By amount (₹)</option>
-            <option value="percent">By percentage (%)</option>
-          </select>
-        </div>
-        <div className="fld"><label htmlFor="ae-dval">{discType === 'percent' ? 'Discount %' : 'Discount ₹'}</label>
-          <input id="ae-dval" className="ainp" type="number" value={discValue} disabled={busy || discType === 'none'}
-            onChange={(e) => setDiscValue(e.target.value)} placeholder={discType === 'percent' ? 'e.g. 10' : 'e.g. 2000'} data-testid="enrol-disc-value" /></div>
+/**
+ * FEE SETUP (client feedback item 7) — the Fee Management → Fee setup action. Opens the SAME
+ * fee configuration as Enroll-in-another-course (discount amount/% + net + payment plan
+ * Full/Installments/Custom + down payment + schedule preview) bound to an EXISTING enrolment.
+ * On save it PATCHes the enrolment's discount/fee (net recomputed + capped server-side) and
+ * (re)builds the payment plan — replacing an existing plan when it has no payments applied.
+ */
+export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enrolmentId: number; onClose: () => void; onSaved: () => void }) {
+  const enr = useFetch<any>(`/enrolments/${enrolmentId}`, [enrolmentId]);
+  const planFetch = useFetch<any[]>(`/payment-plans?enrolment_id=${enrolmentId}`, [enrolmentId]);
+  const e = enr.data;
+  const existingPlan = (planFetch.data ?? []).find((p: any) => p.status === 'active');
+  const cfg = useFeeConfig();
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (e && !loaded) {
+    const dtp = (e.discount_type ?? 'none') as EnrolDiscountType;
+    cfg.setFee(String(Number(e.gross_fee_minor ?? e.fee_minor ?? 0) / 100));
+    cfg.setDiscType(dtp);
+    cfg.setDiscValue(dtp === 'percent' ? String(Number(e.discount_value ?? 0))
+      : dtp === 'amount' ? String(Number(e.discount_amount_minor ?? e.discount_minor ?? 0) / 100) : '');
+    if (e.start_date) cfg.setStart(String(e.start_date).slice(0, 10));
+    setLoaded(true);
+  }
+  const save = async () => {
+    if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
+    setBusy(true);
+    try {
+      // 1) persist the discount/fee on the enrolment (net recomputed + finance-capped server-side)
+      await api.patch(`/enrolments/${enrolmentId}`, {
+        fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
+        payment_plan: cfg.planIntent, start_date: cfg.start || undefined,
+      });
+      // 2) (re)build the payment plan. A plan with money applied cannot be replaced — the
+      //    discount still saves and we say so; else swap it for the freshly configured schedule.
+      if (existingPlan) {
+        try { await api.del(`/payment-plans/${existingPlan.id}`); }
+        catch (de) { toast(`Fee saved. The existing plan was kept — ${(de as Error).message}`, true); onSaved(); return; }
+      }
+      try { await api.post('/payment-plans', feePlanBody(cfg, enrolmentId)); }
+      catch (pe) { toast(`Fee saved; payment plan not created — ${(pe as Error).message}`, true); onSaved(); return; }
+      toast('Fee setup saved.'); onSaved();
+    } catch (err) { toast((err as Error).message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Fee setup — ${e?.enrolment_no ?? ''}`} icon="rupee" onClose={onClose} width={620}
+      footer={<button className="btn primary" onClick={save} disabled={busy || !e} data-testid="feesetup-save"><Ic k="check" />Save fee setup</button>}>
+      {!e ? <div className="fhint">Loading…</div> : (
+        <>
+          <div className="notice" style={{ marginBottom: 10 }}>
+            <Ic k="rupee" /><div>{e.course_name ?? 'Course'} · <span className="mono">{e.enrolment_no}</span> · {[e.branch_name, e.vertical_name].filter(Boolean).join(' › ') || '—'}. Configure the payment plan &amp; discount — same as an enrollment.</div>
+          </div>
+          <div className="form-grid">
+            <FeeConfigFields cfg={cfg} disabled={busy} />
+          </div>
+        </>
+      )}
+    </DetailModal>
+  );
+}
 
-        {/* GROSS / DISCOUNT / NET — shown prominently (the client wants these visible) */}
+/**
+ * EDIT ENROLMENT (client feedback item 6) — the Edit action on a Course Enrollment row. Opens
+ * an edit modal for that enrolment: course (within its Branch › Vertical), fee, discount
+ * amount/%, payment plan (Full/Installments/Custom + down), and per-course status. Fee/course/
+ * discount/plan persist via PATCH /enrolments/:id (+ plan reconcile); a changed status routes
+ * through the dedicated per-enrolment status endpoint (which enforces its own approval rules).
+ */
+export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onClose, onDone }:
+  { student: any; enrolment: any; canManageSensitive: boolean; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const statusCat = useFetch<any[]>(`/students/enrolment-status-catalog`, []);
+  const planFetch = useFetch<any[]>(`/payment-plans?enrolment_id=${enrolment.id}`, [enrolment.id]);
+  const existingPlan = (planFetch.data ?? []).find((p: any) => p.status === 'active');
+  const [courseId, setCourseId] = useState(String(enrolment.course_id ?? ''));
+  const [status, setStatus] = useState(String(enrolment.course_status ?? ''));
+  const cfg = useFeeConfig({
+    fee: String(Number(enrolment.gross_fee_minor ?? enrolment.fee_minor ?? 0) / 100),
+    discType: (enrolment.discount_type ?? 'none') as EnrolDiscountType,
+    discValue: (enrolment.discount_type === 'percent') ? String(Number(enrolment.discount_value ?? 0))
+      : (enrolment.discount_type === 'amount') ? String(Number(enrolment.discount_amount_minor ?? enrolment.discount_minor ?? 0) / 100) : '',
+    start: enrolment.start_date ? String(enrolment.start_date).slice(0, 10) : '',
+  });
+  const [busy, setBusy] = useState(false);
+  // Course list stays within the enrolment's OWN vertical (a vertical/branch move is a Course
+  // Transfer, which mints a new vertical-wise ID — kept as its own dedicated action).
+  const courses = (ref.courses ?? []).filter((c: any) =>
+    String((c.meta as any)?.vertical_id ?? '') === String(enrolment.vertical_id ?? '') ||
+    Number(c.id) === Number(enrolment.course_id));
+  const chooseCourse = (cid: string) => {
+    setCourseId(cid);
+    const c = (ref.courses ?? []).find((x: any) => Number(x.id) === Number(cid));
+    if (c && (c.meta as any)?.fee != null) cfg.setFee(String((c.meta as any).fee));
+  };
+  const statusOpts = (statusCat.data ?? []).filter((o: any) => canManageSensitive || !o.requires_approval);
+  const save = async () => {
+    if (!courseId) { toast('Choose a course.', true); return; }
+    if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
+    setBusy(true);
+    try {
+      // 1) course / fee / discount / plan intent (net recomputed + finance-capped server-side)
+      await api.patch(`/enrolments/${enrolment.id}`, {
+        course_id: Number(courseId),
+        fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
+        payment_plan: cfg.planIntent, start_date: cfg.start || undefined,
+      });
+      // 2) reconcile the payment plan (replace when it carries no payments)
+      if (existingPlan) {
+        try { await api.del(`/payment-plans/${existingPlan.id}`); await api.post('/payment-plans', feePlanBody(cfg, Number(enrolment.id))); }
+        catch (pe) { toast(`Saved. Payment plan unchanged — ${(pe as Error).message}`, true); }
+      } else {
+        try { await api.post('/payment-plans', feePlanBody(cfg, Number(enrolment.id))); }
+        catch (pe) { toast(`Saved; payment plan not created — ${(pe as Error).message}`, true); }
+      }
+      // 3) per-course status — only if the user changed it; the endpoint enforces approval rules
+      if (status && status !== String(enrolment.course_status ?? '')) {
+        try { await api.post(`/students/${student.id}/enrolments/${enrolment.id}/status`, { to_status: status, reason: null, last_attendance_date: null, effective_date: null, approved_by: null }); }
+        catch (se) { toast(`Enrollment saved; status not changed — ${(se as Error).message}. Use the Status action for approvals.`, true); }
+      }
+      toast('Enrollment updated.'); onDone();
+    } catch (err) { toast((err as Error).message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Edit enrollment — ${enrolment.course_name ?? enrolment.enrolment_no}`} icon="pencil" onClose={onClose} width={640}
+      footer={<button className="btn primary" onClick={save} disabled={busy} data-testid="enrol-edit-save"><Ic k="check" />Save changes</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}>
+        <Ic k="pencil" /><div>{[enrolment.branch_name, enrolment.vertical_name].filter(Boolean).join(' › ') || '—'} · <span className="mono">{enrolment.enrolment_no}</span>. Editing the course stays within this vertical — to move branch/vertical use Transfer course.</div>
+      </div>
+      <div className="form-grid">
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', padding: '8px 10px', background: 'var(--surface-2, #f8fafc)', borderRadius: 8, fontSize: 13 }}>
-            <div>Gross fee: <b data-testid="enrol-gross">{fmtINR(grossMinor)}</b></div>
-            <div>Discount: <b style={{ color: 'var(--red, #b91c1c)' }} data-testid="enrol-discamt">− {fmtINR(discount_minor)}</b></div>
-            <div>Net fee after discount: <b style={{ color: 'var(--green, #15803d)' }} data-testid="enrol-net">{fmtINR(net_minor)}</b></div>
-          </div>
-        </div>
-
-        {/* PAYMENT PLAN */}
-        <div className="fld"><label htmlFor="ae-plan">Payment plan</label>
-          <select id="ae-plan" className="ainp" value={plan} disabled={busy} onChange={(e) => setPlan(e.target.value as any)} data-testid="enrol-plan">
-            <option value="full">Full payment</option>
-            <option value="installment">Installments (fixed count)</option>
-            <option value="custom">Custom (own amounts)</option>
+          <label htmlFor="ee-course">Course <span className="star">*</span></label>
+          <select id="ee-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => chooseCourse(e.target.value)} data-testid="enrol-edit-course">
+            <option value="">— Choose course —</option>
+            {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
-        {plan === 'installment' && (
-          <div className="fld"><label htmlFor="ae-count">Number of installments</label>
-            <input id="ae-count" className="ainp" type="number" min={1} value={count} disabled={busy} onChange={(e) => setCount(e.target.value)} data-testid="enrol-count" /></div>
-        )}
-        {plan !== 'full' && (
-          <div className="fld"><label htmlFor="ae-down">Down payment (₹, optional)</label>
-            <input id="ae-down" className="ainp" type="number" value={down} disabled={busy} onChange={(e) => setDown(e.target.value)} placeholder="0" data-testid="enrol-down" /></div>
-        )}
-        <div className="fld"><label htmlFor="ae-start">Start / first due date</label>
-          <input id="ae-start" className="ainp" type="date" value={start} disabled={busy} onChange={(e) => setStart(e.target.value)} /></div>
-
-        {plan === 'custom' && (
-          <div className="fld" style={{ gridColumn: '1 / -1' }}>
-            <label>Custom installments (amounts + due dates must total the payable after down payment)</label>
-            <table className="minitbl" style={{ width: '100%' }}>
-              <thead><tr><th>#</th><th>Amount (₹)</th><th>Due date</th><th /></tr></thead>
-              <tbody>{rows.map((r, i) => (
-                <tr key={i}>
-                  <td>{i + 1}</td>
-                  <td><input className="ainp" type="number" style={{ width: 110 }} value={r.amount} onChange={(e) => setRow(i, { amount: e.target.value })} data-testid={`enrol-crow-amt-${i}`} /></td>
-                  <td><input className="ainp" type="date" value={r.date} onChange={(e) => setRow(i, { date: e.target.value })} /></td>
-                  <td>{rows.length > 1 && <button className="ax" title="Remove" onClick={() => setRows((rs) => rs.filter((_, idx) => idx !== i))}><Ic k="x" /></button>}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-            <button className="btn" style={{ marginTop: 6 }} onClick={() => setRows((rs) => [...rs, { amount: '', date: '' }])}><Ic k="plus" />Add installment</button>
-          </div>
-        )}
-
-        {/* SCHEDULE PREVIEW — sums to the net */}
-        {plan !== 'full' && (
-          <div className="fld" style={{ gridColumn: '1 / -1' }}>
-            <label>Schedule preview</label>
-            <table className="minitbl" style={{ width: '100%' }} data-testid="enrol-schedule">
-              <thead><tr><th>#</th><th>Due</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
-              <tbody>{sched.rows.map((r) => (
-                <tr key={r.seq_no}><td>{r.label}</td><td>{r.due_date}</td><td style={{ textAlign: 'right' }}>{fmtINR(r.amount_minor)}</td></tr>
-              ))}</tbody>
-              <tfoot><tr>
-                <td colSpan={2} style={{ fontWeight: 700 }}>Total</td>
-                <td style={{ textAlign: 'right', fontWeight: 700, color: sched.balances ? 'var(--green,#15803d)' : 'var(--red,#b91c1c)' }} data-testid="enrol-sched-total">{fmtINR(sched.sum_minor)}</td>
-              </tr></tfoot>
-            </table>
-            {!sched.balances && <div className="form-err" style={{ marginTop: 4 }}>{sched.error || `The schedule must total the net fee ${fmtINR(net_minor)}.`}</div>}
-          </div>
-        )}
+        <div className="fld"><label htmlFor="ee-status">Course status</label>
+          <select id="ee-status" className="ainp" value={status} disabled={busy} onChange={(e) => setStatus(e.target.value)} data-testid="enrol-edit-status">
+            {statusOpts.map((o: any) => <option key={o.code} value={o.code}>{o.label}</option>)}
+          </select>
+          <div className="sub" style={{ fontSize: 11 }}>Statuses needing approval (On Hold / Withdrawn / …) are set via the dedicated Status action.</div>
+        </div>
+        <FeeConfigFields cfg={cfg} disabled={busy} />
       </div>
     </DetailModal>
   );
