@@ -6148,6 +6148,10 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
   // (Daily→all · Weekdays→Mon–Fri · Weekends→Sat–Sun · Custom→pick days). The checkboxes are
   // locked to the derived set unless the frequency is Custom.
   const typeCatalog = useFetch<any[]>(`/batches/type-catalog`, []);
+  // dev/93 — the Trainer picker must offer ONLY Trainer-role users (client feedback: it was
+  // listing every user). Source it from the server-filtered /users?role=Trainer endpoint so it
+  // is correct AND branch/vertical-scope-enforced (the same endpoint the Batches list filter uses).
+  const trainerFetch = useFetch<any[]>(`/users?role=Trainer`, []);
   const [batchType, setBatchType] = useState<string>(initial?.batch_type ? String(initial.batch_type) : 'regular');
   const [frequency, setFrequency] = useState<string>(initial?.frequency ? String(initial.frequency) : 'custom');
   const [classDays, setClassDays] = useState<number[]>(
@@ -6185,6 +6189,17 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
   const cOpts = ref.courses.filter((c: any) =>
     (!branchId || Number(c.meta?.branch_id) === Number(branchId))
     && (!verticalId || Number(c.meta?.vertical_id) === Number(verticalId)));
+  // Trainer options = Trainer-role users only (from /users?role=Trainer). Legacy passthrough:
+  // an already-assigned trainer (edit prefill) is kept even if they no longer hold the Trainer
+  // role, so an existing batch's assigned trainer never silently drops out of the dropdown.
+  const trainerOptions = (() => {
+    const base = selectableUsers(trainerFetch.data ?? [], trainerId);
+    if (trainerId && !base.some((u: any) => String(u.id) === String(trainerId))) {
+      const legacy = (ref.users as any[]).find((u: any) => String(u.id) === String(trainerId));
+      if (legacy) return [legacy, ...base];
+    }
+    return base;
+  })();
 
   const save = async () => {
     setErr('');
@@ -6266,7 +6281,7 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
               <label htmlFor="b-trainer">Trainer</label>
               <select id="b-trainer" className="ainp" value={trainerId} onChange={(e) => setTrainerId(e.target.value)}>
                 <option value="">— Unassigned —</option>
-                {selectableUsers(ref.users).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                {trainerOptions.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
             <div className="fld">
