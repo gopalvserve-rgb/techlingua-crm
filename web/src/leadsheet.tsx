@@ -105,10 +105,19 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
   };
 
   const saveEdits = async () => {
-    if (!Object.keys(edits).length) { onClose(); return; }
+    // dev/95 item 5 — Branch/Vertical/Pipeline are edited via the SAME re-parent path the
+    // Transfer flow uses (the app cascade is Branch › Vertical › Pipeline › Campaign): when a
+    // new Campaign is picked the lead is transferred (owner kept); the remaining fields save
+    // through the normal PATCH. branch/vertical/pipeline never go to PATCH (they are not lead
+    // columns) — a Campaign choice carries the whole path.
+    const { branch_id, vertical_id, pipeline_id, campaign_id, ...rest } = edits as Record<string, unknown>;
+    void branch_id; void vertical_id; void pipeline_id;
+    const reparent = campaign_id != null && Number(campaign_id) !== Number(lead.campaign_id);
+    if (!Object.keys(rest).length && !reparent) { onClose(); return; }
     setBusy(true);
     try {
-      await api.patch(`/leads/${lead.id}`, edits);
+      if (reparent) await api.post(`/leads/${lead.id}/transfer`, { campaign_id: Number(campaign_id), owner_mode: 'keep' });
+      if (Object.keys(rest).length) await api.patch(`/leads/${lead.id}`, rest);
       setEdits({});
       setSaved('Changes saved & logged');
       await load(); onChanged?.();
@@ -175,6 +184,28 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
     </select>
   );
 
+  // dev/95 item 5 — editable Branch › Vertical › Pipeline › Campaign (re-parent) in the edit
+  // form. Only offered in edit mode with lead.transfer; the strict cascade mirrors the Transfer
+  // modal. Children reset (null) when a parent changes; a saved Campaign drives the re-parent.
+  const canReparent = editing && can('lead.transfer');
+  const rp = (k: string) => (edits[k] !== undefined ? edits[k] : lead[k]) as any;
+  const setRp = (k: string, v: number | null) => setEdits((x) => {
+    const nx: Record<string, unknown> = { ...x, [k]: v };
+    if (k === 'branch_id') { nx.vertical_id = null; nx.pipeline_id = null; nx.campaign_id = null; }
+    if (k === 'vertical_id') { nx.pipeline_id = null; nx.campaign_id = null; }
+    if (k === 'pipeline_id') { nx.campaign_id = null; }
+    return nx;
+  });
+  const rpsel = (label: string, k: string, opts: Array<{ id: number; name: string }>, disabled?: boolean) => (
+    <div className="f"><label>{label}</label><div className="iv">
+      <select value={rp(k) ?? ''} disabled={!canReparent || disabled}
+        onChange={(e) => setRp(k, e.target.value ? Number(e.target.value) : null)}>
+        <option value="">{disabled ? 'Pick the parent first…' : 'Select…'}</option>
+        {opts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+    </div></div>
+  );
+
   const notes = (lead.activities as Activity[]).filter((a) => a.type === 'note');
 
   return (
@@ -189,6 +220,10 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
               <TempBadge temperature={lead.temperature} score={lead.score} />
               <span className="bdg b-indigo">{lead.vertical_name}{lead.vertical_deleted ? ' (deleted)' : ''} · {lead.pipeline_name}{lead.pipeline_deleted ? ' (deleted)' : ''}</span>
               {lead.is_duplicate && <span className="bdg b-rose">Duplicate</span>}
+              {/* dev/95 item 1 — returning student (alumni) flag. */}
+              {lead.is_existing_student
+                ? <span className="bdg b-green" title={`Returning student${lead.existing_student_name ? ' — ' + lead.existing_student_name : ''}${lead.existing_student_no ? ' (' + lead.existing_student_no + ')' : ''}`}>Existing student</span>
+                : null}
               {/* Sprint 3 — a breached SLA and an escalation flag are visible on the sheet */}
               {lead.sla_breached ? <span className="bdg b-rose" title="SLA breached">SLA breached</span> : null}
               {lead.is_flagged && !lead.sla_breached
@@ -314,17 +349,49 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
                   <option value="low">Low</option><option value="med">Medium</option><option value="high">High</option>
                 </select>
               </div></div>
+              {/* dev/95 item 5 — Stage editable in the edit form (in addition to the stepper).
+                  Changing it moves the lead and triggers the auto-status rule (won→Won, lost→Lost). */}
+              <div className="f"><label>Stage</label><div className="iv">
+                {canUpdate && stages.length
+                  ? <select value={lead.stage_id ?? ''} disabled={busy}
+                      onChange={(e) => { const sid = Number(e.target.value); const s = stages.find((x) => Number(x.id) === sid); if (s) setStage(s); }}>
+                      {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  : <span>{lead.stage_name || '—'}</span>}
+              </div></div>
               <div className="f"><label>Status{mlink('status', 'status_id')}</label><div className="iv">
                 {ref.statuses.length || extra['status_id']?.length ? sel('status_id', withExtra('status_id', ref.statuses), false) : <span>{lead.status_name || '—'}</span>}
               </div></div>
               <div className="f"><label>Next follow-up</label><div className="iv">
                 <span>{fmtDT(lead.next_follow_up_at)}</span><Ic k="cal" />
               </div></div>
-              <div className="f s2"><label>Path</label><div className="iv">
-                <span>
-                  {lead.branch_name}{lead.branch_deleted ? ' (deleted)' : ''} › {lead.vertical_name}{lead.vertical_deleted ? ' (deleted)' : ''} › {lead.pipeline_name}{lead.pipeline_deleted ? ' (deleted)' : ''} › {lead.campaign_name}{lead.campaign_deleted ? ' (deleted)' : ''}
-                </span>
-              </div></div>
+              {/* dev/95 item 5 — Branch & Vertical are EDITABLE here (re-parent). Editing them
+                  walks the strict Branch › Vertical › Pipeline › Campaign cascade and moves the
+                  lead on Save (keeps owner). Without edit + lead.transfer, the path is read-only. */}
+              {canReparent ? (
+                <>
+                  {rpsel('Branch', 'branch_id', ref.branches)}
+                  {rpsel('Vertical', 'vertical_id', ref.verticals.filter((v: any) => !rp('branch_id') || Number(v.branch_id) === Number(rp('branch_id'))), !rp('branch_id'))}
+                  {rpsel('Pipeline', 'pipeline_id', ref.pipelines.filter((p: any) => !rp('vertical_id') || Number(p.vertical_id) === Number(rp('vertical_id'))), !rp('vertical_id'))}
+                  {rpsel('Campaign', 'campaign_id', ref.campaigns.filter((c: any) => !rp('pipeline_id') || Number(c.pipeline_id) === Number(rp('pipeline_id'))), !rp('pipeline_id'))}
+                  <div className="f s2"><div className="empty-note" style={{ fontSize: 11, textAlign: 'left', padding: 0 }}>
+                    Changing Branch / Vertical re-parents the lead. Pick down to a Campaign, then Save to move it (owner kept).
+                  </div></div>
+                </>
+              ) : (
+                <div className="f s2"><label>Path</label><div className="iv">
+                  <span>
+                    {lead.branch_name}{lead.branch_deleted ? ' (deleted)' : ''} › {lead.vertical_name}{lead.vertical_deleted ? ' (deleted)' : ''} › {lead.pipeline_name}{lead.pipeline_deleted ? ' (deleted)' : ''} › {lead.campaign_name}{lead.campaign_deleted ? ' (deleted)' : ''}
+                  </span>
+                </div></div>
+              )}
+              {/* dev/95 item 1 — returning student reference (link to the matched student profile). */}
+              {lead.is_existing_student && (
+                <div className="f s2"><label>Returning student</label><div className="iv">
+                  <span className="bdg b-green" title="This contact matches an existing student">Existing student</span>
+                  <span style={{ marginLeft: 8 }}>{lead.existing_student_name || `Student #${lead.existing_student_id}`}{lead.existing_student_no ? ` · ${lead.existing_student_no}` : ''}</span>
+                </div></div>
+              )}
             </div>
           </div>
           {cfDefs.length > 0 && (() => {

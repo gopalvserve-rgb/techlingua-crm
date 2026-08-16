@@ -31,6 +31,8 @@ export interface FakeState {
   pausedAgents: Array<{ campaign_id: number; user_id: number }>;
   /** users with lead_assignment_enabled = FALSE (global per-user switch, migration 039) */
   leadAssignOff: number[];
+  /** converted STUDENTS for the returning-student flag (dev/95 item 1) */
+  students: any[];
 }
 
 const DEFAULT_STAGES: FakeStage[] = [
@@ -109,6 +111,7 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
     stages: DEFAULT_STAGES,
     pausedAgents: [],
     leadAssignOff: [],
+    students: [],
     ...init,
   };
   let seq = 100;
@@ -236,6 +239,20 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
     if (s.startsWith('SELECT m.id, m.action') && s.includes('FROM lead_merge m')) {
       return st.merges.filter((m) => Number(m.target_lead_id) === Number(params[0]))
         .map((m) => ({ ...m, actor_name: 'Tester' }));
+    }
+
+    // dev/95 item 1 — returning-student lookup (SELECT ... FROM student s WHERE org_id ...)
+    if (s.includes('FROM student s') && s.includes('s.org_id')) {
+      const nums: string[] = [];
+      let email: string | null = null;
+      for (const p of params.slice(1)) {
+        if (Array.isArray(p)) nums.push(...(p as string[]).map((x) => String(x)));
+        else if (typeof p === 'string') email = p.toLowerCase();
+      }
+      const hit = (st.students ?? []).find((su: any) =>
+        (nums.length > 0 && (nums.includes(su.phone) || nums.includes(su.whatsapp_phone) || nums.includes(su.alt_phone)))
+        || (email != null && String(su.email ?? '').toLowerCase() === email));
+      return hit ? [{ id: hit.id, full_name: hit.full_name, student_no: hit.student_no ?? null }] : [];
     }
 
     // ---- generic writes -----------------------------------------------------

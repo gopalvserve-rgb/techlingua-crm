@@ -144,6 +144,8 @@ const LEAD_SELECT = `
          l.score_breakdown, l.scored_at, l.is_flagged, l.flag_reason,
          l.is_red_flagged, l.red_flagged_at,
          l.paused, l.paused_at,
+         l.is_existing_student, l.existing_student_id,
+         es.full_name AS existing_student_name, es.student_no AS existing_student_no,
          EXISTS (SELECT 1 FROM lead_sla s
                   WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now()) AS sla_breached,
          l.state_id, l.city_id, l.course_id, l.qualification_id, l.budget_id,
@@ -165,7 +167,8 @@ const LEAD_SELECT = `
     LEFT JOIN m_status ms ON ms.id = l.status_id
     LEFT JOIN "user" u  ON u.id = l.owner_id
     LEFT JOIN m_course co ON co.id = l.course_id
-    LEFT JOIN city ci   ON ci.id = l.city_id`;
+    LEFT JOIN city ci   ON ci.id = l.city_id
+    LEFT JOIN student es ON es.id = l.existing_student_id`;
 
 @Injectable()
 export class LeadsService {
@@ -876,9 +879,14 @@ export class LeadsService {
     const activities: Array<{ type: string; from: unknown; to: unknown }> = [];
     const fieldChanges: Record<string, { from: unknown; to: unknown }> = {};
 
+    // dev/95 item 2 — the auto-status rule keys off the new stage's TYPE (won|lost|open),
+    // NOT a configurable stage name. A move to a WON stage forces Lead Status = Won; a move
+    // to a LOST/closed stage forces Status = Lost. Resolved here so the forced status flows
+    // through the SAME set()/activity path as a manual status change.
+    let newStageType: string | null = null;
     if (dto.stage_id !== undefined && Number(dto.stage_id) !== Number(before.stage_id)) {
-      const stage = await this.db.one<{ id: string; name: string; pipeline_id: string }>(
-        `SELECT id, name, pipeline_id FROM pipeline_stage WHERE id = $1`, [Number(dto.stage_id)],
+      const stage = await this.db.one<{ id: string; name: string; pipeline_id: string; stage_type: string }>(
+        `SELECT id, name, pipeline_id, stage_type FROM pipeline_stage WHERE id = $1`, [Number(dto.stage_id)],
       );
       if (!stage || Number(stage.pipeline_id) !== Number(before.pipeline_id)) {
         throw new BadRequestException('stage does not belong to the lead pipeline');
@@ -886,13 +894,27 @@ export class LeadsService {
       const from = await this.db.one<{ name: string }>(`SELECT name FROM pipeline_stage WHERE id = $1`, [before.stage_id]);
       set('stage_id', Number(dto.stage_id));
       activities.push({ type: 'stage_change', from: { id: before.stage_id, name: from?.name }, to: { id: stage.id, name: stage.name } });
+      newStageType = stage.stage_type ?? null;
     }
-    if (dto.status_id !== undefined && Number(dto.status_id) !== Number(before.status_id)) {
-      const to = await this.db.one<{ name: string }>(`SELECT name FROM m_status WHERE id = $1`, [Number(dto.status_id)]);
+    // Effective target status: the auto-rule (won→Won, lost→Lost) WINS over an explicit
+    // status in the same PATCH, so convert / a stage move to Enrolled always lands on Won.
+    // An 'open' (unrelated) stage move never touches status — a manually set status is kept.
+    const forcedStatusCode: 'WON' | 'LOST' | null =
+      newStageType === 'won' ? 'WON' : newStageType === 'lost' ? 'LOST' : null;
+    let targetStatusId: number | null = null;
+    if (forcedStatusCode) {
+      const row = await this.db.one<{ id: string }>(
+        `SELECT id FROM m_status WHERE org_id = $1 AND code = $2`, [org, forcedStatusCode]);
+      if (row) targetStatusId = Number(row.id);
+    } else if (dto.status_id !== undefined) {
+      targetStatusId = Number(dto.status_id);
+    }
+    if (targetStatusId != null && targetStatusId !== Number(before.status_id)) {
+      const to = await this.db.one<{ name: string }>(`SELECT name FROM m_status WHERE id = $1`, [targetStatusId]);
       if (!to) throw new BadRequestException('unknown status');
       const from = await this.db.one<{ name: string }>(`SELECT name FROM m_status WHERE id = $1`, [before.status_id]);
-      set('status_id', Number(dto.status_id));
-      activities.push({ type: 'status_change', from: { id: before.status_id, name: from?.name }, to: { id: dto.status_id, name: to.name } });
+      set('status_id', targetStatusId);
+      activities.push({ type: 'status_change', from: { id: before.status_id, name: from?.name }, to: { id: targetStatusId, name: to.name } });
     }
     if (dto.owner_id !== undefined && Number(dto.owner_id ?? 0) !== Number(before.owner_id ?? 0)) {
       const ownerId = dto.owner_id == null ? null : Number(dto.owner_id);

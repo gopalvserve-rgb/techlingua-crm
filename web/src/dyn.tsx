@@ -211,6 +211,8 @@ function leadRow(l: any): Cell[] {
         {l.is_flagged && !l.sla_breached
           ? <span className="bdg b-amber" title={l.flag_reason || 'Flagged'}>!</span> : null}
         {l.is_red_flagged ? <span className="bdg b-red" title="Red flagged"><Ic k="flag" w={2} /></span> : null}
+        {/* dev/95 item 1 — returning student (alumni) flag on the list. */}
+        {l.is_existing_student ? <span className="bdg b-green" title={`Returning student${l.existing_student_name ? ' — ' + l.existing_student_name : ''}${l.existing_student_no ? ' (' + l.existing_student_no + ')' : ''}`}>Alumni</span> : null}
       </span>) },
     l.owner_name || 'Unassigned',
     { b: [l.stage_name || '—', l.stage_type === 'won' ? 'b-green' : l.stage_type === 'lost' ? 'b-rose' : 'b-cyan'] },

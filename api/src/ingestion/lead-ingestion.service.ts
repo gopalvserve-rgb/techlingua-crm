@@ -422,6 +422,34 @@ export class LeadIngestionService {
     );
   }
 
+  /**
+   * dev/95 item 1 — RETURNING STUDENT (alumni) detection. A new lead whose contact matches
+   * an EXISTING converted student (same E.164 phone / WhatsApp / alt phone, or same email —
+   * the same contact keys the duplicate check uses, but against the STUDENTS table) is still
+   * created, and flagged so staff see it is a returning student, with a reference to the
+   * matched student. Match is scoped to the org (single-tenant). Returns the best match or null.
+   */
+  async findExistingStudent(numbers: string[], email: string | null, orgId: number) {
+    const nums = [...new Set(numbers.filter(Boolean))];
+    const mail = email ? email.trim().toLowerCase() : null;
+    if (!nums.length && !mail) return null;
+    const params: unknown[] = [orgId];
+    const clauses: string[] = [];
+    if (nums.length) {
+      params.push(nums);
+      const p = `$${params.length}::text[]`;
+      clauses.push(`s.phone = ANY(${p}) OR s.whatsapp_phone = ANY(${p}) OR s.alt_phone = ANY(${p})`);
+    }
+    if (mail) { params.push(mail); clauses.push(`lower(s.email) = $${params.length}`); }
+    return this.db.one<{ id: string; full_name: string; student_no: string | null }>(
+      `SELECT s.id, s.full_name, s.student_no
+         FROM student s
+        WHERE s.org_id = $1 AND s.deleted_at IS NULL AND (${clauses.join(' OR ')})
+        ORDER BY s.id LIMIT 1`,
+      params,
+    );
+  }
+
   /** The normalised record in lead-column shape — what the merge core consumes. */
   private asMergeInput(lead: NormalisedLead): Record<string, unknown> {
     const out: Record<string, unknown> = {};
@@ -672,6 +700,10 @@ export class LeadIngestionService {
       pool = r.pool; assignNote = r.note;
     }
 
+    // dev/95 item 1 — flag a returning student (converted before) without blocking creation.
+    const existingStudent = await this.findExistingStudent(
+      [lead.phone, lead.whatsapp_phone, lead.alt_phone].filter(Boolean) as string[], lead.email, target.org_id);
+
     // 5) persist (+ ledger inside the SAME tx => idempotent under concurrency)
     try {
       const created = await this.db.tx(async (c) => {
@@ -681,15 +713,17 @@ export class LeadIngestionService {
                              full_name, phone, email, alt_phone, whatsapp_phone, dob, status_id, stage_id, priority, temperature, score,
                              owner_id, next_follow_up_at, last_activity_at, is_duplicate,
                              state_id, city_id, course_id, qualification_id, budget_id, custom_fields,
-                             created_by, ingest_batch_id, external_id, duplicate_of_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,now(),$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+                             created_by, ingest_batch_id, external_id, duplicate_of_id,
+                             is_existing_student, existing_student_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,now(),$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
            RETURNING *`,
           [target.org_id, target.branch_id, target.vertical_id, target.pipeline_id, target.campaign_id, target.source_id,
             lead.full_name, lead.phone, lead.email, lead.alt_phone, lead.whatsapp_phone, lead.dob, lead.status_id, lead.stage_id,
             lead.priority, lead.temperature, lead.score, owner, lead.next_follow_up_at, !!dup,
             lead.state_id, lead.city_id, lead.course_id, lead.qualification_id, lead.budget_id,
             JSON.stringify(lead.custom_fields), ctx.actor_id, ctx.batch_id ?? null, lead.external_id,
-            dup ? Number(dup.id) : null],
+            dup ? Number(dup.id) : null,
+            !!existingStudent, existingStudent ? Number(existingStudent.id) : null],
         );
         const row = ins.rows[0];
         const leadId = Number(row.id);
@@ -724,6 +758,11 @@ export class LeadIngestionService {
           dupNote ?? lead.note);
         if (dupNote && lead.note) await log('note', null, null, lead.note);
         if (owner) await log('assign', null, { owner_id: owner }, assignNote);
+        // dev/95 item 1 — record on the timeline that this lead is a returning student.
+        if (existingStudent) {
+          await log('note', null, { existing_student_id: Number(existingStudent.id) },
+            `Returning student — matches existing student ${existingStudent.student_no ? existingStudent.student_no + ' — ' : ''}${existingStudent.full_name} (#${existingStudent.id})`);
+        }
 
         // worker-created leads never pass through the HTTP AuditInterceptor
         await c.query(
