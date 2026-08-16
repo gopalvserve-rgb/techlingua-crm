@@ -722,7 +722,10 @@ export function invoicePdf(inv: InvoiceDoc, lh: Letterhead): Buffer {
 
 export interface StudentIdCardDoc {
   student_name: string;
+  /** Student ID = the customer id (<CENTRE_CODE>-<YEAR>-<NNN>). */
   student_no?: string | null;
+  /** Roll Number = the vertical-wise id (<VERTICAL_CODE>-<YEAR>-<NNN>) for the card's vertical. */
+  roll_no?: string | null;
   enrollment_no?: string | null;
   courses?: string[];
   batch_name?: string | null;
@@ -791,7 +794,8 @@ export function studentIdCardPdf(c: StudentIdCardDoc, lh: Letterhead): Buffer {
   };
   const courses = (c.courses ?? []).filter(Boolean);
   row('Student ID', c.student_no || '—');
-  if (c.enrollment_no) row('Enrollment', c.enrollment_no);
+  if (c.roll_no) row('Roll Number', c.roll_no);
+  if (c.enrollment_no) row('Enrolment No', c.enrollment_no);
   row('Course', courses.length ? courses.join(', ') : '—');
   row('Branch / Vertical', [c.branch_name, c.vertical_name].filter(Boolean).join(' / ') || '—');
   if (c.batch_name) row('Batch', c.batch_name);

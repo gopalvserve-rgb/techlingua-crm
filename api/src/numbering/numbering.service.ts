@@ -120,6 +120,32 @@ export function formatNumber(
   return `${parts.prefix ?? ''}${tok}${body}${parts.suffix ?? ''}`;
 }
 
+// =============================================================================
+// CLIENT ID RE-MODEL (dev/97) — three CODE-based identifiers in the client's LITERAL
+// format `<CODE>-<YEAR>-<NNN>`:
+//   Student ID    = <CENTRE_CODE>-<YEAR>-<NNN>  (e.g. VP001-2026-001)  — one per student
+//   Roll Number   = <VERTICAL_CODE>-<YEAR>-<NNN> (e.g. BCL-2026-001)   — per (vertical, year)
+//   Enrolment No  = <COURSE_CODE>-<YEAR>-<NNN>  (e.g. ENGA1-2026-001)  — per (course, year)
+//
+// These use a DEDICATED per-(scope, code, year) counter (`coded_number_seq`), NOT the
+// `number_series` table, for two reasons the existing series cannot meet:
+//   1. number_series scopes only by branch/vertical — it can NEVER scope per COURSE.
+//   2. formatNumber joins token and body with a slash (SID-2026-27/0001); the client's
+//      format is DASH-joined with the plain CALENDAR YEAR and a 3-digit sequence.
+// CALENDAR year is taken in IST (the org is India-only) so the number reads the local year.
+export type CodedScope = 'student' | 'roll' | 'enrolment';
+
+/** PURE — the client's `<CODE>-<YEAR>-<NNN>` format (calendar year, 3-digit zero-pad). */
+export function formatCoded(code: string, year: number, seq: number): string {
+  const c = String(code ?? '').trim().toUpperCase() || 'X';
+  return `${c}-${year}-${String(seq).padStart(3, '0')}`;
+}
+
+/** PURE — the IST calendar year for a moment (org is India-only; the number reads the local year). */
+export function istYear(at: Date): number {
+  return new Date(at.getTime() + 5.5 * 3600 * 1000).getUTCFullYear();
+}
+
 @Injectable()
 export class NumberingService {
   constructor(private readonly db: DatabaseService) {}
@@ -221,6 +247,33 @@ export class NumberingService {
     const token = periodToken(row.reset_period, new Date());
     const n = row.reset_period !== 'none' && row.period_token !== token ? 1 : Number(row.next_number);
     return formatNumber({ prefix: row.prefix, suffix: row.suffix, padding: Number(row.padding), token, n });
+  }
+
+  /**
+   * ALLOCATE the next CODE-based number (`<CODE>-<YEAR>-<NNN>`) for the client ID re-model.
+   * One INSERT ... ON CONFLICT DO UPDATE, so the row lock on (org, scope, code, year) is the
+   * mutex — no read-modify-write, no race. Pass the caller's tx client so the sequence rolls
+   * back with the row that used it (an abandoned save must not burn a number). CALENDAR-year
+   * (IST) based; sequence is per (scope, code, year) so two courses/verticals never collide.
+   */
+  async allocateCoded(scope: CodedScope, code: string, client?: PoolClient, now: Date = new Date()): Promise<string> {
+    const orgId = await this.orgId();
+    const codeNorm = String(code ?? '').trim().toUpperCase() || 'X';
+    const year = istYear(now);
+    const q = client
+      ? <T>(sql: string, p: unknown[]) => client.query(sql, p as any[]).then((r) => r.rows as T[])
+      : <T>(sql: string, p: unknown[]) => this.db.query(sql, p) as Promise<T[]>;
+    const out = await q<{ allocated: string }>(
+      `INSERT INTO coded_number_seq (org_id, scope, code, year, next_seq)
+       VALUES ($1::bigint, $2::varchar, $3::varchar, $4::int, 2)
+       ON CONFLICT (org_id, scope, code, year)
+       DO UPDATE SET next_seq = coded_number_seq.next_seq + 1, updated_at = now()
+       RETURNING next_seq - 1 AS allocated`,
+      [orgId, scope, codeNorm, year],
+    );
+    const r = out[0];
+    if (!r) throw new BadRequestException(`Coded numbering series "${scope}/${codeNorm}" vanished mid-allocation`);
+    return formatCoded(codeNorm, year, Number(r.allocated));
   }
 
   // ------------------------------------------------------------------ admin CRUD

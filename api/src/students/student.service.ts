@@ -81,6 +81,16 @@ export class StudentService {
     return Number(r.id);
   }
 
+  /** The FIXED org/centre code that prefixes every Student ID (`<CENTRE_CODE>-<YEAR>-<NNN>`).
+   *  Set once in Settings › Student ID centre code (`app_setting.student_centre_code`), NOT
+   *  derived per branch. Defaults to VP001 so a fresh DB never fails to mint a Student ID. */
+  private async centreCode(): Promise<string> {
+    const row = await this.db.one<{ value: any }>(`SELECT value FROM app_setting WHERE key = 'student_centre_code'`);
+    const raw: any = row?.value;
+    const v = typeof raw === 'string' ? raw : (raw && typeof raw === 'object' ? (raw.code ?? raw.value ?? '') : '');
+    return String(v || 'VP001').trim().toUpperCase() || 'VP001';
+  }
+
   /** ITEM 4 — resolve an enrolment's discount from the form. A discount is EITHER an amount
    *  (₹, paise) OR a percentage (%) on the gross fee; the discount AMOUNT + NET are computed
    *  here (never trust a client net). Legacy payloads (only discount_minor) read as an amount.
@@ -132,11 +142,11 @@ export class StudentService {
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`s.created_at >= $${params.length}::timestamptz`); }
     if (_dr.to) { params.push(_dr.to); where.push(`s.created_at < ($${params.length}::date + 1)`); }
-    if (f.q) { params.push(`%${f.q}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.phone ILIKE $${params.length} OR s.student_no ILIKE $${params.length} OR s.enrollment_no ILIKE $${params.length})`); }
+    if (f.q) { params.push(`%${f.q}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.phone ILIKE $${params.length} OR s.student_no ILIKE $${params.length} OR s.customer_no ILIKE $${params.length} OR s.enrollment_no ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 300), 1000));
 
     return this.db.query<any>(
-      `SELECT s.id, s.student_no, s.enrollment_no, s.full_name, s.phone, s.email, s.status,
+      `SELECT s.id, s.student_no, s.customer_no, s.enrollment_no, s.full_name, s.phone, s.email, s.status,
               sd.label AS status_label, sd.lms_access, s.status_changed_at,
               s.branch_id, s.vertical_id, s.course_id, s.batch_id, s.owner_id,
               s.enrolment_id, s.created_at, s.lead_id,
@@ -804,8 +814,10 @@ export class StudentService {
     const today = new Date();
     const validUntil = new Date(today.getTime()); validUntil.setFullYear(validUntil.getFullYear() + 1);
     const doc: StudentIdCardDoc = {
-      // The card shows the VERTICAL-WISE Student ID (client feedback) as the Student ID.
-      student_name: st.full_name, student_no: r.studentVerticalNo, enrollment_no: st.enrollment_no,
+      // Client ID re-model: the card shows the STUDENT ID (customer id, one per student) and the
+      // ROLL NUMBER (the vertical-wise id for THIS vertical). Falls back to the roll number for the
+      // Student ID only if a legacy row has no customer id yet.
+      student_name: st.full_name, student_no: st.customer_no ?? r.studentVerticalNo, roll_no: r.studentVerticalNo,
       courses: r.courses, batch_name: st.batch_name, branch_name: r.branchName, vertical_name: r.verticalName,
       dob: st.dob, phone: st.phone,
       issue_date: today.toISOString(), valid_until: validUntil.toISOString(), photo,
@@ -930,7 +942,7 @@ export class StudentService {
         WHERE ${w} GROUP BY c.name ORDER BY value DESC LIMIT 12`, params);
 
     const recent = await this.db.query<any>(
-      `SELECT s.id, s.student_no, s.full_name, s.created_at,
+      `SELECT s.id, s.student_no, s.customer_no, s.full_name, s.created_at,
               b.name AS branch_name, c.name AS course_name
          FROM student s
          LEFT JOIN branch b ON b.id = s.branch_id
@@ -1133,12 +1145,15 @@ export class StudentService {
       throw new BadRequestException('Invalid batch.');
     }
 
+    const centreCode = await this.centreCode();
     const out = await this.db.tx(async (c) => {
       const studentNo = await this.numbering.allocate('student', { branch_id: branchId, vertical_id: verticalId }, c);
       const enrollmentNo = manualEnrollment
         ?? await this.numbering.allocate('enrollment', { branch_id: branchId, vertical_id: verticalId }, c);
-      const allCols = [...cols, 'student_no', 'enrollment_no'];
-      const allVals = [...vals, studentNo, enrollmentNo];
+      // Student ID (customer id) — <CENTRE_CODE>-<YEAR>-<NNN>, one per student (client ID re-model).
+      const customerNo = await this.numbering.allocateCoded('student', centreCode, c);
+      const allCols = [...cols, 'student_no', 'enrollment_no', 'customer_no'];
+      const allVals = [...vals, studentNo, enrollmentNo, customerNo];
       const ph = allCols.map((_, i) => `$${i + 1}`).join(', ');
       const ins = await c.query<{ id: string }>(
         `INSERT INTO student (${allCols.join(', ')}) VALUES (${ph}) RETURNING id`, allVals as any[],
@@ -1180,7 +1195,7 @@ export class StudentService {
       }
 
       return {
-        id: studentId, student_no: studentNo, enrollment_no: enrollmentNo,
+        id: studentId, student_no: studentNo, customer_no: customerNo, enrollment_no: enrollmentNo,
         batch_id: assignedBatchId, waitlisted, waitlist_position: waitlistPosition,
       };
     });
@@ -1244,22 +1259,25 @@ export class StudentService {
     const orgId = await this.orgId();
     const courseId = (enrolment?.course_id ?? lead.course_id) ? Number(enrolment?.course_id ?? lead.course_id) : null;
     const ownerId = lead.owner_id ? Number(lead.owner_id) : me.id;
+    const centreCode = await this.centreCode();
 
     try {
       const out = await this.db.tx(async (c) => {
         const studentNo = await this.numbering.allocate('student', { branch_id: Number(lead.branch_id), vertical_id: Number(lead.vertical_id) }, c);
         const enrollmentNo = await this.numbering.allocate('enrollment', { branch_id: Number(lead.branch_id), vertical_id: Number(lead.vertical_id) }, c);
+        // Student ID (customer id) — <CENTRE_CODE>-<YEAR>-<NNN>, one per student (client ID re-model).
+        const customerNo = await this.numbering.allocateCoded('student', centreCode, c);
         const ins = await c.query<{ id: string }>(
-          `INSERT INTO student (org_id, lead_id, enrolment_id, student_no, enrollment_no, full_name,
+          `INSERT INTO student (org_id, lead_id, enrolment_id, student_no, enrollment_no, customer_no, full_name,
                                 phone, whatsapp_phone, alt_phone, email,
                                 branch_id, vertical_id, pipeline_id, campaign_id, course_id,
                                 owner_id, team_id, status, created_by)
-           VALUES ($1::bigint, $2::bigint, $3::bigint, $4, $5, $6,
-                   $7, $8, $9, $10,
-                   $11::bigint, $12::bigint, $13::bigint, $14::bigint, $15::bigint,
-                   $16::bigint, $17::bigint, 'active', $18::bigint)
+           VALUES ($1::bigint, $2::bigint, $3::bigint, $4, $5, $6, $7,
+                   $8, $9, $10, $11,
+                   $12::bigint, $13::bigint, $14::bigint, $15::bigint, $16::bigint,
+                   $17::bigint, $18::bigint, 'active', $19::bigint)
            RETURNING id`,
-          [orgId, leadId, enrolment?.id ?? null, studentNo, enrollmentNo, lead.full_name,
+          [orgId, leadId, enrolment?.id ?? null, studentNo, enrollmentNo, customerNo, lead.full_name,
             lead.phone ?? null, lead.whatsapp_phone ?? null, lead.alt_phone ?? null, lead.email ?? null,
             lead.branch_id, lead.vertical_id, lead.pipeline_id ?? null, lead.campaign_id ?? null, courseId,
             ownerId, lead.team_id ?? null, me.id],
@@ -1427,14 +1445,14 @@ export class StudentService {
    */
   async createConvertEnrolments(studentId: number, leadId: number, lead: any, rows: any[], me: { id: number }) {
     const orgId = await this.orgId();
-    type R = { courseId: number; courseName: string; branchId: number; verticalId: number;
+    type R = { courseId: number; courseName: string; courseCode: string; branchId: number; verticalId: number;
       batchId: number | null; feeMinor: number; disc: number; net: number; plan: string; startDate: string | null;
       discount_type: string; discount_value: number };
     const resolved: R[] = [];
     for (const row of rows) {
       const courseId = row?.course_id ? Number(row.course_id) : null;
       if (!courseId) throw new BadRequestException('Each selected course row must name a course.');
-      const course = await this.db.one<any>(`SELECT id, name, meta FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
+      const course = await this.db.one<any>(`SELECT id, name, code, meta FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
       if (!course) throw new BadRequestException('Unknown course in the selection.');
       const verticalId = row?.vertical_id ? Number(row.vertical_id) : Number(lead.vertical_id);
       const branchId = row?.branch_id ? Number(row.branch_id) : Number(lead.branch_id);
@@ -1460,13 +1478,13 @@ export class StudentService {
       if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
       const startDate = row?.start_date != null && String(row.start_date).trim() !== ''
         ? requireDateString(String(row.start_date), () => { throw new BadRequestException('Invalid start date.'); }) : null;
-      resolved.push({ courseId, courseName: course.name, branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate,
+      resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate,
         discount_type: dsc.discount_type, discount_value: dsc.discount_value });
     }
     const out: any[] = [];
     await this.db.tx(async (c) => {
       for (const r of resolved) {
-        const enrolmentNo = await this.numbering.allocate('enrolment', { branch_id: r.branchId, vertical_id: r.verticalId }, c);
+        const enrolmentNo = await this.numbering.allocateCoded('enrolment', r.courseCode, c);
         const ins = await c.query<{ id: string }>(
           `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
                                   course_id, batch_id, student_profile_id, fee_minor, discount_minor,
@@ -1807,7 +1825,11 @@ export class StudentService {
       return { id: Number(existing.rows[0].id), student_vertical_no: String(existing.rows[0].student_vertical_no), created: false };
     }
     const orgId = await this.orgId();
-    const no = await this.numbering.allocate('student_vertical', { branch_id: branchId ?? null, vertical_id: verticalId }, c);
+    // Roll Number — <VERTICAL_CODE>-<YEAR>-<NNN> (client ID re-model). Vertical-wise: the code is
+    // the vertical's own Code (set on the vertical), so two verticals mint distinct roll numbers.
+    const vc = await c.query(`SELECT code FROM vertical WHERE id = $1::bigint`, [verticalId]);
+    const verticalCode = String(vc.rows[0]?.code ?? '').trim().toUpperCase() || 'V';
+    const no = await this.numbering.allocateCoded('roll', verticalCode, c);
     const ins = await c.query(
       `INSERT INTO student_vertical_id (org_id, student_id, branch_id, vertical_id, student_vertical_no, created_by)
        VALUES ($1::bigint,$2::bigint,$3::bigint,$4::bigint,$5::varchar,$6::bigint)
@@ -1917,7 +1939,7 @@ export class StudentService {
     const student = await this.get(id, scope);
     const courseId = dto?.course_id ? Number(dto.course_id) : null;
     if (!courseId) throw new BadRequestException('Choose a course to enrol into.');
-    const course = await this.db.one<any>(`SELECT id, name FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
+    const course = await this.db.one<any>(`SELECT id, name, code FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
     if (!course) throw new BadRequestException('Unknown course.');
     // A student may be enrolled into ANOTHER vertical (the Branch>Vertical>Course cascade). Default
     // to the student's own branch/vertical; honour an explicit vertical_id/branch_id when given.
@@ -1951,8 +1973,9 @@ export class StudentService {
     const orgId = await this.orgId();
 
     const out = await this.db.tx(async (c) => {
-      const enrolmentNo = await this.numbering.allocate(
-        'enrolment', { branch_id: enrolBranchId, vertical_id: enrolVerticalId }, c);
+      // Enrolment No — <COURSE_CODE>-<YEAR>-<NNN> (client ID re-model), sequence per course+year.
+      const enrolmentNo = await this.numbering.allocateCoded(
+        'enrolment', String(course.code ?? '').trim() || 'CRS', c);
       const r = await c.query<{ id: string }>(
         `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
                                 course_id, batch_id, student_profile_id, fee_minor, discount_minor,

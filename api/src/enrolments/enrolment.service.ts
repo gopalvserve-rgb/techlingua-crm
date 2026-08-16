@@ -207,11 +207,15 @@ export class EnrolmentService {
     const steps = requiredSteps(policy, money);
     const status = steps.length ? 'pending_approval' : 'active';
     const orgId = await this.orgId();
+    // Enrolment No — <COURSE_CODE>-<YEAR>-<NNN> (client ID re-model), sequence per course+year.
+    let courseCode = 'CRS';
+    if (courseId) {
+      const cc = await this.db.one<{ code: string }>(`SELECT code FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
+      courseCode = String(cc?.code ?? '').trim() || 'CRS';
+    }
 
     const out = await this.db.tx(async (c) => {
-      const enrolmentNo = await this.numbering.allocate(
-        'enrolment', { branch_id: Number(lead.branch_id), vertical_id: Number(lead.vertical_id) }, c,
-      );
+      const enrolmentNo = await this.numbering.allocateCoded('enrolment', courseCode, c);
       let id: number;
       try {
         const r = await c.query<{ id: string }>(

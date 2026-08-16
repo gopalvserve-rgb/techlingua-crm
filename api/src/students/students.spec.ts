@@ -59,7 +59,7 @@ function make(opts: { lead?: any; existing?: any; enrolment?: any; wonStage?: an
       },
     }),
   };
-  const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001') };
+  const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001'), allocateCoded: async (_s: string, code: string) => `${code}-2026-001` };
   const svc = new StudentService(db as never, resolver as never, numbering as never);
   return { svc, issued };
 }
@@ -191,7 +191,7 @@ describe('StudentService.bulkConvert (Leads-list multi-select)', () => {
         },
       }),
     };
-    const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001') };
+    const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001'), allocateCoded: async (_s: string, code: string) => `${code}-2026-001` };
     const svc = new StudentService(db as never, resolver as never, numbering as never);
     return { svc, inserts };
   }
@@ -393,7 +393,7 @@ function makeProfileDb() {
     },
     issued,
   };
-  const numbering = { allocate: async () => 'X' } as any;
+  const numbering = { allocate: async () => 'X', allocateCoded: async (_s: string, code: string) => `${code}-2026-001` } as any;
   return { svc: new StudentService(db as any, resolver as any, numbering), db };
 }
 
@@ -459,7 +459,7 @@ function makeCreate(opts: { capacity?: number; filled?: number; batchInScope?: b
       },
     }),
   };
-  const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001') };
+  const numbering = { allocate: async (kind: string) => (kind === 'enrollment' ? 'EN-0001' : 'STU-0001'), allocateCoded: async (_s: string, code: string) => `${code}-2026-001` };
   const svc = new StudentService(db as never, resolver as never, numbering as never);
   return { svc, issued };
 }
@@ -534,7 +534,7 @@ function makeTransfer(opts: { student?: any; branchOk?: boolean; verticalOk?: bo
       },
     }),
   };
-  const numbering = { allocate: async () => 'X' };
+  const numbering = { allocate: async () => 'X', allocateCoded: async (_s: string, code: string) => `${code}-2026-001` };
   return { svc: new StudentService(db as never, resolver as never, numbering as never), issued };
 }
 
@@ -605,7 +605,7 @@ describe('StudentService.changeStatus + lifecycle', () => {
       resolve: (_g: any, _k: string) => ({ allowed: !!opts.hasManage }),
     };
     const rbacData = { loadUserGrants: async (_u: number) => ({ userId: 1 }) };
-    const numbering = { allocate: async () => 'X' };
+    const numbering = { allocate: async () => 'X', allocateCoded: async (_s: string, code: string) => `${code}-2026-001` };
     const notif = { safeFire: async () => {} };
     const svc = new StudentService(db as never, resolver as never, numbering as never, notif as never, undefined as never, rbacData as never);
     return { svc, issued };

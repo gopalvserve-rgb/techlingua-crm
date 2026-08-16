@@ -106,6 +106,17 @@ export const SETTING_GROUPS: SettingGroup[] = [
       + 'A branch or vertical series overrides the org-wide one — most specific wins, the same rule the SLA policies use.',
   },
   {
+    // Client ID re-model (dev/97). The FIXED org/centre code that prefixes every Student ID
+    // (`<CENTRE_CODE>-<YEAR>-<NNN>`, e.g. VP001-2026-001). A single value set once here — NOT
+    // derived per branch. Changing it affects NEW Student IDs only; existing IDs are stable.
+    key: 'student_centre_code', label: 'Student ID centre code', icon: 'doc',
+    blurb: 'The fixed centre code that prefixes every Student ID, e.g. VP001 → VP001-2026-001. '
+      + 'One value for the whole organisation. Changing it changes only Student IDs minted afterwards.',
+    fields: [
+      { key: 'code', label: 'Centre code', type: 'text', hint: 'Uppercase, e.g. VP001 (no spaces). Used as the Student ID prefix.' },
+    ],
+  },
+  {
     // Sprint 5. Its value lives in `app_setting.enrolment_approvals`, but the card is a
     // purpose-built editor: this is the one switch that changes how every sale closes,
     // and a JSON textarea is not the place for it.

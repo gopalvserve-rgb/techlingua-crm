@@ -4104,7 +4104,7 @@ function StudentDashboard() {
           empty="No lead has been converted to a student yet"
           rows={(data?.recent ?? []).map((s: any): Cell[] => [
             { node: <b className="nm">{s.full_name}</b> },
-            { mono: s.student_no ?? '—' },
+            { mono: s.customer_no ?? s.student_no ?? '—' },
             s.course_name ?? '—',
             s.branch_name ?? '—',
             fmtFull(s.created_at),
@@ -4216,7 +4216,7 @@ function StudentsList() {
         empty="No students yet — convert a won lead from the Leads list (⋮ → Convert to Student)."
         onRowClick={(i) => setView(rows[i])}
         rows={rows.map((st) => [
-          { node: <div><b className="nm">{st.full_name}</b><div className="sub mono">{st.student_no ?? '—'}</div></div> } as Cell,
+          { node: <div><b className="nm">{st.full_name}</b><div className="sub mono" data-testid={`stu-row-id-${st.id}`}>{st.customer_no ?? st.student_no ?? '—'}</div></div> } as Cell,
           { mono: st.phone ?? '—' } as Cell,
           // Item 7 (client feedback): show the CONVERTED course(s) — every enrolment course
           // (single OR multiple, across verticals) — not the stale lead course. `courses` is the
@@ -4394,7 +4394,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
           <div className="form-grid">
             <div className="fld">
               <label>Student ID</label>
-              <input className="ainp" value={isEdit ? (initial?.student_no ?? '') : ''} placeholder="Auto — assigned on save" readOnly disabled />
+              <input className="ainp" value={isEdit ? (initial?.customer_no ?? initial?.student_no ?? '') : ''} placeholder="Auto — assigned on save" readOnly disabled />
             </div>
             {Txt('Enrollment No.', 'enrollment_no', { ph: 'Auto if left blank' })}
             {Txt('Student Full Name', 'full_name', { req: true, ph: 'Full name' })}
@@ -4768,8 +4768,8 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           <div className="fbp-id">
             <h2 className="fbp-name">{full.full_name}</h2>
             <div className="fbp-sub">
-              <span className="mono">{full.student_no ?? '—'}</span>
-              {full.enrollment_no ? <span className="mono">· {full.enrollment_no}</span> : null}
+              <span className="mono" title="Student ID" data-testid="stu-customer-no">{full.customer_no ?? full.student_no ?? '—'}</span>
+              {full.customer_no && full.student_no ? <span className="sub mono" style={{ fontSize: 11 }} title="Internal record no.">· {full.student_no}</span> : null}
               <span>{renderCell(studentStatusCell(full.status))}</span>
               <span className="sub" style={{ fontSize: 11 }}>· {LMS_HINT[statusMeta(full.status).lms]}</span>
             </div>
@@ -4810,8 +4810,9 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
       {tab === 'overview' && (
         <Section title="Identity">
           <KV rows={[
-            ['Student ID', <span className="mono">{full.student_no ?? '—'}</span>],
-            ['Enrollment No.', <span className="mono">{dash(full.enrollment_no)}</span>],
+            ['Student ID', <span className="mono" data-testid="stu-identity-customer-no">{full.customer_no ?? full.student_no ?? '—'}</span>],
+            ['Roll Number(s)', <span className="mono">{((prof?.vertical_ids ?? []) as any[]).map((v) => v.student_vertical_no).filter(Boolean).join(', ') || '—'}</span>],
+            ['Internal record no.', <span className="mono">{dash(full.student_no)}</span>],
             ['Name', full.full_name],
             ['Date of Birth', dmy(full.dob)],
             ['Gender', dash(full.gender)],
@@ -4893,7 +4894,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
         return (
         <Section title="Student ID Card">
           <div className="notice" style={{ marginBottom: 10 }}>
-            <Ic k="award" /><div>A printable identity card with the student photo, the <b>vertical-wise Student ID</b>, the course(s) enrolled <b>in that vertical</b> and Branch › Vertical. {multi ? 'This student is enrolled across multiple verticals — pick a vertical to produce its own card (a distinct card + ID per vertical).' : 'Upload a photo from the header to have it appear on the card.'}</div>
+            <Ic k="award" /><div>A printable identity card with the student photo, the <b>Student ID</b> and the vertical's <b>Roll Number</b>, the course(s) enrolled <b>in that vertical</b> and Branch › Vertical. {multi ? 'This student is enrolled across multiple verticals — pick a vertical to produce its own card (a distinct Roll Number per vertical).' : 'Upload a photo from the header to have it appear on the card.'}</div>
           </div>
           {verts.length ? (
             <div className="min-row" style={{ marginBottom: 12, gap: 8, flexWrap: 'wrap' }} data-testid="idcard-vert-picker">
@@ -4908,7 +4909,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           ) : null}
           {selected ? (
             <div className="sub" style={{ marginBottom: 8 }}>
-              Card for <b>{[selected.branch_name, selected.vertical_name].filter(Boolean).join(' › ')}</b> — Student ID <b className="mono">{selected.student_vertical_no ?? '—'}</b>
+              Card for <b>{[selected.branch_name, selected.vertical_name].filter(Boolean).join(' › ')}</b> — Roll Number <b className="mono">{selected.student_vertical_no ?? '—'}</b>
               {selected.courses?.length ? <> · Courses: {selected.courses.join(', ')}</> : null}
             </div>
           ) : null}
@@ -5108,7 +5109,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
       {tab === 'enrollments' && (
         <Section title="Course Enrollment">
           <div className="notice" style={{ marginBottom: 10 }}>
-            <Ic k="grid" /><div>Overall student status: <b>{statusMeta(full.status).label}</b>. Each course enrollment carries its <b>own</b> status — completing or cancelling one course does <b>not</b> change the others or the overall student status. The <b>Student ID is generated per vertical</b>: each enrollment shows its <b>Branch › Vertical › Course</b> and the vertical-wise Student ID.</div>
+            <Ic k="grid" /><div>Overall student status: <b>{statusMeta(full.status).label}</b>. Each course enrollment carries its <b>own</b> status — completing or cancelling one course does <b>not</b> change the others or the overall student status. The <b>Roll Number is per vertical</b> (vertical-code format) and each enrolment carries its own <b>Enrolment Number</b> (course-code format), alongside its <b>Branch › Vertical › Course</b>.</div>
           </div>
           {(enrolData.data?.vertical_ids ?? []).length ? (
             <div className="min-row" style={{ marginBottom: 10, gap: 8, flexWrap: 'wrap' }} data-testid="enrol-vertical-ids">
@@ -5121,7 +5122,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           ) : null}
           {canEdit && <button className="btn primary" style={{ marginBottom: 10 }} onClick={() => setAddEnrol(true)} data-testid="enrol-add"><Ic k="plus" />Enroll in another course</button>}
           {(enrolData.data?.enrolments ?? []).length ? (
-            <table className="minitbl"><thead><tr><th>Branch › Vertical › Course</th><th>Vertical Student ID</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
+            <table className="minitbl"><thead><tr><th>Branch › Vertical › Course</th><th>Roll Number</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
               <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => (
                 <tr key={e.id} data-testid={`enrol-row-${e.id}`}>
                   <td><b className="nm">{e.course_name ?? '—'}</b><div className="sub" data-testid={`enrol-path-${e.id}`}>{e.path || [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' › ')}</div><div className="sub mono">{e.enrolment_no}</div></td>
@@ -5828,7 +5829,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
             <option value="">{branchId ? '— Choose vertical —' : '— Choose branch first —'}</option>
             {branchVerticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
-          <div className="sub" style={{ fontSize: 11 }}>The Student ID is generated per vertical — enrolling in another vertical mints its own vertical-wise ID.</div>
+          <div className="sub" style={{ fontSize: 11 }}>The Roll Number is generated per vertical — enrolling in another vertical mints its own vertical-code Roll Number; the enrolment gets its own course-code Enrolment Number.</div>
         </div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
           <label htmlFor="ae-course">Course <span className="star">*</span></label><MasterQuickAdd type="course" onAdded={(row) => chooseCourse(String(row.id))} />

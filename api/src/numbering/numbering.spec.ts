@@ -1,4 +1,4 @@
-import { formatNumber, periodToken, NumberingService } from './numbering.service';
+import { formatNumber, periodToken, formatCoded, istYear, NumberingService } from './numbering.service';
 
 /** A tiny fake db that records the SQL and answers with scripted rows. */
 function fakeDb(rows: Record<string, unknown[]>) {
@@ -96,6 +96,49 @@ describe('allocation', () => {
     const { db } = fakeDb({ 'FROM organisation': [{ id: 1 }], 'FROM number_series': [] });
     const svc = new NumberingService(db);
     await expect(svc.allocate('unicorn')).rejects.toThrow(/Unknown numbering series/);
+  });
+});
+
+describe('the coded ID re-model format (dev/97)', () => {
+  it('is <CODE>-<YEAR>-<NNN>, uppercased, 3-digit zero-padded', () => {
+    expect(formatCoded('VP001', 2026, 1)).toBe('VP001-2026-001');
+    expect(formatCoded('bcl', 2026, 12)).toBe('BCL-2026-012');
+    expect(formatCoded('ENGA1', 2026, 7)).toBe('ENGA1-2026-007');
+    expect(formatCoded('', 2026, 3)).toBe('X-2026-003');           // never blank
+    expect(formatCoded('X', 2026, 1234)).toBe('X-2026-1234');      // wider than pad, not truncated
+  });
+  it('reads the IST calendar year, not UTC', () => {
+    // 00:30 IST on 1 Jan 2026 is still 31 Dec 2025 19:00 UTC — the number must read the LOCAL year.
+    expect(istYear(new Date('2025-12-31T19:00:00Z'))).toBe(2026);
+    expect(istYear(new Date('2026-07-16T12:00:00Z'))).toBe(2026);
+  });
+});
+
+describe('coded allocation (Student ID / Roll Number / Enrolment No)', () => {
+  it('allocates <CODE>-<YEAR>-<NNN> in ONE upsert — the row lock is the mutex', async () => {
+    const { db, seen } = fakeDb({
+      'FROM organisation': [{ id: 1 }],
+      'INSERT INTO coded_number_seq': [{ allocated: 1 }],
+    });
+    const svc = new NumberingService(db);
+    const no = await svc.allocateCoded('roll', 'BCL', undefined, new Date('2026-07-16T12:00:00Z'));
+    expect(no).toBe('BCL-2026-001');
+    const ins = seen.filter((s) => /INSERT INTO coded_number_seq/.test(s));
+    expect(ins).toHaveLength(1);
+    expect(ins[0]).toMatch(/ON CONFLICT \(org_id, scope, code, year\)/);
+    expect(ins[0]).toMatch(/RETURNING next_seq - 1 AS allocated/);
+  });
+  it('a second allocation in the same scope increments the sequence', async () => {
+    const { db } = fakeDb({ 'FROM organisation': [{ id: 1 }], 'INSERT INTO coded_number_seq': [{ allocated: 2 }] });
+    const svc = new NumberingService(db);
+    expect(await svc.allocateCoded('enrolment', 'ENGA1', undefined, new Date('2026-07-16T12:00:00Z'))).toBe('ENGA1-2026-002');
+  });
+  it('mints the three distinct client formats (VP001-.. / BCL-.. / ENGA1-..)', async () => {
+    const mk = () => fakeDb({ 'FROM organisation': [{ id: 1 }], 'INSERT INTO coded_number_seq': [{ allocated: 1 }] });
+    const at = new Date('2026-02-01T12:00:00Z');
+    expect(await new NumberingService(mk().db).allocateCoded('student', 'VP001', undefined, at)).toBe('VP001-2026-001');
+    expect(await new NumberingService(mk().db).allocateCoded('roll', 'BCL', undefined, at)).toBe('BCL-2026-001');
+    expect(await new NumberingService(mk().db).allocateCoded('enrolment', 'ENGA1', undefined, at)).toBe('ENGA1-2026-001');
   });
 });
 
