@@ -6045,8 +6045,13 @@ function BatchesList() {
       String((u as any).role_names ?? '').split(',').map((r) => r.trim().toLowerCase()).includes('trainer'));
     return trs.length ? trs : selectableUsers(ref.users);
   })();
-  // Batch Type + Delivery Mode enum options (client feedback #10).
-  const typeOpts = BATCH_TYPE_OPTS;
+  // Batch Type + Delivery Mode enum options (client feedback #10). The Batch Type options are
+  // sourced from the server catalog (/batches/type-catalog = all 9 codes) so the filter can never
+  // drift from the seeded set; the hardcoded 9 are the fallback if the fetch is empty.
+  const typeCat = useFetch<any[]>(`/batches/type-catalog`, []);
+  const typeOpts = (typeCat.data && typeCat.data.length)
+    ? typeCat.data.map((t: any) => ({ id: String(t.code), name: String(t.label ?? t.code) }))
+    : BATCH_TYPE_OPTS;
   const modeOpts = (ref.deliveryModes?.length ? ref.deliveryModes.map((m: any) => ({ id: String(m.id ?? m.name), name: String(m.name) })) : DELIVERY_MODES.map((m) => ({ id: m, name: m })));
   const params = new URLSearchParams();
   if (fBranches.length) params.set('branch_id', fBranches.join(','));
@@ -6069,6 +6074,14 @@ function BatchesList() {
   const [statusFor, setStatusFor] = useState<any | null>(null);
   const [historyFor, setHistoryFor] = useState<any | null>(null);
   const after = () => { list.reload(); bump(); };
+  // Select-batch: per-row + select-all checkboxes drive a bulk action bar (bulk STATUS change +
+  // bulk delete), reusing the app's useTableSelect + useBulkDelete pattern. Individual row actions
+  // are unchanged. Selection is pruned automatically as the filtered rows change.
+  const _ids = rows.map((b: any) => Number(b.id));
+  const _sel = useTableSelect(_ids);
+  const _bd = useBulkDelete('Batch', '/batches/bulk-delete/impact', '/batches/bulk-delete',
+    () => { list.reload(); bump(); _sel.clear(); });
+  const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
 
   return (
     <>
@@ -6092,7 +6105,18 @@ function BatchesList() {
         <EnumMulti label="Delivery Mode" icon="grid" value={fModes} options={modeOpts} onChange={setFModes} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search batch name / code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
       </div>
+      {_sel.count > 0 && (canEdit || can('batch.delete')) && (
+        <div className="card" data-testid="bulk-bar" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', marginBottom: 10, flexWrap: 'wrap' }}>
+          <b>{_sel.count} selected</b>
+          <button className="btn" type="button" onClick={_sel.clear}>Clear</button>
+          <span style={{ flex: 1 }} />
+          {canEdit && <button className="btn" type="button" onClick={() => setBulkStatusOpen(true)} data-testid="bulk-batch-status"><Ic k="flag" />Change status</button>}
+          {can('batch.delete') && <button className="btn" type="button" onClick={() => _bd.openBulk(_sel.selected)} data-testid="bulk-delete"
+            style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' }}><Ic k="trash" />Delete batches</button>}
+        </div>
+      )}
       <TableCard fill title="Batches" icon="grid"
+        select={(canEdit || can('batch.delete')) ? _sel.tableSelect : undefined}
         more={<ListActions onExport={() => downloadObjectsCsv('batches.csv', rows)} onRefresh={() => list.reload()} />}
         cols={['Batch', 'Course', 'Branch · Vertical', 'Trainer', 'Type', 'Delivery', 'Schedule', 'Capacity', 'Enrolled', 'Owner', 'Status', 'Actions']}
         empty="No batches yet — create one bound to a Branch → Vertical → Course."
@@ -6120,6 +6144,10 @@ function BatchesList() {
           }),
         ])} />
       {del.deleteModal}
+      {_bd.bulkModal}
+      {bulkStatusOpen && <BatchBulkStatusModal ids={_sel.selected}
+        onClose={() => setBulkStatusOpen(false)}
+        onDone={() => { setBulkStatusOpen(false); list.reload(); bump(); _sel.clear(); }} />}
       {roster && <BatchRosterModal batch={roster} onClose={() => setRoster(null)} onChanged={after} />}
       {statusFor && <BatchStatusModal batch={statusFor} onClose={() => setStatusFor(null)} onDone={() => { setStatusFor(null); after(); }} />}
       {historyFor && <BatchStatusHistoryModal batch={historyFor} onClose={() => setHistoryFor(null)} />}
@@ -6445,6 +6473,47 @@ export function BatchStatusModal({ batch, onClose, onDone }: { batch: any; onClo
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
           <label htmlFor="bs-reason">Reason (optional)</label>
           <input id="bs-reason" className="ainp" value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Trainer on leave — paused for 2 weeks" />
+        </div>
+      </div>
+    </DetailModal>
+  );
+}
+
+/** BULK change status for the selected batches — one target status applied to all (each row
+ *  keeps the per-batch manual-sticky / auto-resume rule server-side). */
+function BatchBulkStatusModal({ ids, onClose, onDone }: { ids: number[]; onClose: () => void; onDone: () => void }) {
+  const catalog = useFetch<any[]>(`/batches/status-catalog`, []);
+  const all = catalog.data ?? [];
+  const [toStatus, setToStatus] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!toStatus) { toast('Choose a status.', true); return; }
+    setBusy(true);
+    try {
+      const res = await api.post<any>(`/batches/bulk-status`, { ids, to_status: toStatus, reason: reason.trim() || null });
+      const skipped = res && res.requested > res.in_scope ? res.requested - res.in_scope : 0;
+      toast(`${res?.changed ?? 0} batch${(res?.changed ?? 0) === 1 ? '' : 'es'} set to ${batchStatusMeta(toStatus).label}${skipped ? ` — ${skipped} skipped (out of scope)` : ''}.`);
+      onDone();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Change status — ${ids.length} batch${ids.length === 1 ? '' : 'es'}`} icon="flag" onClose={onClose} width={520}
+      footer={<button className="btn primary" onClick={submit} disabled={busy || !toStatus} data-testid="batch-bulk-status-save"><Ic k="flag" />Apply to {ids.length}</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}><Ic k="flag" /><div>Applies to the {ids.length} selected batch{ids.length === 1 ? '' : 'es'}. Manual statuses (Completed / Cancelled / Suspended / Archived) stick; auto statuses re-derive from each batch's own dates.</div></div>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="bbs-status">Status</label>
+          <select id="bbs-status" className="ainp" value={toStatus} disabled={busy} onChange={(e) => setToStatus(e.target.value)} data-testid="batch-bulk-status-select">
+            <option value="">— Choose status —</option>
+            {(all.length ? all : BATCH_STATUS_ORDER.map((c) => ({ code: c, ...BATCH_STATUS_META[c] }))).map((o: any) => (
+              <option key={o.code} value={o.code}>{o.label}{o.is_manual || BATCH_STATUS_META[o.code]?.manual ? ' (manual)' : ' (auto)'}</option>
+            ))}
+          </select>
+        </div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <label htmlFor="bbs-reason">Reason (optional)</label>
+          <input id="bbs-reason" className="ainp" value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Term ended — archiving cohort" />
         </div>
       </div>
     </DetailModal>

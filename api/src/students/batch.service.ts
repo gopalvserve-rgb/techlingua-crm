@@ -364,6 +364,64 @@ export class BatchService {
     return { id, deleted: true };
   }
 
+  /* ------------------------------------------------------ bulk (list) actions */
+
+  private idList(raw: unknown): number[] {
+    return (Array.isArray(raw) ? raw : []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+  }
+
+  /** The subset of the requested ids that are live AND within the caller's scope. */
+  private async inScopeIds(ids: number[], scope: ResolvedScope): Promise<number[]> {
+    if (!ids.length) return [];
+    const params: unknown[] = [ids];
+    const w = this.resolver.buildScopeWhere(scope, BATCH_SCOPE_COLS, params);
+    const rows = await this.db.query<{ id: string }>(
+      `SELECT bt.id FROM batch bt WHERE bt.id = ANY($1::bigint[]) AND bt.deleted_at IS NULL AND ${w}`, params);
+    return rows.map((r) => Number(r.id));
+  }
+
+  /** Impact preview for a bulk soft-delete (scoped; out-of-scope ids silently dropped). */
+  async bulkImpact(raw: unknown, scope: ResolvedScope) {
+    const req = this.idList(raw);
+    const ok = await this.inScopeIds(req, scope);
+    return {
+      entity: 'batch', label: 'Batch', requested: req.length, in_scope: ok.length,
+      out_of_scope: req.length - ok.length, total_associations: 0, impact: [],
+    };
+  }
+
+  /** Bulk soft-delete — every in-scope id; a batch with students assigned is SKIPPED (not fatal). */
+  async bulkRemove(raw: unknown, me: { id: number }, scope: ResolvedScope) {
+    const ok = await this.inScopeIds(this.idList(raw), scope);
+    let deleted = 0;
+    for (const id of ok) {
+      try { await this.remove(id, me, scope); deleted++; } catch { /* skip in-use / already gone */ }
+    }
+    return { deleted, skipped: this.idList(raw).length - deleted };
+  }
+
+  /**
+   * BULK CHANGE STATUS — apply ONE target status to every in-scope selected batch. Each row goes
+   * through changeStatus() so the SAME rule applies per batch: a manual status sticks, an auto
+   * status re-derives from THAT batch's own dates (resume), and history is written per batch.
+   * Out-of-scope ids are silently skipped; a row that rejects is skipped (never aborts the set).
+   */
+  async bulkStatus(raw: unknown, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const to = String(dto?.to_status ?? '').trim();
+    if (!to) throw new BadRequestException('Choose a status.');
+    if (!(BATCH_STATUS_CODES as readonly string[]).includes(to)) throw new BadRequestException('Unknown status.');
+    const req = this.idList(raw);
+    const ok = await this.inScopeIds(req, scope);
+    let changed = 0;
+    for (const id of ok) {
+      try {
+        const r: any = await this.changeStatus(id, { to_status: to, reason: dto?.reason }, me, scope);
+        if (!r?.unchanged) changed++;
+      } catch { /* skip a row that rejects */ }
+    }
+    return { changed, requested: req.length, in_scope: ok.length, to_status: to };
+  }
+
   /** The 9-value batch-type catalog (code + label) — powers the Batch Type dropdown on the form. */
   async typeCatalog() {
     return this.db.query<any>(

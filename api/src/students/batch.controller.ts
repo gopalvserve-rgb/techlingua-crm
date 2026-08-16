@@ -57,6 +57,26 @@ export class BatchController {
     return this.svc.changeStatus(id, dto, me, scope);
   }
 
+  /** BULK change status for the selected batches (list multi-select). Guarded by batch.update. */
+  @Post('bulk-status')
+  @RequirePermission('batch.update')
+  bulkStatus(@Body() b: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.bulkStatus(b?.ids, b, me, scope);
+  }
+
+  /** BULK soft-delete the selected batches — impact preview then delete. Guarded by batch.delete. */
+  @Post('bulk-delete/impact')
+  @RequirePermission('batch.delete')
+  bulkImpact(@Body() b: any, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.bulkImpact(b?.ids, scope);
+  }
+
+  @Post('bulk-delete')
+  @RequirePermission('batch.delete')
+  bulkDelete(@Body() b: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.bulkRemove(b?.ids, me, scope);
+  }
+
   /** The status transition trail (who / when / from → to / manual? / reason). */
   @Get(':id/status-history')
   @RequirePermission('batch.read')
