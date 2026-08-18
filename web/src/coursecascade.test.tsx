@@ -159,7 +159,7 @@ describe('Course configuration — Branch › Vertical cascade', () => {
   it('does NOT render a Delivery Mode field (dropped from the course UI)', () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     expect(hasField('Delivery Mode')).toBe(false);
-    expect(hasField('Course Level')).toBe(true);   // the other descriptors stay
+    expect(hasField('Levels')).toBe(true);         // the repeatable per-level fee editor
     expect(hasField('Course Type')).toBe(true);
     expect(hasField('Description')).toBe(true);
   });

@@ -449,9 +449,14 @@ const EXEMPT: Record<string, Allow> = {
 // pipeline (id 4) under vertical 1 and a single campaign (id 5) under it, so the differential probe
 // cannot SWITCH them to a second value to observe the payload change. Their persistence, strict
 // gating and parent-reset are proven directly in coursecascade.test.tsx instead.
+// dev/100 removed Pipeline/Campaign from the ERP course form (CRM-only concepts), so they are no
+// longer rendered and need no exemption. The one exempt field now is the Levels sub-editor:
 EXEMPT['students.courses'] = {
-  Pipeline: 'optional association; one pipeline under the fixture vertical, so the probe cannot switch it \u2014 persistence proven in coursecascade.test.tsx',
-  Campaign: 'optional association; one campaign under the fixture pipeline, so the probe cannot switch it \u2014 persistence proven in coursecascade.test.tsx',
+  // Course LEVELS (enrollment re-model, batch 1) \u2014 a repeatable per-level fee sub-editor (\uff0b Add level;
+  // each row = level code + its own fee). Persisted by a SEPARATE PUT /courses/:id/levels, not the main
+  // course POST body, so the single-field differential probe cannot observe it; its full add/persist/
+  // reload behaviour is proven directly in courselevels.test.tsx.
+  Levels: 'type "levels" \u2014 a structured multi-row per-level fee editor persisted via PUT /courses/:id/levels; proven in courselevels.test.tsx',
 };
 EXEMPT['admin.courseconfig'] = EXEMPT['students.courses'];
 EXEMPT['dash.quickcontact'] = EXEMPT['leads.all'];

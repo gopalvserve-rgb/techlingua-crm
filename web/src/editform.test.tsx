@@ -178,8 +178,10 @@ describe.each(CASES)('Edit $name modal', ({ formKey, spec }) => {
     render(<AddModal formKey={formKey} onClose={() => {}} edit={spec} />);
     for (const f of SPEC_FORMS[formKey].fields) {
       if (spec.lock?.includes(f.label)) continue;
-      // 'auto' fields are system-generated placeholders in the Add form too — parity, not a bug
-      if (f.type === 'auto' || f.type === 'table' || f.type === 'lookup') continue;
+      // 'auto' fields are system-generated placeholders in the Add form too — parity, not a bug.
+      // 'table' (pipeline stages) and 'levels' (course per-level fees) are structured sub-editors that
+      // render an "add row/level" button, not a single editable control, so they don't fit this probe.
+      if (f.type === 'auto' || f.type === 'table' || f.type === 'levels' || f.type === 'lookup') continue;
       expect(editable(f.label), `"${f.label}" must be editable in Edit ${formKey}`).toBe(true);
     }
   });

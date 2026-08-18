@@ -11,7 +11,7 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
-import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES } from './forms';
+import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
@@ -2653,14 +2653,16 @@ function Campaigns() {
  *  Courses screen and Administration › Masters so Course always edits with all fields. */
 const courseEditSpec = (edit: any): EditSpec => ({
   title: `Edit Course \u2014 ${edit.name}`,
+  // Course levels (enrollment re-model, batch 1) — the id the Levels editor fetches its rows for.
+  levelsCourseId: Number(edit.id),
   // DEF-2: nothing is locked — every Add Course field is editable and prefilled.
   initialVals: {
     'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
     'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
     'Standard Fee': (edit.meta as any)?.fee ?? '',
     'Eligibility Criteria': (edit.meta as any)?.eligibility ?? '',
-    // Course descriptors (client feedback #13) — prefill so an Edit reopens fully.
-    'Course Level': (edit.meta as any)?.level ?? '',
+    // Course descriptors (client feedback #13) — prefill so an Edit reopens fully. The single
+    // "Course Level" descriptor is superseded by the per-level Levels editor (loaded by course id).
     'Course Type': (edit.meta as any)?.course_type ?? '',
     // dev/100 (client): Delivery Mode removed from the course UI (meta.delivery_mode kept in DB).
     'Description': (edit.meta as any)?.description ?? '',
@@ -2686,14 +2688,17 @@ const courseEditSpec = (edit: any): EditSpec => ({
         // dev/100 (client): Campaign/Pipeline removed from the ERP course form (CRM-only). The meta
         // spread above preserves any legacy pipeline_id/campaign_id value (non-breaking).
         eligibility: vals['Eligibility Criteria'] || undefined,
-        // Course descriptors (client feedback #13) — persisted in meta; override the spread above.
-        level: vals['Course Level'] || undefined,
+        // Course descriptors (client feedback #13) — persisted in meta; override the spread above. The
+        // single "Course Level" descriptor is superseded by the per-level Levels editor (course_level).
         course_type: vals['Course Type'] || undefined,
         // dev/100 (client): delivery_mode dropped from the course UI (meta value preserved by the spread).
         description: vals['Description'] || undefined,
       },
       is_active: vals['Status'] !== 'Inactive',
     });
+    // Course LEVELS (enrollment re-model, batch 1) — replace-all sync the per-level fees. Empty →
+    // the course has no levels and keeps its single Standard Fee (meta.fee).
+    await api.put(`/courses/${edit.id}/levels`, { levels: levelsPayload(vals['Levels']) });
     return 'Course updated';
   },
 });

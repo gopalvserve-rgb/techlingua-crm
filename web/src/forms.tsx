@@ -234,11 +234,15 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // at Branch \u2192 Vertical exactly as before.
   'students.courses': { title: 'Add Course', fields: [
     F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
-    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
+    // Course LEVELS (enrollment re-model, batch 1) \u2014 a course can have MANY levels (A1, A2, \u2026), each
+    // with its OWN fee. "+ Add level" adds rows; empty falls back to the single Standard Fee below.
+    // Replaces the old single "Course Level" descriptor. Persisted via PUT /courses/:id/levels.
+    F('Levels', 'levels', 0, 0, 'optional \u2014 each level carries its own fee; leave empty to use the single Standard Fee'),
+    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number', 0, 0, 'used when the course has no levels'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
     // Course descriptors (client feedback #13, Aug 2026) — Level / Type / Description. dev/100 (client):
     // Delivery Mode dropped from the course UI (meta.delivery_mode kept in DB, hidden); ERP forms carry
     // NO Campaign/Pipeline (CRM-only) — the course walks Branch > Vertical only.
-    F('Course Level', 'select', 0, COURSE_LEVELS, 'e.g. A1, A2 \u2014 optional'), F('Course Type', 'select', 0, COURSE_TYPES, 'e.g. Diploma, Certificate'),
+    F('Course Type', 'select', 0, COURSE_TYPES, 'e.g. Diploma, Certificate'),
     F('Description', 'textarea', 0, 0, 'optional \u2014 short course description'),
     F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
@@ -601,15 +605,19 @@ SAVERS['students.courses'] = async (vals, ids) => {
       vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
       // dev/100 (client): Campaign/Pipeline are CRM-only \u2014 not sent from the ERP course form.
       eligibility: vals['Eligibility Criteria'] || undefined,
-      // Course descriptors (client feedback #13) — stored in meta like fee/vertical_id.
-      level: vals['Course Level'] || undefined,
+      // Course descriptors (client feedback #13) — stored in meta like fee/vertical_id. The single
+      // "Course Level" descriptor is superseded by the per-level Levels editor (course_level table).
       course_type: vals['Course Type'] || undefined,
       // dev/100 (client): delivery_mode dropped from the course UI (column kept in DB, not written here).
       description: vals['Description'] || undefined,
     },
     is_active: vals['Status'] !== 'Inactive',
   });
-  return { msg: `Course "${row.name}" added to the master`, row };
+  // Course LEVELS (enrollment re-model, batch 1) — persist the per-level fees to the course_level
+  // table. A course with no levels rows keeps its single Standard Fee (meta.fee) — nothing to sync.
+  const levels = levelsPayload(vals['Levels']);
+  if (row?.id) { try { await api.put(`/courses/${row.id}/levels`, { levels }); } catch { /* levels re-savable from Edit */ } }
+  return { msg: levels.length ? `Course "${row.name}" added with ${levels.length} level${levels.length > 1 ? 's' : ''}` : `Course "${row.name}" added to the master`, row };
 };
 SAVERS['admin.courseconfig'] = SAVERS['students.courses'];
 SAVERS['dash.quickcontact'] = SAVERS['leads.all'];
@@ -789,6 +797,9 @@ export interface EditSpec {
   /** dev/88 — an arbitrary node rendered below the form grid (e.g. the vertical logo uploader,
    *  which needs the record id and the presigned-R2 flow that a plain field type can't do). */
   extra?: ReactNode;
+  /** Course levels editor (enrollment re-model, batch 1) — the course id to fetch existing
+   *  levels for on an Edit, so the repeatable Levels editor reopens fully populated. */
+  levelsCourseId?: number;
   submit: (vals: Vals, ids: Ids) => Promise<string>;
 }
 
@@ -911,6 +922,106 @@ function StageTableField({ value, disabled, onChange }: {
       {!disabled && (
         <button type="button" className="sc-addrow" onClick={add}><Ic k="plus" w={2.6} />Add row</button>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * COURSE LEVELS (enrollment re-model, batch 1).                       *
+ * A course can have MANY levels (A1, A2, … from the course_level_def  *
+ * catalog), each with its OWN fee (and an optional per-level          *
+ * duration). This is the repeatable sub-editor that replaces the old  *
+ * single "Course Level" descriptor: one row per level (level picker + *
+ * fee), a "＋ Add level" button and a remove-row. Serialised into the *
+ * field value as JSON; the saver PUTs it to /courses/:id/levels after *
+ * the course is created/updated. A course with NO levels keeps its    *
+ * single Standard Fee (meta.fee) — backward compatible.               *
+ * ------------------------------------------------------------------ */
+export type LevelRow = { code: string; label?: string; fee: string; duration?: string };
+
+/** Parse the field value (JSON string) into level rows. `fee` is kept as a rupee string. */
+export function parseLevelRows(v: unknown): LevelRow[] {
+  if (typeof v !== 'string' || !v.trim()) return [];
+  try {
+    const a = JSON.parse(v);
+    if (!Array.isArray(a)) return [];
+    return a.filter((x) => x && typeof x === 'object').map((x: any) => ({
+      code: String(x.code ?? x.label ?? ''),
+      label: x.label != null ? String(x.label) : undefined,
+      fee: x.fee != null && x.fee !== '' ? String(x.fee)
+        : (x.fee_minor != null ? String(Number(x.fee_minor) / 100) : ''),
+      duration: x.duration != null ? String(x.duration) : undefined,
+    }));
+  } catch { return []; }
+}
+
+/** The API payload (rupee fee → the API converts to paise) for PUT /courses/:id/levels. */
+export function levelsPayload(v?: string): Array<{ code: string; label?: string; fee: string; duration?: string; ordering: number }> {
+  return parseLevelRows(v).filter((r) => r.code.trim()).map((r, i) => ({
+    code: r.code.trim(),
+    label: r.label && r.label.trim() ? r.label.trim() : undefined,
+    fee: r.fee ?? '',
+    duration: r.duration && r.duration.trim() ? r.duration.trim() : undefined,
+    ordering: i,
+  }));
+}
+
+function LevelsField({ value, courseId, onChange }: {
+  value: string; courseId?: number; onChange: (json: string) => void;
+}) {
+  const ref = useRef_();
+  const levelOpts = (ref.courseLevels?.length ? ref.courseLevels : COURSE_LEVELS.map((c) => ({ id: c, name: c })));
+  const [rows, setRows] = useState<LevelRow[]>(() => parseLevelRows(value));
+  const [loaded, setLoaded] = useState(!courseId);
+  // Edit — fetch the course's stored levels once, so the editor reopens fully populated.
+  useEffect(() => {
+    if (!courseId || loaded) return;
+    let dead = false;
+    (async () => {
+      try {
+        const got = await api.get<any[]>(`/courses/${courseId}/levels`);
+        if (dead) return;
+        const mapped = (got ?? []).map((r) => ({
+          code: String(r.code), label: r.label ?? undefined,
+          fee: r.fee_minor != null ? String(Number(r.fee_minor) / 100) : '',
+          duration: r.duration ?? undefined,
+        }));
+        setRows(mapped); onChange(JSON.stringify(mapped));
+      } catch { /* leave empty on error */ }
+      finally { if (!dead) setLoaded(true); }
+    })();
+    return () => { dead = true; };
+  }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const commit = (next: LevelRow[]) => { setRows(next); onChange(JSON.stringify(next)); };
+  const add = () => commit([...rows, { code: '', fee: '' }]);
+  const setCode = (i: number, code: string) => commit(rows.map((r, j) => (j === i ? { ...r, code } : r)));
+  const setFee = (i: number, fee: string) => commit(rows.map((r, j) => (j === i ? { ...r, fee } : r)));
+  const remove = (i: number) => commit(rows.filter((_, j) => j !== i));
+  return (
+    <div className="sc-rows" data-levels-editor>
+      {rows.length === 0 && (
+        <div className="empty-note" style={{ padding: '6px 2px', textAlign: 'left' }}>
+          No levels — click <b>＋ Add level</b> to add levels (e.g. A1, A2, …), each with its own fee.
+          Leave empty to use the single <b>Standard Fee</b> below.
+        </div>
+      )}
+      {rows.map((r, i) => (
+        <div className="sc-row" key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="sc-row-ord">{i + 1}</span>
+          <select className="ainp" data-testid={`level-code-${i}`} value={r.code} style={{ flex: '1 1 40%' }}
+            onChange={(e) => setCode(i, e.target.value)}>
+            <option value="">Level…</option>
+            {levelOpts.map((o: any) => <option key={String(o.id)} value={String(o.name)}>{o.name}</option>)}
+          </select>
+          <input className="ainp" type="number" min="0" placeholder="Fee (₹)" data-testid={`level-fee-${i}`}
+            value={r.fee} style={{ flex: '1 1 40%' }} onChange={(e) => setFee(i, e.target.value)} />
+          <button type="button" className="sc-row-btn danger" title="Remove level"
+            data-testid={`level-remove-${i}`} onClick={() => remove(i)}><Ic k="x" w={2.6} /></button>
+        </div>
+      ))}
+      <button type="button" className="sc-addrow" data-testid="level-add" onClick={add}>
+        <Ic k="plus" w={2.6} />Add level
+      </button>
     </div>
   );
 }
@@ -1294,6 +1405,11 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       <StageTableField value={v} disabled={!!edit?.lock?.includes(f.label)}
         onChange={(json) => setField(f.label, json)} />
     );
+    // Course Levels — repeatable per-level fee editor (enrollment re-model, batch 1).
+    if (t === 'levels') return (
+      <LevelsField value={v} courseId={edit?.levelsCourseId}
+        onChange={(json) => setField(f.label, json)} />
+    );
     return <input className="ainp" type="text" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
   };
 
@@ -1356,7 +1472,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
           <div className="form-grid">
             {[...spec.fields, ...cfFields].filter((f) => !(f.addOnly && edit)).map((f) => {
               const t = f.type || 'text';
-              const span2 = t === 'textarea' || t === 'table';
+              const span2 = t === 'textarea' || t === 'table' || t === 'levels';
               // 'checkbox' renders its own caption next to the box — don't print the hint twice
               const inField = t === 'auto' || t === 'lookup' || t === 'table' || t === 'checkbox';
               return (
