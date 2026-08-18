@@ -2662,18 +2662,15 @@ const courseEditSpec = (edit: any): EditSpec => ({
     // Course descriptors (client feedback #13) — prefill so an Edit reopens fully.
     'Course Level': (edit.meta as any)?.level ?? '',
     'Course Type': (edit.meta as any)?.course_type ?? '',
-    'Delivery Mode': (edit.meta as any)?.delivery_mode ?? '',
+    // dev/100 (client): Delivery Mode removed from the course UI (meta.delivery_mode kept in DB).
     'Description': (edit.meta as any)?.description ?? '',
     'Status': edit.is_active === false ? 'Inactive' : 'Active',
   },
   initialIds: {
-    // Branch › Vertical › Pipeline › Campaign — prefill the whole chain so Configure Course
-    // reopens fully cascading. Branch+Vertical are the course's ownership; Pipeline/Campaign are
-    // the optional associations (blank on legacy courses, which simply reopen at Branch→Vertical).
+    // dev/100 (client): the ERP course form walks Branch > Vertical only. Campaign/Pipeline are
+    // CRM-only concepts and were removed from this form (any legacy meta value is left untouched).
     'Branch': (edit.meta as any)?.branch_id ? Number((edit.meta as any).branch_id) : undefined,
     'Vertical': (edit.meta as any)?.vertical_id ? Number((edit.meta as any).vertical_id) : undefined,
-    'Pipeline': (edit.meta as any)?.pipeline_id ? Number((edit.meta as any).pipeline_id) : undefined,
-    'Campaign': (edit.meta as any)?.campaign_id ? Number((edit.meta as any).campaign_id) : undefined,
   },
   submit: async (vals, ids) => {
     await api.patch(`/masters/course/${edit.id}`, {
@@ -2686,15 +2683,13 @@ const courseEditSpec = (edit: any): EditSpec => ({
         fee: vals['Standard Fee'] || undefined,
         branch_id: need(ids['Branch'], 'Pick a Branch'),
         vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
-        // optional hierarchy associations — persisted so they prefill + cascade on the next Edit.
-        // Sent as null (not undefined) when cleared so the PATCH actually drops a prior value.
-        pipeline_id: ids['Pipeline'] ?? null,
-        campaign_id: ids['Campaign'] ?? null,
+        // dev/100 (client): Campaign/Pipeline removed from the ERP course form (CRM-only). The meta
+        // spread above preserves any legacy pipeline_id/campaign_id value (non-breaking).
         eligibility: vals['Eligibility Criteria'] || undefined,
         // Course descriptors (client feedback #13) — persisted in meta; override the spread above.
         level: vals['Course Level'] || undefined,
         course_type: vals['Course Type'] || undefined,
-        delivery_mode: vals['Delivery Mode'] || undefined,
+        // dev/100 (client): delivery_mode dropped from the course UI (meta value preserved by the spread).
         description: vals['Description'] || undefined,
       },
       is_active: vals['Status'] !== 'Inactive',
@@ -2714,7 +2709,7 @@ function Courses() {
   const [fCourses, setFCourses] = useState<number[]>([]);
   const [fStatuses, setFStatuses] = useState<string[]>([]);
   const [fTypes, setFTypes] = useState<string[]>([]);
-  const [fModes, setFModes] = useState<string[]>([]);
+  // dev/100 (client): Delivery Mode filter removed from the course list (field dropped from the UI).
   const [q, setQ] = useState('');
   const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
   // Course filter options cascade off Branch/Vertical (a course's meta carries branch_id/vertical_id).
@@ -2724,7 +2719,6 @@ function Courses() {
   // Course Type / Delivery Mode filter options come from the seeded catalogs (RefData →
   // GET /courses/*-catalog); fall back to the bundled constants offline / in unit tests.
   const typeFilterOpts = (ref.courseTypes.length ? ref.courseTypes : COURSE_TYPES.map((t) => ({ id: t, name: t }))).map((o: any) => ({ id: String(o.id ?? o.name), name: String(o.name) }));
-  const modeFilterOpts = (ref.deliveryModes.length ? ref.deliveryModes : DELIVERY_MODES.map((m) => ({ id: m, name: m }))).map((o: any) => ({ id: String(o.id ?? o.name), name: String(o.name) }));
   const cparams = new URLSearchParams();
   // Status filter (client, Aug 2026): active/inactive. include-inactive chip OR an 'inactive' pick
   // must surface inactive rows, so pass all=1 whenever inactive could be in the result set.
@@ -2734,7 +2728,6 @@ function Courses() {
   if (fCourses.length) cparams.set('course_ids', fCourses.join(','));
   if (fStatuses.length) cparams.set('statuses', fStatuses.join(','));
   if (fTypes.length) cparams.set('course_types', fTypes.join(','));
-  if (fModes.length) cparams.set('delivery_modes', fModes.join(','));
   if (q.trim()) cparams.set('q', q.trim());
   const list = useFetch<any[]>(`/masters/course?${cparams.toString()}`, [refreshTick, cparams.toString()]);
   const rows = list.data ?? [];
@@ -2749,8 +2742,9 @@ function Courses() {
   return (
     <>
       <div className="filters">
-        {/* Course master filters (client, Aug 2026): Branch > Vertical > Course, Status, Course Type,
-            Delivery Mode (all multi-select) + name search. Each genuinely narrows the server query. */}
+        {/* Course master filters (client, Aug 2026): Branch > Vertical > Course, Status, Course Type
+            (all multi-select) + name search. Each genuinely narrows the server query. dev/100 (client):
+            the Delivery Mode filter was removed (the course Delivery Mode field was dropped from the UI). */}
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
           onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); setFCourses((cur) => cur.filter((id) => ref.courses.some((c: any) => Number(c.id) === id && v.includes(Number((c.meta as any)?.branch_id))))); }} />
         <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts}
@@ -2759,12 +2753,11 @@ function Courses() {
         <EnumMulti label="Status" icon="check" value={fStatuses}
           options={[{ id: 'active', name: 'Active' }, { id: 'inactive', name: 'Inactive' }]} onChange={setFStatuses} />
         <EnumMulti label="Course Type" icon="award" value={fTypes} options={typeFilterOpts} onChange={setFTypes} />
-        <EnumMulti label="Delivery Mode" icon="grid" value={fModes} options={modeFilterOpts} onChange={setFModes} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search course name / code\u2026" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Course" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Type', 'Level', 'Delivery Mode', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
+      <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Type', 'Level', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => [
           { mono: String(c.code ?? '\u2014') } as Cell,
@@ -2772,7 +2765,6 @@ function Courses() {
           String(nameOf(ref.verticals, (c.meta as any)?.vertical_id) ?? (c.meta as any)?.vertical ?? '\u2014'),
           String((c.meta as any)?.course_type ?? '\u2014'),
           String((c.meta as any)?.level ?? '\u2014'),
-          String((c.meta as any)?.delivery_mode ?? '\u2014'),
           String((c.meta as any)?.mode ?? '\u2014'),
           String((c.meta as any)?.duration ?? '\u2014'),
           String((c.meta as any)?.fee ?? '\u2014'),
@@ -2798,7 +2790,6 @@ function Courses() {
               ['Vertical', nameOf(ref.verticals, (view.meta as any)?.vertical_id) ?? '\u2014'],
               ['Course type', String((view.meta as any)?.course_type ?? '\u2014')],
               ['Course level', String((view.meta as any)?.level ?? '\u2014')],
-              ['Delivery mode', String((view.meta as any)?.delivery_mode ?? '\u2014')],
               ['Training mode', String((view.meta as any)?.mode ?? '\u2014')],
               ['Duration', String((view.meta as any)?.duration ?? '\u2014')],
               ['Standard fee', String((view.meta as any)?.fee ?? '\u2014')],
@@ -5122,7 +5113,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           ) : null}
           {canEdit && <button className="btn primary" style={{ marginBottom: 10 }} onClick={() => setAddEnrol(true)} data-testid="enrol-add"><Ic k="plus" />Enroll in another course</button>}
           {(enrolData.data?.enrolments ?? []).length ? (
-            <table className="minitbl"><thead><tr><th>Branch › Vertical › Course</th><th>Roll Number</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
+            <table className="minitbl"><thead><tr><th>Branch › Vertical › Course</th><th>Roll Number</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Balance / Due Fee</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
               <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => (
                 <tr key={e.id} data-testid={`enrol-row-${e.id}`}>
                   <td><b className="nm">{e.course_name ?? '—'}</b><div className="sub" data-testid={`enrol-path-${e.id}`}>{e.path || [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' › ')}</div><div className="sub mono">{e.enrolment_no}</div></td>
@@ -5137,6 +5128,11 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                         {e.discount_type === 'percent' ? ` (${Number(e.discount_value)}%)` : ''}
                       </div>
                     )}
+                  </td>
+                  {/* dev/100 (client): Balance / Due Fee = net fee - fees paid (from the API's outstanding_minor). */}
+                  <td data-testid={`enrol-balance-${e.id}`}>
+                    <b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }}>{money(e.outstanding_minor ?? 0)}</b>
+                    {Number(e.paid_minor ?? 0) > 0 && <div className="sub" style={{ fontSize: 10 }}>paid {money(e.paid_minor)}</div>}
                   </td>
                   <td>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</td>
                   <td><span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span></td>

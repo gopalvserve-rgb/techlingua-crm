@@ -1860,6 +1860,9 @@ export class StudentService {
               e.course_status_effective_date, e.course_status_outstanding_minor,
               e.course_status_approved_by, e.course_status_changed_by, e.course_status_changed_at,
               e.admission_stage,
+              -- dev/100 (client): surface the per-enrolment Balance / Due Fee = net_fee - fees paid.
+              COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
+                          WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0) AS paid_minor,
               co.name AS course_name, bt.name AS batch_name,
               br.name AS branch_name, vt.name AS vertical_name,
               svi.student_vertical_no,
@@ -1881,8 +1884,15 @@ export class StudentService {
     const enrolments = rows.map((e: any) => {
       const courseAccess = studentLmsAccess(e.course_status);
       const effective = combineAccess(overall, courseAccess);
+      // dev/100 (client): Balance / Due Fee = net fee - fees paid (never negative). Surfaced as a
+      // column in the Course Enrollment section; the standalone Fee Management screen already shows it.
+      const paidMinor = Number(e.paid_minor ?? 0);
+      const netMinor = Number(e.net_fee_minor ?? 0);
+      const outstandingMinor = Math.max(0, netMinor - paidMinor);
       return {
         ...e,
+        paid_minor: paidMinor,
+        outstanding_minor: outstandingMinor,
         // Branch > Vertical > Course breadcrumb for THIS enrolment (client feedback).
         path: [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' \u203a '),
         course_lms_access: courseAccess,

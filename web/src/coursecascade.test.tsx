@@ -49,8 +49,8 @@ const fld = (name: string) =>
   [...document.querySelectorAll('.add-modal .fld')].find((f) => f.querySelector('label')?.textContent?.trim().startsWith(name)) as HTMLElement;
 const sel = (name: string) => fld(name).querySelector('select') as HTMLSelectElement;
 const vertOpts = () => [...sel('Vertical').options].filter((o) => o.value).map((o) => o.value);
-const pipeOpts = () => [...sel('Pipeline').options].filter((o) => o.value).map((o) => o.value);
-const campOpts = () => [...sel('Campaign').options].filter((o) => o.value).map((o) => o.value);
+// dev/100 (client): the ERP course form carries NO Campaign/Pipeline (CRM-only concepts).
+const hasField = (name: string) => Boolean(fld(name));
 
 beforeEach(() => { cleanup(); post.mockClear(); patch.mockClear(); });
 
@@ -129,52 +129,17 @@ describe('Course configuration — Branch › Vertical cascade', () => {
     expect(body.meta.vertical_id).toBe(1);
   });
 
-  it('Pipeline is gated by Vertical and Campaign by Pipeline (strict Branch\u2192Vertical\u2192Pipeline\u2192Campaign)', () => {
+  // dev/100 (client): Campaign & Pipeline are CRM-only concepts and were REMOVED from the ERP
+  // course form. It must walk Branch > Vertical only \u2014 no Pipeline / Campaign selector at all.
+  it('does NOT render a Pipeline or Campaign field (ERP forms are CRM-concept-free)', () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
-    // nothing chosen: Pipeline + Campaign disabled and empty
-    expect(sel('Pipeline').disabled).toBe(true);
-    expect(pipeOpts()).toEqual([]);
-    expect(sel('Campaign').disabled).toBe(true);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    expect(sel('Pipeline').disabled).toBe(false);
-    expect(pipeOpts()).toEqual(['41', '42']);            // pipelines under vertical 1 only
-    expect(sel('Campaign').disabled).toBe(true);          // still gated on Pipeline
-    fireEvent.change(sel('Pipeline'), { target: { value: '41' } });
-    expect(sel('Campaign').disabled).toBe(false);
-    expect(campOpts()).toEqual(['51', '52']);             // campaigns under pipeline 41 only
+    expect(hasField('Branch')).toBe(true);
+    expect(hasField('Vertical')).toBe(true);
+    expect(hasField('Pipeline')).toBe(false);
+    expect(hasField('Campaign')).toBe(false);
   });
 
-  it('changing Vertical resets a now-invalid Pipeline AND Campaign', () => {
-    render(<AddModal formKey="students.courses" onClose={() => {}} />);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    fireEvent.change(sel('Pipeline'), { target: { value: '41' } });
-    fireEvent.change(sel('Campaign'), { target: { value: '51' } });
-    expect(sel('Campaign').value).toBe('51');
-    fireEvent.change(sel('Vertical'), { target: { value: '2' } });   // switch vertical
-    expect(sel('Pipeline').value).toBe('');                          // stale pipeline cleared
-    expect(sel('Campaign').value).toBe('');                          // stale campaign cleared
-  });
-
-  it('saves optional pipeline_id + campaign_id in meta when chosen', async () => {
-    render(<AddModal formKey="students.courses" onClose={() => {}} />);
-    fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'Java' } });
-    fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'JV' } });
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    fireEvent.change(sel('Pipeline'), { target: { value: '41' } });
-    fireEvent.change(sel('Campaign'), { target: { value: '51' } });
-    fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLElement);
-    await waitFor(() => expect(post).toHaveBeenCalled());
-    const body = post.mock.calls[0][1] as any;
-    expect(body.meta.branch_id).toBe(9);
-    expect(body.meta.vertical_id).toBe(1);
-    expect(body.meta.pipeline_id).toBe(41);
-    expect(body.meta.campaign_id).toBe(51);
-  });
-
-  it('a course with only Branch+Vertical still saves (Pipeline/Campaign are optional)', async () => {
+  it('a course with only Branch+Vertical saves WITHOUT pipeline_id / campaign_id', async () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'French' } });
     fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'FR' } });
@@ -187,19 +152,15 @@ describe('Course configuration — Branch › Vertical cascade', () => {
     expect(body.meta.vertical_id).toBe(2);
     expect(body.meta.pipeline_id).toBeUndefined();
     expect(body.meta.campaign_id).toBeUndefined();
+    // dev/100: Delivery Mode also dropped from the course UI \u2014 not written from the form.
+    expect(body.meta.delivery_mode).toBeUndefined();
   });
 
-  it('Edit prefills Pipeline + Campaign too, still cascading', () => {
-    const spec: EditSpec = {
-      title: 'Configure Course \u2014 Java',
-      initialVals: { 'Course Name': 'Java', 'Course Code': 'JV', Status: 'Active' },
-      initialIds: { Branch: 9, Vertical: 1, Pipeline: 41, Campaign: 52 },
-      submit: async () => 'Course updated',
-    };
-    render(<AddModal formKey="students.courses" onClose={() => {}} edit={spec} />);
-    expect(sel('Pipeline').value).toBe('41');
-    expect(sel('Campaign').value).toBe('52');
-    expect(pipeOpts()).toEqual(['41', '42']);
-    expect(campOpts()).toEqual(['51', '52']);
+  it('does NOT render a Delivery Mode field (dropped from the course UI)', () => {
+    render(<AddModal formKey="students.courses" onClose={() => {}} />);
+    expect(hasField('Delivery Mode')).toBe(false);
+    expect(hasField('Course Level')).toBe(true);   // the other descriptors stay
+    expect(hasField('Course Type')).toBe(true);
+    expect(hasField('Description')).toBe(true);
   });
 });
