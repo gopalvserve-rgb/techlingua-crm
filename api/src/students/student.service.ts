@@ -2155,7 +2155,7 @@ export class StudentService {
     } else {
       fee = Number(dto?.fee_minor ?? 0);
       if (!Number.isFinite(fee) || fee < 0) throw new BadRequestException('Fee must be a non-negative amount.');
-      const dsc = await this.resolveDiscount(fee, dto, enrolVerticalId, me.id);
+      const dsc = await this.resolveDiscount(fee, dto, enrolVerticalId, me.id, true);
       disc = dsc.discount_amount_minor; net = dsc.net_fee_minor;
       discountType = dsc.discount_type; discountValue = dsc.discount_value;
     }
