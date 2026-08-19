@@ -133,6 +133,14 @@ export class StudentController {
     return this.svc.addEnrolment(id, dto, me, scope);
   }
 
+  /** UPGRADE — add another LEVEL to this course-enrolment (A1 → add A2). Same enrolment: Total/Net
+   *  increase, plan reconciles, no second enrolment. Guarded by student.update; scope-enforced. */
+  @Post(':id/enrolments/:eid/levels')
+  @RequirePermission('student.update')
+  addEnrolmentLevel(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.addEnrolmentLevel(eid, dto, me, scope, id);
+  }
+
   /** CHANGE a single enrolment's status. Guarded by student.update; SENSITIVE statuses are
    *  additionally gated by student.status_manage INSIDE the service (403), with the required
    *  fields + Approved-By enforced (400). */

@@ -24,6 +24,8 @@ const openPdf = (path: string) => { window.open(`/api${path}`, '_blank', 'noopen
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
 
 const PLAN_TYPE_LABEL: Record<string, string> = { full: 'Full', installment: 'Installment', emi: 'EMI', custom: 'Custom' };
+// The enrolment's payment-plan INTENT code (enrolment.payment_plan) → a readable Fee Plan label.
+const FEE_PLAN_LABEL: Record<string, string> = { full: 'Full payment', emi_3: '3 installments', emi_6: '6 installments', custom: 'Custom' };
 const PLAN_STATUS_BADGE: Record<string, [string, string]> = {
   active: ['Active', 'b-indigo'], completed: ['Completed', 'b-green'], cancelled: ['Cancelled', 'b-gray'],
 };
@@ -392,27 +394,35 @@ export function FeeDuesScreen() {
       </div>
       <TableCard fill title="Fee Management" icon="clock"
         more={<ListActions onExport={() => downloadObjectsCsv('fee-management.csv', rows.map((r) => ({
-          student: r.student_name, enrolment: r.enrolment_no, course: r.course_name || '',
-          due_date: dt(r.due_date), amount: (Number(r.amount_minor) / 100).toFixed(2),
-          paid: (Number(r.paid_minor) / 100).toFixed(2), outstanding: (Number(r.outstanding_minor) / 100).toFixed(2),
+          roll_number: r.roll_no || '', enrolment: r.enrolment_no, branch: r.branch_name, vertical: r.vertical_name,
+          course: r.course_name || '', level: r.level_summary || '',
+          total_fee: (Number(r.total_fee_minor ?? r.amount_minor) / 100).toFixed(2),
+          net_fee: (Number(r.net_fee_minor ?? r.amount_minor) / 100).toFixed(2),
+          fee_plan: FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '',
+          due_fee: (Number(r.outstanding_minor) / 100).toFixed(2),
+          status: r.course_status_label || r.course_status || '',
           ageing: (BUCKET_BADGE[r.bucket]?.[0]) ?? r.bucket, days_overdue: r.overdue_days,
-          status: r.course_status_label || r.course_status || '', trainer: r.trainer_name || '',
-          source: r.source, owner: r.owner_name || '', branch: r.branch_name, vertical: r.vertical_name,
+          student: r.student_name, trainer: r.trainer_name || '', owner: r.owner_name || '', source: r.source,
         })))} onRefresh={after} />}
-        cols={['Student', 'Enrolment', 'Course', 'Status', 'Trainer', 'Due date', 'Outstanding', 'Ageing', 'Days overdue', 'Owner', 'Branch \u203a Vertical', 'Actions']}
+        cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
         empty="No outstanding dues — every active enrolment is paid up."
         rows={rows.map((r): Cell[] => [
           { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div> : <div className="sub">Installment {r.seq_no}</div>}</div> },
+          { mono: r.roll_no || '—' },
           { mono: r.enrolment_no },
+          r.branch_name || '—',
+          r.vertical_name || '—',
           r.course_name || '—',
-          { node: <span className="bdg b-gray">{r.course_status_label || r.course_status || '—'}</span> },
-          r.trainer_name || '—',
-          dt(r.due_date),
+          { node: r.level_summary ? <b>{r.level_summary}</b> : <span className="sub">—</span> },
+          { mono: fmtINR(Number(r.total_fee_minor ?? r.amount_minor)) },
+          { mono: fmtINR(Number(r.net_fee_minor ?? r.amount_minor)) },
+          FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '—',
           { mono: fmtINR(r.outstanding_minor) },
+          { node: <span className="bdg b-gray">{r.course_status_label || r.course_status || '—'}</span> },
           { b: BUCKET_BADGE[r.bucket] ?? [r.bucket, 'b-gray'] },
           Number(r.overdue_days) > 0 ? String(r.overdue_days) : '—',
+          r.trainer_name || '—',
           r.owner_name || '—',
-          { node: <span>{[r.branch_name, r.vertical_name].filter(Boolean).join(' \u203a ') || '—'}</span> },
           {
             node: <RowBtns items={[
               ...(can('payment_plan.create') ? [['cfg', 'Fee setup (payment plan)', () => setPlanFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),

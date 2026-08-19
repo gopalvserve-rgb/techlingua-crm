@@ -65,6 +65,11 @@ export class DuesService {
              e.counsellor_id AS owner_id, u.name AS owner_name,
              e.batch_id, bt.name AS batch_name, bt.trainer_id, tr.name AS trainer_name,
              e.course_status, ssd.label AS course_status_label,
+             svi.student_vertical_no AS roll_no,
+             (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
+                FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
+             COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
+             e.net_fee_minor AS net_fee_minor, e.payment_plan AS fee_plan,
              i.due_date, i.amount_minor, i.paid_minor,
              (i.amount_minor - i.paid_minor) AS outstanding_minor,
              ((SELECT d FROM today) - i.due_date) AS days_overdue
@@ -79,6 +84,7 @@ export class DuesService {
         LEFT JOIN batch bt ON bt.id = e.batch_id
         LEFT JOIN "user" tr ON tr.id = bt.trainer_id
         LEFT JOIN student_status_def ssd ON ssd.code = e.course_status
+        LEFT JOIN student_vertical_id svi ON svi.student_id = e.student_profile_id AND svi.vertical_id = e.vertical_id
        WHERE e.deleted_at IS NULL AND e.status = 'active'
          AND i.status <> 'waived' AND (i.amount_minor - i.paid_minor) > 0 AND ${w1}
       UNION ALL
@@ -91,6 +97,11 @@ export class DuesService {
              e.counsellor_id AS owner_id, u.name AS owner_name,
              e.batch_id, bt.name AS batch_name, bt.trainer_id, tr.name AS trainer_name,
              e.course_status, ssd.label AS course_status_label,
+             svi.student_vertical_no AS roll_no,
+             (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
+                FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
+             COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
+             e.net_fee_minor AS net_fee_minor, e.payment_plan AS fee_plan,
              COALESCE(e.start_date, e.created_at::date) AS due_date,
              e.net_fee_minor AS amount_minor,
              COALESCE(pr.paid_minor, 0) AS paid_minor,
@@ -105,6 +116,7 @@ export class DuesService {
         LEFT JOIN batch bt ON bt.id = e.batch_id
         LEFT JOIN "user" tr ON tr.id = bt.trainer_id
         LEFT JOIN student_status_def ssd ON ssd.code = e.course_status
+        LEFT JOIN student_vertical_id svi ON svi.student_id = e.student_profile_id AND svi.vertical_id = e.vertical_id
         LEFT JOIN LATERAL (SELECT COALESCE(sum(fr.amount_minor),0) AS paid_minor
                              FROM fee_receipt fr WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL) pr ON TRUE
        WHERE e.deleted_at IS NULL AND e.status = 'active'

@@ -26,8 +26,10 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [lead, setLead] = useState<any>(null);
-  // Multi-course rows: each is a {vertical → course (→ fee, discount)} selection. Item 1.
-  const [rows, setRows] = useState<Array<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string }>>([]);
+  // Multi-course rows: each is a {vertical → course (→ levels, fee, discount)} selection. Item 1 +
+  // batch 2: a course WITH levels lets you pick one or more; the fee auto-sums from them.
+  const [rows, setRows] = useState<Array<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string; levels: string[] }>>([]);
+  const [rowLevels, setRowLevels] = useState<Record<number, any[]>>({}); // row index -> the course's master levels
   const [result, setResult] = useState<any>(null);
 
   useEffect(() => {
@@ -46,7 +48,8 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
         const cid = ld?.course_id ? String(ld.course_id) : '';
         const course = cid ? (ref.courses ?? []).find((c: any) => Number(c.id) === Number(cid)) : null;
         const fee = course ? String((course.meta as any)?.fee ?? '') : '';
-        setRows([{ vertical_id: v, course_id: cid, fee, disc_type: 'none', disc_value: '' }]);
+        setRows([{ vertical_id: v, course_id: cid, fee, disc_type: 'none', disc_value: '', levels: [] }]);
+        if (cid) fetchLevels(0, cid);
       } catch (e) { if (live) setErr((e as Error).message); }
       finally { if (live) setLoading(false); }
     })();
@@ -59,28 +62,51 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   const coursesFor = (vid: string) => (ref.courses ?? []).filter((c: any) =>
     !vid || String((c.meta as any)?.vertical_id ?? '') === String(vid));
 
-  const setRow = (i: number, patch: Partial<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string }>) =>
+  const setRow = (i: number, patch: Partial<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string; levels: string[] }>) =>
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addRow = () => setRows((rs) => [...rs, { vertical_id: '', course_id: '', fee: '', disc_type: 'none', disc_value: '' }]);
+  const addRow = () => setRows((rs) => [...rs, { vertical_id: '', course_id: '', fee: '', disc_type: 'none', disc_value: '', levels: [] }]);
   const removeRow = (i: number) => setRows((rs) => rs.filter((_, idx) => idx !== i));
-  // Choosing a course prefills the fee from the Course master (editable).
+  // Fetch a course's levels (batch 2). A course WITH levels drives its fee from the selection.
+  const fetchLevels = (i: number, cid: string) => {
+    api.get<any[]>(`/courses/${cid}/levels`).then((ls) => setRowLevels((m) => ({ ...m, [i]: ls ?? [] }))).catch(() => setRowLevels((m) => ({ ...m, [i]: [] })));
+  };
+  // Choosing a course prefills the fee from the Course master (editable) + loads its levels.
   const chooseCourse = (i: number, cid: string) => {
     const course = (ref.courses ?? []).find((c: any) => Number(c.id) === Number(cid));
-    setRow(i, { course_id: cid, fee: course ? String((course.meta as any)?.fee ?? '') : '' });
+    setRow(i, { course_id: cid, fee: course ? String((course.meta as any)?.fee ?? '') : '', levels: [] });
+    setRowLevels((m) => ({ ...m, [i]: [] }));
+    if (cid) fetchLevels(i, cid);
   };
+  // The selected level objects of a row (course_level_id + fee), and their summed fee (paise).
+  const selLevelObjs = (i: number) => (rowLevels[i] ?? []).filter((l: any) => (rows[i]?.levels ?? []).includes(String(l.code)));
+  const rowGrossMinor = (i: number) => {
+    const sel = selLevelObjs(i);
+    if (sel.length) return sel.reduce((s: number, l: any) => s + Number(l.fee_minor || 0), 0);
+    return Math.round(Number(rows[i]?.fee || 0) * 100);
+  };
+  const toggleLevel = (i: number, code: string, on: boolean) =>
+    setRow(i, { levels: on ? [...(rows[i]?.levels ?? []), code] : (rows[i]?.levels ?? []).filter((c) => c !== code) });
 
   const validRows = rows.filter((r) => r.course_id);
   const convert = async () => {
     setErr(''); setBusy(true);
     try {
-      const courses = validRows.map((r) => ({
-        vertical_id: r.vertical_id ? Number(r.vertical_id) : undefined,
-        course_id: Number(r.course_id),
-        fee_minor: r.fee !== '' ? Math.round(Number(r.fee) * 100) : undefined,
-        discount_type: r.disc_type,
-        discount_value: r.disc_type === 'percent' ? Number(r.disc_value || 0)
-          : r.disc_type === 'amount' ? Math.round(Number(r.disc_value || 0) * 100) : 0,
-      }));
+      const courses = validRows.map((r) => {
+        const idx = rows.indexOf(r);
+        const sel = selLevelObjs(idx);
+        const gross = rowGrossMinor(idx);
+        return {
+          vertical_id: r.vertical_id ? Number(r.vertical_id) : undefined,
+          course_id: Number(r.course_id),
+          fee_minor: gross || (r.fee !== '' ? Math.round(Number(r.fee) * 100) : undefined),
+          discount_type: r.disc_type,
+          discount_value: r.disc_type === 'percent' ? Number(r.disc_value || 0)
+            : r.disc_type === 'amount' ? Math.round(Number(r.disc_value || 0) * 100) : 0,
+          // batch 2: a level-course sends its selected levels[] (+ overall discount scope); ONE
+          // enrolment covers them and Total = Σ level fees. A no-level course omits levels.
+          ...(sel.length ? { levels: sel.map((l: any) => ({ course_level_id: Number(l.id), code: String(l.code) })), discount_scope: 'overall' } : {}),
+        };
+      });
       const r = await api.post<any>('/students/convert', { lead_id: leadId, courses });
       if (r?.already) {
         toast(`Already a student (${r.student_no ?? ''})`);
@@ -171,8 +197,20 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                           {coursesFor(r.vertical_id).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                         <div style={{ marginTop: 4 }}><MasterQuickAdd type="course" onAdded={(row) => chooseCourse(i, String(row.id))} /></div>
+                        {(rowLevels[i] ?? []).length > 0 && (
+                          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }} data-testid={`conv-levels-${i}`}>
+                            <div className="sub" style={{ fontSize: 11 }}>Levels (select one or more):</div>
+                            {(rowLevels[i] ?? []).map((l: any) => (
+                              <label key={l.code} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }} data-testid={`conv-level-${i}-${l.code}`}>
+                                <input type="checkbox" checked={(r.levels ?? []).includes(String(l.code))} onChange={(e) => toggleLevel(i, String(l.code), e.target.checked)} data-testid={`conv-level-cb-${i}-${l.code}`} />
+                                <b>{l.code}</b><span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
                       </td>
-                      <td><input className="ainp" type="number" style={{ width: 80 }} value={r.fee}
+                      <td><input className="ainp" type="number" style={{ width: 80 }} value={selLevelObjs(i).length ? String(rowGrossMinor(i) / 100) : r.fee}
+                        disabled={selLevelObjs(i).length > 0}
                         onChange={(e) => setRow(i, { fee: e.target.value })} placeholder="0" data-testid={`conv-fee-${i}`} /></td>
                       <td>
                         <div style={{ display: 'flex', gap: 4 }}>
@@ -187,10 +225,10 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                         </div>
                       </td>
                       <td data-testid={`conv-net-${i}`}>{(() => {
-                        const gross = Math.round(Number(r.fee || 0) * 100);
+                        const gross = rowGrossMinor(i);
                         const val = r.disc_type === 'percent' ? Number(r.disc_value || 0) : Math.round(Number(r.disc_value || 0) * 100);
                         const { discount_minor, net_minor } = enrolDiscount(gross, r.disc_type, val);
-                        return <span title={`Discount ${fmtINR(discount_minor)}`}>{fmtINR(net_minor)}</span>;
+                        return <span title={`Total ${fmtINR(gross)} · Discount ${fmtINR(discount_minor)}`}>{fmtINR(net_minor)}</span>;
                       })()}</td>
                       <td>{rows.length > 1 && (
                         <button className="ax" title="Remove" onClick={() => removeRow(i)}><Ic k="x" /></button>

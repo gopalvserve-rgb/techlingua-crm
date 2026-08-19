@@ -13,6 +13,7 @@ import { RbacDataService } from '../rbac/rbac-data.service';
 import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVENUE_CANCELLING_STATUSES, lmsBlockedMessage, combineAccess, ENROLMENT_STATUSES } from './lms-access';
 import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from '../enrolments/discount.util';
+import { DiscountScope, MasterLevel, ResolvedLevel, resolveLevels, sumLevelDiscounts, sumLevelFees } from '../enrolments/level.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
 
 /**
@@ -115,6 +116,87 @@ export class StudentService {
       });
     }
     return d;
+  }
+
+  /* ------------------------------------------------ level line-items (batch 2) */
+
+  /** Load a course's master levels (code + fee snapshot source) for resolving a selection. */
+  private async fetchMasterLevels(courseId: number): Promise<MasterLevel[]> {
+    const rows = await this.db.query<any>(
+      `SELECT id, code, label, fee_minor FROM course_level
+        WHERE course_id = $1::bigint AND is_active ORDER BY ordering, id`, [courseId]);
+    return rows.map((r) => ({ id: Number(r.id), code: String(r.code), label: r.label ?? null, fee_minor: Number(r.fee_minor ?? 0) }));
+  }
+
+  /**
+   * ENROLLMENT LEVEL RE-MODEL (batch 2). Given a course + the selected `levels[]`, resolve the
+   * line-items (snapshot each level's fee), compute the COMBINED Total = Σ level fees, apply the
+   * discount OVERALL (on the total, via the item-4 discount path) or LEVEL-wise (Σ per-line
+   * discounts), and return Net = Total − Discount. Reuses the finance cap check. Returns null
+   * when no levels were selected (the caller then falls back to the single-course fee — the
+   * unchanged, back-compatible path for a course without levels).
+   */
+  private async resolveLevelMoney(
+    courseId: number, levelsInput: unknown, dto: any, verticalId: number | null, actorId: number,
+  ): Promise<null | {
+    levels: ResolvedLevel[]; scope: DiscountScope; total_fee_minor: number; discount_minor: number; net_fee_minor: number;
+    discount_type: EnrolmentDiscountType; discount_value: number;
+  }> {
+    if (!Array.isArray(levelsInput) || levelsInput.length === 0) return null;
+    const master = await this.fetchMasterLevels(courseId);
+    if (!master.length) throw new BadRequestException('This course has no levels configured — enrol it on its Standard Fee instead.');
+    const scope: DiscountScope = String(dto?.discount_scope ?? '').trim().toLowerCase() === 'level' ? 'level' : 'overall';
+    let levels: ResolvedLevel[];
+    try { levels = resolveLevels(master, levelsInput, scope); }
+    catch (e) { throw new BadRequestException((e as Error).message); }
+    if (!levels.length) return null;
+    const total = sumLevelFees(levels);
+
+    if (scope === 'level') {
+      const discount = sumLevelDiscounts(levels);
+      if (discount > total) throw new BadRequestException('The level discounts cannot exceed the total fee.');
+      if (this.finance) {
+        await this.finance.assertAllowed({
+          verticalId, userId: actorId, kind: 'discount', base: total, discount, label: 'Enrolment discount',
+        });
+      }
+      return { levels, scope, total_fee_minor: total, discount_minor: discount, net_fee_minor: total - discount,
+        discount_type: discount > 0 ? 'amount' : 'none', discount_value: discount };
+    }
+    // OVERALL — one discount on the summed total (the item-4 amount/percent path).
+    const d = await this.resolveDiscount(total, dto, verticalId, actorId);
+    return { levels, scope, total_fee_minor: total, discount_minor: d.discount_amount_minor, net_fee_minor: d.net_fee_minor,
+      discount_type: d.discount_type, discount_value: d.discount_value };
+  }
+
+  /** Insert an enrolment's level line-items (one row per selected level). Same client `c`. */
+  private async insertEnrolmentLevels(c: any, orgId: number, enrolmentId: number, levels: ResolvedLevel[]) {
+    for (const l of levels) {
+      await c.query(
+        `INSERT INTO enrolment_level (org_id, enrolment_id, course_level_id, code, label, fee_minor, discount_minor, ordering)
+         VALUES ($1::bigint,$2::bigint,$3::bigint,$4::varchar,$5,$6::bigint,$7::bigint,$8::int)`,
+        [orgId, enrolmentId, l.course_level_id, l.code, l.label, l.fee_minor, l.discount_minor, l.ordering]);
+    }
+  }
+
+  /** The level line-items of a set of enrolments, grouped by enrolment_id (for reads). */
+  private async levelsByEnrolment(enrolmentIds: number[]): Promise<Map<number, any[]>> {
+    const map = new Map<number, any[]>();
+    if (!enrolmentIds.length) return map;
+    const rows = await this.db.query<any>(
+      `SELECT enrolment_id, course_level_id, code, label, fee_minor, discount_minor, ordering
+         FROM enrolment_level WHERE enrolment_id = ANY($1::bigint[]) ORDER BY enrolment_id, ordering, id`,
+      [enrolmentIds]);
+    for (const r of rows) {
+      const eid = Number(r.enrolment_id);
+      if (!map.has(eid)) map.set(eid, []);
+      map.get(eid)!.push({
+        course_level_id: r.course_level_id != null ? Number(r.course_level_id) : null,
+        code: r.code, label: r.label ?? r.code,
+        fee_minor: Number(r.fee_minor ?? 0), discount_minor: Number(r.discount_minor ?? 0), ordering: Number(r.ordering ?? 0),
+      });
+    }
+    return map;
   }
 
   /* ------------------------------------------------------------------ reads */
@@ -400,7 +482,10 @@ export class StudentService {
               e.course_status_changed_at, e.admission_stage, co.name AS course_name, bt.name AS batch_name,
               br.name AS branch_name, vt.name AS vertical_name, svi.student_vertical_no,
               sd.label AS course_status_label, sd.lms_access AS course_lms_access,
-              pp.id AS plan_id
+              pp.id AS plan_id,
+              COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
+              (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
+                 FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary
          FROM enrolment e
          LEFT JOIN m_course co ON co.id = e.course_id
          LEFT JOIN batch bt ON bt.id = e.batch_id
@@ -1447,7 +1532,7 @@ export class StudentService {
     const orgId = await this.orgId();
     type R = { courseId: number; courseName: string; courseCode: string; branchId: number; verticalId: number;
       batchId: number | null; feeMinor: number; disc: number; net: number; plan: string; startDate: string | null;
-      discount_type: string; discount_value: number };
+      discount_type: string; discount_value: number; discountScope: DiscountScope; levels: ResolvedLevel[] };
     const resolved: R[] = [];
     for (const row of rows) {
       const courseId = row?.course_id ? Number(row.course_id) : null;
@@ -1463,23 +1548,34 @@ export class StudentService {
           [batchId, verticalId]);
         if (!b) throw new BadRequestException(`The chosen batch is not in the "${course.name}" vertical.`);
       }
-      let feeMinor: number;
-      if (row?.fee_minor != null && String(row.fee_minor).trim() !== '') {
-        feeMinor = Number(row.fee_minor);
+      // ENROLLMENT LEVEL RE-MODEL (batch 2): if the row selects course levels, Total = Σ level
+      // fees, discount overall/level, Net = Total − discount, and the levels become line-items on
+      // the ONE enrolment. Otherwise (no levels) the classic single-course fee path is unchanged.
+      const lm = await this.resolveLevelMoney(courseId, row?.levels, row, verticalId, me.id);
+      let feeMinor: number; let disc: number; let net: number;
+      let discount_type: EnrolmentDiscountType; let discount_value: number;
+      let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
+      if (lm) {
+        feeMinor = lm.total_fee_minor; disc = lm.discount_minor; net = lm.net_fee_minor;
+        discount_type = lm.discount_type; discount_value = lm.discount_value; discountScope = lm.scope; levels = lm.levels;
       } else {
-        const masterFee = Number((course.meta as any)?.fee ?? 0);
-        feeMinor = Math.round((Number.isFinite(masterFee) ? masterFee : 0) * 100);
+        if (row?.fee_minor != null && String(row.fee_minor).trim() !== '') {
+          feeMinor = Number(row.fee_minor);
+        } else {
+          const masterFee = Number((course.meta as any)?.fee ?? 0);
+          feeMinor = Math.round((Number.isFinite(masterFee) ? masterFee : 0) * 100);
+        }
+        if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new BadRequestException('Fee must be a non-negative amount.');
+        const dsc = await this.resolveDiscount(feeMinor, row, verticalId, me.id);
+        disc = dsc.discount_amount_minor; net = dsc.net_fee_minor;
+        discount_type = dsc.discount_type; discount_value = dsc.discount_value;
       }
-      if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new BadRequestException('Fee must be a non-negative amount.');
-      const dsc = await this.resolveDiscount(feeMinor, row, verticalId, me.id);
-      const disc = dsc.discount_amount_minor;
-      const net = dsc.net_fee_minor;
       const plan = String(row?.payment_plan ?? 'full');
       if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
       const startDate = row?.start_date != null && String(row.start_date).trim() !== ''
         ? requireDateString(String(row.start_date), () => { throw new BadRequestException('Invalid start date.'); }) : null;
       resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate,
-        discount_type: dsc.discount_type, discount_value: dsc.discount_value });
+        discount_type, discount_value, discountScope, levels });
     }
     const out: any[] = [];
     await this.db.tx(async (c) => {
@@ -1489,17 +1585,18 @@ export class StudentService {
           `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
                                   course_id, batch_id, student_profile_id, fee_minor, discount_minor,
                                   net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by,
-                                  gross_fee_minor, discount_type, discount_value, discount_amount_minor)
+                                  gross_fee_minor, discount_type, discount_value, discount_amount_minor, discount_scope)
            VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
                    $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
                    $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
-                   $17::bigint,$18::varchar,$19::numeric,$20::bigint)
+                   $17::bigint,$18::varchar,$19::numeric,$20::bigint,$21::varchar)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, r.branchId, r.verticalId, lead.owner_id ?? me.id,
             r.courseId, r.batchId, studentId, r.feeMinor, r.disc, r.net, r.plan, r.startDate,
             `Enrolled in ${r.courseName} on conversion`, me.id,
-            r.feeMinor, r.discount_type, r.discount_value, r.disc]);
+            r.feeMinor, r.discount_type, r.discount_value, r.disc, r.discountScope]);
         const eid = Number(ins.rows[0].id);
+        if (r.levels.length) await this.insertEnrolmentLevels(c, orgId, eid, r.levels);
         await c.query(
           `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
                from_status, to_status, reason, effective_date, outstanding_minor, changed_by)
@@ -1511,7 +1608,9 @@ export class StudentService {
         out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName,
           vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected',
           student_vertical_no: svid.student_vertical_no,
-          gross_fee_minor: r.feeMinor, discount_type: r.discount_type, discount_value: r.discount_value, discount_amount_minor: r.disc });
+          total_fee_minor: r.feeMinor, gross_fee_minor: r.feeMinor, discount_type: r.discount_type, discount_value: r.discount_value,
+          discount_amount_minor: r.disc, discount_scope: r.discountScope,
+          levels: r.levels.map((l) => ({ course_level_id: l.course_level_id, code: l.code, label: l.label, fee_minor: l.fee_minor, discount_minor: l.discount_minor })) });
       }
     });
     return out;
@@ -1901,6 +2000,16 @@ export class StudentService {
         effective_can_attempt: canAttempt(effective),
       };
     });
+    // ENROLLMENT LEVEL RE-MODEL (batch 2): attach each enrolment's level line-items + a compact
+    // summary string ("A1, A2, B1") for the Course Enrollment tab / Fee Management "Level" column.
+    // Total Fee = summed level fees (== fee_minor when levels exist) else the single course fee.
+    const lvlMap = await this.levelsByEnrolment(enrolments.map((e: any) => Number(e.id)));
+    for (const e of enrolments) {
+      const ls = lvlMap.get(Number(e.id)) ?? [];
+      e.levels = ls;
+      e.level_summary = ls.map((l: any) => l.code).join(', ');
+      e.total_fee_minor = Number(e.gross_fee_minor ?? e.fee_minor ?? 0);
+    }
     // The distinct vertical-wise Student IDs across this student's enrolments (one per vertical).
     const vseen = new Map<number, any>();
     for (const e of enrolments) {
@@ -1971,11 +2080,22 @@ export class StudentService {
         [batchId, enrolVerticalId]);
       if (!b) throw new BadRequestException("That batch is not in this enrolment's vertical.");
     }
-    const fee = Number(dto?.fee_minor ?? 0);
-    if (!Number.isFinite(fee) || fee < 0) throw new BadRequestException('Fee must be a non-negative amount.');
-    const dsc = await this.resolveDiscount(fee, dto, enrolVerticalId, me.id);
-    const disc = dsc.discount_amount_minor;
-    const net = dsc.net_fee_minor;
+    // ENROLLMENT LEVEL RE-MODEL (batch 2): if levels are selected, Total = Σ level fees and the
+    // levels become line-items on this ONE enrolment; else the classic single-fee path (unchanged).
+    const lm = await this.resolveLevelMoney(courseId, dto?.levels, dto, enrolVerticalId, me.id);
+    let fee: number; let disc: number; let net: number;
+    let discountType: EnrolmentDiscountType; let discountValue: number;
+    let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
+    if (lm) {
+      fee = lm.total_fee_minor; disc = lm.discount_minor; net = lm.net_fee_minor;
+      discountType = lm.discount_type; discountValue = lm.discount_value; discountScope = lm.scope; levels = lm.levels;
+    } else {
+      fee = Number(dto?.fee_minor ?? 0);
+      if (!Number.isFinite(fee) || fee < 0) throw new BadRequestException('Fee must be a non-negative amount.');
+      const dsc = await this.resolveDiscount(fee, dto, enrolVerticalId, me.id);
+      disc = dsc.discount_amount_minor; net = dsc.net_fee_minor;
+      discountType = dsc.discount_type; discountValue = dsc.discount_value;
+    }
     const plan = String(dto?.payment_plan ?? 'full');
     if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
     const startDate = dto?.start_date != null && String(dto.start_date).trim() !== ''
@@ -1990,17 +2110,18 @@ export class StudentService {
         `INSERT INTO enrolment (org_id, enrolment_no, lead_id, branch_id, vertical_id, counsellor_id,
                                 course_id, batch_id, student_profile_id, fee_minor, discount_minor,
                                 net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by,
-                                gross_fee_minor, discount_type, discount_value, discount_amount_minor)
+                                gross_fee_minor, discount_type, discount_value, discount_amount_minor, discount_scope)
          VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
                  $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
                  $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
-                 $17::bigint,$18::varchar,$19::numeric,$20::bigint)
+                 $17::bigint,$18::varchar,$19::numeric,$20::bigint,$21::varchar)
          RETURNING id`,
         [orgId, enrolmentNo, student.lead_id ?? null, enrolBranchId, enrolVerticalId,
           student.owner_id ?? me.id, courseId, batchId, id, fee, disc, net, plan, startDate,
           dto?.remarks ?? null, me.id,
-          dsc.gross_fee_minor, dsc.discount_type, dsc.discount_value, dsc.discount_amount_minor]);
+          fee, discountType, discountValue, disc, discountScope]);
       const eid = Number(r.rows[0].id);
+      if (levels.length) await this.insertEnrolmentLevels(c, orgId, eid, levels);
       await c.query(
         `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
              from_status, to_status, reason, effective_date, outstanding_minor, changed_by)
@@ -2013,8 +2134,132 @@ export class StudentService {
     });
     return { ...out, course_id: courseId, course_name: course.name, status: 'active', course_status: 'active',
       vertical_id: enrolVerticalId, branch_id: enrolBranchId,
-      gross_fee_minor: dsc.gross_fee_minor, discount_type: dsc.discount_type, discount_value: dsc.discount_value,
-      discount_amount_minor: dsc.discount_amount_minor, net_fee_minor: dsc.net_fee_minor };
+      total_fee_minor: fee, gross_fee_minor: fee, discount_type: discountType, discount_value: discountValue,
+      discount_amount_minor: disc, net_fee_minor: net, discount_scope: discountScope,
+      levels: levels.map((l) => ({ course_level_id: l.course_level_id, code: l.code, label: l.label, fee_minor: l.fee_minor, discount_minor: l.discount_minor })) };
+  }
+
+  /**
+   * UPGRADE — add another LEVEL to an EXISTING course-enrolment (e.g. A1 → add A2), NOT a
+   * second enrolment. Inserts new enrolment_level line-item(s), increases Total (Σ level fees)
+   * + Net, recomputes the discount in the enrolment's own scope (overall % re-applies on the new
+   * total; overall amount is preserved; level-wise adds the per-level discount), and RECONCILES
+   * the active installment plan so future installments cover the added amount — already-paid
+   * money is untouched, Due recomputes. Scope-enforced; the level must belong to the enrolment's
+   * course and must not already be present.
+   */
+  async addEnrolmentLevel(enrolmentId: number, dto: any, me: { id: number }, scope: ResolvedScope, expectStudentId?: number) {
+    const enr = await this.enrolmentInScope(enrolmentId, scope);
+    if (expectStudentId != null && Number(enr.linked_student_id) !== Number(expectStudentId)) {
+      throw new NotFoundException('Enrolment not found for this student.');
+    }
+    if (String(enr.status) !== 'active') {
+      throw new BadRequestException(`${enr.enrolment_no} is ${enr.status}; a level can only be added to an active enrolment.`);
+    }
+    const courseId = enr.course_id ? Number(enr.course_id) : null;
+    if (!courseId) throw new BadRequestException('This enrolment has no course, so it has no levels to add.');
+    const master = await this.fetchMasterLevels(courseId);
+    if (!master.length) throw new BadRequestException('This course has no levels configured.');
+    const scopeD: DiscountScope = String(enr.discount_scope ?? 'overall') === 'level' ? 'level' : 'overall';
+    const input = Array.isArray(dto?.levels) ? dto.levels
+      : (dto?.course_level_id != null || dto?.code != null ? [dto] : []);
+    if (!input.length) throw new BadRequestException('Choose a level to add.');
+    let newLevels: ResolvedLevel[];
+    try { newLevels = resolveLevels(master, input, scopeD); }
+    catch (e) { throw new BadRequestException((e as Error).message); }
+    // must not already be part of this enrolment (the unique index would 23505 anyway)
+    const existing = await this.db.query<any>(`SELECT lower(code) AS code FROM enrolment_level WHERE enrolment_id = $1::bigint`, [enrolmentId]);
+    const existingCodes = new Set(existing.map((r) => String(r.code)));
+    const existingCount = existing.length;
+    for (const l of newLevels) {
+      if (existingCodes.has(l.code.toLowerCase())) throw new BadRequestException(`Level ${l.code} is already part of this enrolment.`);
+    }
+    newLevels.forEach((l, i) => { l.ordering = existingCount + i; });
+
+    const addedFee = sumLevelFees(newLevels);
+    const oldTotal = Number(enr.fee_minor ?? 0);
+    const oldDiscount = Number(enr.discount_amount_minor ?? enr.discount_minor ?? 0);
+    const oldNet = Number(enr.net_fee_minor ?? 0);
+    const newTotal = oldTotal + addedFee;
+
+    let newDiscount: number; let discType: EnrolmentDiscountType; let discValue: number;
+    if (scopeD === 'level') {
+      newDiscount = Math.min(oldDiscount + sumLevelDiscounts(newLevels), newTotal);
+      discType = newDiscount > 0 ? 'amount' : 'none'; discValue = newDiscount;
+    } else if (String(enr.discount_type) === 'percent') {
+      const d = computeEnrolmentDiscount(newTotal, 'percent', Number(enr.discount_value ?? 0));
+      newDiscount = d.discount_amount_minor; discType = 'percent'; discValue = Number(enr.discount_value ?? 0);
+    } else if (String(enr.discount_type) === 'amount') {
+      newDiscount = Math.min(oldDiscount, newTotal); discType = 'amount'; discValue = newDiscount;
+    } else { newDiscount = 0; discType = 'none'; discValue = 0; }
+    const newNet = newTotal - newDiscount;
+    if (this.finance) {
+      await this.finance.assertAllowed({
+        verticalId: Number(enr.vertical_id), userId: me.id, kind: 'discount',
+        base: newTotal, discount: newDiscount, label: 'Enrolment discount',
+      });
+    }
+    const orgId = Number(enr.org_id);
+    const deltaNet = newNet - oldNet;
+    await this.db.tx(async (c) => {
+      await this.insertEnrolmentLevels(c, orgId, enrolmentId, newLevels);
+      await c.query(
+        `UPDATE enrolment SET fee_minor = $2::bigint, gross_fee_minor = $2::bigint,
+                discount_minor = $3::bigint, discount_amount_minor = $3::bigint, net_fee_minor = $4::bigint,
+                discount_type = $5::varchar, discount_value = $6::numeric, updated_at = now()
+          WHERE id = $1::bigint`,
+        [enrolmentId, newTotal, newDiscount, newNet, discType, discValue]);
+      await this.reconcilePlanIncrease(c, enrolmentId, deltaNet);
+    });
+    return {
+      id: enrolmentId, enrolment_no: enr.enrolment_no, discount_scope: scopeD,
+      total_fee_minor: newTotal, gross_fee_minor: newTotal, discount_amount_minor: newDiscount,
+      discount_type: discType, discount_value: discValue, net_fee_minor: newNet,
+      added_levels: newLevels.map((l) => ({ course_level_id: l.course_level_id, code: l.code, label: l.label, fee_minor: l.fee_minor, discount_minor: l.discount_minor })),
+    };
+  }
+
+  /**
+   * Reconcile an active installment plan when an enrolment's Net rises by `deltaMinor` (a level
+   * upgrade). Bumps the plan total and pushes the extra onto the LAST still-open installment (or
+   * appends a fresh installment if every existing one is already paid) — future collection covers
+   * the new amount, paid money is never disturbed. No-op when there is no active plan (an
+   * unplanned enrolment's outstanding recomputes straight from net_fee_minor in the dues view).
+   */
+  private async reconcilePlanIncrease(c: any, enrolmentId: number, deltaMinor: number) {
+    if (!Number.isFinite(deltaMinor) || deltaMinor <= 0) return;
+    const plan = (await c.query(
+      `SELECT id FROM payment_plan WHERE enrolment_id = $1::bigint AND status = 'active' AND deleted_at IS NULL LIMIT 1`,
+      [enrolmentId])).rows[0];
+    if (!plan) return;
+    const planId = Number(plan.id);
+    await c.query(`UPDATE payment_plan SET total_minor = total_minor + $2::bigint, updated_at = now() WHERE id = $1::bigint`, [planId, deltaMinor]);
+    const target = (await c.query(
+      `SELECT id, amount_minor, paid_minor FROM installment
+        WHERE plan_id = $1::bigint AND status <> 'waived' AND paid_minor < amount_minor
+        ORDER BY seq_no DESC LIMIT 1`, [planId])).rows[0];
+    if (target) {
+      const newAmt = Number(target.amount_minor) + deltaMinor;
+      await c.query(
+        `UPDATE installment
+            SET amount_minor = $2::bigint,
+                status = CASE WHEN paid_minor >= $2::bigint THEN 'paid' WHEN paid_minor > 0 THEN 'partial' ELSE 'pending' END,
+                updated_at = now()
+          WHERE id = $1::bigint`, [Number(target.id), newAmt]);
+    } else {
+      const last = (await c.query(`SELECT COALESCE(MAX(seq_no),0) AS seq, MAX(due_date) AS d FROM installment WHERE plan_id = $1::bigint`, [planId])).rows[0];
+      await c.query(
+        `INSERT INTO installment (plan_id, enrolment_id, seq_no, due_date, amount_minor, label)
+         VALUES ($1::bigint,$2::bigint,$3::int, COALESCE($4::date, (now() AT TIME ZONE 'Asia/Kolkata')::date), $5::bigint, $6)`,
+        [planId, enrolmentId, Number(last.seq) + 1, last.d, deltaMinor, 'Level upgrade']);
+    }
+    await c.query(
+      `UPDATE payment_plan pp
+          SET status = CASE WHEN pp.status = 'cancelled' THEN 'cancelled'
+                            WHEN NOT EXISTS (SELECT 1 FROM installment i WHERE i.plan_id = pp.id AND i.status NOT IN ('paid','waived'))
+                              THEN 'completed' ELSE 'active' END,
+              updated_at = now()
+        WHERE pp.id = $1::bigint`, [planId]);
   }
 
   /** CHANGE a SINGLE enrolment's status — mirrors the student status endpoint. Per-status
