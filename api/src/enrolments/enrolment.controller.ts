@@ -78,6 +78,29 @@ export class EnrolmentController {
     return this.svc.settleApproval(d.entity_id, false, Number(me.id));
   }
 
+  /* -------- OVER-CAP DISCOUNT APPROVAL (dev/103) — Discount Master enforcement -------- */
+
+  /** The pending over-cap discount queue — scoped. discount.approve = Academic Admin/admin. */
+  @Get('discount-approvals')
+  @RequirePermission('discount.approve')
+  discountQueue(@CurrentScope() scope: ResolvedScope) {
+    return this.svc.pendingDiscountApprovals(scope);
+  }
+
+  /** APPROVE the over-cap discount → the full requested discount applies + Net/Due recompute. */
+  @Post(':id/discount/approve')
+  @RequirePermission('discount.approve')
+  approveDiscount(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.approveDiscount(id, dto, me, scope);
+  }
+
+  /** REJECT the over-cap discount → the discount stays at the cap (remarks required). */
+  @Post(':id/discount/reject')
+  @RequirePermission('discount.approve')
+  rejectDiscount(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.rejectDiscount(id, dto, me, scope);
+  }
+
   /* -------- ADMISSION JOURNEY (migration 075) — the intake funnel + gates -------- */
 
   /** APPROVE — authorized person only (admission.approve → 403 without). Validates payment +

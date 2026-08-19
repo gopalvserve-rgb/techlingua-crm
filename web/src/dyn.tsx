@@ -53,6 +53,7 @@ import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 import { SupportTickets } from './support';
 import { CrossSell } from './crosssell';
 import { FinanceSettings } from './financesettings';
+import { DiscountMaster } from './discountmaster';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
 import { StudyMaterialScreen, CertificatesScreen, ReportCardsScreen } from './learning';
 import { CourseContentScreen, SyllabusScreen } from './academics-content';
@@ -5667,9 +5668,31 @@ export function feePlanBody(cfg: FeeConfig, enrolmentId: number) {
 }
 /** The discount + payment-plan + net + schedule preview fields. `showFee` renders the editable
  *  gross-fee input (Enroll + Edit); Fee setup on the dues list shows the fee read-only above). */
-export function FeeConfigFields({ cfg, disabled, showFee = true, hideDiscount = false }: { cfg: FeeConfig; disabled?: boolean; showFee?: boolean; hideDiscount?: boolean }) {
+export function FeeConfigFields({ cfg, disabled, showFee = true, hideDiscount = false, capCtx }: { cfg: FeeConfig; disabled?: boolean; showFee?: boolean; hideDiscount?: boolean; capCtx?: { branch_id?: number | null; vertical_id?: number | null; course_id?: number | null } }) {
   const setRow = (i: number, patch: Partial<{ amount: string; date: string }>) =>
     cfg.setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  // dev/103 — the DISCOUNT MASTER cap hint. When a scope (branch/vertical/course) is known,
+  // resolve the applicable cap and warn when the entered discount EXCEEDS it: the over-cap
+  // portion needs an authorized user's approval (Academic Admin / Org / Super Admin).
+  const [cap, setCap] = useState<{ cap: { max_percent: number | null; max_amount_minor: number | null } | null; cap_minor: number | null } | null>(null);
+  const capKey = capCtx ? `${capCtx.branch_id ?? ''}|${capCtx.vertical_id ?? ''}|${capCtx.course_id ?? ''}|${cfg.grossMinor}` : '';
+  useEffect(() => {
+    if (!capCtx || !cfg.grossMinor) { setCap(null); return; }
+    const p = new URLSearchParams();
+    if (capCtx.branch_id) p.set('branch_id', String(capCtx.branch_id));
+    if (capCtx.vertical_id) p.set('vertical_id', String(capCtx.vertical_id));
+    if (capCtx.course_id) p.set('course_id', String(capCtx.course_id));
+    p.set('base', String(cfg.grossMinor));
+    let dead = false;
+    api.get<any>(`/discounts/effective?${p.toString()}`).then((r) => { if (!dead) setCap(r); }).catch(() => { if (!dead) setCap(null); });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capKey]);
+  const capMinor = cap?.cap_minor ?? null;
+  const overCap = !hideDiscount && capMinor != null && cfg.discount_minor > capMinor;
+  const capLabel = cap?.cap
+    ? [cap.cap.max_percent != null ? `${cap.cap.max_percent}%` : null, cap.cap.max_amount_minor != null ? fmtINR(cap.cap.max_amount_minor) : null].filter(Boolean).join(' / ')
+    : '';
   return (
     <>
       {showFee && (
@@ -5699,6 +5722,20 @@ export function FeeConfigFields({ cfg, disabled, showFee = true, hideDiscount = 
           <div>Net fee after discount: <b style={{ color: 'var(--green, #15803d)' }} data-testid="enrol-net">{fmtINR(cfg.net_minor)}</b></div>
         </div>
       </div>
+      {/* dev/103 — Discount Master cap hint + over-cap warning */}
+      {!hideDiscount && capCtx && capMinor != null && (
+        <div className="fld" style={{ gridColumn: '1 / -1' }} data-testid="enrol-cap-hint">
+          {overCap ? (
+            <div className="notice warn" style={{ marginTop: 0 }}><Ic k="bolt" /><div>
+              This discount <b>exceeds the discount cap</b>{capLabel ? ` (${capLabel})` : ''} — max {fmtINR(capMinor)} on this fee.
+              Only up to the cap will apply now; the <b>excess needs approval</b> from an authorized user
+              (Academic Admin / Org / Super Admin) before it takes effect.
+            </div></div>
+          ) : (
+            <div className="sub" style={{ marginTop: 2 }}>Discount cap{capLabel ? ` (${capLabel})` : ''}: up to <b>{fmtINR(capMinor)}</b> on this fee.</div>
+          )}
+        </div>
+      )}
       {/* PAYMENT PLAN */}
       <div className="fld"><label htmlFor="ae-plan">Payment plan</label>
         <select id="ae-plan" className="ainp" value={cfg.plan} disabled={disabled} onChange={(e) => cfg.setPlan(e.target.value as FeePlanKind)} data-testid="enrol-plan">
@@ -5943,7 +5980,8 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
         {/* DISCOUNT · NET · PAYMENT PLAN · SCHEDULE — shared with Fee setup + Edit enrollment.
             For a level-course the fee comes from the levels, so hide the editable fee input; a
             level-wise discount hides the overall discount (it is entered per level above). */}
-        <FeeConfigFields cfg={cfg} disabled={busy} showFee={!lvl?.hasLevels} hideDiscount={lvl?.hasLevels && lvl.scope === 'level'} />
+        <FeeConfigFields cfg={cfg} disabled={busy} showFee={!lvl?.hasLevels} hideDiscount={lvl?.hasLevels && lvl.scope === 'level'}
+          capCtx={{ branch_id: Number(branchId) || null, vertical_id: Number(vertId) || null, course_id: Number(courseId) || null }} />
       </div>
     </DetailModal>
   );
@@ -6058,7 +6096,8 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
             <Ic k="rupee" /><div>{e.course_name ?? 'Course'} · <span className="mono">{e.enrolment_no}</span> · {[e.branch_name, e.vertical_name].filter(Boolean).join(' › ') || '—'}. Configure the payment plan &amp; discount — same as an enrollment.</div>
           </div>
           <div className="form-grid">
-            <FeeConfigFields cfg={cfg} disabled={busy} />
+            <FeeConfigFields cfg={cfg} disabled={busy}
+              capCtx={{ branch_id: e.branch_id ?? null, vertical_id: e.vertical_id ?? null, course_id: e.course_id ?? null }} />
           </div>
         </>
       )}
@@ -6147,7 +6186,8 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
           </select>
           <div className="sub" style={{ fontSize: 11 }}>Statuses needing approval (On Hold / Withdrawn / …) are set via the dedicated Status action.</div>
         </div>
-        <FeeConfigFields cfg={cfg} disabled={busy} />
+        <FeeConfigFields cfg={cfg} disabled={busy}
+          capCtx={{ branch_id: enrolment.branch_id ?? null, vertical_id: enrolment.vertical_id ?? null, course_id: Number(courseId) || (enrolment.course_id ?? null) }} />
       </div>
     </DetailModal>
   );
@@ -7026,6 +7066,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   bulkWhatsApp: BulkWhatsApp,
   settings: Settings,
   financeSettings: FinanceSettings,
+  discountMaster: DiscountMaster,
   // Phase 3 Batch 1 — GST tax invoices + finance dashboard
   invoicesList: InvoicesScreen,
   financeDashboard: FinanceDashboard,

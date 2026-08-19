@@ -98,6 +98,12 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // (the permitted user); 'override' applies a discount/scholarship BEYOND the cap. A
   // Counsellor holds neither manage nor override, so a Counsellor is capped.
   { module: 'finance', label: 'Finance Settings (discount/scholarship/cap)', actions: ['read', 'manage', 'override'] },
+  // Discount Master + over-cap approval (migration 093) — a MANAGEABLE master of discount
+  // caps (max % and/or ₹, optionally scoped by branch/vertical/course; most-specific-wins).
+  // read/create/update/delete manage the master; 'approve' authorises an OVER-CAP discount
+  // on an enrolment (the over-cap portion is held pending until an authorized user approves).
+  // approve is Academic Admin / Org / Super Admin — the client's chosen approvers.
+  { module: 'discount', label: 'Discount Master (caps & over-cap approval)', actions: ['read', 'create', 'update', 'delete', 'approve'] },
   // Phase 2 ERP Batch 1 (migration 047) — Academics core.
   // Attendance: 'mark' = record a session's marks (staff / self / biometric feed); 'manage'
   // = admin corrections. Tests: 'grade' = enter/update per-student scores, distinct from

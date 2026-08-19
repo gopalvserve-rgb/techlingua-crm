@@ -293,14 +293,11 @@ export const APP: ModuleItem[] = [
       sub: 'Percentage or fixed. Approval workflow at manager level. Scholarship reason mandatory.',
       sprintNote: NOTE_S2,
       blocks: [emptyTable('Scholarship requests', ['Student', 'Type', 'Value', 'Reason', 'Approver', 'Status'], 'No scholarship requests yet')] } },
-    { id: 'discounts', label: 'Discounts', spec: {
-      sub: 'Referral, Early Bird, Employee, Sibling, Promotional — role-based approval limits at closure / invoice.',
-      blocks: [
-        { type: 'table', title: 'Discount types', cols: ['Type', 'Applies at', 'Default', 'Approval needed above'], rows: [
-          ['Early Bird', 'Closure', 'Configurable', 'Manager'], ['Referral', 'Closure', 'Configurable', '—'],
-          ['Sibling', 'Invoice', 'Configurable', 'Manager'], ['Employee', 'Closure', 'Configurable', 'Manager'],
-          ['Promotional', 'Invoice', 'Variable', 'Manager']] },
-      ] } },
+    // dev/103 — the manageable Discount Master: cap a discount by % AND ₹, optionally scoped by
+    // branch/vertical/course (most-specific-wins). An over-cap discount is held for approval by an
+    // authorized user (discount.approve = Academic Admin / Org / Super Admin) on the same screen.
+    { id: 'discounts', label: 'Discount Master', spec: { dyn: 'discountMaster',
+      sub: 'Cap discounts by percentage AND by amount (₹), optionally scoped by branch / vertical / course (most-specific-wins). When a counsellor enters a discount above the cap, only the cap is applied and the excess is held for approval — an authorized user (Academic Admin / Org / Super Admin) approves (the full discount applies, Net/Due recompute) or rejects (the discount stays at the cap). Full list treatment.' } },
     { id: 'revenue', label: 'Revenue', spec: { dyn: 'revenueView',
       sub: 'The two views of revenue: COLLECTION (money received, net of approved refunds) and ACCRUAL (fee billed / earned = enrolment net fee recognised). Group by branch / vertical / course / counsellor / payment mode / day / month, with DateRange + scope. India ₹.' } },
     { id: 'refunds', label: 'Refunds', spec: { dyn: 'refundsList',

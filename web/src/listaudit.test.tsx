@@ -75,6 +75,8 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'ErrorLogs', file: 'dyn.tsx', req: LOG },
   // ---- Finance · GST Invoices (Phase 3) ----
   { name: 'InvoicesScreen', file: 'invoices.tsx', req: FULL },
+  // ---- Finance · Discount Master (dev/103) ----
+  { name: 'DiscountMaster', file: 'discountmaster.tsx', req: FULL },
   // ---- Finance · Payment Plans + Fee Dues (Phase 3 Batch 2) ----
   { name: 'PaymentPlansScreen', file: 'paymentplans.tsx', req: FULL },
   // ---- Finance · Online Payments (Phase 3 Batch 3 — Razorpay) ----

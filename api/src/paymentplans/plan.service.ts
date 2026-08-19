@@ -394,4 +394,47 @@ export class PlanService {
       [planId],
     );
   }
+
+  /**
+   * RECONCILE an enrolment's active payment plan(s) to the enrolment's CURRENT net fee —
+   * called when the net moves (e.g. an over-cap discount is approved, dev/103). Only plans
+   * with NOTHING collected are rebuilt (a schedule with money applied is a fact, left as-is);
+   * the fresh schedule reuses the plan's own type / frequency / installment count / down
+   * payment against the new net. Best-effort per plan: a plan whose stored params cannot be
+   * regenerated (a custom plan) is skipped rather than throwing. Runs inside the caller's tx.
+   */
+  async reconcileToNet(c: PoolClient, enrolmentId: number): Promise<void> {
+    const plans = await c.query<any>(
+      `SELECT pp.id, pp.plan_type, pp.frequency, pp.down_payment_minor, pp.num_installments,
+              pp.start_date, e.net_fee_minor
+         FROM payment_plan pp JOIN enrolment e ON e.id = pp.enrolment_id
+        WHERE pp.enrolment_id = $1::bigint AND pp.status = 'active' AND pp.deleted_at IS NULL`,
+      [enrolmentId],
+    );
+    for (const pp of plans.rows) {
+      const paid = await c.query<{ p: string }>(
+        `SELECT COALESCE(sum(paid_minor), 0) AS p FROM installment WHERE plan_id = $1::bigint`, [pp.id]);
+      if (Number(paid.rows[0].p) > 0) continue;                 // money applied → leave the schedule alone
+      const total = Number(pp.net_fee_minor);
+      const startDate = toDateString(pp.start_date) || new Date().toISOString().slice(0, 10);
+      let schedule;
+      try {
+        schedule = generateSchedule({
+          plan_type: pp.plan_type as PlanType, total_minor: total,
+          down_payment_minor: Number(pp.down_payment_minor),
+          num_installments: Math.max(1, Number(pp.num_installments)),
+          frequency: pp.frequency as Frequency, start_date: startDate,
+        });
+      } catch { continue; }
+      await c.query(`DELETE FROM installment WHERE plan_id = $1::bigint`, [pp.id]);
+      for (const row of schedule) {
+        await c.query(
+          `INSERT INTO installment (plan_id, enrolment_id, seq_no, due_date, amount_minor, label)
+           VALUES ($1,$2,$3,$4::date,$5,$6)`,
+          [pp.id, enrolmentId, row.seq_no, row.due_date, row.amount_minor, row.label]);
+      }
+      await c.query(`UPDATE payment_plan SET total_minor = $2::bigint, updated_at = now() WHERE id = $1::bigint`, [pp.id, total]);
+      await this.recomputePlanStatus(c, pp.id);
+    }
+  }
 }

@@ -4,6 +4,8 @@ import { FinanceSettingsController } from './finance-settings.controller';
 import { FinanceSettingsService } from './finance-settings.service';
 import { FinanceDashboardController } from './finance-dashboard.controller';
 import { FinanceDashboardService } from './finance-dashboard.service';
+import { DiscountMasterController } from './discount-master.controller';
+import { DiscountMasterService } from './discount-master.service';
 
 /**
  * FINANCE — the discount/scholarship/capping-limit settings and the enforcer. The service
@@ -13,8 +15,8 @@ import { FinanceDashboardService } from './finance-dashboard.service';
  */
 @Module({
   imports: [DatabaseModule],
-  controllers: [FinanceSettingsController, FinanceDashboardController],
-  providers: [FinanceSettingsService, FinanceDashboardService],
-  exports: [FinanceSettingsService, FinanceDashboardService],
+  controllers: [FinanceSettingsController, FinanceDashboardController, DiscountMasterController],
+  providers: [FinanceSettingsService, FinanceDashboardService, DiscountMasterService],
+  exports: [FinanceSettingsService, FinanceDashboardService, DiscountMasterService],
 })
 export class FinanceModule {}

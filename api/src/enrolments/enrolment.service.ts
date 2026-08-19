@@ -7,8 +7,27 @@ import { rupeesToMinor } from '../common/money.util';
 import { ApprovalService, requiredSteps } from './approval.service';
 import { requireDateString, assertDateRange } from '../common/date.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
+import { DiscountMasterService } from '../finance/discount-master.service';
+import { RbacDataService } from '../rbac/rbac-data.service';
+import { PlanService } from '../paymentplans/plan.service';
 import { stageOrdinal } from './admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from './discount.util';
+
+/**
+ * OVER-CAP DISCOUNT APPROVAL (dev/103) — the applied discount vs the requested discount.
+ *   status 'none'     — within cap (or no cap): the full requested discount is applied.
+ *   status 'pending'  — over cap by a counsellor: only UP TO THE CAP is applied now; the
+ *                       excess is held until an authorized user (discount.approve) approves.
+ *   status 'approved' — the full requested discount is applied (inline by an authorized user,
+ *                       or after an approval decision).
+ *   status 'rejected' — the over-cap request was declined; the discount stays at the cap.
+ */
+export type DiscountApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
+/** The discount actually applied given the request, the cap and where the request stands. */
+export function appliedDiscountMinor(status: DiscountApprovalStatus, requestedMinor: number, capMinor: number | null): number {
+  if ((status === 'pending' || status === 'rejected') && capMinor != null) return Math.min(requestedMinor, capMinor);
+  return requestedMinor;
+}
 
 /**
  * ENROLMENT — the SALE CLOSURE record. "Sale closure = enrolment" (§5).
@@ -57,7 +76,41 @@ export class EnrolmentService {
     private readonly numbering: NumberingService,
     private readonly approvals: ApprovalService,
     private readonly finance?: FinanceSettingsService,
+    private readonly discountMaster?: DiscountMasterService,
+    private readonly rbac?: RbacDataService,
+    private readonly plans?: PlanService,
   ) {}
+
+  /** Does the user hold a permission that lets them apply an OVER-CAP discount outright
+   *  (discount.approve — the client's approvers — or the legacy finance.override)? */
+  private async canApproveDiscount(userId: number): Promise<boolean> {
+    if (!this.rbac) return false;
+    try {
+      const grants = await this.rbac.loadUserGrants(userId);
+      return grants.rolePermissions.some((p: any) => p.permissionKey === 'discount.approve' || p.permissionKey === 'finance.override');
+    } catch { return false; }
+  }
+
+  /**
+   * Resolve the applicable Discount Master cap for a (branch, vertical, course) and decide
+   * how a requested discount is treated: applied in full (within cap / authorized) or held
+   * at the cap with the excess pending an authorized approval.
+   */
+  private async decideDiscount(
+    ctx: { branch_id?: number | null; vertical_id?: number | null; course_id?: number | null },
+    fee_minor: number, requestedMinor: number, userId: number,
+  ): Promise<{ applied: number; status: DiscountApprovalStatus; capMinor: number | null; authorized: boolean }> {
+    if (!this.discountMaster || requestedMinor <= 0) {
+      return { applied: requestedMinor, status: 'none', capMinor: null, authorized: true };
+    }
+    const { capMinor } = await this.discountMaster.resolve(ctx, fee_minor);
+    if (capMinor == null || requestedMinor <= capMinor) {
+      return { applied: requestedMinor, status: 'none', capMinor, authorized: true };
+    }
+    const authorized = await this.canApproveDiscount(userId);
+    if (authorized) return { applied: requestedMinor, status: 'approved', capMinor, authorized: true };
+    return { applied: capMinor, status: 'pending', capMinor, authorized: false };
+  }
 
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -186,15 +239,20 @@ export class EnrolmentService {
 
     const lead = await this.leadInScope(leadId, scope);
     const money = this.normaliseMoney(dto);
-    if (this.finance) {
-      await this.finance.assertAllowed({
-        verticalId: Number(lead.vertical_id), userId: me.id, kind: 'discount',
-        base: money.fee_minor, discount: money.discount_minor, label: 'Enrolment discount',
-      });
-    }
+    const courseIdForCap = dto?.course_id ? Number(dto.course_id) : null;
+    // OVER-CAP APPROVAL (dev/103) — the requested discount is `money.discount_amount_minor`.
+    // The Discount Master cap decides whether it applies in full or is held at the cap with
+    // the excess pending an authorized approval.
+    const requestedDiscountMinor = money.discount_amount_minor;
+    const dd = await this.decideDiscount(
+      { branch_id: Number(lead.branch_id), vertical_id: Number(lead.vertical_id), course_id: courseIdForCap },
+      money.fee_minor, requestedDiscountMinor, me.id,
+    );
+    const appliedDiscount = dd.applied;
+    const netAfterApplied = money.fee_minor - appliedDiscount;
     const plan = String(dto?.payment_plan ?? 'full');
     if (!(PAYMENT_PLANS as readonly string[]).includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
-    if (money.first_payment_minor > money.net_fee_minor) {
+    if (money.first_payment_minor > netAfterApplied) {
       throw new BadRequestException('The first payment cannot be more than the net fee.');
     }
     const startDate = this.date(dto?.start_date);
@@ -223,18 +281,25 @@ export class EnrolmentService {
                                   pipeline_id, campaign_id, counsellor_id, team_id, course_id,
                                   fee_minor, discount_minor, net_fee_minor, payment_plan,
                                   first_payment_minor, plan_note, start_date, status, remarks, created_by,
-                                  gross_fee_minor, discount_type, discount_value, discount_amount_minor)
+                                  gross_fee_minor, discount_type, discount_value, discount_amount_minor,
+                                  discount_approval_status, discount_requested_minor, discount_cap_minor,
+                                  discount_requested_by, discount_approved_by, discount_approved_at)
            VALUES ($1::bigint, $2::varchar, $3::bigint, $4::bigint, $5::bigint, $6::bigint,
                    $7::bigint, $8::bigint, $9::bigint, $10::bigint, $11::bigint,
                    $12::bigint, $13::bigint, $14::bigint, $15::varchar,
                    $16::bigint, $17, $18::date, $19::varchar, $20, $21::bigint,
-                   $22::bigint, $23::varchar, $24::numeric, $25::bigint)
+                   $22::bigint, $23::varchar, $24::numeric, $25::bigint,
+                   $26::varchar, $27::bigint, $28::bigint, $29::bigint, $30::bigint,
+                   CASE WHEN $26::varchar = 'approved' THEN now() ELSE NULL END)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, quotationId, lead.branch_id, lead.vertical_id,
             lead.pipeline_id ?? null, lead.campaign_id ?? null, counsellorId, lead.team_id ?? null, courseId,
-            money.fee_minor, money.discount_minor, money.net_fee_minor, plan,
+            money.fee_minor, appliedDiscount, netAfterApplied, plan,
             money.first_payment_minor, dto?.plan_note ?? null, startDate, status, dto?.remarks ?? null, me.id,
-            money.gross_fee_minor, money.discount_type, money.discount_value, money.discount_amount_minor],
+            money.gross_fee_minor, money.discount_type, money.discount_value, appliedDiscount,
+            dd.status, requestedDiscountMinor, dd.capMinor,
+            dd.status === 'pending' ? me.id : null,
+            dd.status === 'approved' ? me.id : null],
         );
         id = Number(r.rows[0].id);
       } catch (e) {
@@ -258,6 +323,10 @@ export class EnrolmentService {
         steps.length
           ? `Enrolment ${enrolmentNo} submitted for approval (${steps.map((s) => s.label).join(', ')})`
           : `Enrolled — ${enrolmentNo}`);
+      if (dd.status === 'pending') {
+        await this.activity(c, leadId, me.id,
+          `Discount above cap on ${enrolmentNo} — over-cap portion held for approval (applied up to the cap ₹${((dd.capMinor ?? 0) / 100).toFixed(2)}).`);
+      }
       return { id, enrolment_no: enrolmentNo };
     });
 
@@ -265,7 +334,12 @@ export class EnrolmentService {
     if (steps.length) {
       await this.approvals.notifyApprovers(out.id, out.enrolment_no, Number(lead.branch_id), leadId, steps);
     }
-    return { ...out, status, pending_steps: steps.map((s) => s.label) };
+    return {
+      ...out, status, pending_steps: steps.map((s) => s.label),
+      discount_approval_status: dd.status,
+      discount_over_cap: dd.status === 'pending',
+      discount_cap_minor: dd.capMinor,
+    };
   }
 
   /**
@@ -332,20 +406,48 @@ export class EnrolmentService {
       first_payment: dto?.first_payment,
       first_payment_minor: dto?.first_payment_minor ?? (dto?.first_payment === undefined ? cur.first_payment_minor : undefined),
     });
+    // OVER-CAP APPROVAL (dev/103). The full requested discount is money.discount_amount_minor.
+    const requestedFull = money.discount_amount_minor;
+    const discountChanged = dto?.discount !== undefined || dto?.discount_minor !== undefined
+      || dto?.discount_value !== undefined || dto?.discount_type !== undefined;
+    const capCtx = {
+      branch_id: cur.branch_id != null ? Number(cur.branch_id) : null,
+      vertical_id: cur.vertical_id != null ? Number(cur.vertical_id) : null,
+      course_id: (dto?.course_id === undefined ? cur.course_id : dto.course_id) != null
+        ? Number(dto?.course_id === undefined ? cur.course_id : dto.course_id) : null,
+    };
+    let appliedDiscount: number;
+    let appStatus: DiscountApprovalStatus;
+    let capMinorVal: number | null;
+    let requestedBy: number | null;
+    let approvedBy: number | null;
+    if (discountChanged) {
+      // A fresh discount entry is re-checked against the cap from scratch.
+      const dd = await this.decideDiscount(capCtx, money.fee_minor, requestedFull, me.id);
+      appliedDiscount = dd.applied; appStatus = dd.status; capMinorVal = dd.capMinor;
+      requestedBy = dd.status === 'pending' ? me.id : null;
+      approvedBy = dd.status === 'approved' ? me.id : null;
+    } else {
+      // Discount entry unchanged (e.g. a fee/date edit): keep the standing approval state,
+      // re-resolving the cap in case the fee (and hence a %-cap) moved.
+      const { capMinor: cm } = this.discountMaster
+        ? await this.discountMaster.resolve(capCtx, money.fee_minor)
+        : { capMinor: cur.discount_cap_minor != null ? Number(cur.discount_cap_minor) : null };
+      capMinorVal = cm;
+      appStatus = (cur.discount_approval_status as DiscountApprovalStatus) ?? 'none';
+      appliedDiscount = appliedDiscountMinor(appStatus, requestedFull, capMinorVal);
+      requestedBy = cur.discount_requested_by != null ? Number(cur.discount_requested_by) : null;
+      approvedBy = cur.discount_approved_by != null ? Number(cur.discount_approved_by) : null;
+    }
+    const netAfterApplied = money.fee_minor - appliedDiscount;
     // MONEY ALREADY COLLECTED IS A FACT. Lowering the net fee below what the customer
     // has already paid would silently create a refund liability we have no Phase-1
     // machinery for (refunds are Phase 3) — so it is refused, loudly.
-    if (money.net_fee_minor < Number(cur.paid_minor)) {
+    if (netAfterApplied < Number(cur.paid_minor)) {
       throw new BadRequestException(
         `${cur.lead_name} has already paid ${(Number(cur.paid_minor) / 100).toFixed(2)}. `
         + 'The net fee cannot be set below what has been collected — refunds arrive in Phase 3.',
       );
-    }
-    if (this.finance) {
-      await this.finance.assertAllowed({
-        verticalId: Number(cur.vertical_id), userId: me.id, kind: 'discount',
-        base: money.fee_minor, discount: money.discount_minor, label: 'Enrolment discount',
-      });
     }
     const plan = dto?.payment_plan ?? cur.payment_plan;
     if (!(PAYMENT_PLANS as readonly string[]).includes(String(plan))) throw new BadRequestException('Choose a valid payment plan.');
@@ -359,19 +461,109 @@ export class EnrolmentService {
                 remarks = $11,
                 gross_fee_minor = $12::bigint, discount_type = $13::varchar,
                 discount_value = $14::numeric, discount_amount_minor = $15::bigint,
+                discount_approval_status = $16::varchar, discount_requested_minor = $17::bigint,
+                discount_cap_minor = $18::bigint, discount_requested_by = $19::bigint,
+                discount_approved_by = $20::bigint,
+                discount_approved_at = CASE WHEN $16::varchar = 'approved' THEN COALESCE(discount_approved_at, now()) ELSE NULL END,
                 updated_at = now()
           WHERE id = $1::bigint`,
         [id, dto?.course_id === undefined ? cur.course_id : (dto.course_id || null),
-          money.fee_minor, money.discount_minor, money.net_fee_minor, plan, money.first_payment_minor,
+          money.fee_minor, appliedDiscount, netAfterApplied, plan, money.first_payment_minor,
           dto?.plan_note === undefined ? cur.plan_note : dto.plan_note,
           dto?.start_date === undefined ? cur.start_date : this.date(dto.start_date),
           dto?.counsellor_id === undefined ? cur.counsellor_id : (dto.counsellor_id || null),
           dto?.remarks === undefined ? cur.remarks : dto.remarks,
-          money.gross_fee_minor, money.discount_type, money.discount_value, money.discount_amount_minor],
+          money.gross_fee_minor, money.discount_type, money.discount_value, appliedDiscount,
+          appStatus, requestedFull, capMinorVal, requestedBy, approvedBy],
       );
+      // Net moved → reconcile any unpaid payment-plan schedule to the new net (Due is
+      // computed live everywhere as net − paid, so it reconciles regardless).
+      if (this.plans && Number(cur.net_fee_minor) !== netAfterApplied) {
+        try { await this.plans.reconcileToNet(c, id); } catch { /* plan reconcile is best-effort */ }
+      }
       await this.activity(c, Number(cur.lead_id), me.id, `Enrolment ${cur.enrolment_no} updated`);
+      if (discountChanged && appStatus === 'pending') {
+        await this.activity(c, Number(cur.lead_id), me.id,
+          `Discount above cap on ${cur.enrolment_no} — over-cap portion held for approval.`);
+      }
     });
-    return { id, ok: true };
+    return { id, ok: true, discount_approval_status: appStatus, discount_over_cap: appStatus === 'pending' };
+  }
+
+  /* ============================ OVER-CAP DISCOUNT APPROVAL (dev/103) ============================ */
+
+  /** The pending over-cap discount queue — scoped (an approver sees their branch/vertical). */
+  async pendingDiscountApprovals(scope: ResolvedScope) {
+    const params: unknown[] = [];
+    const w = this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params);
+    return this.db.query<any>(
+      `SELECT e.id, e.enrolment_no, e.fee_minor, e.discount_minor, e.net_fee_minor,
+              e.discount_requested_minor, e.discount_cap_minor, e.discount_approval_status,
+              e.created_at, l.full_name AS lead_name, l.phone AS lead_phone,
+              c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
+              ru.name AS requested_by_name
+         FROM enrolment e
+         JOIN lead l ON l.id = e.lead_id
+         JOIN branch b ON b.id = e.branch_id
+         JOIN vertical v ON v.id = e.vertical_id
+         LEFT JOIN m_course c ON c.id = e.course_id
+         LEFT JOIN "user" ru ON ru.id = e.discount_requested_by
+        WHERE e.deleted_at IS NULL AND e.discount_approval_status = 'pending' AND ${w}
+        ORDER BY e.created_at ASC
+        LIMIT 200`,
+      params,
+    );
+  }
+
+  /** APPROVE the over-cap discount — discount.approve holder only (route-guarded). Applies the
+   *  FULL requested discount, recomputes Net/Due and reconciles the plan. */
+  async approveDiscount(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const cur = await this.get(id, scope);
+    if (cur.discount_approval_status !== 'pending') {
+      throw new BadRequestException(`${cur.enrolment_no} has no over-cap discount awaiting approval.`);
+    }
+    if (cur.discount_requested_by != null && Number(cur.discount_requested_by) === Number(me.id)) {
+      throw new BadRequestException('You cannot approve your own discount request. Ask another authorized user.');
+    }
+    const requested = Number(cur.discount_requested_minor);
+    const fee = Number(cur.fee_minor);
+    const applied = Math.min(requested, fee);
+    const net = fee - applied;
+    if (net < Number(cur.paid_minor)) {
+      throw new BadRequestException('Approving would set the net below what has already been collected.');
+    }
+    const remarks = dto?.remarks ?? dto?.note ?? null;
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment SET discount_minor = $2::bigint, discount_amount_minor = $2::bigint,
+                net_fee_minor = $3::bigint, discount_approval_status = 'approved',
+                discount_approved_by = $4::bigint, discount_approved_at = now(),
+                discount_approval_remarks = $5, updated_at = now()
+          WHERE id = $1::bigint`, [id, applied, net, me.id, remarks]);
+      if (this.plans) { try { await this.plans.reconcileToNet(c, id); } catch { /* best-effort */ } }
+      await this.activity(c, Number(cur.lead_id), me.id,
+        `Over-cap discount on ${cur.enrolment_no} approved — full discount ₹${(applied / 100).toFixed(2)} applied.`);
+    });
+    return { id, discount_approval_status: 'approved', discount_minor: applied, net_fee_minor: net };
+  }
+
+  /** REJECT the over-cap discount — discount.approve holder only. The discount stays at the cap. */
+  async rejectDiscount(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const cur = await this.get(id, scope);
+    if (cur.discount_approval_status !== 'pending') {
+      throw new BadRequestException(`${cur.enrolment_no} has no over-cap discount awaiting approval.`);
+    }
+    const remarks = String(dto?.remarks ?? dto?.reason ?? dto?.note ?? '').trim();
+    if (!remarks) throw new BadRequestException('A reason (remarks) is required to reject a discount request.');
+    await this.db.query(
+      `UPDATE enrolment SET discount_approval_status = 'rejected', discount_approved_by = $2::bigint,
+              discount_approved_at = now(), discount_approval_remarks = $3, updated_at = now()
+        WHERE id = $1::bigint`, [id, me.id, remarks]);
+    await this.db.tx(async (c) => {
+      await this.activity(c, Number(cur.lead_id), me.id,
+        `Over-cap discount on ${cur.enrolment_no} rejected — discount stays at the cap. ${remarks}`);
+    });
+    return { id, discount_approval_status: 'rejected', discount_minor: Number(cur.discount_minor) };
   }
 
   /** CANCEL — the reversible end state. It frees the lead to enrol again (the partial
