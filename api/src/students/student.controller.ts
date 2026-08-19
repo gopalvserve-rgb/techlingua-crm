@@ -133,6 +133,15 @@ export class StudentController {
     return this.svc.addEnrolment(id, dto, me, scope);
   }
 
+  /** EDIT this course-enrolment (client feedback item 6) — course/fee/discount/plan/start. Scope-
+   *  enforced + lead-OPTIONAL (fixes the old PATCH /enrolments/:id 404 on a lead-less enrolment,
+   *  DEF-2) and runs the Discount Master over-cap decision on save (DEF-4). Guarded by student.update. */
+  @Patch(':id/enrolments/:eid')
+  @RequirePermission('student.update')
+  updateEnrolment(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.updateEnrolment(eid, dto, me, scope, id);
+  }
+
   /** UPGRADE — add another LEVEL to this course-enrolment (A1 → add A2). Same enrolment: Total/Net
    *  increase, plan reconciles, no second enrolment. Guarded by student.update; scope-enforced. */
   @Post(':id/enrolments/:eid/levels')

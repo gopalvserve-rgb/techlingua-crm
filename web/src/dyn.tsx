@@ -6144,8 +6144,10 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
     if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
     try {
-      // 1) course / fee / discount / plan intent (net recomputed + finance-capped server-side)
-      await api.patch(`/enrolments/${enrolment.id}`, {
+      // 1) course / fee / discount / plan intent — via the student-scoped enrolment-update route
+      //    (dev/104 DEF-2: lead-less enrolments 404'd on PATCH /enrolments/:id; DEF-4: this path
+      //    runs the Discount Master over-cap decision — net recomputed + capped server-side).
+      await api.patch(`/students/${student.id}/enrolments/${enrolment.id}`, {
         course_id: Number(courseId),
         fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
         payment_plan: cfg.planIntent, start_date: cfg.start || undefined,

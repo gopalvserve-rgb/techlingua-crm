@@ -141,7 +141,7 @@ export class EnrolmentService {
               COALESCE(p.paid_minor, 0) AS paid_minor,
               e.net_fee_minor - COALESCE(p.paid_minor, 0) AS balance_minor
          FROM enrolment e
-         JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN lead l ON l.id = e.lead_id
          JOIN branch b ON b.id = e.branch_id
          JOIN vertical v ON v.id = e.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id
@@ -193,7 +193,7 @@ export class EnrolmentService {
               COALESCE(p.paid_minor, 0) AS paid_minor,
               e.net_fee_minor - COALESCE(p.paid_minor, 0) AS balance_minor
          FROM enrolment e
-         JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN lead l ON l.id = e.lead_id
          JOIN branch b ON b.id = e.branch_id
          JOIN vertical v ON v.id = e.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id
@@ -503,7 +503,7 @@ export class EnrolmentService {
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               ru.name AS requested_by_name
          FROM enrolment e
-         JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN lead l ON l.id = e.lead_id
          JOIN branch b ON b.id = e.branch_id
          JOIN vertical v ON v.id = e.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id

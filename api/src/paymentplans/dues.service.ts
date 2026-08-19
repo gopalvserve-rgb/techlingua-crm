@@ -59,7 +59,9 @@ export class DuesService {
       -- 1) installment dues
       SELECT 'inst:' || i.id::text AS due_id, 'installment'::text AS source,
              e.id AS enrolment_id, e.enrolment_no, i.plan_id, i.seq_no,
-             l.full_name AS student_name, l.phone AS student_phone, l.email AS student_email,
+             COALESCE(l.full_name, sp.full_name) AS student_name,
+             COALESCE(l.phone, sp.phone) AS student_phone,
+             COALESCE(l.email, sp.email) AS student_email,
              e.course_id, c.name AS course_name,
              e.branch_id, b.name AS branch_name, e.vertical_id, v.name AS vertical_name,
              e.counsellor_id AS owner_id, u.name AS owner_name,
@@ -76,7 +78,8 @@ export class DuesService {
         FROM installment i
         JOIN payment_plan pp ON pp.id = i.plan_id AND pp.status = 'active' AND pp.deleted_at IS NULL
         JOIN enrolment e ON e.id = i.enrolment_id
-        JOIN lead l ON l.id = e.lead_id
+        LEFT JOIN lead l ON l.id = e.lead_id
+        LEFT JOIN student sp ON sp.id = e.student_profile_id AND sp.deleted_at IS NULL
         JOIN branch b ON b.id = e.branch_id
         JOIN vertical v ON v.id = e.vertical_id
         LEFT JOIN m_course c ON c.id = e.course_id
@@ -91,7 +94,9 @@ export class DuesService {
       -- 2) unplanned enrolment balances (no active plan)
       SELECT 'enr:' || e.id::text AS due_id, 'unplanned'::text AS source,
              e.id AS enrolment_id, e.enrolment_no, NULL::bigint AS plan_id, 1 AS seq_no,
-             l.full_name AS student_name, l.phone AS student_phone, l.email AS student_email,
+             COALESCE(l.full_name, sp.full_name) AS student_name,
+             COALESCE(l.phone, sp.phone) AS student_phone,
+             COALESCE(l.email, sp.email) AS student_email,
              e.course_id, c.name AS course_name,
              e.branch_id, b.name AS branch_name, e.vertical_id, v.name AS vertical_name,
              e.counsellor_id AS owner_id, u.name AS owner_name,
@@ -108,7 +113,8 @@ export class DuesService {
              (e.net_fee_minor - COALESCE(pr.paid_minor, 0)) AS outstanding_minor,
              ((SELECT d FROM today) - COALESCE(e.start_date, e.created_at::date)) AS days_overdue
         FROM enrolment e
-        JOIN lead l ON l.id = e.lead_id
+        LEFT JOIN lead l ON l.id = e.lead_id
+        LEFT JOIN student sp ON sp.id = e.student_profile_id AND sp.deleted_at IS NULL
         JOIN branch b ON b.id = e.branch_id
         JOIN vertical v ON v.id = e.vertical_id
         LEFT JOIN m_course c ON c.id = e.course_id
@@ -217,7 +223,9 @@ export class DuesService {
     const scopeWhere = this.resolver.buildScopeWhere(scope, PLAN_SCOPE_COLS, params);
     const rows = await this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.net_fee_minor, e.branch_id, e.vertical_id, e.lead_id,
-              l.full_name AS student_name, l.phone AS student_phone, l.email AS student_email,
+              COALESCE(l.full_name, sp.full_name) AS student_name,
+             COALESCE(l.phone, sp.phone) AS student_phone,
+             COALESCE(l.email, sp.email) AS student_email,
               c.name AS course_name,
               COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
                          WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0) AS paid_minor
