@@ -87,6 +87,31 @@ describe('DEF-4 convert — over-cap discount is capped + held pending (not appl
   });
 });
 
+// A legacy finance-settings cap that THROWS on over-cap must NOT block the Discount Master
+// over-cap-pending flow on the convert/add save paths (DEF-4 regression — dev/104): the save
+// path passes skipCap so decideMasterDiscount governs instead of the legacy hard 400.
+describe('DEF-4 — legacy finance cap does not hard-block the over-cap-pending save path', () => {
+  it('convert with a throwing finance cap still succeeds: capped + pending, no 400', async () => {
+    const issued: Array<{ sql: string; params: unknown[] }> = [];
+    const throwingFinance = { assertAllowed: async () => { throw new Error('The discount exceeds the allowed limit.'); } };
+    const db = {
+      one: async (sql: string) => { if (/FROM organisation/.test(sql)) return { id: 1 };
+        if (/FROM m_course WHERE id/.test(sql)) return { id: 100, name: 'French', code: 'FR', meta: { fee: 20000 } }; return null; },
+      query: async () => [],
+      tx: async (fn: any) => fn({ query: async (sql: string) => {
+        if (/INSERT INTO enrolment \(/.test(sql)) return { rows: [{ id: 900 }] };
+        if (/FROM student_vertical_id/.test(sql)) return { rows: [{ id: 950, student_vertical_no: 'RID-1' }] };
+        return { rows: [{ id: 1 }] }; } }),
+    };
+    const svc = new StudentService(db as never, resolver as never, numbering as never,
+      undefined, undefined, rbac(false) as never, throwingFinance as never, undefined, discountMaster as never);
+    const rows = [{ course_id: 100, discount_type: 'amount', discount_value: REQUESTED }];
+    const out: any = await svc.createConvertEnrolments(7, 31, LEAD, rows, { id: 5 });
+    expect(out[0].discount_approval_status).toBe('pending');
+    expect(out[0].net_fee_minor).toBe(1600000);
+  });
+});
+
 /* -------------------------------------------------------------- add-enrolment harness */
 function makeAdd(authorised: boolean) {
   const issued: Array<{ sql: string; params: unknown[] }> = [];

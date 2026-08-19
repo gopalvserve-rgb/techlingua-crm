@@ -138,8 +138,11 @@ export class StudentService {
   /** ITEM 4 — resolve an enrolment's discount from the form. A discount is EITHER an amount
    *  (₹, paise) OR a percentage (%) on the gross fee; the discount AMOUNT + NET are computed
    *  here (never trust a client net). Legacy payloads (only discount_minor) read as an amount.
-   *  Then enforce the finance discount cap (%/₹) — over-cap throws 400. */
-  private async resolveDiscount(feeMinor: number, dto: any, verticalId: number | null, actorId: number) {
+   *  Then enforce the finance discount cap (%/₹) — over-cap throws 400. `skipCap` bypasses that
+   *  legacy hard-throw on the paths where the Discount Master over-cap decision governs instead
+   *  (convert / add-enrolment), so an over-cap discount is capped + held pending, not rejected
+   *  (DEF-4, dev/104). */
+  private async resolveDiscount(feeMinor: number, dto: any, verticalId: number | null, actorId: number, skipCap = false) {
     const rawType = String(dto?.discount_type ?? '').trim().toLowerCase();
     let type: EnrolmentDiscountType; let value: number;
     if (rawType === 'percent') { type = 'percent'; value = Number(dto?.discount_value ?? 0); }
@@ -152,7 +155,7 @@ export class StudentService {
     let d;
     try { d = computeEnrolmentDiscount(feeMinor, type, value); }
     catch (e) { throw new BadRequestException((e as Error).message); }
-    if (this.finance) {
+    if (this.finance && !skipCap) {
       await this.finance.assertAllowed({
         verticalId, userId: actorId, kind: 'discount',
         base: d.gross_fee_minor, discount: d.discount_amount_minor, label: 'Enrolment discount',
@@ -180,7 +183,7 @@ export class StudentService {
    * unchanged, back-compatible path for a course without levels).
    */
   private async resolveLevelMoney(
-    courseId: number, levelsInput: unknown, dto: any, verticalId: number | null, actorId: number,
+    courseId: number, levelsInput: unknown, dto: any, verticalId: number | null, actorId: number, skipCap = false,
   ): Promise<null | {
     levels: ResolvedLevel[]; scope: DiscountScope; total_fee_minor: number; discount_minor: number; net_fee_minor: number;
     discount_type: EnrolmentDiscountType; discount_value: number;
@@ -198,7 +201,7 @@ export class StudentService {
     if (scope === 'level') {
       const discount = sumLevelDiscounts(levels);
       if (discount > total) throw new BadRequestException('The level discounts cannot exceed the total fee.');
-      if (this.finance) {
+      if (this.finance && !skipCap) {
         await this.finance.assertAllowed({
           verticalId, userId: actorId, kind: 'discount', base: total, discount, label: 'Enrolment discount',
         });
@@ -207,7 +210,7 @@ export class StudentService {
         discount_type: discount > 0 ? 'amount' : 'none', discount_value: discount };
     }
     // OVERALL — one discount on the summed total (the item-4 amount/percent path).
-    const d = await this.resolveDiscount(total, dto, verticalId, actorId);
+    const d = await this.resolveDiscount(total, dto, verticalId, actorId, skipCap);
     return { levels, scope, total_fee_minor: total, discount_minor: d.discount_amount_minor, net_fee_minor: d.net_fee_minor,
       discount_type: d.discount_type, discount_value: d.discount_value };
   }
@@ -1596,7 +1599,7 @@ export class StudentService {
       // ENROLLMENT LEVEL RE-MODEL (batch 2): if the row selects course levels, Total = Σ level
       // fees, discount overall/level, Net = Total − discount, and the levels become line-items on
       // the ONE enrolment. Otherwise (no levels) the classic single-course fee path is unchanged.
-      const lm = await this.resolveLevelMoney(courseId, row?.levels, row, verticalId, me.id);
+      const lm = await this.resolveLevelMoney(courseId, row?.levels, row, verticalId, me.id, true);
       let feeMinor: number; let disc: number; let net: number;
       let discount_type: EnrolmentDiscountType; let discount_value: number;
       let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
@@ -1611,7 +1614,7 @@ export class StudentService {
           feeMinor = Math.round((Number.isFinite(masterFee) ? masterFee : 0) * 100);
         }
         if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new BadRequestException('Fee must be a non-negative amount.');
-        const dsc = await this.resolveDiscount(feeMinor, row, verticalId, me.id);
+        const dsc = await this.resolveDiscount(feeMinor, row, verticalId, me.id, true);
         disc = dsc.discount_amount_minor; net = dsc.net_fee_minor;
         discount_type = dsc.discount_type; discount_value = dsc.discount_value;
       }
@@ -2142,7 +2145,7 @@ export class StudentService {
     }
     // ENROLLMENT LEVEL RE-MODEL (batch 2): if levels are selected, Total = Σ level fees and the
     // levels become line-items on this ONE enrolment; else the classic single-fee path (unchanged).
-    const lm = await this.resolveLevelMoney(courseId, dto?.levels, dto, enrolVerticalId, me.id);
+    const lm = await this.resolveLevelMoney(courseId, dto?.levels, dto, enrolVerticalId, me.id, true);
     let fee: number; let disc: number; let net: number;
     let discountType: EnrolmentDiscountType; let discountValue: number;
     let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
