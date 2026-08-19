@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
-import { assertDateRange, requireDateString } from '../common/date.util';
+import { assertDateRange, requireDateString, toDateString } from '../common/date.util';
 import { normalizePhone } from '../common/phone.util';
 import { NumberingService } from '../numbering/numbering.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
@@ -14,6 +14,7 @@ import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVE
 import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from '../enrolments/discount.util';
 import { DiscountScope, MasterLevel, ResolvedLevel, resolveLevels, sumLevelDiscounts, sumLevelFees } from '../enrolments/level.util';
+import { Frequency, PlanType, generateSchedule } from '../paymentplans/schedule.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { DiscountMasterService } from '../finance/discount-master.service';
 import { DiscountApprovalStatus } from '../enrolments/enrolment.service';
@@ -2295,20 +2296,26 @@ export class StudentService {
           : requireDateString(String(dto.start_date), () => { throw new BadRequestException('Invalid start date.'); }))
       : (enr.start_date ?? null);
 
-    await this.db.query(
-      `UPDATE enrolment
-          SET course_id = $2::bigint, fee_minor = $3::bigint, gross_fee_minor = $3::bigint,
-              discount_minor = $4::bigint, discount_amount_minor = $4::bigint, net_fee_minor = $5::bigint,
-              discount_type = $6::varchar, discount_value = $7::numeric, payment_plan = $8::varchar,
-              start_date = $9::date,
-              discount_approval_status = $10::varchar, discount_requested_minor = $11::bigint,
-              discount_cap_minor = $12::bigint, discount_requested_by = $13::bigint,
-              discount_approved_by = $14::bigint,
-              discount_approved_at = CASE WHEN $10::varchar = 'approved' THEN COALESCE(discount_approved_at, now()) ELSE NULL END,
-              updated_at = now()
-        WHERE id = $1::bigint`,
-      [enrolmentId, courseId, feeMinor, applied, net, d.discount_type, d.discount_value, plan, startDate,
-        dd.status, requested, dd.capMinor, dd.requestedBy, dd.approvedBy]);
+    const oldNetForPlan = Number(enr.net_fee_minor ?? 0);
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment
+            SET course_id = $2::bigint, fee_minor = $3::bigint, gross_fee_minor = $3::bigint,
+                discount_minor = $4::bigint, discount_amount_minor = $4::bigint, net_fee_minor = $5::bigint,
+                discount_type = $6::varchar, discount_value = $7::numeric, payment_plan = $8::varchar,
+                start_date = $9::date,
+                discount_approval_status = $10::varchar, discount_requested_minor = $11::bigint,
+                discount_cap_minor = $12::bigint, discount_requested_by = $13::bigint,
+                discount_approved_by = $14::bigint,
+                discount_approved_at = CASE WHEN $10::varchar = 'approved' THEN COALESCE(discount_approved_at, now()) ELSE NULL END,
+                updated_at = now()
+          WHERE id = $1::bigint`,
+        [enrolmentId, courseId, feeMinor, applied, net, d.discount_type, d.discount_value, plan, startDate,
+          dd.status, requested, dd.capMinor, dd.requestedBy, dd.approvedBy]);
+      // OBS-1 — the net moved (e.g. a discount edit): rebuild any UNPAID plan schedule so Due
+      // (Σ outstanding) always equals Net − Paid. A plan with money applied keeps its schedule.
+      if (net !== oldNetForPlan) await this.rebuildUnpaidPlanToNet(c, enrolmentId);
+    });
 
     return {
       id: enrolmentId, ok: true, enrolment_no: enr.enrolment_no,
@@ -2406,6 +2413,49 @@ export class StudentService {
    * the new amount, paid money is never disturbed. No-op when there is no active plan (an
    * unplanned enrolment's outstanding recomputes straight from net_fee_minor in the dues view).
    */
+  /** Rebuild every UNPAID active installment plan on an enrolment to its CURRENT Net fee, so the
+   *  schedule (and hence Due = Σ outstanding) always equals Net − Paid after a discount edit or a
+   *  level upgrade. A plan with money already applied is left intact (paid money is a fact — the
+   *  delta path carries the increase). Mirrors PlanService.reconcileToNet; kept local because
+   *  StudentsModule does not import PlansModule. Runs inside the caller's transaction. */
+  private async rebuildUnpaidPlanToNet(c: any, enrolmentId: number) {
+    const plans = await c.query(
+      `SELECT pp.id, pp.plan_type, pp.frequency, pp.down_payment_minor, pp.num_installments,
+              pp.start_date, e.net_fee_minor
+         FROM payment_plan pp JOIN enrolment e ON e.id = pp.enrolment_id
+        WHERE pp.enrolment_id = $1::bigint AND pp.status = 'active' AND pp.deleted_at IS NULL`,
+      [enrolmentId]);
+    for (const pp of plans.rows) {
+      const paid = await c.query(
+        `SELECT COALESCE(sum(paid_minor), 0) AS p FROM installment WHERE plan_id = $1::bigint`, [pp.id]);
+      if (Number(paid.rows[0].p) > 0) continue;                 // money applied -> leave the schedule alone
+      const total = Number(pp.net_fee_minor);
+      const startDate = toDateString(pp.start_date) || new Date().toISOString().slice(0, 10);
+      let schedule;
+      try {
+        schedule = generateSchedule({
+          plan_type: pp.plan_type as PlanType, total_minor: total,
+          down_payment_minor: Number(pp.down_payment_minor),
+          num_installments: Math.max(1, Number(pp.num_installments)),
+          frequency: pp.frequency as Frequency, start_date: startDate,
+        });
+      } catch { continue; }
+      await c.query(`DELETE FROM installment WHERE plan_id = $1::bigint`, [pp.id]);
+      for (const row of schedule) {
+        await c.query(
+          `INSERT INTO installment (plan_id, enrolment_id, seq_no, due_date, amount_minor, label)
+           VALUES ($1,$2,$3,$4::date,$5,$6)`,
+          [pp.id, enrolmentId, row.seq_no, row.due_date, row.amount_minor, row.label]);
+      }
+      await c.query(`UPDATE payment_plan SET total_minor = $2::bigint, updated_at = now() WHERE id = $1::bigint`, [pp.id, total]);
+      await c.query(
+        `UPDATE payment_plan pp SET status = CASE WHEN pp.status = 'cancelled' THEN 'cancelled'
+              WHEN NOT EXISTS (SELECT 1 FROM installment i WHERE i.plan_id = pp.id AND i.status NOT IN ('paid','waived'))
+                THEN 'completed' ELSE 'active' END,
+            updated_at = now() WHERE pp.id = $1::bigint`, [pp.id]);
+    }
+  }
+
   private async reconcilePlanIncrease(c: any, enrolmentId: number, deltaMinor: number) {
     if (!Number.isFinite(deltaMinor) || deltaMinor <= 0) return;
     const plan = (await c.query(

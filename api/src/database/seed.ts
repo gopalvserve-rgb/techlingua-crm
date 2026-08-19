@@ -226,6 +226,14 @@ async function seed(c: PoolClient) {
     'referral.read', 'referral.create', 'referral.update'];
   await grant('Counsellor', agentPerms, 'own');
   await grant('Telecaller', agentPerms, 'own');
+  // OBS-2 (dev/105) — a Counsellor / Team Leader must READ the branches & verticals they belong
+  // to so the Enroll + New-Student Branch/Vertical dropdowns populate (they hold student.create /
+  // enrolment.create). Read-only, scoped like the managers (branch.read@branch, vertical.read@
+  // vertical) so the ScopeResolver shows only their own units. Mirrors migration 094 for a FRESH DB.
+  await grant('Counsellor', ['branch.read'], 'branch');
+  await grant('Counsellor', ['vertical.read'], 'vertical');
+  await grant('Team Leader', ['branch.read'], 'branch');
+  await grant('Team Leader', ['vertical.read'], 'vertical');
   // Trainer (governance): teaching + academic activity, DRAFT + SUBMIT for approval, but NO
   // global publish/approve and NO certificate issue (migration 070). batch.read only.
   await grant('Trainer', ['dashboard.read', 'master.read', 'notification.read',
