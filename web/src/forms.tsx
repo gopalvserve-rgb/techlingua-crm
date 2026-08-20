@@ -24,7 +24,7 @@ export interface FormField {
   /** UAT-R2 — a STRING-valued select whose options come from a master list (RefData key).
    *  Unlike `src` (which stores an id and cascades), `mopts` stores the master's NAME, so
    *  the column/JSON stays text and edit-prefill is trivial. Carries the ＋ Master add. */
-  mopts?: keyof Pick<RefData, 'trainings' | 'visitPurposes' | 'walkinStatuses' | 'ticketCategories'>;
+  mopts?: keyof Pick<RefData, 'trainings' | 'visitPurposes' | 'walkinStatuses' | 'ticketCategories' | 'courseTypes'>;
   /** client update #5 (Task module only) — render the logged-in user as "Myself",
    *  pinned to the top of the user list and selected by default. Scoped per field,
    *  so Lead Owner / Counsellor dropdowns elsewhere keep showing real names. */
@@ -242,7 +242,9 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     // Course descriptors (client feedback #13, Aug 2026) — Level / Type / Description. dev/100 (client):
     // Delivery Mode dropped from the course UI (meta.delivery_mode kept in DB, hidden); ERP forms carry
     // NO Campaign/Pipeline (CRM-only) — the course walks Branch > Vertical only.
-    F('Course Type', 'select', 0, COURSE_TYPES, 'e.g. Diploma, Certificate'),
+    // dev/106 — Course Type reads the self-manageable master (RefData.courseTypes, via /courses/type-catalog
+    // which now serves m_course_type); ＋ Master adds a new type inline. Stores the label text in meta.course_type.
+    { ...F('Course Type', 'select', 0, 0, 'master \u2014 add your own with \uFF0B Master'), mopts: 'courseTypes' },
     F('Description', 'textarea', 0, 0, 'optional \u2014 short course description'),
     F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
@@ -765,6 +767,8 @@ const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
 const MOPTS_MASTER: Record<NonNullable<FormField['mopts']>, string> = {
   trainings: 'training', visitPurposes: 'visit_purpose', walkinStatuses: 'walkin_status',
   ticketCategories: 'ticket_category',
+  // dev/106 — Course Type is now a self-manageable master; ＋ Master adds a new type inline.
+  courseTypes: 'course_type',
 };
 /** Masters whose dedicated management screen has a richer form: ＋ Master opens that
  *  full form (client: adding a Course from a lead must show all course fields,

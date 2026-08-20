@@ -23,6 +23,10 @@ export const MASTER_TYPES: Record<string, { table: string; label: string; singul
   walkin_status: { table: 'm_walkin_status', label: 'Walk-in Statuses', singular: 'Walk-in Status' },      // #19
   // Support & Tickets (migration 037) — Ticket Category is admin-managed here.
   ticket_category: { table: 'm_ticket_category', label: 'Ticket Categories', singular: 'Ticket Category' },
+  // Course Type master (dev/106, migration 095) — was a fixed course_type_def catalog; now a
+  // self-manageable master. The course form's Course Type dropdown reads it (via /courses/type-catalog
+  // back-compat alias) and the inline + Master adds new values; managed in Administration > Masters.
+  course_type: { table: 'm_course_type', label: 'Course Types', singular: 'Course Type' },
 };
 
 export interface MasterDto {

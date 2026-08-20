@@ -73,6 +73,11 @@ async function seed(c: PoolClient) {
     // codes MATCH walk_in.status values so existing rows keep rendering
     ['Waiting', 'waiting'], ['In progress', 'in_progress'], ['Converted', 'converted'], ['Closed', 'closed'],
   ]);
+  // Course Type master (dev/106) — self-manageable; the course form's Course Type dropdown reads it.
+  await master('m_course_type', [
+    ['Diploma', 'DIPLOMA'], ['Certificate', 'CERT'], ['Foundation', 'FOUND'],
+    ['Crash Course', 'CRASH'], ['Advanced Diploma', 'ADVDIP'], ['Workshop', 'WORKSHOP'],
+  ]);
   const metaSourceId = (await c.query(`SELECT id FROM m_source WHERE org_id=$1 AND code='META'`, [org])).rows[0].id as Id;
 
   // ---- hierarchy: branches > verticals > pipelines/stages > campaign > source

@@ -13,7 +13,16 @@ export class CoursesService {
   constructor(private readonly db: DatabaseService) {}
 
   typeCatalog() {
-    return this.db.query(`SELECT code, label, ordering FROM course_type_def ORDER BY ordering, code`);
+    // dev/106 — Course Type is now a self-manageable master (m_course_type, migration 095). This
+    // endpoint stays as a BACK-COMPAT alias so existing callers (RefData `courseTypes`, the course
+    // form dropdown, the Course list Course Type filter) keep working unchanged: it returns
+    // code == label == name (the value stored in m_course.meta->>'course_type'), active values only,
+    // and now reflects whatever the client has added/edited/deactivated in Administration > Masters.
+    return this.db.query(
+      `SELECT name AS code, name AS label, sort_order AS ordering
+         FROM m_course_type WHERE deleted_at IS NULL AND is_active
+        ORDER BY sort_order, name`,
+    );
   }
   levelCatalog() {
     return this.db.query(`SELECT code, label, ordering FROM course_level_def ORDER BY ordering, code`);
