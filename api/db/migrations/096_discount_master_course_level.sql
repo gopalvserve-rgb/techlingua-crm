@@ -1,5 +1,5 @@
 -- =============================================================================
--- 094 — DISCOUNT MASTER: LEVEL (optional) scope  [discount level-aware cap, dev/107]
+-- 096 — DISCOUNT MASTER: LEVEL (optional) scope  [discount level-aware cap, dev/107]
 --
 -- Client requirement (extends dev/103): a discount rule scoped to a COURSE that has LEVELS
 -- may be pinned to a SPECIFIC course-level (e.g. French A1 vs A2). The cap resolver becomes
