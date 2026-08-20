@@ -78,7 +78,7 @@ const p2 = (title: string, sub: string, caps: CapItem[]): ScreenSpec => ({
 
 /* ============================ THE NAV TREE ============================ */
 
-export const APP: ModuleItem[] = [
+const APP_FULL: ModuleItem[] = [
 
   /* ---------------- Dashboard ---------------- */
   { id: 'dash', label: 'Dashboard', icon: 'dash', subs: [
@@ -626,6 +626,40 @@ export const APP: ModuleItem[] = [
     { id: 'all', label: 'Site Map', spec: { dyn: 'sitemap' } },
   ] },
 ];
+
+/* ============================ NAV VISIBILITY ============================
+ * dev/111 (client, 2026-08-21) — REVERSIBLE nav hide. The modules / sub-items
+ * listed below are removed from the navigation (sidebar tree AND the site map).
+ * Nothing is deleted: every screen spec, dyn component and backend endpoint is
+ * left intact above, so re-enabling an item is just deleting its id from the
+ * sets below. This is purely a front-end nav filter.
+ *
+ *   • Operations — the whole module (Catalog, Inventory, Assets, Vendors, Procurement)
+ *   • HR & Workforce — Hiring, Bank, Performance, Incentives
+ *   • Workspace & Productivity — Social Publisher, Social Comments, Social Inbox
+ *   • Analytics & Reports — Scheduled Delivery, Counselor Analytics
+ *   • Communication Intelligence — Intent Detection, Conversation Analytics,
+ *       Sentiment Analysis, Objection Detection, Follow-up Suggestions
+ *   • Calls (Telephony) — Telephony Settings, Call Routing, Conference Calling, Call Transfer
+ */
+const HIDDEN_MODULES = new Set<string>([
+  'ops', // Operations — entire module hidden
+]);
+const HIDDEN_SUBS: Record<string, Set<string>> = {
+  hr:        new Set(['hiring', 'bank', 'performance', 'incentives']),
+  work:      new Set(['socialpublisher', 'socialcomments', 'socialinbox']),
+  analytics: new Set(['delivery', 'counseloranalytics']),
+  intel:     new Set(['intent', 'convanalytics', 'sentiment', 'objection', 'followsug']),
+  calls:     new Set(['telSettings', 'routing', 'conference', 'transfer']),
+};
+
+/** The nav tree the app actually renders — {@link APP_FULL} minus the hidden entries above. */
+export const APP: ModuleItem[] = APP_FULL
+  .filter((m) => !HIDDEN_MODULES.has(m.id))
+  .map((m) => {
+    const hide = HIDDEN_SUBS[m.id];
+    return hide ? { ...m, subs: m.subs.filter((s) => !hide.has(s.id)) } : m;
+  });
 
 export const findScreen = (m: string, s: string): { mod: ModuleItem; sub: SubItem } | null => {
   const mod = APP.find((x) => x.id === m);
