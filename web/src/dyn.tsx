@@ -5204,6 +5204,8 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             if (!lead) return <Empty t="No originating lead — student created directly." />;
             const acts = (lj?.activities ?? []) as any[];
             const fus = (lj?.follow_ups ?? []) as any[];
+            // lead_activity.from_value/to_value are jsonb — render a safe string, never an object.
+            const sval = (v: any) => v == null ? '—' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
             return (
               <div data-testid="lead-journey">
                 <div className="notice" style={{ marginBottom: 10 }}>
@@ -5229,7 +5231,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                     {acts.map((a: any) => (
                       <li key={a.id} style={{ marginBottom: 6 }} data-testid={`lj-act-${a.id}`}>
                         <span className="bdg b-slate" style={{ marginRight: 6 }}>{a.type}</span>
-                        {a.note ? <span>{a.note}</span> : (a.from_value != null || a.to_value != null ? <span className="sub">{dash(a.from_value)} → {dash(a.to_value)}</span> : null)}
+                        {a.note ? <span>{String(a.note)}</span> : (a.from_value != null || a.to_value != null ? <span className="sub">{sval(a.from_value)} → {sval(a.to_value)}</span> : null)}
                         <span className="sub mono" style={{ marginLeft: 8 }}>{fmtDT(a.occurred_at)}{a.actor_name ? ` · ${a.actor_name}` : ''}</span>
                       </li>
                     ))}
