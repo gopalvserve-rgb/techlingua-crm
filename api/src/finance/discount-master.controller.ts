@@ -25,7 +25,8 @@ export class DiscountMasterController {
   effective(@Query() q: any) {
     const num = (v: any) => (v === undefined || v === null || v === '' ? undefined : Number(v));
     return this.svc.effectiveForApi(
-      { branch_id: num(q?.branch_id), vertical_id: num(q?.vertical_id), course_id: num(q?.course_id) },
+      { branch_id: num(q?.branch_id), vertical_id: num(q?.vertical_id), course_id: num(q?.course_id),
+        course_level_id: num(q?.course_level_id) },
       num(q?.base),
     );
   }

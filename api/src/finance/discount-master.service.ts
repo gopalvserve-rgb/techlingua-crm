@@ -23,7 +23,7 @@ export class DiscountMasterService {
   async caps(): Promise<DiscountCapRow[]> {
     const org = await this.orgId();
     const rows = await this.db.query<any>(
-      `SELECT id, branch_id, vertical_id, course_id, max_percent, max_amount_minor
+      `SELECT id, branch_id, vertical_id, course_id, course_level_id, max_percent, max_amount_minor
          FROM discount_master
         WHERE org_id = $1::bigint AND active AND deleted_at IS NULL`,
       [org],
@@ -33,6 +33,7 @@ export class DiscountMasterService {
       branch_id: r.branch_id != null ? Number(r.branch_id) : null,
       vertical_id: r.vertical_id != null ? Number(r.vertical_id) : null,
       course_id: r.course_id != null ? Number(r.course_id) : null,
+      course_level_id: r.course_level_id != null ? Number(r.course_level_id) : null,
       max_percent: r.max_percent != null ? Number(r.max_percent) : null,
       max_amount_minor: r.max_amount_minor != null ? Number(r.max_amount_minor) : null,
     }));
@@ -64,16 +65,18 @@ export class DiscountMasterService {
   async list() {
     const org = await this.orgId();
     return this.db.query<any>(
-      `SELECT dm.id, dm.name, dm.branch_id, dm.vertical_id, dm.course_id,
+      `SELECT dm.id, dm.name, dm.branch_id, dm.vertical_id, dm.course_id, dm.course_level_id,
               dm.max_percent, dm.max_amount_minor, dm.active, dm.updated_at,
-              b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, c.code AS course_code
+              b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, c.code AS course_code,
+              cl.code AS course_level_code, COALESCE(cl.label, cl.code) AS course_level_label
          FROM discount_master dm
          LEFT JOIN branch b ON b.id = dm.branch_id
          LEFT JOIN vertical v ON v.id = dm.vertical_id
          LEFT JOIN m_course c ON c.id = dm.course_id
+         LEFT JOIN course_level cl ON cl.id = dm.course_level_id
         WHERE dm.org_id = $1::bigint AND dm.deleted_at IS NULL
-        ORDER BY (dm.course_id IS NOT NULL) DESC, (dm.vertical_id IS NOT NULL) DESC,
-                 (dm.branch_id IS NOT NULL) DESC, dm.name`,
+        ORDER BY (dm.course_level_id IS NOT NULL) DESC, (dm.course_id IS NOT NULL) DESC,
+                 (dm.vertical_id IS NOT NULL) DESC, (dm.branch_id IS NOT NULL) DESC, dm.name`,
       [org],
     );
   }
@@ -106,11 +109,15 @@ export class DiscountMasterService {
     if (max_percent == null && max_amount_minor == null) {
       throw new BadRequestException('Set at least one cap — a max percentage and/or a max amount.');
     }
+    const courseId = dto?.course_id ? Number(dto.course_id) : null;
+    // A level scope is only meaningful alongside a course (a level belongs to a course).
+    const courseLevelId = courseId && dto?.course_level_id ? Number(dto.course_level_id) : null;
     return {
       name,
       branch_id: dto?.branch_id ? Number(dto.branch_id) : null,
       vertical_id: dto?.vertical_id ? Number(dto.vertical_id) : null,
-      course_id: dto?.course_id ? Number(dto.course_id) : null,
+      course_id: courseId,
+      course_level_id: courseLevelId,
       max_percent, max_amount_minor,
       active: dto?.active === undefined ? true : !!dto.active,
     };
@@ -120,11 +127,11 @@ export class DiscountMasterService {
     const org = await this.orgId();
     const v = this.normalise(dto);
     const row = await this.db.one<any>(
-      `INSERT INTO discount_master (org_id, name, branch_id, vertical_id, course_id,
+      `INSERT INTO discount_master (org_id, name, branch_id, vertical_id, course_id, course_level_id,
                                     max_percent, max_amount_minor, active, created_by, updated_by)
-       VALUES ($1::bigint, $2, $3::bigint, $4::bigint, $5::bigint, $6, $7, $8, $9::bigint, $9::bigint)
+       VALUES ($1::bigint, $2, $3::bigint, $4::bigint, $5::bigint, $6::bigint, $7, $8, $9, $10::bigint, $10::bigint)
        RETURNING id`,
-      [org, v.name, v.branch_id, v.vertical_id, v.course_id, v.max_percent, v.max_amount_minor, v.active, actorId],
+      [org, v.name, v.branch_id, v.vertical_id, v.course_id, v.course_level_id, v.max_percent, v.max_amount_minor, v.active, actorId],
     );
     return { id: Number(row.id), ok: true };
   }
@@ -139,6 +146,7 @@ export class DiscountMasterService {
       branch_id: dto?.branch_id === undefined ? cur.branch_id : dto.branch_id,
       vertical_id: dto?.vertical_id === undefined ? cur.vertical_id : dto.vertical_id,
       course_id: dto?.course_id === undefined ? cur.course_id : dto.course_id,
+      course_level_id: dto?.course_level_id === undefined ? cur.course_level_id : dto.course_level_id,
       max_percent: dto?.max_percent === undefined ? cur.max_percent : dto.max_percent,
       max_amount_minor: dto?.max_amount_minor === undefined && dto?.max_amount === undefined ? cur.max_amount_minor : dto.max_amount_minor,
       max_amount: dto?.max_amount,
@@ -146,10 +154,10 @@ export class DiscountMasterService {
     });
     await this.db.query(
       `UPDATE discount_master SET name = $2, branch_id = $3::bigint, vertical_id = $4::bigint,
-              course_id = $5::bigint, max_percent = $6, max_amount_minor = $7, active = $8,
-              updated_by = $9::bigint, updated_at = now()
+              course_id = $5::bigint, course_level_id = $6::bigint, max_percent = $7, max_amount_minor = $8,
+              active = $9, updated_by = $10::bigint, updated_at = now()
         WHERE id = $1::bigint`,
-      [id, v.name, v.branch_id, v.vertical_id, v.course_id, v.max_percent, v.max_amount_minor, v.active, actorId],
+      [id, v.name, v.branch_id, v.vertical_id, v.course_id, v.course_level_id, v.max_percent, v.max_amount_minor, v.active, actorId],
     );
     return { id, ok: true };
   }

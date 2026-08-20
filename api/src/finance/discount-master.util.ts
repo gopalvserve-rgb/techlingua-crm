@@ -16,6 +16,8 @@ export interface DiscountCapRow {
   branch_id: number | null;
   vertical_id: number | null;
   course_id: number | null;
+  /** Optional COURSE-LEVEL scope (dev/107). NULL/omitted = all levels of the course. */
+  course_level_id?: number | null;
   max_percent: number | null;
   max_amount_minor: number | null;
 }
@@ -24,6 +26,8 @@ export interface CapCtx {
   branch_id?: number | null;
   vertical_id?: number | null;
   course_id?: number | null;
+  /** The concrete course-level being priced (dev/107). Omit for a level-less enrolment. */
+  course_level_id?: number | null;
 }
 
 const eq = (a: number | null | undefined, b: number | null | undefined) =>
@@ -31,12 +35,15 @@ const eq = (a: number | null | undefined, b: number | null | undefined) =>
 
 /** Does this cap's scope apply to the given context? A NULL scope column matches anything. */
 export function capMatches(cap: DiscountCapRow, ctx: CapCtx): boolean {
-  return eq(cap.branch_id, ctx.branch_id) && eq(cap.vertical_id, ctx.vertical_id) && eq(cap.course_id, ctx.course_id);
+  return eq(cap.branch_id, ctx.branch_id) && eq(cap.vertical_id, ctx.vertical_id)
+    && eq(cap.course_id, ctx.course_id) && eq(cap.course_level_id, ctx.course_level_id);
 }
 
-/** Specificity — course (4) beats vertical (2) beats branch (1) so a course-specific cap wins. */
+/** Specificity — course-level (8) beats course (4) beats vertical (2) beats branch (1), so the
+ *  MOST specific cap wins: course+level > course > vertical > branch > org default (dev/107). */
 export function capSpecificity(cap: DiscountCapRow): number {
-  return (cap.course_id != null ? 4 : 0) + (cap.vertical_id != null ? 2 : 0) + (cap.branch_id != null ? 1 : 0);
+  return (cap.course_level_id != null ? 8 : 0) + (cap.course_id != null ? 4 : 0)
+    + (cap.vertical_id != null ? 2 : 0) + (cap.branch_id != null ? 1 : 0);
 }
 
 /** The single applicable cap (most-specific-wins; newer id breaks a tie), or null if none match. */

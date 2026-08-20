@@ -23,8 +23,10 @@ import { fmtINR, minorToInput } from './money';
 
 interface Rule {
   id: number; name: string; branch_id: number | null; vertical_id: number | null; course_id: number | null;
+  course_level_id?: number | null;
   max_percent: number | null; max_amount_minor: number | null; active: boolean;
   branch_name?: string | null; vertical_name?: string | null; course_name?: string | null; course_code?: string | null;
+  course_level_code?: string | null; course_level_label?: string | null;
 }
 
 const capText = (r: { max_percent: number | null; max_amount_minor: number | null }): string => {
@@ -64,6 +66,7 @@ export function DiscountMaster() {
   const exportRows = shown.map((r) => ({
     Name: r.name, 'Max %': r.max_percent ?? '', 'Max ₹': r.max_amount_minor != null ? (r.max_amount_minor / 100) : '',
     Branch: r.branch_name ?? 'All', Vertical: r.vertical_name ?? 'All', Course: r.course_name ?? 'All',
+    Level: r.course_level_code ? (r.course_level_label || r.course_level_code) : 'All',
     Active: r.active ? 'Yes' : 'No',
   }));
 
@@ -96,7 +99,7 @@ export function DiscountMaster() {
           { node: <b className="nm">{r.name}</b> } as Cell,
           r.max_percent != null ? `${r.max_percent}%` : '—',
           r.max_amount_minor != null ? fmtINR(r.max_amount_minor) : '—',
-          { node: <span className="sub">{r.branch_name ? r.branch_name : 'All branches'}{r.vertical_name ? ` › ${r.vertical_name}` : ''}{r.course_name ? ` › ${r.course_name}` : ''}</span> } as Cell,
+          { node: <span className="sub">{r.branch_name ? r.branch_name : 'All branches'}{r.vertical_name ? ` › ${r.vertical_name}` : ''}{r.course_name ? ` › ${r.course_name}` : ''}{r.course_level_code ? ` › ${r.course_level_label || r.course_level_code}` : ''}</span> } as Cell,
           { b: [r.active ? 'Active' : 'Inactive', r.active ? 'b-green' : 'b-gray'] } as Cell,
           rowActions({
             onEdit: mayUpdate ? () => setEdit(r) : undefined,
@@ -121,13 +124,27 @@ function RuleModal({ initial, onClose, onSaved, rd }: { initial?: Rule; onClose:
   const [branchId, setBranchId] = useState(String(initial?.branch_id ?? ''));
   const [verticalId, setVerticalId] = useState(String(initial?.vertical_id ?? ''));
   const [courseId, setCourseId] = useState(String(initial?.course_id ?? ''));
+  const [courseLevelId, setCourseLevelId] = useState(String(initial?.course_level_id ?? ''));
   const [maxPct, setMaxPct] = useState(initial?.max_percent != null ? String(initial.max_percent) : '');
   const [maxAmt, setMaxAmt] = useState(minorToInput(initial?.max_amount_minor ?? null));
   const [active, setActive] = useState(initial?.active ?? true);
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
 
   const vOpts = rd.verticals.filter((v: any) => !branchId || Number(v.branch_id) === Number(branchId));
-  const cOpts = rd.courses;
+  // #2 (dev/107) — the Course dropdown is filtered by the chosen Branch/Vertical (a course's
+  // meta carries branch_id/vertical_id, the same mapping convert/enroll use). Blank = all courses.
+  const cOpts = rd.courses.filter((c: any) =>
+    (!branchId || Number(c.meta?.branch_id) === Number(branchId))
+    && (!verticalId || Number(c.meta?.vertical_id) === Number(verticalId)));
+  // #1 (dev/107) — when the chosen course HAS levels, offer a LEVEL (optional) scope.
+  const levelsQ = useFetch<any[]>(courseId ? `/courses/${courseId}/levels` : null, [courseId]);
+  const courseLevels = levelsQ.data ?? [];
+
+  // Keep the scope coherent: changing Branch/Vertical clears a now-invalid Course; changing
+  // Course clears a now-invalid Level.
+  const pickBranch = (v: string) => { setBranchId(v); setVerticalId(''); setCourseId(''); setCourseLevelId(''); };
+  const pickVertical = (v: string) => { setVerticalId(v); setCourseId(''); setCourseLevelId(''); };
+  const pickCourse = (v: string) => { setCourseId(v); setCourseLevelId(''); };
 
   const save = async () => {
     setErr('');
@@ -139,6 +156,7 @@ function RuleModal({ initial, onClose, onSaved, rd }: { initial?: Rule; onClose:
       branch_id: branchId ? Number(branchId) : null,
       vertical_id: verticalId ? Number(verticalId) : null,
       course_id: courseId ? Number(courseId) : null,
+      course_level_id: courseId && courseLevelId ? Number(courseLevelId) : null,
       max_percent: maxPct.trim() === '' ? null : maxPct,
       max_amount: maxAmt.trim() === '' ? null : maxAmt,
       active,
@@ -161,17 +179,23 @@ function RuleModal({ initial, onClose, onSaved, rd }: { initial?: Rule; onClose:
         <div className="fld"><label>Max discount amount (₹)</label>
           <input className="ainp" type="text" value={maxAmt} onChange={(e) => setMaxAmt(e.target.value)} placeholder="e.g. 5000 (blank = off)" data-testid="dm-amt" /></div>
         <div className="fld"><label>Branch (optional)</label>
-          <select className="ainp" value={branchId} onChange={(e) => { setBranchId(e.target.value); setVerticalId(''); }}>
+          <select className="ainp" value={branchId} onChange={(e) => pickBranch(e.target.value)}>
             <option value="">All branches</option>{rd.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select></div>
         <div className="fld"><label>Vertical (optional)</label>
-          <select className="ainp" value={verticalId} onChange={(e) => setVerticalId(e.target.value)}>
+          <select className="ainp" value={verticalId} onChange={(e) => pickVertical(e.target.value)}>
             <option value="">All verticals</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select></div>
         <div className="fld"><label>Course (optional)</label>
-          <select className="ainp" value={courseId} onChange={(e) => setCourseId(e.target.value)}>
+          <select className="ainp" value={courseId} onChange={(e) => pickCourse(e.target.value)} data-testid="dm-course">
             <option value="">All courses</option>{cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select></div>
+        {courseId && courseLevels.length > 0 && (
+          <div className="fld"><label>Level (optional)</label>
+            <select className="ainp" value={courseLevelId} onChange={(e) => setCourseLevelId(e.target.value)} data-testid="dm-level">
+              <option value="">All levels</option>{courseLevels.map((l: any) => <option key={l.id} value={l.id}>{l.label || l.code}</option>)}
+            </select></div>
+        )}
         <div className="fld"><label>Status</label>
           <select className="ainp" value={active ? '1' : '0'} onChange={(e) => setActive(e.target.value === '1')}>
             <option value="1">Active</option><option value="0">Inactive</option>

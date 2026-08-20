@@ -104,7 +104,7 @@ export class StudentService {
    * (PATCH /enrolments/:id) path already does.
    */
   private async decideMasterDiscount(
-    ctx: { branch_id?: number | null; vertical_id?: number | null; course_id?: number | null },
+    ctx: { branch_id?: number | null; vertical_id?: number | null; course_id?: number | null; course_level_id?: number | null },
     feeMinor: number, requestedMinor: number, userId: number,
   ): Promise<{ applied: number; status: DiscountApprovalStatus; capMinor: number | null;
       requestedBy: number | null; approvedBy: number | null }> {
@@ -1628,7 +1628,11 @@ export class StudentService {
       // non-authorised user → only the cap applies now, the excess held pending.
       const discRequested = disc;
       const dd = await this.decideMasterDiscount(
-        { branch_id: branchId, vertical_id: verticalId, course_id: courseId }, feeMinor, discRequested, me.id);
+        { branch_id: branchId, vertical_id: verticalId, course_id: courseId,
+          // Level-aware cap (dev/107): a single-level enrolment resolves the (course, level) cap;
+          // a multi-level (or level-less) enrolment falls back to the course/vertical/branch cap.
+          course_level_id: levels.length === 1 ? levels[0].course_level_id : null },
+        feeMinor, discRequested, me.id);
       disc = dd.applied; net = feeMinor - disc;
       resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate,
         discount_type, discount_value, discountScope, levels,
@@ -2168,7 +2172,9 @@ export class StudentService {
     // Master cap decides applied-in-full vs held-at-cap with the excess pending an authorised nod.
     const discRequested = disc;
     const dd = await this.decideMasterDiscount(
-      { branch_id: enrolBranchId, vertical_id: enrolVerticalId, course_id: courseId }, fee, discRequested, me.id);
+      { branch_id: enrolBranchId, vertical_id: enrolVerticalId, course_id: courseId,
+        course_level_id: levels.length === 1 ? levels[0].course_level_id : null },
+      fee, discRequested, me.id);
     disc = dd.applied; net = fee - disc;
     const orgId = await this.orgId();
 
@@ -2272,9 +2278,16 @@ export class StudentService {
     const requested = d.discount_amount_minor;
 
     // OVER-CAP APPROVAL (dev/103, DEF-4) — Discount Master decides applied vs held-pending.
+    // Level-aware cap (dev/107): if this enrolment is on exactly ONE course-level, resolve the
+    // (course, level) cap; multi-level or level-less falls back to the course/vertical/branch cap.
+    const enrLevelRows = await this.db.query<any>(
+      `SELECT course_level_id FROM enrolment_level WHERE enrolment_id = $1::bigint AND course_level_id IS NOT NULL`,
+      [enrolmentId]);
+    const enrCourseLevelId = enrLevelRows.length === 1 ? Number(enrLevelRows[0].course_level_id) : null;
     const dd = await this.decideMasterDiscount(
       { branch_id: enr.branch_id != null ? Number(enr.branch_id) : null,
-        vertical_id: enr.vertical_id != null ? Number(enr.vertical_id) : null, course_id: courseId },
+        vertical_id: enr.vertical_id != null ? Number(enr.vertical_id) : null, course_id: courseId,
+        course_level_id: enrCourseLevelId },
       feeMinor, requested, me.id);
     const applied = dd.applied;
     const net = feeMinor - applied;
