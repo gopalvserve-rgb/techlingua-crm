@@ -582,18 +582,29 @@ export class StudentService {
     if (enrolmentIds.length) {
       // dev/80 — carry Branch > Vertical > Course + the enrolment/student name so the profile
       // Fees tab can print the breadcrumb and the reused ReceiptViewModal has everything it needs.
+      // dev/109 — a receipt row also carries the choosable enrolment columns the Fee Receipt
+      // Records list can now show/hide: Roll Number (student_vertical_no), Level (level_summary),
+      // Total/Net/Due fee, Fee Plan (payment_plan) and course Status — the same set the Fee
+      // Management dues list and the Course Enrollment section expose via the column chooser.
       receipts = await this.db.query<any>(
         `SELECT fr.id, fr.receipt_no, fr.amount_minor, fr.mode, fr.reference, fr.received_at,
                 fr.note, u.name AS received_by_name, e.enrolment_no,
-                br.name AS branch_name, vt.name AS vertical_name, co.name AS course_name
+                br.name AS branch_name, vt.name AS vertical_name, co.name AS course_name,
+                svi.student_vertical_no, e.payment_plan, e.net_fee_minor, e.course_status,
+                COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
+                (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
+                   FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
+                GREATEST(0, e.net_fee_minor - COALESCE((SELECT sum(fr2.amount_minor) FROM fee_receipt fr2
+                       WHERE fr2.enrolment_id = e.id AND fr2.deleted_at IS NULL), 0))::bigint AS outstanding_minor
            FROM fee_receipt fr
            LEFT JOIN "user" u ON u.id = fr.received_by
            LEFT JOIN enrolment e ON e.id = fr.enrolment_id
            LEFT JOIN branch br ON br.id = e.branch_id
            LEFT JOIN vertical vt ON vt.id = e.vertical_id
            LEFT JOIN m_course co ON co.id = e.course_id
+           LEFT JOIN student_vertical_id svi ON svi.student_id = $2::bigint AND svi.vertical_id = e.vertical_id
           WHERE fr.enrolment_id = ANY($1::bigint[]) AND fr.deleted_at IS NULL
-          ORDER BY fr.received_at DESC`, [enrolmentIds]);
+          ORDER BY fr.received_at DESC`, [enrolmentIds, sid]);
       receipts = receipts.map((r: any) => ({ ...r, lead_name: student.full_name ?? null }));
     }
     const netFee = enrolments.reduce((s: number, e: any) => s + Number(e.net_fee_minor ?? 0), 0);

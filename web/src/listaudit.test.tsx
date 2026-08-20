@@ -160,6 +160,30 @@ describe('list-audit — every registered list screen renders the full treatment
     });
   }
 
+  // dev/109 — the two profile sub-lists (Course Enrollment + Fee Receipt Records) live INSIDE
+  // StudentDetailModal, not as standalone list screens, so they can't declare a control profile in
+  // LISTS above. They still must carry the shared column chooser (colprefs) with per-user, per-list
+  // persistence and the 11 client-requested choosable columns. Assert that here.
+  it('StudentDetailModal Course Enrollment + Fee Receipt lists carry the shared column chooser', () => {
+    // NB: these lists live inside StudentDetailModal, whose object-destructured params defeat the
+    // brace-matcher above, so we assert against the whole module source (the tokens are unique to it).
+    const src = read('dyn.tsx');
+    // Both lists wire the shared chooser (persisted per user, per list key) + a ColumnsButton.
+    expect(/useColumnVisibility\('student-course-enrollment'/.test(src)).toBe(true);
+    expect(/useColumnVisibility\('student-fee-receipts'/.test(src)).toBe(true);
+    expect((src.match(/<ColumnsButton\b/g) || []).length).toBeGreaterThanOrEqual(2);
+    // The 11 client-requested choosable columns must be present in both column-label sets.
+    const ELEVEN = ['Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status'];
+    for (const set of ['ENROL_COL_LABELS', 'RECEIPT_COL_LABELS']) {
+      const m = new RegExp(`const ${set} = \\[([^\\]]*)\\]`).exec(src);
+      expect(m, `${set} not found`).toBeTruthy();
+      const body = (m as RegExpExecArray)[1];
+      for (const col of ELEVEN) {
+        expect(body.includes(col), `${set} is missing the "${col}" choosable column`).toBe(true);
+      }
+    }
+  });
+
   // The client's explicit complaint: Campaigns (and the other hierarchy lists) MUST be multi-select.
   it('the hierarchy lists all use a multi-select filter control', () => {
     for (const name of ['Campaigns', 'Verticals', 'Pipelines', 'Sources']) {

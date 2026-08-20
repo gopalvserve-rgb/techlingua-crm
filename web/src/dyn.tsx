@@ -19,6 +19,7 @@ import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, RowMenu, RowMenuItem, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
 import { UserPicker } from './userpicker';
+import { useColumnVisibility, ColumnsButton } from './colprefs';
 import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
@@ -4628,9 +4629,21 @@ function SiblingsSection({ studentId, branchId, verticalId, canEdit }: { student
   );
 }
 
+// dev/109 — CHOOSABLE COLUMNS for the profile's Course Enrollment + Fee Receipt Records lists.
+// These two lists live inside StudentDetailModal (not standalone list screens), so they reuse the
+// shared column chooser (colprefs) directly: a "Columns" button + per-user/per-list persistence.
+// The 11 client-requested columns lead the set (Roll Number · Enrolment Number · Branch · Vertical ·
+// Course · Level · Total Fee · Net Fee · Fee Plan · Due Fee · Status), matching the Fee Management
+// dues list; a few list-specific extras (Batch, Enrolled, LMS, Amount, Mode, Received, Actions) follow.
+const ENROL_COL_LABELS = ['Roll Number', 'Enrolment Number', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Batch', 'Enrolled', 'LMS', 'Actions'];
+const RECEIPT_COL_LABELS = ['Receipt', 'Roll Number', 'Enrolment No', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Amount', 'Mode', 'Received', 'Actions'];
+
 export function StudentDetailModal({ student, onClose, onChanged, onEdit, initialTab }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void; initialTab?: string }) {
   const { can } = useAuth();
   const canEdit = can('student.update');
+  // dev/109 — column-visibility state for the two profile lists (persisted per user, per list).
+  const enrolCols = useColumnVisibility('student-course-enrollment', ENROL_COL_LABELS);
+  const receiptCols = useColumnVisibility('student-fee-receipts', RECEIPT_COL_LABELS);
   const [prof, setProf] = useState<any>(null);
   const [full, setFull] = useState<any>(student);
   const [batches, setBatches] = useState<any[]>([]);
@@ -5130,40 +5143,42 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           ) : null}
           {canEdit && <button className="btn primary" style={{ marginBottom: 10 }} onClick={() => setAddEnrol(true)} data-testid="enrol-add"><Ic k="plus" />Enroll in another course</button>}
           {(enrolData.data?.enrolments ?? []).length ? (
-            <table className="minitbl"><thead><tr><th>Branch › Vertical › Course</th><th>Level</th><th>Roll Number</th><th>Batch</th><th>Enrolled</th><th>Fee (gross · discount · net)</th><th>Balance / Due Fee</th><th>Course Status</th><th>LMS</th><th>Actions</th></tr></thead>
-              <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => (
-                <tr key={e.id} data-testid={`enrol-row-${e.id}`}>
-                  <td><b className="nm">{e.course_name ?? '—'}</b><div className="sub" data-testid={`enrol-path-${e.id}`}>{e.path || [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' › ')}</div><div className="sub mono">{e.enrolment_no}</div></td>
-                  {/* LEVEL (batch 2) — all of this enrolment's levels, e.g. "A1, A2, B1"; '—' for a no-level course */}
-                  <td data-testid={`enrol-levels-${e.id}`}>{e.level_summary ? <b>{e.level_summary}</b> : <span className="sub">—</span>}</td>
-                  <td><b className="mono" data-testid={`enrol-vid-${e.id}`}>{e.student_vertical_no ?? '—'}</b></td>
-                  <td>{e.batch_name ?? '—'}</td>
-                  <td>{e.start_date ? dmy(e.start_date) : dmy(e.created_at)}</td>
-                  <td>
-                    <b>{money(e.net_fee_minor)}</b>
-                    {Number(e.discount_amount_minor ?? e.discount_minor ?? 0) > 0 && (
-                      <div className="sub" style={{ fontSize: 10 }}>
-                        {money(e.gross_fee_minor ?? e.fee_minor)} − {money(e.discount_amount_minor ?? e.discount_minor)}
-                        {e.discount_type === 'percent' ? ` (${Number(e.discount_value)}%)` : ''}
-                      </div>
-                    )}
-                  </td>
-                  {/* dev/100 (client): Balance / Due Fee = net fee - fees paid (from the API's outstanding_minor). */}
-                  <td data-testid={`enrol-balance-${e.id}`}>
-                    <b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }}>{money(e.outstanding_minor ?? 0)}</b>
-                    {Number(e.paid_minor ?? 0) > 0 && <div className="sub" style={{ fontSize: 10 }}>paid {money(e.paid_minor)}</div>}
-                  </td>
-                  <td>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</td>
-                  <td><span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span></td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolEditFor(e)} data-testid={`enrol-edit-${e.id}`}><Ic k="pencil" />Edit</button>}
-                    {canEdit && e.status !== 'cancelled' && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolLevelFor(e)} data-testid={`enrol-addlevel-${e.id}`}><Ic k="plus" />Add level</button></>}
-                    {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button></>}
-                    {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolXferFor(e)} data-testid={`enrol-xfer-${e.id}`}><Ic k="swap" />Transfer course</button></>}
-                    {' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolHistFor(e)}><Ic k="list" />History</button>
-                  </td>
-                </tr>
-              ))}</tbody></table>
+            <>
+              {/* dev/109 — choosable columns (show/hide), persisted per user, per list. */}
+              <div className="min-row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
+                <ColumnsButton cols={ENROL_COL_LABELS} ids={enrolCols.ids} hidden={enrolCols.hidden} onToggle={enrolCols.toggle} onReset={enrolCols.reset} />
+              </div>
+              <table className="minitbl"><thead><tr>{enrolCols.visibleIdx.map((ci) => <th key={ci}>{ENROL_COL_LABELS[ci]}</th>)}</tr></thead>
+                <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => {
+                  const disc = Number(e.discount_amount_minor ?? e.discount_minor ?? 0);
+                  // Cells aligned 1:1 with ENROL_COL_LABELS — only the chosen columns are rendered.
+                  const cells: ReactNode[] = [
+                    <b className="mono" data-testid={`enrol-vid-${e.id}`}>{e.student_vertical_no ?? '—'}</b>,
+                    <span className="mono" data-testid={`enrol-enrolno-${e.id}`}>{e.enrolment_no ?? '—'}</span>,
+                    e.branch_name ?? '—',
+                    e.vertical_name ?? '—',
+                    <><b className="nm">{e.course_name ?? '—'}</b><div className="sub" data-testid={`enrol-path-${e.id}`}>{e.path || [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' › ')}</div></>,
+                    e.level_summary ? <b data-testid={`enrol-levels-${e.id}`}>{e.level_summary}</b> : <span className="sub" data-testid={`enrol-levels-${e.id}`}>—</span>,
+                    <><b>{money(e.total_fee_minor ?? e.gross_fee_minor ?? e.fee_minor)}</b>{disc > 0 && <div className="sub" style={{ fontSize: 10 }}>− {money(disc)}{e.discount_type === 'percent' ? ` (${Number(e.discount_value)}%)` : ''}</div>}</>,
+                    <b>{money(e.net_fee_minor)}</b>,
+                    e.payment_plan ?? '—',
+                    // dev/100 (client): Balance / Due Fee = net fee - fees paid (from the API's outstanding_minor).
+                    <><b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }} data-testid={`enrol-balance-${e.id}`}>{money(e.outstanding_minor ?? 0)}</b>{Number(e.paid_minor ?? 0) > 0 && <div className="sub" style={{ fontSize: 10 }}>paid {money(e.paid_minor)}</div>}</>,
+                    <>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</>,
+                    e.batch_name ?? '—',
+                    e.start_date ? dmy(e.start_date) : dmy(e.created_at),
+                    <span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span>,
+                    <span style={{ whiteSpace: 'nowrap' }}>
+                      {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolEditFor(e)} data-testid={`enrol-edit-${e.id}`}><Ic k="pencil" />Edit</button>}
+                      {canEdit && e.status !== 'cancelled' && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolLevelFor(e)} data-testid={`enrol-addlevel-${e.id}`}><Ic k="plus" />Add level</button></>}
+                      {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button></>}
+                      {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolXferFor(e)} data-testid={`enrol-xfer-${e.id}`}><Ic k="swap" />Transfer course</button></>}
+                      {' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolHistFor(e)}><Ic k="list" />History</button>
+                    </span>,
+                  ];
+                  return <tr key={e.id} data-testid={`enrol-row-${e.id}`}>{enrolCols.visibleIdx.map((ci) => <td key={ci}>{cells[ci]}</td>)}</tr>;
+                })}</tbody></table>
+            </>
           ) : <Empty t="No course enrollments yet — use the Enroll in another course button." />}
         </Section>
       )}
@@ -5359,24 +5374,41 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               reusing ReceiptViewModal + the receipt-PDF endpoint from the standalone screen. */}
           <Section title="Fee Receipt Records">
             {fees?.receipts?.length ? (
-              <table className="minitbl"><thead><tr>
-                <th>Receipt</th><th>Enrolment No</th><th>Amount</th><th>Mode</th><th>Received</th><th>Branch &rsaquo; Vertical &rsaquo; Course</th><th>Actions</th>
-              </tr></thead>
-                <tbody>{fees.receipts.map((r: any) => (
-                  <tr key={r.id}>
-                    <td className="mono">{r.receipt_no}</td>
-                    {/* dev/108 #3 — the course-code enrolment number this receipt belongs to. */}
-                    <td className="mono" data-testid={`receipt-enrol-no-${r.id}`}>{r.enrolment_no ?? '—'}</td>
-                    <td>{money(r.amount_minor)}</td>
-                    <td>{r.mode}</td>
-                    <td>{dmy(r.received_at)}</td>
-                    <td>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '—'}</td>
-                    <td><div className="rowacts">
-                      <button className="icon-btn sm" title="View receipt" onClick={() => setFeeReceiptView({ ...r, lead_name: r.lead_name ?? full.full_name })}><Ic k="eye" /></button>
-                      <button className="icon-btn sm" title="Download receipt PDF" onClick={() => window.open(`/api/fees/receipts/${r.id}/pdf`, '_blank', 'noopener')}><Ic k="doc" /></button>
-                    </div></td>
-                  </tr>
-                ))}</tbody></table>
+              <>
+                {/* dev/109 — choosable columns (show/hide) incl. Roll No / Enrolment No / Level and
+                    the enrolment's Total/Net/Due fee, Fee Plan & Status; persisted per user, per list. */}
+                <div className="min-row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
+                  <ColumnsButton cols={RECEIPT_COL_LABELS} ids={receiptCols.ids} hidden={receiptCols.hidden} onToggle={receiptCols.toggle} onReset={receiptCols.reset} />
+                </div>
+                <table className="minitbl"><thead><tr>{receiptCols.visibleIdx.map((ci) => <th key={ci}>{RECEIPT_COL_LABELS[ci]}</th>)}</tr></thead>
+                  <tbody>{fees.receipts.map((r: any) => {
+                    // Cells aligned 1:1 with RECEIPT_COL_LABELS — only the chosen columns render.
+                    const cells: ReactNode[] = [
+                      <span className="mono">{r.receipt_no}</span>,
+                      // Roll Number (vertical-code id) for the enrolment this receipt belongs to.
+                      <span className="mono" data-testid={`receipt-roll-no-${r.id}`}>{r.student_vertical_no ?? '—'}</span>,
+                      // dev/108 #3 — the course-code enrolment number this receipt belongs to.
+                      <span className="mono" data-testid={`receipt-enrol-no-${r.id}`}>{r.enrolment_no ?? '—'}</span>,
+                      r.branch_name ?? '—',
+                      r.vertical_name ?? '—',
+                      r.course_name ?? '—',
+                      r.level_summary ? <b data-testid={`receipt-levels-${r.id}`}>{r.level_summary}</b> : <span className="sub" data-testid={`receipt-levels-${r.id}`}>{'—'}</span>,
+                      money(r.total_fee_minor),
+                      money(r.net_fee_minor),
+                      r.payment_plan ?? '—',
+                      <b style={{ color: Number(r.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }}>{money(r.outstanding_minor ?? 0)}</b>,
+                      r.course_status ? renderCell(studentStatusCell(r.course_status)) : '—',
+                      <b>{money(r.amount_minor)}</b>,
+                      r.mode,
+                      dmy(r.received_at),
+                      <div className="rowacts">
+                        <button className="icon-btn sm" title="View receipt" onClick={() => setFeeReceiptView({ ...r, lead_name: r.lead_name ?? full.full_name })}><Ic k="eye" /></button>
+                        <button className="icon-btn sm" title="Download receipt PDF" onClick={() => window.open(`/api/fees/receipts/${r.id}/pdf`, '_blank', 'noopener')}><Ic k="doc" /></button>
+                      </div>,
+                    ];
+                    return <tr key={r.id} data-testid={`receipt-row-${r.id}`}>{receiptCols.visibleIdx.map((ci) => <td key={ci}>{cells[ci]}</td>)}</tr>;
+                  })}</tbody></table>
+              </>
             ) : <Empty t="No fee receipts yet." />}
           </Section>
         </>
