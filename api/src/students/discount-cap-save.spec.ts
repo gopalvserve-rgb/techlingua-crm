@@ -168,10 +168,7 @@ function makeEdit(authorised: boolean) {
       return null;
     },
     query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return []; },
-    // updateEnrolment wraps the UPDATE + plan reconcile in a tx (OBS-1, dev/105).
-    tx: async (fn: any) => fn({
-      query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return { rows: [] }; },
-    }),
+    tx: async (fn: any) => fn({ query: async (sql: string, params: unknown[] = []) => { issued.push({ sql, params }); return { rows: [] }; } }),
   };
   const svc = new StudentService(db as never, resolver as never, numbering as never,
     undefined, undefined, rbac(authorised) as never, undefined, undefined, discountMaster as never);

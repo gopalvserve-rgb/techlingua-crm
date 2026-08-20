@@ -16,6 +16,15 @@ import { enrolDiscount, fmtINR, EnrolDiscountType } from './money';
 
 interface ExistingStudent { id: number; student_no: string; full_name: string; status: string }
 
+type LevelDiscType = 'amount' | 'percent';
+/** A convert row's course selection, with an optional per-level discount (dev/110). */
+interface ConvRow {
+  vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string;
+  levels: string[]; disc_scope: 'overall' | 'level'; level_disc: Record<string, { type: LevelDiscType; value: string }>;
+}
+const newRow = (o: Partial<ConvRow> = {}): ConvRow =>
+  ({ vertical_id: '', course_id: '', fee: '', disc_type: 'none', disc_value: '', levels: [], disc_scope: 'overall', level_disc: {}, ...o });
+
 export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJourney }: {
   leadId: number; leadName?: string; onDone?: () => void; onClose: () => void;
   onOpenJourney?: (studentId: number, studentNo?: string, name?: string) => void;
@@ -28,7 +37,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   const [lead, setLead] = useState<any>(null);
   // Multi-course rows: each is a {vertical → course (→ levels, fee, discount)} selection. Item 1 +
   // batch 2: a course WITH levels lets you pick one or more; the fee auto-sums from them.
-  const [rows, setRows] = useState<Array<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string; levels: string[] }>>([]);
+  const [rows, setRows] = useState<ConvRow[]>([]);
   const [rowLevels, setRowLevels] = useState<Record<number, any[]>>({}); // row index -> the course's master levels
   const [result, setResult] = useState<any>(null);
 
@@ -48,7 +57,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
         const cid = ld?.course_id ? String(ld.course_id) : '';
         const course = cid ? (ref.courses ?? []).find((c: any) => Number(c.id) === Number(cid)) : null;
         const fee = course ? String((course.meta as any)?.fee ?? '') : '';
-        setRows([{ vertical_id: v, course_id: cid, fee, disc_type: 'none', disc_value: '', levels: [] }]);
+        setRows([newRow({ vertical_id: v, course_id: cid, fee })]);
         if (cid) fetchLevels(0, cid);
       } catch (e) { if (live) setErr((e as Error).message); }
       finally { if (live) setLoading(false); }
@@ -62,9 +71,9 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   const coursesFor = (vid: string) => (ref.courses ?? []).filter((c: any) =>
     !vid || String((c.meta as any)?.vertical_id ?? '') === String(vid));
 
-  const setRow = (i: number, patch: Partial<{ vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string; levels: string[] }>) =>
+  const setRow = (i: number, patch: Partial<ConvRow>) =>
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addRow = () => setRows((rs) => [...rs, { vertical_id: '', course_id: '', fee: '', disc_type: 'none', disc_value: '', levels: [] }]);
+  const addRow = () => setRows((rs) => [...rs, newRow()]);
   const removeRow = (i: number) => setRows((rs) => rs.filter((_, idx) => idx !== i));
   // Fetch a course's levels (batch 2). A course WITH levels drives its fee from the selection.
   const fetchLevels = (i: number, cid: string) => {
@@ -86,6 +95,29 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   };
   const toggleLevel = (i: number, code: string, on: boolean) =>
     setRow(i, { levels: on ? [...(rows[i]?.levels ?? []), code] : (rows[i]?.levels ?? []).filter((c) => c !== code) });
+  const setLevelDisc = (i: number, code: string, patch: Partial<{ type: LevelDiscType; value: string }>) => {
+    const cur = rows[i]?.level_disc?.[code] ?? { type: 'amount' as LevelDiscType, value: '' };
+    setRow(i, { level_disc: { ...(rows[i]?.level_disc ?? {}), [code]: { ...cur, ...patch } } });
+  };
+  // Per-level discount (paise), from the row's per-level {type,value}, clamped to the level fee.
+  const perLevelDiscMinor = (i: number, l: any) => {
+    const ld = rows[i]?.level_disc?.[String(l.code)];
+    const t: LevelDiscType = ld?.type || 'amount';
+    const raw = t === 'percent' ? Number(ld?.value || 0) : Math.round(Number(ld?.value || 0) * 100);
+    const { discount_minor } = enrolDiscount(Number(l.fee_minor || 0), t, raw);
+    return discount_minor;
+  };
+  // A row's discount + net. Level scope sums per-level discounts; overall uses the row discount.
+  const rowMoney = (i: number) => {
+    const gross = rowGrossMinor(i); const r = rows[i];
+    if (selLevelObjs(i).length && r.disc_scope === 'level') {
+      const disc = selLevelObjs(i).reduce((s: number, l: any) => s + perLevelDiscMinor(i, l), 0);
+      return { gross, discount_minor: disc, net_minor: gross - disc };
+    }
+    const val = r.disc_type === 'percent' ? Number(r.disc_value || 0) : Math.round(Number(r.disc_value || 0) * 100);
+    const { discount_minor, net_minor } = enrolDiscount(gross, r.disc_type, val);
+    return { gross, discount_minor, net_minor };
+  };
 
   const validRows = rows.filter((r) => r.course_id);
   const convert = async () => {
@@ -95,6 +127,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
         const idx = rows.indexOf(r);
         const sel = selLevelObjs(idx);
         const gross = rowGrossMinor(idx);
+        const levelScope = sel.length > 0 && r.disc_scope === 'level';
         return {
           vertical_id: r.vertical_id ? Number(r.vertical_id) : undefined,
           course_id: Number(r.course_id),
@@ -102,9 +135,16 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
           discount_type: r.disc_type,
           discount_value: r.disc_type === 'percent' ? Number(r.disc_value || 0)
             : r.disc_type === 'amount' ? Math.round(Number(r.disc_value || 0) * 100) : 0,
-          // batch 2: a level-course sends its selected levels[] (+ overall discount scope); ONE
-          // enrolment covers them and Total = Σ level fees. A no-level course omits levels.
-          ...(sel.length ? { levels: sel.map((l: any) => ({ course_level_id: Number(l.id), code: String(l.code) })), discount_scope: 'overall' } : {}),
+          // batch 2 + dev/110: a level-course sends its selected levels[]; the discount is either
+          // OVERALL (on the summed total) or LEVEL-wise (each level carries its own type/value). ONE
+          // enrolment covers them, Total = Σ level fees. A no-level course omits levels.
+          ...(sel.length ? {
+            levels: sel.map((l: any) => ({
+              course_level_id: Number(l.id), code: String(l.code), fee_minor: Number(l.fee_minor || 0),
+              ...(levelScope ? { discount_type: (r.level_disc?.[String(l.code)]?.type || 'amount'), discount_value: Number(r.level_disc?.[String(l.code)]?.value || 0) } : {}),
+            })),
+            discount_scope: levelScope ? 'level' : 'overall',
+          } : {}),
         };
       });
       const r = await api.post<any>('/students/convert', { lead_id: leadId, courses });
@@ -200,12 +240,33 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                         {(rowLevels[i] ?? []).length > 0 && (
                           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }} data-testid={`conv-levels-${i}`}>
                             <div className="sub" style={{ fontSize: 11 }}>Levels (select one or more):</div>
-                            {(rowLevels[i] ?? []).map((l: any) => (
-                              <label key={l.code} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }} data-testid={`conv-level-${i}-${l.code}`}>
-                                <input type="checkbox" checked={(r.levels ?? []).includes(String(l.code))} onChange={(e) => toggleLevel(i, String(l.code), e.target.checked)} data-testid={`conv-level-cb-${i}-${l.code}`} />
-                                <b>{l.code}</b><span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
-                              </label>
-                            ))}
+                            {(rowLevels[i] ?? []).map((l: any) => {
+                              const code = String(l.code); const on = (r.levels ?? []).includes(code);
+                              const levelScope = r.disc_scope === 'level';
+                              return (
+                                <label key={code} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexWrap: 'wrap' }} data-testid={`conv-level-${i}-${code}`}>
+                                  <input type="checkbox" checked={on} onChange={(e) => toggleLevel(i, code, e.target.checked)} data-testid={`conv-level-cb-${i}-${code}`} />
+                                  <b>{code}</b><span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
+                                  {levelScope && on && (
+                                    <>
+                                      <select className="ainp" style={{ width: 52 }} value={r.level_disc?.[code]?.type || 'amount'}
+                                        onChange={(e) => setLevelDisc(i, code, { type: e.target.value as LevelDiscType })} data-testid={`conv-level-disctype-${i}-${code}`}>
+                                        <option value="amount">₹</option>
+                                        <option value="percent">%</option>
+                                      </select>
+                                      <input className="ainp" type="number" style={{ width: 66 }} value={r.level_disc?.[code]?.value || ''}
+                                        placeholder={(r.level_disc?.[code]?.type || 'amount') === 'percent' ? '%' : '₹'}
+                                        onChange={(e) => setLevelDisc(i, code, { value: e.target.value })} data-testid={`conv-level-disc-${i}-${code}`} />
+                                      <span className="sub" data-testid={`conv-level-net-${i}-${code}`}>Net {fmtINR(Number(l.fee_minor || 0) - perLevelDiscMinor(i, l))}</span>
+                                    </>
+                                  )}
+                                </label>
+                              );
+                            })}
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginTop: 2 }}>
+                              <input type="checkbox" checked={r.disc_scope === 'level'} onChange={(e) => setRow(i, { disc_scope: e.target.checked ? 'level' : 'overall' })} data-testid={`conv-level-scope-${i}`} />
+                              <span className="sub">Discount per level (else one overall discount →)</span>
+                            </label>
                           </div>
                         )}
                       </td>
@@ -213,21 +274,23 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                         disabled={selLevelObjs(i).length > 0}
                         onChange={(e) => setRow(i, { fee: e.target.value })} placeholder="0" data-testid={`conv-fee-${i}`} /></td>
                       <td>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <select className="ainp" style={{ width: 64 }} value={r.disc_type}
-                            onChange={(e) => setRow(i, { disc_type: e.target.value as EnrolDiscountType, disc_value: '' })} data-testid={`conv-disc-type-${i}`}>
-                            <option value="none">—</option>
-                            <option value="amount">₹</option>
-                            <option value="percent">%</option>
-                          </select>
-                          <input className="ainp" type="number" style={{ width: 70 }} value={r.disc_value} disabled={r.disc_type === 'none'}
-                            onChange={(e) => setRow(i, { disc_value: e.target.value })} placeholder="0" data-testid={`conv-disc-value-${i}`} />
-                        </div>
+                        {(selLevelObjs(i).length > 0 && r.disc_scope === 'level') ? (
+                          <span className="sub" style={{ fontSize: 11 }} data-testid={`conv-disc-perlevel-${i}`}>per level ↑</span>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <select className="ainp" style={{ width: 64 }} value={r.disc_type}
+                              onChange={(e) => setRow(i, { disc_type: e.target.value as EnrolDiscountType, disc_value: '' })} data-testid={`conv-disc-type-${i}`}>
+                              <option value="none">—</option>
+                              <option value="amount">₹</option>
+                              <option value="percent">%</option>
+                            </select>
+                            <input className="ainp" type="number" style={{ width: 70 }} value={r.disc_value} disabled={r.disc_type === 'none'}
+                              onChange={(e) => setRow(i, { disc_value: e.target.value })} placeholder="0" data-testid={`conv-disc-value-${i}`} />
+                          </div>
+                        )}
                       </td>
                       <td data-testid={`conv-net-${i}`}>{(() => {
-                        const gross = rowGrossMinor(i);
-                        const val = r.disc_type === 'percent' ? Number(r.disc_value || 0) : Math.round(Number(r.disc_value || 0) * 100);
-                        const { discount_minor, net_minor } = enrolDiscount(gross, r.disc_type, val);
+                        const { gross, discount_minor, net_minor } = rowMoney(i);
                         return <span title={`Total ${fmtINR(gross)} · Discount ${fmtINR(discount_minor)}`}>{fmtINR(net_minor)}</span>;
                       })()}</td>
                       <td>{rows.length > 1 && (

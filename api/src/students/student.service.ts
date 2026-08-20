@@ -120,6 +120,36 @@ export class StudentService {
     return { applied: capMinor, status: 'pending', capMinor, requestedBy: userId, approvedBy: null };
   }
 
+  /**
+   * LEVEL-WISE over-cap decision (dev/110). A level-scoped enrolment carries a discount PER LEVEL,
+   * so the Discount Master's level-scoped cap (dev/107, `discount_master.course_level_id`) resolves
+   * PER (course, level): each level's requested discount is decided on its own fee against its own
+   * cap. Over-cap on ONE level holds only that level's excess pending while the others apply in full.
+   * The enrolment aggregates: applied = Σ applied-per-level, requested = Σ requested-per-level (== the
+   * summed `enrolment_level.discount_minor` breakdown), and it is `pending` if ANY level is over-cap.
+   * On approval the queue re-applies min(requested, fee) = the full Σ, matching the level breakdown.
+   */
+  private async decideLevelDiscounts(
+    levels: ResolvedLevel[], ctx: { branch_id?: number | null; vertical_id?: number | null; course_id?: number | null }, userId: number,
+  ): Promise<{ applied: number; requested: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null }> {
+    let applied = 0; let requested = 0; let status: DiscountApprovalStatus = 'none';
+    let requestedBy: number | null = null; let approvedBy: number | null = null;
+    for (const l of levels) {
+      const req = Number(l.discount_minor || 0);
+      requested += req;
+      const dd = await this.decideMasterDiscount({ ...ctx, course_level_id: l.course_level_id }, Number(l.fee_minor || 0), req, userId);
+      applied += dd.applied;
+      if (dd.status === 'pending') { status = 'pending'; requestedBy = dd.requestedBy ?? requestedBy; }
+      else if (dd.status === 'approved' && status !== 'pending') { status = 'approved'; approvedBy = dd.approvedBy ?? approvedBy; }
+    }
+    return {
+      applied, requested, status,
+      capMinor: status === 'pending' ? applied : null,          // only up to `applied` applies now; excess pending
+      requestedBy: status === 'pending' ? requestedBy : null,
+      approvedBy: status === 'approved' ? approvedBy : null,
+    };
+  }
+
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
     if (!r) throw new NotFoundException('No organisation');
@@ -185,9 +215,13 @@ export class StudentService {
    */
   private async resolveLevelMoney(
     courseId: number, levelsInput: unknown, dto: any, verticalId: number | null, actorId: number, skipCap = false,
+    branchId: number | null = null,
   ): Promise<null | {
     levels: ResolvedLevel[]; scope: DiscountScope; total_fee_minor: number; discount_minor: number; net_fee_minor: number;
     discount_type: EnrolmentDiscountType; discount_value: number;
+    // When scope = 'level' the per-(course,level) over-cap decision is ALREADY made here (dev/110),
+    // so the caller must NOT run decideMasterDiscount again — it uses this decision verbatim.
+    decision: null | { applied: number; requested: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null };
   }> {
     if (!Array.isArray(levelsInput) || levelsInput.length === 0) return null;
     const master = await this.fetchMasterLevels(courseId);
@@ -200,20 +234,20 @@ export class StudentService {
     const total = sumLevelFees(levels);
 
     if (scope === 'level') {
-      const discount = sumLevelDiscounts(levels);
-      if (discount > total) throw new BadRequestException('The level discounts cannot exceed the total fee.');
-      if (this.finance && !skipCap) {
-        await this.finance.assertAllowed({
-          verticalId, userId: actorId, kind: 'discount', base: total, discount, label: 'Enrolment discount',
-        });
-      }
-      return { levels, scope, total_fee_minor: total, discount_minor: discount, net_fee_minor: total - discount,
-        discount_type: discount > 0 ? 'amount' : 'none', discount_value: discount };
+      const requested = sumLevelDiscounts(levels);
+      if (requested > total) throw new BadRequestException('The level discounts cannot exceed the total fee.');
+      // Per-level Discount-Master over-cap decision (dev/110). `enrolment_level.discount_minor` keeps
+      // the REQUESTED per-level breakdown; the enrolment applies the capped sum until an approval lands.
+      const decision = await this.decideLevelDiscounts(levels,
+        { branch_id: branchId, vertical_id: verticalId, course_id: courseId }, actorId);
+      return { levels, scope, total_fee_minor: total, discount_minor: decision.applied, net_fee_minor: total - decision.applied,
+        discount_type: requested > 0 ? 'amount' : 'none', discount_value: requested, decision };
     }
-    // OVERALL — one discount on the summed total (the item-4 amount/percent path).
+    // OVERALL — one discount on the summed total (the item-4 amount/percent path). The over-cap
+    // decision stays with the caller (it resolves the course/level cap on the total).
     const d = await this.resolveDiscount(total, dto, verticalId, actorId, skipCap);
     return { levels, scope, total_fee_minor: total, discount_minor: d.discount_amount_minor, net_fee_minor: d.net_fee_minor,
-      discount_type: d.discount_type, discount_value: d.discount_value };
+      discount_type: d.discount_type, discount_value: d.discount_value, decision: null };
   }
 
   /** Insert an enrolment's level line-items (one row per selected level). Same client `c`. */
@@ -1680,13 +1714,15 @@ export class StudentService {
       // ENROLLMENT LEVEL RE-MODEL (batch 2): if the row selects course levels, Total = Σ level
       // fees, discount overall/level, Net = Total − discount, and the levels become line-items on
       // the ONE enrolment. Otherwise (no levels) the classic single-course fee path is unchanged.
-      const lm = await this.resolveLevelMoney(courseId, row?.levels, row, verticalId, me.id, true);
+      const lm = await this.resolveLevelMoney(courseId, row?.levels, row, verticalId, me.id, true, branchId);
       let feeMinor: number; let disc: number; let net: number;
       let discount_type: EnrolmentDiscountType; let discount_value: number;
       let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
+      let levelDecision: null | { applied: number; requested: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null } = null;
       if (lm) {
         feeMinor = lm.total_fee_minor; disc = lm.discount_minor; net = lm.net_fee_minor;
         discount_type = lm.discount_type; discount_value = lm.discount_value; discountScope = lm.scope; levels = lm.levels;
+        levelDecision = lm.decision;
       } else {
         if (row?.fee_minor != null && String(row.fee_minor).trim() !== '') {
           feeMinor = Number(row.fee_minor);
@@ -1706,13 +1742,23 @@ export class StudentService {
       // OVER-CAP APPROVAL (dev/103, DEF-4) — `disc` is the FULL requested discount. Run it through
       // the Discount Master cap: within cap / authorised → applied in full; over cap by a
       // non-authorised user → only the cap applies now, the excess held pending.
-      const discRequested = disc;
-      const dd = await this.decideMasterDiscount(
-        { branch_id: branchId, vertical_id: verticalId, course_id: courseId,
-          // Level-aware cap (dev/107): a single-level enrolment resolves the (course, level) cap;
-          // a multi-level (or level-less) enrolment falls back to the course/vertical/branch cap.
-          course_level_id: levels.length === 1 ? levels[0].course_level_id : null },
-        feeMinor, discRequested, me.id);
+      // A level-wise enrolment already made its per-(course,level) decision (dev/110); otherwise
+      // run the Discount Master cap on the total (single-level resolves the (course,level) cap).
+      let discRequested: number;
+      let dd: { applied: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null };
+      if (levelDecision) {
+        discRequested = levelDecision.requested;
+        dd = { applied: levelDecision.applied, status: levelDecision.status, capMinor: levelDecision.capMinor,
+          requestedBy: levelDecision.requestedBy, approvedBy: levelDecision.approvedBy };
+      } else {
+        discRequested = disc;
+        dd = await this.decideMasterDiscount(
+          { branch_id: branchId, vertical_id: verticalId, course_id: courseId,
+            // Level-aware cap (dev/107): a single-level enrolment resolves the (course, level) cap;
+            // a multi-level (or level-less) enrolment falls back to the course/vertical/branch cap.
+            course_level_id: levels.length === 1 ? levels[0].course_level_id : null },
+          feeMinor, discRequested, me.id);
+      }
       disc = dd.applied; net = feeMinor - disc;
       resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate,
         discount_type, discount_value, discountScope, levels,
@@ -2101,6 +2147,7 @@ export class StudentService {
     const rows = await this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.status, e.course_id, e.batch_id, e.net_fee_minor, e.fee_minor,
               e.discount_minor, e.gross_fee_minor, e.discount_type, e.discount_value, e.discount_amount_minor,
+              e.discount_scope, e.discount_approval_status, e.discount_requested_minor, e.discount_cap_minor,
               e.payment_plan, e.start_date, e.created_at,
               e.branch_id, e.vertical_id,
               e.course_status, e.course_status_reason, e.course_status_last_attendance_date,
@@ -2230,13 +2277,15 @@ export class StudentService {
     }
     // ENROLLMENT LEVEL RE-MODEL (batch 2): if levels are selected, Total = Σ level fees and the
     // levels become line-items on this ONE enrolment; else the classic single-fee path (unchanged).
-    const lm = await this.resolveLevelMoney(courseId, dto?.levels, dto, enrolVerticalId, me.id, true);
+    const lm = await this.resolveLevelMoney(courseId, dto?.levels, dto, enrolVerticalId, me.id, true, enrolBranchId);
     let fee: number; let disc: number; let net: number;
     let discountType: EnrolmentDiscountType; let discountValue: number;
     let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
+    let levelDecision: null | { applied: number; requested: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null } = null;
     if (lm) {
       fee = lm.total_fee_minor; disc = lm.discount_minor; net = lm.net_fee_minor;
       discountType = lm.discount_type; discountValue = lm.discount_value; discountScope = lm.scope; levels = lm.levels;
+      levelDecision = lm.decision;
     } else {
       fee = Number(dto?.fee_minor ?? 0);
       if (!Number.isFinite(fee) || fee < 0) throw new BadRequestException('Fee must be a non-negative amount.');
@@ -2248,13 +2297,22 @@ export class StudentService {
     if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
     const startDate = dto?.start_date != null && String(dto.start_date).trim() !== ''
       ? requireDateString(String(dto.start_date), () => { throw new BadRequestException('Invalid start date.'); }) : null;
-    // OVER-CAP APPROVAL (dev/103, DEF-4) — `disc` is the FULL requested discount. The Discount
-    // Master cap decides applied-in-full vs held-at-cap with the excess pending an authorised nod.
-    const discRequested = disc;
-    const dd = await this.decideMasterDiscount(
-      { branch_id: enrolBranchId, vertical_id: enrolVerticalId, course_id: courseId,
-        course_level_id: levels.length === 1 ? levels[0].course_level_id : null },
-      fee, discRequested, me.id);
+    // OVER-CAP APPROVAL (dev/103, DEF-4; dev/110 per-level) — a level-wise enrolment already made
+    // its per-(course,level) decision in resolveLevelMoney; otherwise `disc` is the FULL requested
+    // discount and the Discount Master cap decides applied-in-full vs held-at-cap (excess pending).
+    let discRequested: number;
+    let dd: { applied: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null };
+    if (levelDecision) {
+      discRequested = levelDecision.requested;
+      dd = { applied: levelDecision.applied, status: levelDecision.status, capMinor: levelDecision.capMinor,
+        requestedBy: levelDecision.requestedBy, approvedBy: levelDecision.approvedBy };
+    } else {
+      discRequested = disc;
+      dd = await this.decideMasterDiscount(
+        { branch_id: enrolBranchId, vertical_id: enrolVerticalId, course_id: courseId,
+          course_level_id: levels.length === 1 ? levels[0].course_level_id : null },
+        fee, discRequested, me.id);
+    }
     disc = dd.applied; net = fee - disc;
     const orgId = await this.orgId();
 
@@ -2339,38 +2397,62 @@ export class StudentService {
     }
     if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new BadRequestException('Fee must be a non-negative amount.');
 
-    // REQUESTED discount (amount ₹/paise or percent), from the form or carried from the enrolment.
-    const rawType = String(dto?.discount_type ?? enr.discount_type ?? '').trim().toLowerCase();
-    let dType: EnrolmentDiscountType; let dValue: number;
-    if (rawType === 'percent') { dType = 'percent'; dValue = Number(dto?.discount_value ?? enr.discount_value ?? 0); }
-    else if (rawType === 'amount') {
-      dType = 'amount';
-      dValue = dto?.discount_value != null && String(dto.discount_value).trim() !== ''
-        ? Math.trunc(Number(dto.discount_value)) : Math.trunc(Number(enr.discount_amount_minor ?? enr.discount_minor ?? 0));
-    } else if (rawType === 'none') { dType = 'none'; dValue = 0; }
-    else {
-      const amt = Math.trunc(Number(dto?.discount_minor ?? enr.discount_amount_minor ?? enr.discount_minor ?? 0));
-      dType = amt > 0 ? 'amount' : 'none'; dValue = amt;
-    }
-    let d;
-    try { d = computeEnrolmentDiscount(feeMinor, dType, dValue); }
-    catch (e) { throw new BadRequestException((e as Error).message); }
-    const requested = d.discount_amount_minor;
+    // LEVEL-WISE EDIT (dev/110). When the Edit modal sends `levels[]` (the enrolment's level line-
+    // items with an editable per-level discount + add/remove), the enrolment is RECONCILED to that
+    // set: Total = Σ level fees, discount PER LEVEL (level scope) or overall, and the
+    // `enrolment_level` rows are re-synced. Otherwise the classic single-fee edit path (unchanged).
+    const dtoLevels: any[] | null = Array.isArray(dto?.levels) && dto.levels.length ? dto.levels : null;
+    const ctx = { branch_id: enr.branch_id != null ? Number(enr.branch_id) : null,
+      vertical_id: enr.vertical_id != null ? Number(enr.vertical_id) : null, course_id: courseId };
 
-    // OVER-CAP APPROVAL (dev/103, DEF-4) — Discount Master decides applied vs held-pending.
-    // Level-aware cap (dev/107): if this enrolment is on exactly ONE course-level, resolve the
-    // (course, level) cap; multi-level or level-less falls back to the course/vertical/branch cap.
-    const enrLevelRows = await this.db.query<any>(
-      `SELECT course_level_id FROM enrolment_level WHERE enrolment_id = $1::bigint AND course_level_id IS NOT NULL`,
-      [enrolmentId]);
-    const enrCourseLevelId = enrLevelRows.length === 1 ? Number(enrLevelRows[0].course_level_id) : null;
-    const dd = await this.decideMasterDiscount(
-      { branch_id: enr.branch_id != null ? Number(enr.branch_id) : null,
-        vertical_id: enr.vertical_id != null ? Number(enr.vertical_id) : null, course_id: courseId,
-        course_level_id: enrCourseLevelId },
-      feeMinor, requested, me.id);
-    const applied = dd.applied;
-    const net = feeMinor - applied;
+    let feeFinal: number; let applied: number; let requested: number;
+    let dType: EnrolmentDiscountType; let dValue: number;
+    let ddStatus: DiscountApprovalStatus; let ddCap: number | null; let ddReqBy: number | null; let ddAppBy: number | null;
+    let discScope: DiscountScope = String(enr.discount_scope ?? 'overall') === 'level' ? 'level' : 'overall';
+    let resolvedLevels: ResolvedLevel[] | null = null;
+
+    if (dtoLevels) {
+      if (!courseId) throw new BadRequestException('This enrolment has no course, so it has no levels.');
+      discScope = String(dto?.discount_scope ?? enr.discount_scope ?? 'overall').trim().toLowerCase() === 'level' ? 'level' : 'overall';
+      const master = await this.fetchMasterLevels(courseId);
+      if (!master.length) throw new BadRequestException('This course has no levels configured.');
+      try { resolvedLevels = resolveLevels(master, dtoLevels, discScope); }
+      catch (e) { throw new BadRequestException((e as Error).message); }
+      feeFinal = sumLevelFees(resolvedLevels);
+      if (discScope === 'level') {
+        const decision = await this.decideLevelDiscounts(resolvedLevels, ctx, me.id);
+        applied = decision.applied; requested = decision.requested;
+        ddStatus = decision.status; ddCap = decision.capMinor; ddReqBy = decision.requestedBy; ddAppBy = decision.approvedBy;
+        dType = requested > 0 ? 'amount' : 'none'; dValue = requested;
+      } else {
+        // OVERALL discount on the summed level total (amount/percent from the form).
+        let dov;
+        try { dov = computeEnrolmentDiscount(feeFinal, this.discTypeFromDto(dto, enr), this.discValueFromDto(dto, enr, feeFinal)); }
+        catch (e) { throw new BadRequestException((e as Error).message); }
+        dType = dov.discount_type; dValue = dov.discount_value;
+        const dd = await this.decideMasterDiscount(
+          { ...ctx, course_level_id: resolvedLevels.length === 1 ? resolvedLevels[0].course_level_id : null },
+          feeFinal, dov.discount_amount_minor, me.id);
+        applied = dd.applied; requested = dov.discount_amount_minor;
+        ddStatus = dd.status; ddCap = dd.capMinor; ddReqBy = dd.requestedBy; ddAppBy = dd.approvedBy;
+      }
+    } else {
+      // CLASSIC single-fee edit (no levels sent) — unchanged behaviour.
+      dType = this.discTypeFromDto(dto, enr); dValue = this.discValueFromDto(dto, enr, feeMinor);
+      let d;
+      try { d = computeEnrolmentDiscount(feeMinor, dType, dValue); }
+      catch (e) { throw new BadRequestException((e as Error).message); }
+      dType = d.discount_type; dValue = d.discount_value;
+      feeFinal = feeMinor; requested = d.discount_amount_minor;
+      // Level-aware cap (dev/107): a single existing course-level resolves the (course,level) cap.
+      const enrLevelRows = await this.db.query<any>(
+        `SELECT course_level_id FROM enrolment_level WHERE enrolment_id = $1::bigint AND course_level_id IS NOT NULL`,
+        [enrolmentId]);
+      const enrCourseLevelId = enrLevelRows.length === 1 ? Number(enrLevelRows[0].course_level_id) : null;
+      const dd = await this.decideMasterDiscount({ ...ctx, course_level_id: enrCourseLevelId }, feeMinor, requested, me.id);
+      applied = dd.applied; ddStatus = dd.status; ddCap = dd.capMinor; ddReqBy = dd.requestedBy; ddAppBy = dd.approvedBy;
+    }
+    const net = feeFinal - applied;
 
     const paid = await this.db.one<{ paid: string }>(
       `SELECT COALESCE(sum(amount_minor), 0)::bigint AS paid FROM fee_receipt
@@ -2390,33 +2472,62 @@ export class StudentService {
       : (enr.start_date ?? null);
 
     const oldNetForPlan = Number(enr.net_fee_minor ?? 0);
+    const orgId = Number(enr.org_id);
     await this.db.tx(async (c) => {
       await c.query(
         `UPDATE enrolment
             SET course_id = $2::bigint, fee_minor = $3::bigint, gross_fee_minor = $3::bigint,
                 discount_minor = $4::bigint, discount_amount_minor = $4::bigint, net_fee_minor = $5::bigint,
                 discount_type = $6::varchar, discount_value = $7::numeric, payment_plan = $8::varchar,
-                start_date = $9::date,
+                start_date = $9::date, discount_scope = $15::varchar,
                 discount_approval_status = $10::varchar, discount_requested_minor = $11::bigint,
                 discount_cap_minor = $12::bigint, discount_requested_by = $13::bigint,
                 discount_approved_by = $14::bigint,
                 discount_approved_at = CASE WHEN $10::varchar = 'approved' THEN COALESCE(discount_approved_at, now()) ELSE NULL END,
                 updated_at = now()
           WHERE id = $1::bigint`,
-        [enrolmentId, courseId, feeMinor, applied, net, d.discount_type, d.discount_value, plan, startDate,
-          dd.status, requested, dd.capMinor, dd.requestedBy, dd.approvedBy]);
+        [enrolmentId, courseId, feeFinal, applied, net, dType, dValue, plan, startDate,
+          ddStatus, requested, ddCap, ddReqBy, ddAppBy, discScope]);
+      // Re-sync the level line-items to the edited set (add/remove + per-level discount) — the
+      // enrolment_level.discount_minor keeps the REQUESTED per-level breakdown.
+      if (resolvedLevels) {
+        await c.query(`DELETE FROM enrolment_level WHERE enrolment_id = $1::bigint`, [enrolmentId]);
+        await this.insertEnrolmentLevels(c, orgId, enrolmentId, resolvedLevels);
+      }
       // OBS-1 — the net moved (e.g. a discount edit): rebuild any UNPAID plan schedule so Due
       // (Σ outstanding) always equals Net − Paid. A plan with money applied keeps its schedule.
       if (net !== oldNetForPlan) await this.rebuildUnpaidPlanToNet(c, enrolmentId);
     });
 
     return {
-      id: enrolmentId, ok: true, enrolment_no: enr.enrolment_no,
-      total_fee_minor: feeMinor, gross_fee_minor: feeMinor, discount_type: d.discount_type, discount_value: d.discount_value,
+      id: enrolmentId, ok: true, enrolment_no: enr.enrolment_no, discount_scope: discScope,
+      total_fee_minor: feeFinal, gross_fee_minor: feeFinal, discount_type: dType, discount_value: dValue,
       discount_amount_minor: applied, net_fee_minor: net,
-      discount_approval_status: dd.status, discount_over_cap: dd.status === 'pending',
-      discount_requested_minor: requested, discount_cap_minor: dd.capMinor,
+      discount_approval_status: ddStatus, discount_over_cap: ddStatus === 'pending',
+      discount_requested_minor: requested, discount_cap_minor: ddCap,
+      levels: (resolvedLevels ?? []).map((l) => ({ course_level_id: l.course_level_id, code: l.code, label: l.label, fee_minor: l.fee_minor, discount_minor: l.discount_minor })),
     };
+  }
+
+  /** Resolve the enrolment discount TYPE from an edit dto, falling back to the stored enrolment. */
+  private discTypeFromDto(dto: any, enr: any): EnrolmentDiscountType {
+    const rawType = String(dto?.discount_type ?? enr.discount_type ?? '').trim().toLowerCase();
+    if (rawType === 'percent') return 'percent';
+    if (rawType === 'amount') return 'amount';
+    if (rawType === 'none') return 'none';
+    const amt = Math.trunc(Number(dto?.discount_minor ?? enr.discount_amount_minor ?? enr.discount_minor ?? 0));
+    return amt > 0 ? 'amount' : 'none';
+  }
+
+  /** Resolve the enrolment discount VALUE (paise for amount, % for percent) from an edit dto. */
+  private discValueFromDto(dto: any, enr: any, _feeMinor: number): number {
+    const t = this.discTypeFromDto(dto, enr);
+    if (t === 'percent') return Number(dto?.discount_value ?? enr.discount_value ?? 0);
+    if (t === 'amount') {
+      return dto?.discount_value != null && String(dto.discount_value).trim() !== ''
+        ? Math.trunc(Number(dto.discount_value)) : Math.trunc(Number(enr.discount_amount_minor ?? enr.discount_minor ?? 0));
+    }
+    return 0;
   }
 
   /**

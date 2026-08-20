@@ -5898,65 +5898,110 @@ export function FeeConfigFields({ cfg, disabled, showFee = true, hideDiscount = 
   );
 }
 
-/** The payload the level picker reports up to its host modal. */
+/** The payload the level picker reports up to its host modal. Per-level discount carries a type
+ *  toggle (% / ₹) + value in the user's natural unit — the SERVER computes the paise amount. */
+export type LevelDiscType = 'amount' | 'percent';
 export interface LevelSelection {
-  hasLevels: boolean; totalMinor: number; netMinor: number; scope: 'overall' | 'level';
-  levels: Array<{ course_level_id: number; code: string; fee_minor: number; discount_minor?: number }>;
+  hasLevels: boolean; totalMinor: number; netMinor: number; discountMinor: number; scope: 'overall' | 'level';
+  levels: Array<{ course_level_id: number; code: string; fee_minor: number; discount_type?: LevelDiscType; discount_value?: number; discount_minor?: number }>;
+}
+/** Optional seed so the SAME picker reopens a saved enrolment (Edit) with its levels pre-selected
+ *  and their per-level discount pre-filled. */
+export interface LevelSeed { courseId: string | number; scope: 'overall' | 'level'; levels: Array<{ code: string; discount_minor?: number }>; }
+
+/** Per-level discount amount (paise) from a type + natural value, clamped to the level fee. */
+function perLevelDiscMinor(feeMinor: number, type: LevelDiscType, rawValue: string | number): number {
+  const v = Number(rawValue || 0);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  const dm = type === 'percent' ? Math.round((feeMinor * Math.min(v, 100)) / 100) : Math.round(v * 100);
+  return Math.max(0, Math.min(dm, feeMinor));
 }
 /**
- * ENROLLMENT LEVEL PICKER (batch 2) — when the chosen course has Levels (course master), pick one
- * or MORE; the fee AUTO-SUMS from the selected levels (Total = Σ level fees). The discount can be
- * OVERALL (default — use the Discount control below) or LEVEL-wise (toggle → a per-level discount
- * box). Renders nothing for a course with no levels, so the classic single-Standard-Fee path is
- * unchanged. Reports the selection up via `onChange` so the host can drive the fee/net + submit.
+ * ENROLLMENT LEVEL PICKER (batch 2 + dev/110 per-level discount) — when the chosen course has
+ * Levels, pick one or MORE; the fee AUTO-SUMS (Total = Σ level fees). The discount can be OVERALL
+ * (the Discount control below) or LEVEL-wise — each selected level gets its own discount with a
+ * type toggle (% / ₹) and a live per-level net; the picker shows Gross / Discount / Net totals.
+ * A student can take the next level a year later at a DIFFERENT discount, so discounts are tracked
+ * per level. Renders nothing for a course with no levels (the classic single-Standard-Fee path).
  */
-export function EnrolLevelPicker({ courseId, disabled, onChange }:
-  { courseId: string; disabled?: boolean; onChange: (p: LevelSelection) => void }) {
+export function EnrolLevelPicker({ courseId, disabled, onChange, seed }:
+  { courseId: string; disabled?: boolean; onChange: (p: LevelSelection) => void; seed?: LevelSeed }) {
   const [levels, setLevels] = useState<any[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [scope, setScope] = useState<'overall' | 'level'>('overall');
   const [disc, setDisc] = useState<Record<string, string>>({});
+  const [discType, setDiscType] = useState<Record<string, LevelDiscType>>({});
+  const seededFor = useRef<string>('');
   useEffect(() => {
-    setSel({}); setDisc({}); setScope('overall'); setLevels([]);
+    setSel({}); setDisc({}); setDiscType({}); setScope('overall'); setLevels([]); seededFor.current = '';
     if (!courseId) return;
     api.get<any[]>(`/courses/${courseId}/levels`).then((rows) => setLevels(rows ?? [])).catch(() => setLevels([]));
   }, [courseId]);
+  // Seed once, after the master levels load, when editing THIS enrolment's course.
+  useEffect(() => {
+    if (!seed || !levels.length) return;
+    if (String(seed.courseId) !== String(courseId)) return;
+    if (seededFor.current === String(courseId)) return;
+    seededFor.current = String(courseId);
+    const s: Record<string, boolean> = {}; const dv: Record<string, string> = {}; const dt: Record<string, LevelDiscType> = {};
+    for (const sl of seed.levels) {
+      const code = String(sl.code); s[code] = true; dt[code] = 'amount';
+      if (Number(sl.discount_minor || 0) > 0) dv[code] = String(Number(sl.discount_minor) / 100);
+    }
+    setSel(s); setDisc(dv); setDiscType(dt); setScope(seed.scope === 'level' ? 'level' : 'overall');
+  }, [levels, seed, courseId]);
   const chosen = levels.filter((l) => sel[String(l.code)]);
   const totalMinor = chosen.reduce((s, l) => s + Number(l.fee_minor || 0), 0);
-  const perDiscMinor = (code: string) => Math.round(Number(disc[code] || 0) * 100);
-  const netMinor = scope === 'level'
-    ? chosen.reduce((s, l) => s + Math.max(0, Number(l.fee_minor || 0) - perDiscMinor(String(l.code))), 0)
-    : totalMinor;
+  const perDiscMinor = (l: any) => perLevelDiscMinor(Number(l.fee_minor || 0), discType[String(l.code)] || 'amount', disc[String(l.code)] || '');
+  const discountMinor = scope === 'level' ? chosen.reduce((s, l) => s + perDiscMinor(l), 0) : 0;
+  const netMinor = totalMinor - discountMinor;
   useEffect(() => {
     onChange({
-      hasLevels: levels.length > 0, totalMinor, netMinor, scope,
+      hasLevels: levels.length > 0, totalMinor, netMinor, discountMinor, scope,
       levels: chosen.map((l) => ({ course_level_id: Number(l.id), code: String(l.code), fee_minor: Number(l.fee_minor || 0),
-        ...(scope === 'level' ? { discount_minor: perDiscMinor(String(l.code)) } : {}) })),
+        ...(scope === 'level' ? { discount_type: (discType[String(l.code)] || 'amount'), discount_value: Number(disc[String(l.code)] || 0), discount_minor: perDiscMinor(l) } : {}) })),
     });
-  }, [levels, sel, scope, disc]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [levels, sel, scope, disc, discType]);   // eslint-disable-line react-hooks/exhaustive-deps
   if (!courseId || !levels.length) return null;
   return (
     <div className="fld" style={{ gridColumn: '1 / -1' }}>
       <label>Levels <span className="star">*</span> <span className="sub" style={{ fontWeight: 400 }}>— select one or more; the fee auto-sums</span></label>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', background: 'var(--surface-2,#f8fafc)', borderRadius: 8 }} data-testid="enrol-levels">
-        {levels.map((l) => (
-          <label key={l.code} style={{ display: 'flex', alignItems: 'center', gap: 8 }} data-testid={`enrol-level-${l.code}`}>
-            <input type="checkbox" disabled={disabled} checked={!!sel[l.code]} onChange={(e) => setSel((s) => ({ ...s, [l.code]: e.target.checked }))} data-testid={`enrol-level-cb-${l.code}`} />
-            <b>{l.code}</b>{l.label && l.label !== l.code ? <span className="sub">{l.label}</span> : null}
-            <span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
-            {scope === 'level' && sel[l.code] && (
-              <input className="ainp" style={{ width: 96 }} type="number" placeholder="disc ₹" value={disc[l.code] || ''}
-                onChange={(e) => setDisc((d) => ({ ...d, [l.code]: e.target.value }))} data-testid={`enrol-level-disc-${l.code}`} />
-            )}
-          </label>
-        ))}
+        {levels.map((l) => {
+          const code = String(l.code); const fee = Number(l.fee_minor || 0);
+          const on = !!sel[code]; const lvlNet = fee - perDiscMinor(l);
+          return (
+            <label key={code} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }} data-testid={`enrol-level-${code}`}>
+              <input type="checkbox" disabled={disabled} checked={on} onChange={(e) => setSel((s) => ({ ...s, [code]: e.target.checked }))} data-testid={`enrol-level-cb-${code}`} />
+              <b>{code}</b>{l.label && l.label !== code ? <span className="sub">{l.label}</span> : null}
+              <span style={{ marginLeft: 'auto' }}>{fmtINR(fee)}</span>
+              {scope === 'level' && on && (
+                <>
+                  <select className="ainp" style={{ width: 60 }} disabled={disabled} value={discType[code] || 'amount'}
+                    onChange={(e) => setDiscType((d) => ({ ...d, [code]: e.target.value as LevelDiscType }))} data-testid={`enrol-level-disctype-${code}`}>
+                    <option value="amount">₹</option>
+                    <option value="percent">%</option>
+                  </select>
+                  <input className="ainp" style={{ width: 84 }} type="number" placeholder={(discType[code] || 'amount') === 'percent' ? 'e.g. 10' : 'disc ₹'} value={disc[code] || ''}
+                    disabled={disabled} onChange={(e) => setDisc((d) => ({ ...d, [code]: e.target.value }))} data-testid={`enrol-level-disc-${code}`} />
+                  <span className="sub" data-testid={`enrol-level-net-${code}`} style={{ minWidth: 90, textAlign: 'right' }}>Net {fmtINR(lvlNet)}</span>
+                </>
+              )}
+            </label>
+          );
+        })}
       </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
         <input type="checkbox" checked={scope === 'level'} disabled={disabled} onChange={(e) => setScope(e.target.checked ? 'level' : 'overall')} data-testid="enrol-level-scope" />
         <span className="sub">Apply discount per level (otherwise one overall discount below)</span>
       </label>
-      <div style={{ marginTop: 6, fontSize: 13 }}>Total fee: <b data-testid="enrol-level-total">{fmtINR(totalMinor)}</b>
-        {scope === 'level' && <> &middot; Net: <b data-testid="enrol-level-net">{fmtINR(netMinor)}</b></>}</div>
+      <div style={{ marginTop: 6, fontSize: 13, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <span>Total (gross): <b data-testid="enrol-level-total">{fmtINR(totalMinor)}</b></span>
+        {scope === 'level' && <>
+          <span>Discount: <b style={{ color: 'var(--red,#b91c1c)' }} data-testid="enrol-level-disctotal">− {fmtINR(discountMinor)}</b></span>
+          <span>Net: <b style={{ color: 'var(--green,#15803d)' }} data-testid="enrol-level-net">{fmtINR(netMinor)}</b></span>
+        </>}
+      </div>
     </div>
   );
 }
@@ -6104,7 +6149,12 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
   { student: any; enrolment: any; onClose: () => void; onDone: () => void }) {
   const [levels, setLevels] = useState<any[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [disc, setDisc] = useState<Record<string, string>>({});
+  const [discType, setDiscType] = useState<Record<string, LevelDiscType>>({});
   const [busy, setBusy] = useState(false);
+  // A level-scoped enrolment carries a discount PER LEVEL, so the level being ADDED can get its own
+  // discount (the client's "next level a year later at a different discount" case).
+  const levelScope = String(enrolment.discount_scope ?? 'overall') === 'level';
   const already = new Set<string>((enrolment.levels ?? []).map((l: any) => String(l.code).toLowerCase())
     .concat(String(enrolment.level_summary ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean)));
   useEffect(() => {
@@ -6115,35 +6165,51 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
       .catch(() => setLevels([]));
   }, [enrolment.course_id]);   // eslint-disable-line react-hooks/exhaustive-deps
   const chosen = levels.filter((l) => sel[String(l.code)]);
-  const addMinor = chosen.reduce((s, l) => s + Number(l.fee_minor || 0), 0);
+  const addFeeMinor = chosen.reduce((s, l) => s + Number(l.fee_minor || 0), 0);
+  const addDiscMinor = levelScope ? chosen.reduce((s, l) => s + perLevelDiscMinor(Number(l.fee_minor || 0), discType[String(l.code)] || 'amount', disc[String(l.code)] || ''), 0) : 0;
   const save = async () => {
     if (!chosen.length) { toast('Select at least one level to add.', true); return; }
     setBusy(true);
     try {
       await api.post(`/students/${student.id}/enrolments/${enrolment.id}/levels`, {
-        levels: chosen.map((l) => ({ course_level_id: Number(l.id), code: String(l.code) })),
+        levels: chosen.map((l) => ({ course_level_id: Number(l.id), code: String(l.code), fee_minor: Number(l.fee_minor || 0),
+          ...(levelScope ? { discount_type: (discType[String(l.code)] || 'amount'), discount_value: Number(disc[String(l.code)] || 0) } : {}) })),
       });
       toast('Level added — the enrolment fee and plan were updated.'); onDone();
     } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
   };
   return (
-    <DetailModal title={`Add level — ${enrolment.course_name ?? enrolment.enrolment_no}`} icon="plus" onClose={onClose} width={520}
+    <DetailModal title={`Add level — ${enrolment.course_name ?? enrolment.enrolment_no}`} icon="plus" onClose={onClose} width={540}
       footer={<button className="btn primary" onClick={save} disabled={busy || !chosen.length} data-testid="enrol-addlevel-save"><Ic k="plus" />Add to this enrolment</button>}>
       <div className="form-grid">
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
-          <div className="sub" style={{ marginBottom: 6 }}>Current levels: <b>{enrolment.level_summary || '—'}</b>. Adding a level increases the Total &amp; Net of this same enrolment; future installments cover the extra.</div>
+          <div className="sub" style={{ marginBottom: 6 }}>Current levels: <b>{enrolment.level_summary || '—'}</b>. Adding a level increases the Total &amp; Net of this same enrolment; future installments cover the extra.{levelScope ? ' This enrolment tracks discounts per level, so the new level can take its own discount.' : ''}</div>
           {levels.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', background: 'var(--surface-2,#f8fafc)', borderRadius: 8 }} data-testid="addlevel-list">
-              {levels.map((l) => (
-                <label key={l.code} style={{ display: 'flex', alignItems: 'center', gap: 8 }} data-testid={`addlevel-${l.code}`}>
-                  <input type="checkbox" disabled={busy} checked={!!sel[l.code]} onChange={(e) => setSel((s) => ({ ...s, [l.code]: e.target.checked }))} data-testid={`addlevel-cb-${l.code}`} />
-                  <b>{l.code}</b>{l.label && l.label !== l.code ? <span className="sub">{l.label}</span> : null}
-                  <span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
-                </label>
-              ))}
+              {levels.map((l) => {
+                const code = String(l.code); const on = !!sel[code];
+                return (
+                  <label key={code} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }} data-testid={`addlevel-${code}`}>
+                    <input type="checkbox" disabled={busy} checked={on} onChange={(e) => setSel((s) => ({ ...s, [code]: e.target.checked }))} data-testid={`addlevel-cb-${code}`} />
+                    <b>{code}</b>{l.label && l.label !== code ? <span className="sub">{l.label}</span> : null}
+                    <span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
+                    {levelScope && on && (
+                      <>
+                        <select className="ainp" style={{ width: 60 }} disabled={busy} value={discType[code] || 'amount'}
+                          onChange={(e) => setDiscType((d) => ({ ...d, [code]: e.target.value as LevelDiscType }))} data-testid={`addlevel-disctype-${code}`}>
+                          <option value="amount">₹</option>
+                          <option value="percent">%</option>
+                        </select>
+                        <input className="ainp" style={{ width: 84 }} type="number" placeholder={(discType[code] || 'amount') === 'percent' ? 'e.g. 10' : 'disc ₹'} value={disc[code] || ''}
+                          disabled={busy} onChange={(e) => setDisc((d) => ({ ...d, [code]: e.target.value }))} data-testid={`addlevel-disc-${code}`} />
+                      </>
+                    )}
+                  </label>
+                );
+              })}
             </div>
           ) : <div className="empty-note">No further levels available to add for this course.</div>}
-          {chosen.length > 0 && <div style={{ marginTop: 8, fontSize: 13 }}>Adds <b data-testid="addlevel-total">{fmtINR(addMinor)}</b> to the enrolment total.</div>}
+          {chosen.length > 0 && <div style={{ marginTop: 8, fontSize: 13 }}>Adds <b data-testid="addlevel-total">{fmtINR(addFeeMinor)}</b> gross{levelScope && addDiscMinor > 0 ? <> · discount <b style={{ color: 'var(--red,#b91c1c)' }}>− {fmtINR(addDiscMinor)}</b> · net <b style={{ color: 'var(--green,#15803d)' }}>{fmtINR(addFeeMinor - addDiscMinor)}</b></> : null} to the enrolment.</div>}
         </div>
       </div>
     </DetailModal>
@@ -6235,6 +6301,24 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
     start: enrolment.start_date ? String(enrolment.start_date).slice(0, 10) : '',
   });
   const [busy, setBusy] = useState(false);
+  // LEVEL-WISE EDIT (dev/110) — a level-course enrolment shows its Level line-items with an editable
+  // per-level discount + add/remove (same picker as Enroll), seeded from the saved levels. The fee
+  // then comes from the levels, not the free-text fee input. A no-level enrolment keeps the classic
+  // single-fee edit. Only the ORIGINAL course's levels are seeded (changing course resets them).
+  const [lvl, setLvl] = useState<LevelSelection | null>(null);
+  const hasLevels = ((enrolment.levels ?? []).length > 0) && String(courseId) === String(enrolment.course_id ?? '');
+  const levelSeed: LevelSeed | undefined = (enrolment.levels ?? []).length > 0
+    ? { courseId: enrolment.course_id, scope: String(enrolment.discount_scope ?? 'overall') === 'level' ? 'level' : 'overall',
+        levels: (enrolment.levels ?? []).map((l: any) => ({ code: String(l.code), discount_minor: Number(l.discount_minor ?? 0) })) }
+    : undefined;
+  const onLevels = (p: LevelSelection) => {
+    setLvl(p);
+    if (p.hasLevels) {
+      cfg.setFee(String((p.scope === 'level' ? p.netMinor : p.totalMinor) / 100));
+      if (p.scope === 'level') cfg.setDiscType('none');
+    }
+  };
+  const levelScope = (lvl?.scope ?? (String(enrolment.discount_scope ?? 'overall') === 'level' ? 'level' : 'overall'));
   // Course list stays within the enrolment's OWN vertical (a vertical/branch move is a Course
   // Transfer, which mints a new vertical-wise ID — kept as its own dedicated action).
   const courses = (ref.courses ?? []).filter((c: any) =>
@@ -6248,16 +6332,20 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
   const statusOpts = (statusCat.data ?? []).filter((o: any) => canManageSensitive || !o.requires_approval);
   const save = async () => {
     if (!courseId) { toast('Choose a course.', true); return; }
+    if (hasLevels && lvl?.hasLevels && !lvl.levels.length) { toast('Keep at least one level on this enrolment.', true); return; }
     if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
     try {
       // 1) course / fee / discount / plan intent — via the student-scoped enrolment-update route
       //    (dev/104 DEF-2: lead-less enrolments 404'd on PATCH /enrolments/:id; DEF-4: this path
       //    runs the Discount Master over-cap decision — net recomputed + capped server-side).
+      //    A level-course enrolment sends its edited levels[] + discount_scope (dev/110): the server
+      //    re-syncs the level line-items (add/remove + per-level discount) and recomputes Total/Net.
       await api.patch(`/students/${student.id}/enrolments/${enrolment.id}`, {
         course_id: Number(courseId),
         fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
         payment_plan: cfg.planIntent, start_date: cfg.start || undefined,
+        ...(hasLevels && lvl?.hasLevels ? { levels: lvl.levels, discount_scope: lvl.scope } : {}),
       });
       // 2) reconcile the payment plan (replace when it carries no payments)
       if (existingPlan) {
@@ -6295,7 +6383,12 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
           </select>
           <div className="sub" style={{ fontSize: 11 }}>Statuses needing approval (On Hold / Withdrawn / …) are set via the dedicated Status action.</div>
         </div>
+        {/* LEVELS (dev/110) — a level-course enrolment shows its Level line-items with an editable
+            per-level discount + add/remove; the fee then auto-sums from the levels. Seeded from the
+            saved levels; only shown while the course is unchanged (a course change resets levels). */}
+        {hasLevels && <EnrolLevelPicker courseId={courseId} disabled={busy} onChange={onLevels} seed={levelSeed} />}
         <FeeConfigFields cfg={cfg} disabled={busy}
+          showFee={!hasLevels} hideDiscount={hasLevels && levelScope === 'level'}
           capCtx={{ branch_id: enrolment.branch_id ?? null, vertical_id: enrolment.vertical_id ?? null, course_id: Number(courseId) || (enrolment.course_id ?? null) }} />
       </div>
     </DetailModal>

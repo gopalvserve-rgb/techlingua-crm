@@ -9,6 +9,8 @@
  * later master fee edit never re-prices a signed-up student.
  */
 
+import { applyPct } from '../common/money.util';
+
 export type DiscountScope = 'overall' | 'level';
 
 /** A course's level as it lives in the `course_level` master (what the caller loads). */
@@ -24,7 +26,12 @@ export interface LevelInput {
   course_level_id?: number | string | null;
   code?: string | null;
   fee_minor?: number | string | null;   // optional override; else the master fee is snapshotted
-  discount_minor?: number | string | null; // per-level discount (only used when scope = 'level')
+  // Per-level discount (only used when scope = 'level'). The client sends EITHER a natural
+  // discount_type + discount_value (`amount` → rupees, `percent` → a % number), which the
+  // server converts to a paise amount, OR a raw discount_minor (paise) for back-compat.
+  discount_type?: string | null;
+  discount_value?: number | string | null;
+  discount_minor?: number | string | null;
 }
 
 /** A resolved level line-item, ready to insert into `enrolment_level`. */
@@ -72,7 +79,24 @@ export function resolveLevels(master: MasterLevel[], input: unknown, scope: Disc
     const overrideFee = intMinor(r.fee_minor);
     const feeMinor = overrideFee != null ? overrideFee : Math.trunc(Number(m.fee_minor) || 0);
     if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new Error(`Level "${m.code}": fee must be zero or more`);
-    let discMinor = scope === 'level' ? (intMinor(r.discount_minor) ?? 0) : 0;
+    // Per-level discount (level scope only). Prefer the natural (discount_type, discount_value):
+    // `amount` → rupees, `percent` → a % of THIS level's fee; else fall back to a raw
+    // discount_minor (paise). The server always computes the paise amount — a client net is never trusted.
+    let discMinor = 0;
+    if (scope === 'level') {
+      const dt = String(r.discount_type ?? '').trim().toLowerCase();
+      if (dt === 'percent') {
+        let pct = Number(r.discount_value ?? 0);
+        if (!Number.isFinite(pct) || pct < 0) pct = 0;
+        if (pct > 100) throw new Error(`Level "${m.code}": a percentage discount cannot exceed 100%`);
+        discMinor = applyPct(feeMinor, pct);
+      } else if (dt === 'amount') {
+        const rupees = Number(r.discount_value ?? 0);
+        discMinor = Number.isFinite(rupees) && rupees > 0 ? Math.round(rupees * 100) : 0;
+      } else {
+        discMinor = intMinor(r.discount_minor) ?? 0;
+      }
+    }
     if (!Number.isFinite(discMinor) || discMinor < 0) discMinor = 0;
     if (discMinor > feeMinor) throw new Error(`Level "${m.code}": the discount cannot exceed that level's fee`);
     out.push({
