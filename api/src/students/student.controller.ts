@@ -84,6 +84,16 @@ export class StudentController {
     return this.svc.profile(id, scope);
   }
 
+  /** dev/108 #2 — LEAD JOURNEY: the originating lead (linked via lead_id) + its activity
+   *  timeline / follow-ups, surfaced as a tab in the student profile. Guarded by student.read
+   *  (whoever can see the student can see where they came from). `{ lead: null }` when the
+   *  student was created directly (no originating lead) → the UI shows a clean empty state. */
+  @Get(':id/lead-journey')
+  @RequirePermission('student.read')
+  leadJourney(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.leadJourney(id, scope);
+  }
+
   /** BRANCH TRANSFER — move a student to another Branch (and Vertical, optional Batch). Reuses
    *  student.update; scoped on BOTH ends inside the service so a transfer cannot cross a scope
    *  boundary in either direction. Writes a student_transfer history row + audit. */

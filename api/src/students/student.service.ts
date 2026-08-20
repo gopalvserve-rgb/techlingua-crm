@@ -561,6 +561,22 @@ export class StudentService {
       });
     }
     const vertical_ids = Array.from(vmap.values());
+    // dev/108 #1 — the profile HEADER must show the ADMISSION (converted) Branch › Vertical
+    // derived from the student's ENROLMENT(s), NOT the originating lead's stored branch/vertical
+    // (which stays stale after conversion). Pick the PRIMARY enrolment: the most-recent active
+    // one (enrolments are ordered created_at DESC), else the most-recent enrolment, else fall
+    // back to the stored (lead) values so a lead-less/enrolment-less student still renders.
+    const DEAD_ENROL = ['cancelled', 'withdrawn', 'dropped_out'];
+    const primaryEnrol = enrolments.find((e: any) => !DEAD_ENROL.includes(String(e.course_status ?? '')))
+      ?? enrolments[0] ?? null;
+    const st: any = student;
+    st.admission_branch_id = primaryEnrol?.branch_id != null ? Number(primaryEnrol.branch_id) : (st.branch_id ?? null);
+    st.admission_branch_name = primaryEnrol?.branch_name ?? st.branch_name ?? null;
+    st.admission_vertical_id = primaryEnrol?.vertical_id != null ? Number(primaryEnrol.vertical_id) : (st.vertical_id ?? null);
+    st.admission_vertical_name = primaryEnrol?.vertical_name ?? st.vertical_name ?? null;
+    // How many distinct verticals the student is enrolled across — lets the header add a concise
+    // "+N more" when a student spans multiple verticals rather than picking one silently.
+    st.admission_vertical_count = vertical_ids.length;
     const enrolmentIds = enrolments.map((e: any) => Number(e.id));
     let receipts: any[] = [];
     if (enrolmentIds.length) {
@@ -621,6 +637,59 @@ export class StudentService {
         },
       },
     };
+  }
+
+  /**
+   * dev/108 #2 — LEAD JOURNEY for the student profile.
+   *
+   * The student links to its originating lead via `lead_id` (046 dropped the NOT NULL — a
+   * directly-added student has NULL). This surfaces that lead's record + its journey (the
+   * activity timeline, follow-ups) so the "leads record here" the client asked for shows up
+   * as a tab in the student profile. Guarded by `student.read` at the controller — a user who
+   * can see the student can see where they came from, independent of `lead.read` scope.
+   *
+   * No originating lead → `{ lead: null, ... }` so the UI shows a clean empty state.
+   */
+  async leadJourney(id: number, scope: ResolvedScope) {
+    const student = await this.get(id, scope);            // scope + existence (throws 404)
+    const empty = { lead: null, activities: [], follow_ups: [] };
+    const leadId = (student as any).lead_id != null ? Number((student as any).lead_id) : null;
+    if (!leadId) return empty;
+    const lead = await this.db.one<any>(
+      `SELECT l.id, l.full_name, l.phone, l.email, l.status_id, l.created_at, l.updated_at,
+              l.is_red_flagged, l.paused, l.next_follow_up_at, l.last_activity_at,
+              l.branch_id, l.vertical_id, l.pipeline_id, l.campaign_id, l.source_id, l.stage_id, l.owner_id,
+              b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
+              c.name AS campaign_name, s.name AS source_name, st.name AS stage_name,
+              ms.name AS status_name, u.name AS owner_name, co.name AS course_name
+         FROM lead l
+         LEFT JOIN branch b   ON b.id = l.branch_id
+         LEFT JOIN vertical v ON v.id = l.vertical_id
+         LEFT JOIN pipeline p ON p.id = l.pipeline_id
+         LEFT JOIN campaign c ON c.id = l.campaign_id
+         LEFT JOIN source s   ON s.id = l.source_id
+         LEFT JOIN pipeline_stage st ON st.id = l.stage_id
+         LEFT JOIN m_status ms ON ms.id = l.status_id
+         LEFT JOIN m_course co ON co.id = l.course_id
+         LEFT JOIN "user" u   ON u.id = l.owner_id
+        WHERE l.id = $1::bigint`, [leadId]);
+    if (!lead) return empty;                              // lead was hard-deleted — clean empty state
+    lead.path = [lead.branch_name, lead.vertical_name, lead.pipeline_name, lead.campaign_name]
+      .filter(Boolean).join(' › ');
+    const activities = await this.db.query<any>(
+      `SELECT a.id, a.type, a.from_value, a.to_value, a.note, a.occurred_at, a.actor_name
+         FROM lead_activity a WHERE a.lead_id = $1::bigint
+        ORDER BY a.occurred_at DESC, a.id DESC LIMIT 200`, [leadId]);
+    const follow_ups = await this.db.query<any>(
+      `SELECT f.id, f.scheduled_at, f.completed_at, f.status, f.notes,
+              ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name
+         FROM follow_up f
+         LEFT JOIN m_followup_type ft ON ft.id = f.type_id
+         LEFT JOIN m_disposition d ON d.id = f.disposition_id
+         LEFT JOIN "user" u ON u.id = f.owner_id
+        WHERE f.lead_id = $1::bigint AND f.is_active AND f.deleted_at IS NULL
+        ORDER BY f.scheduled_at DESC`, [leadId]);
+    return { lead, activities, follow_ups };
   }
 
   /* -------------------------------------------------- BRANCH transfer ------ */

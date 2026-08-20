@@ -4652,6 +4652,8 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const canStatusManage = can('student.status_manage');
   const canApproveAdm = can('admission.approve');
   const journeyData = useFetch<any>(tab === 'admission' ? `/students/${student.id}/admission-journey` : null, [student.id, tab]);
+  // dev/108 #2 — the originating lead's record + journey (activity timeline / follow-ups).
+  const leadJourney = useFetch<any>(tab === 'leadjourney' ? `/students/${student.id}/lead-journey` : null, [student.id, tab]);
   const [admActionFor, setAdmActionFor] = useState<{ enrolment: any; action: string } | null>(null);
   const reloadJourney = () => { journeyData.reload(); loadProfile(); onChanged(); };
   const enrolData = useFetch<any>(tab === 'enrollments' ? `/students/${student.id}/enrolments` : null, [student.id, tab]);
@@ -4728,6 +4730,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
     ['education', 'Education', 'book'], ['academics', 'Academics', 'grid'], ['attendance', 'Attendance', 'check'],
     ['status', 'Status & LMS', 'flag'], ['enrollments', 'Course Enrollment', 'grid'], ['learning', 'Syllabus', 'book'],
     ['placements', 'Placements', 'target'],
+    ['leadjourney', 'Lead Journey', 'target'],
     ['admission', 'Admission Journey', 'check'],
     ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
   ];
@@ -4771,7 +4774,14 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               <span>{renderCell(studentStatusCell(full.status))}</span>
               <span className="sub" style={{ fontSize: 11 }}>· {LMS_HINT[statusMeta(full.status).lms]}</span>
             </div>
-            <div className="fbp-path">{[full.branch_name, full.vertical_name, full.course_name].filter(Boolean).join(' › ') || '—'}</div>
+            {/* dev/108 #1 — header shows the ADMISSION (converted) Branch › Vertical derived from
+                the student's enrolment(s), not the originating lead's stale branch/vertical. */}
+            <div className="fbp-path" data-testid="stu-admission-path">
+              {[full.admission_branch_name ?? full.branch_name, full.admission_vertical_name ?? full.vertical_name].filter(Boolean).join(' › ') || '—'}
+              {Number(full.admission_vertical_count ?? 0) > 1
+                ? <span className="sub" style={{ marginLeft: 6 }}>+{Number(full.admission_vertical_count) - 1} more vertical{Number(full.admission_vertical_count) - 1 === 1 ? '' : 's'}</span>
+                : null}
+            </div>
             <div className="fbp-tags">
               <span className="fbp-tag"><Ic k="book" />{activeCourses.length ? activeCourses.join(', ') : 'No course'}</span>
               <span className="fbp-tag"><Ic k="grid" />{ac?.current_batch?.name ?? full.batch_name ?? 'No batch'}</span>
@@ -5186,6 +5196,67 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
         </Section>
       )}
 
+      {tab === 'leadjourney' && (
+        <Section title="Lead Journey">
+          {leadJourney.loading ? <div className="sub">Loading…</div> : (() => {
+            const lj = leadJourney.data;
+            const lead = lj?.lead;
+            if (!lead) return <Empty t="No originating lead — student created directly." />;
+            const acts = (lj?.activities ?? []) as any[];
+            const fus = (lj?.follow_ups ?? []) as any[];
+            return (
+              <div data-testid="lead-journey">
+                <div className="notice" style={{ marginBottom: 10 }}>
+                  <Ic k="target" /><div>The originating lead this student was converted from — its record and full activity journey. This is the "leads record" carried over on conversion.</div>
+                </div>
+                <KV rows={[
+                  ['Lead', <span>{lead.full_name ?? '—'} <span className="sub mono">· #{lead.id}</span></span>],
+                  ['Phone', dash(lead.phone)],
+                  ['Email', dash(lead.email)],
+                  ['Path', dash(lead.path)],
+                  ['Source', dash(lead.source_name)],
+                  ['Campaign', dash(lead.campaign_name)],
+                  ['Stage', dash(lead.stage_name)],
+                  ['Status', dash(lead.status_name)],
+                  ['Course (as lead)', dash(lead.course_name)],
+                  ['Owner', dash(lead.owner_name)],
+                  ['Created', dmy(lead.created_at)],
+                  ['Last activity', lead.last_activity_at ? fmtDT(lead.last_activity_at) : '—'],
+                ]} />
+                <div className="sub" style={{ marginTop: 14, fontWeight: 600 }}>Activity Timeline</div>
+                {acts.length ? (
+                  <ul className="timeline" style={{ marginTop: 6 }}>
+                    {acts.map((a: any) => (
+                      <li key={a.id} style={{ marginBottom: 6 }} data-testid={`lj-act-${a.id}`}>
+                        <span className="bdg b-slate" style={{ marginRight: 6 }}>{a.type}</span>
+                        {a.note ? <span>{a.note}</span> : (a.from_value != null || a.to_value != null ? <span className="sub">{dash(a.from_value)} → {dash(a.to_value)}</span> : null)}
+                        <span className="sub mono" style={{ marginLeft: 8 }}>{fmtDT(a.occurred_at)}{a.actor_name ? ` · ${a.actor_name}` : ''}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <div className="sub" style={{ marginTop: 6 }}>No activity recorded on the lead.</div>}
+                <div className="sub" style={{ marginTop: 14, fontWeight: 600 }}>Follow-ups</div>
+                {fus.length ? (
+                  <table className="minitbl" style={{ marginTop: 6 }}><thead><tr>
+                    <th>Scheduled</th><th>Type</th><th>Disposition</th><th>Status</th><th>Owner</th><th>Notes</th>
+                  </tr></thead>
+                    <tbody>{fus.map((f: any) => (
+                      <tr key={f.id}>
+                        <td>{fmtDT(f.scheduled_at)}</td>
+                        <td>{dash(f.type_name)}</td>
+                        <td>{dash(f.disposition_name)}</td>
+                        <td>{dash(f.status)}</td>
+                        <td>{dash(f.owner_name)}</td>
+                        <td>{dash(f.notes)}</td>
+                      </tr>
+                    ))}</tbody></table>
+                ) : <div className="sub" style={{ marginTop: 6 }}>No follow-ups on the lead.</div>}
+              </div>
+            );
+          })()}
+        </Section>
+      )}
+
       {tab === 'admission' && (
         <Section title="Admission Journey">
           <div className="notice" style={{ marginBottom: 10 }}>
@@ -5287,11 +5358,13 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           <Section title="Fee Receipt Records">
             {fees?.receipts?.length ? (
               <table className="minitbl"><thead><tr>
-                <th>Receipt</th><th>Amount</th><th>Mode</th><th>Received</th><th>Branch &rsaquo; Vertical &rsaquo; Course</th><th>Actions</th>
+                <th>Receipt</th><th>Enrolment No</th><th>Amount</th><th>Mode</th><th>Received</th><th>Branch &rsaquo; Vertical &rsaquo; Course</th><th>Actions</th>
               </tr></thead>
                 <tbody>{fees.receipts.map((r: any) => (
                   <tr key={r.id}>
                     <td className="mono">{r.receipt_no}</td>
+                    {/* dev/108 #3 — the course-code enrolment number this receipt belongs to. */}
+                    <td className="mono" data-testid={`receipt-enrol-no-${r.id}`}>{r.enrolment_no ?? '—'}</td>
                     <td>{money(r.amount_minor)}</td>
                     <td>{r.mode}</td>
                     <td>{dmy(r.received_at)}</td>
