@@ -259,12 +259,20 @@ export function PlanCreateModal({ onClose, onSaved, enrolmentId }: { onClose: ()
 /* ==================================================================== */
 
 export function PlanDetailModal({ id, onClose, onChanged }: { id: number; onClose: () => void; onChanged: () => void }) {
-  const { data } = useFetch<any>(`/payment-plans/${id}`);
+  const { can } = useAuth();
+  const { data, reload } = useFetch<any>(`/payment-plans/${id}`);
   const pp = data;
+  // Per-installment Collect (dev/115): a Collect button on every outstanding installment opens
+  // the collect form prefilled with that installment's due; the payment targets it (oldest-due
+  // first thereafter). After collecting we refresh the schedule + balance and the parent dues.
+  const [collect, setCollect] = useState<{ enrolmentId: number; installmentId: number; amount: string } | null>(null);
+  const canCollect = can('fee.collect');
+  const refresh = () => { reload(); onChanged(); };
   return (
+    <>
     <div className="add-scrim">
-      <div className="add-modal" style={{ maxWidth: 760 }}>
-        <div className="ah"><h3><Ic k="rupee" />Plan — {pp?.enrolment_no || ''}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+      <div className="add-modal" style={{ maxWidth: 820 }}>
+        <div className="ah"><h3><Ic k="rupee" />View schedule — {pp?.enrolment_no || ''}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
         <div className="abody">
           {!pp ? <div className="fhint">Loading…</div> : (
             <>
@@ -275,7 +283,7 @@ export function PlanDetailModal({ id, onClose, onChanged }: { id: number; onClos
                 <div><span className="kl">Net fee</span><span className="kvv">{fmtINR(pp.net_fee_minor)}</span></div>
               </div>
               <TableCard title="Installment schedule" icon="list"
-                cols={['#', 'Due date', 'Amount', 'Paid', 'Outstanding', 'Status']}
+                cols={['#', 'Due date', 'Amount', 'Paid', 'Outstanding', 'Status', 'Collect']}
                 empty="No installments"
                 rows={(pp.installments ?? []).map((it: any): Cell[] => ([
                   String(it.seq_no),
@@ -284,14 +292,29 @@ export function PlanDetailModal({ id, onClose, onChanged }: { id: number; onClos
                   { mono: fmtINR(it.paid_minor) },
                   { mono: fmtINR(it.outstanding_minor) },
                   { b: INST_BADGE[it.effective_status] ?? [it.effective_status, 'b-gray'] },
+                  {
+                    node: (canCollect && Number(it.outstanding_minor) > 0 && it.effective_status !== 'waived')
+                      ? <button className="btn sm" onClick={() => setCollect({ enrolmentId: Number(pp.enrolment_id), installmentId: Number(it.id), amount: (Number(it.outstanding_minor) / 100).toFixed(2) })}><Ic k="rupee" />Collect</button>
+                      : <span className="sub">—</span>,
+                  },
                 ]))} />
-              <div className="fhint" style={{ marginTop: 8 }}>Collections recorded in Fee Collection are applied to these installments oldest-due first. Ageing is computed in IST on the Fee Dues screen.</div>
+              <div className="fhint" style={{ marginTop: 8 }}>Collect an installment above, or record a payment in Fee Collection — either way collections apply oldest-due first. Ageing is computed in IST on the Fee Dues screen.</div>
             </>
           )}
         </div>
         <div className="af"><button className="btn" onClick={onClose}>Close</button></div>
       </div>
     </div>
+    {collect && (
+      <CollectModal
+        enrolmentId={collect.enrolmentId}
+        installmentId={collect.installmentId}
+        defaultAmount={collect.amount}
+        onClose={() => setCollect(null)}
+        onSaved={() => { setCollect(null); refresh(); }}
+      />
+    )}
+    </>
   );
 }
 
@@ -408,11 +431,12 @@ export function FeeDuesScreen() {
           net_fee: (Number(r.net_fee_minor ?? r.amount_minor) / 100).toFixed(2),
           fee_plan: FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '',
           due_fee: (Number(r.outstanding_minor) / 100).toFixed(2),
+          balance: (Number(r.balance_minor ?? r.outstanding_minor) / 100).toFixed(2),
           status: r.course_status_label || r.course_status || '',
           ageing: (BUCKET_BADGE[r.bucket]?.[0]) ?? r.bucket, days_overdue: r.overdue_days,
           student: r.student_name, trainer: r.trainer_name || '', owner: r.owner_name || '', source: r.source,
         })))} onRefresh={after} />}
-        cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
+        cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Balance', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
         empty="No outstanding dues — every active enrolment is paid up."
         rows={rows.map((r): Cell[] => [
           { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div> : <div className="sub">Installment {r.seq_no}</div>}</div> },
@@ -426,6 +450,8 @@ export function FeeDuesScreen() {
           { mono: fmtINR(Number(r.net_fee_minor ?? r.amount_minor)) },
           FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '—',
           { mono: fmtINR(r.outstanding_minor) },
+          // Balance = enrolment-level Net − everything receipted (the true outstanding).
+          { mono: fmtINR(r.balance_minor ?? r.outstanding_minor) },
           { node: <span className="bdg b-gray">{r.course_status_label || r.course_status || '—'}</span> },
           { b: BUCKET_BADGE[r.bucket] ?? [r.bucket, 'b-gray'] },
           Number(r.overdue_days) > 0 ? String(r.overdue_days) : '—',
@@ -434,7 +460,7 @@ export function FeeDuesScreen() {
           {
             node: <RowBtns items={[
               ...(can('payment_plan.create') ? [['cfg', 'Fee setup (payment plan)', () => setPlanFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
-              ...(r.plan_id ? [['pencil', 'Edit plan / schedule', () => setPlanEditFor(Number(r.plan_id))] as [string, string, () => void]] : []),
+              ...(r.plan_id ? [['eye', 'View schedule', () => setPlanEditFor(Number(r.plan_id))] as [string, string, () => void]] : []),
               ['bell', 'Send fee reminder', () => void remind(r)],
               ...(can('fee.collect') ? [['rupee', 'Collect fee', () => setCollectFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
               ['doc', 'Download latest receipt', () => void downloadReceipt(r)],

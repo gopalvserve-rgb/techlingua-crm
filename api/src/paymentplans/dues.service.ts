@@ -74,6 +74,12 @@ export class DuesService {
              e.net_fee_minor AS net_fee_minor, e.payment_plan AS fee_plan,
              i.due_date, i.amount_minor, i.paid_minor,
              (i.amount_minor - i.paid_minor) AS outstanding_minor,
+             -- enrolment-level Balance (Net − everything receipted on the enrolment), so the
+             -- Fee Management "Balance" column is the true outstanding, not just this installment's.
+             COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
+                        WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0) AS enrolment_paid_minor,
+             (e.net_fee_minor - COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
+                        WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0)) AS balance_minor,
              ((SELECT d FROM today) - i.due_date) AS days_overdue
         FROM installment i
         JOIN payment_plan pp ON pp.id = i.plan_id AND pp.status = 'active' AND pp.deleted_at IS NULL
@@ -111,6 +117,8 @@ export class DuesService {
              e.net_fee_minor AS amount_minor,
              COALESCE(pr.paid_minor, 0) AS paid_minor,
              (e.net_fee_minor - COALESCE(pr.paid_minor, 0)) AS outstanding_minor,
+             COALESCE(pr.paid_minor, 0) AS enrolment_paid_minor,
+             (e.net_fee_minor - COALESCE(pr.paid_minor, 0)) AS balance_minor,
              ((SELECT d FROM today) - COALESCE(e.start_date, e.created_at::date)) AS days_overdue
         FROM enrolment e
         LEFT JOIN lead l ON l.id = e.lead_id

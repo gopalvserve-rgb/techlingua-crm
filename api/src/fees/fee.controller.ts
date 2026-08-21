@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
@@ -61,6 +61,14 @@ export class FeeController {
   @RequirePermission('fee.collect')
   collect(@Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     return this.svc.collect(dto, me, scope);
+  }
+
+  /** Correct a recorded payment (amount / mode / reference / date). Re-runs the installment
+   *  allocation and writes an audit_log old→new entry. Permission-gated + scope-enforced. */
+  @Patch('receipts/:id')
+  @RequirePermission('fee.collect')
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.update(id, dto, me, scope);
   }
 
   @Delete('receipts/:id')

@@ -1196,13 +1196,13 @@ export function CounsellorPerformance() {
 /*  FEE COLLECTION — LITE                                                */
 /* ==================================================================== */
 
-export function CollectModal({ enrolmentId, onClose, onSaved }: {
-  enrolmentId?: number; onClose: () => void; onSaved?: () => void;
+export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClose, onSaved }: {
+  enrolmentId?: number; installmentId?: number; defaultAmount?: string; onClose: () => void; onSaved?: () => void;
 }) {
   const enrolments = useFetch<any[]>('/enrolments?status=active');
   const meta = useFetch<any>('/fees/meta');
   const [enrolment, setEnrolment] = useState<string>(String(enrolmentId ?? ''));
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(defaultAmount ?? '');
   const [mode, setMode] = useState('cash');
   const [reference, setReference] = useState('');
   const [receivedAt, setReceivedAt] = useState(new Date().toISOString().slice(0, 10));
@@ -1224,6 +1224,8 @@ export function CollectModal({ enrolmentId, onClose, onSaved }: {
         reference: reference || null,
         received_at: receivedAt ? new Date(`${receivedAt}T${new Date().toISOString().slice(11, 19)}Z`).toISOString() : undefined,
         note: note || null,
+        // dev/115 — a per-installment Collect targets THIS installment first, overflow oldest-due.
+        installment_id: installmentId || undefined,
       });
       toast(`Receipt ${r.receipt_no} — ${r.fully_paid ? 'paid in full' : `${fmtINR(r.balance_minor)} outstanding`}`);
       onSaved?.(); onClose();
@@ -1241,7 +1243,7 @@ export function CollectModal({ enrolmentId, onClose, onSaved }: {
           <div className="form-grid">
             <div className="fld span2">
               <label htmlFor="c-enrolment">Enrolment <span className="star">*</span></label>
-              <select id="c-enrolment" className="ainp" value={enrolment} onChange={(e) => setEnrolment(e.target.value)}>
+              <select id="c-enrolment" className="ainp" value={enrolment} onChange={(e) => setEnrolment(e.target.value)} disabled={!!installmentId}>
                 <option value="">—</option>
                 {list.map((e) => (
                   <option key={e.id} value={e.id}>
@@ -1348,6 +1350,7 @@ export function FeeCollection() {
   const rows = data ?? [];
   const s = summary.data;
   const [viewRec, setViewRec] = useState<any | null>(null);
+  const [editRec, setEditRec] = useState<any | null>(null);
   const bump = () => { reload(); summary.reload(); };
 
   const del = async (r: any) => {
@@ -1403,6 +1406,7 @@ export function FeeCollection() {
           {
             node: <RowBtns items={[
               ['eye', 'View receipt', () => setViewRec(r)],
+              ...(can('fee.collect') ? [['pencil', 'Edit payment', () => setEditRec(r)] as [string, string, () => void]] : []),
               ['doc', 'Download receipt PDF', () => openPdf(`/fees/receipts/${r.id}/pdf`)],
               ...(can('fee.delete') ? [['trash', 'Delete', () => void del(r)] as [string, string, () => void]] : []),
             ]} />,
@@ -1411,7 +1415,89 @@ export function FeeCollection() {
       />
       {modal && <CollectModal onClose={() => setModal(false)} onSaved={bump} />}
       {viewRec && <ReceiptViewModal r={viewRec} onClose={() => setViewRec(null)} />}
+      {editRec && <EditPaymentModal r={editRec} onClose={() => setEditRec(null)} onSaved={bump} />}
     </>
+  );
+}
+
+/**
+ * EDIT PAYMENT (dev/115) — correct a recorded receipt whose amount / mode / reference / date
+ * was entered wrongly. PATCH /fees/receipts/:id reverses + re-applies the installment allocation
+ * (so the schedule + balance stay exact) and writes an audit_log old→new entry on the server.
+ * Permission-gated (fee.collect) — the caller only reaches this when `can('fee.collect')`.
+ */
+export function EditPaymentModal({ r, onClose, onSaved }: { r: any; onClose: () => void; onSaved?: () => void }) {
+  const meta = useFetch<any>('/fees/meta');
+  const [amount, setAmount] = useState((Number(r.amount_minor) / 100).toFixed(2));
+  const [mode, setMode] = useState<string>(r.mode);
+  const [reference, setReference] = useState<string>(r.reference || '');
+  const [receivedAt, setReceivedAt] = useState<string>(new Date(r.received_at).toISOString().slice(0, 10));
+  const [note, setNote] = useState<string>(r.note || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const needsRef = ['cheque', 'upi', 'online'].includes(mode);
+
+  const save = async () => {
+    setErr(''); setBusy(true);
+    try {
+      const res = await api.patch<any>(`/fees/receipts/${r.id}`, {
+        amount,
+        mode,
+        reference: reference || null,
+        received_at: receivedAt ? new Date(`${receivedAt}T${new Date().toISOString().slice(11, 19)}Z`).toISOString() : undefined,
+        note: note || null,
+      });
+      toast(`Receipt ${res.receipt_no} updated — ${res.fully_paid ? 'paid in full' : `${fmtINR(res.balance_minor)} outstanding`}`);
+      onSaved?.(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 620 }}>
+        <div className="ah">
+          <h3><Ic k="pencil" />Edit payment — {r.receipt_no}</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          <div className="notice" style={{ marginBottom: 10 }}><Ic k="shield" /><div>Correcting a receipt re-computes the fee allocation and balance, and is written to the audit log (old → new). This is a correction, not a refund.</div></div>
+          <div className="form-grid">
+            <div className="fld">
+              <label htmlFor="e-amount">Amount (₹) <span className="star">*</span></label>
+              <input id="e-amount" className="ainp" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+              <div className="fhint">More than the outstanding (excluding this receipt) is refused.</div>
+            </div>
+            <div className="fld">
+              <label htmlFor="e-mode">Mode <span className="star">*</span></label>
+              <select id="e-mode" className="ainp" value={mode} onChange={(e) => setMode(e.target.value)}>
+                {(meta.data?.modes ?? [
+                  { key: 'cash', label: 'Cash' }, { key: 'upi', label: 'UPI' }, { key: 'card', label: 'Card' },
+                  { key: 'cheque', label: 'Cheque' }, { key: 'online', label: 'Online transfer' },
+                ]).map((m: any) => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="e-ref">Reference{needsRef ? <span className="star">*</span> : null}</label>
+              <input id="e-ref" className="ainp" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / cheque number" />
+              {needsRef ? <div className="fhint">Required for {mode}.</div> : null}
+            </div>
+            <div className="fld">
+              <label htmlFor="e-date">Received on</label>
+              <input id="e-date" className="ainp" type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} />
+            </div>
+            <div className="fld span2">
+              <label htmlFor="e-note">Note</label>
+              <input id="e-note" className="ainp" value={note} onChange={(e) => setNote(e.target.value)} />
+            </div>
+          </div>
+          {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save changes'}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

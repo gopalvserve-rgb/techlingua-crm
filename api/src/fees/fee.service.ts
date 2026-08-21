@@ -388,6 +388,104 @@ export class FeeService {
   }
 
   /**
+   * UPDATE (correct) a recorded payment — the clerk typed the wrong AMOUNT / MODE / REFERENCE
+   * / DATE. This is NOT a refund (no money moves); it RE-STATES one receipt and re-computes the
+   * installment allocation it backs, so the schedule + enrolment balance stay exact. Every
+   * change is written to audit_log (before → after), so a corrected receipt is never a silent edit.
+   *
+   * The over-collection guard still holds: THIS receipt is first reversed out of the enrolment's
+   * paid total, so the new amount is checked against the balance WITHOUT it — a ₹1,000 receipt
+   * can be raised to the full outstanding, but never beyond it. Permission-gated at the
+   * controller (`fee.collect`) and scope-enforced (the initial `get` 404s outside your access).
+   */
+  async update(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const existing = await this.get(id, scope); // scope-enforced; 404 outside access
+    if (existing.gateway || existing.gateway_payment_id) {
+      throw new BadRequestException('A gateway-captured (Razorpay) payment cannot be edited by hand.');
+    }
+
+    let amount_minor: number;
+    try {
+      amount_minor = dto?.amount_minor !== undefined && dto?.amount_minor !== null
+        ? Math.trunc(Number(dto.amount_minor))
+        : rupeesToMinor(dto?.amount);
+    } catch (e) { throw new BadRequestException(`Amount: ${(e as Error).message}`); }
+    if (!Number.isFinite(amount_minor) || amount_minor <= 0) throw new BadRequestException('The amount must be more than zero.');
+
+    const mode = String(dto?.mode ?? existing.mode);
+    if (!(PAYMENT_MODES as readonly string[]).includes(mode)) {
+      throw new BadRequestException(`Choose a payment mode: ${PAYMENT_MODES.map((m) => MODE_LABELS[m]).join(', ')}.`);
+    }
+    const reference = dto?.reference !== undefined
+      ? (dto.reference ? String(dto.reference).trim().slice(0, 64) : null)
+      : (existing.reference ?? null);
+    if (REFERENCE_REQUIRED.includes(mode) && !reference) {
+      throw new BadRequestException(`A ${MODE_LABELS[mode]} payment needs a reference (UTR / cheque number) — without it the receipt cannot be reconciled.`);
+    }
+    if (dto?.gateway || dto?.gateway_payment_id) {
+      throw new BadRequestException('Online payment capture (Razorpay) is recorded automatically by the payment webhook — it cannot be entered by hand here.');
+    }
+    const receivedAt = dto?.received_at ? new Date(String(dto.received_at)) : new Date(existing.received_at);
+    if (Number.isNaN(receivedAt.getTime())) throw new BadRequestException('The received date is not a date.');
+    if (receivedAt.getTime() > Date.now() + 60_000) throw new BadRequestException('A payment cannot be received in the future.');
+    const note = dto?.note !== undefined ? (dto.note ?? null) : (existing.note ?? null);
+
+    const orgId = await this.orgId();
+    const enrolmentId = Number(existing.enrolment_id);
+    const before = {
+      amount_minor: Number(existing.amount_minor), mode: existing.mode,
+      reference: existing.reference ?? null, received_at: existing.received_at, note: existing.note ?? null,
+    };
+
+    const out = await this.db.tx(async (c) => {
+      // LOCK the enrolment — the balance check must serialise with concurrent collects.
+      const lk = await c.query<any>(
+        `SELECT e.id, e.enrolment_no, e.net_fee_minor, e.lead_id,
+                COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
+                           WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0) AS paid_minor
+           FROM enrolment e WHERE e.id = $1::bigint FOR UPDATE`,
+        [enrolmentId],
+      );
+      const e = lk.rows[0];
+      if (!e) throw new NotFoundException('Enrolment not found');
+      const net = Number(e.net_fee_minor);
+      const paidWithout = Number(e.paid_minor) - Number(existing.amount_minor); // exclude THIS receipt
+      const availBalance = net - paidWithout;
+      if (amount_minor > availBalance) {
+        throw new BadRequestException(
+          `That is more than the outstanding balance. Net fee ${formatINR(net)}, paid excluding this receipt ${formatINR(paidWithout)}, room ${formatINR(availBalance)}. Enter ${formatINR(availBalance)} or less.`,
+        );
+      }
+      // reverse this receipt's installment allocations, RE-STATE the receipt, then re-apply.
+      if (this.plans) await this.plans.reverseReceipt(c, id);
+      await c.query(
+        `UPDATE fee_receipt SET amount_minor = $2::bigint, mode = $3::varchar, reference = $4,
+                received_at = $5::timestamptz, note = $6 WHERE id = $1::bigint`,
+        [id, amount_minor, mode, reference, receivedAt.toISOString(), note],
+      );
+      if (this.plans) await this.plans.applyReceipt(c, id, enrolmentId, amount_minor, dto?.installment_id ? Number(dto.installment_id) : null);
+      // AUDIT — old → new (append-only, inside the same tx so it commits with the correction).
+      const after = { amount_minor, mode, reference, received_at: receivedAt.toISOString(), note };
+      await c.query(
+        `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+         VALUES ($1, $2, 'fee_receipt', $3::bigint, 'update', $4, $5)`,
+        [orgId, me.id, id, JSON.stringify(before), JSON.stringify(after)],
+      );
+      await c.query(
+        `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
+         SELECT l.id, l.org_id, l.branch_id, 'note', $2, $3::bigint FROM lead l WHERE l.id = $1::bigint`,
+        [Number(e.lead_id), `Receipt ${existing.receipt_no} corrected: ${formatINR(before.amount_minor)} → ${formatINR(amount_minor)} (${MODE_LABELS[mode]})`, me.id],
+      );
+      const newPaid = paidWithout + amount_minor;
+      return {
+        id, receipt_no: existing.receipt_no, enrolment_id: enrolmentId,
+        amount_minor, paid_minor: newPaid, balance_minor: net - newPaid, fully_paid: net - newPaid === 0,
+      };
+    });
+    return out;
+  }
+
+  /**
    * DELETE a receipt. Soft-deleted like everything else, so it lands in Deleted Items and
    * the money is recoverable. NOT a refund — a refund moves money and is Phase 3; this is
    * "the clerk typed the wrong figure".
