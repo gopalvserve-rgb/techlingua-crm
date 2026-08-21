@@ -264,11 +264,17 @@ export class FollowUpsController {
       from: first(q.from) || undefined, to: first(q.to) || undefined,
       // Follow-up date filter (client #3) — preset window on the DUE date + optional custom range.
       followup: (first(q.followup) as any) || undefined, fu_from: first(q.fu_from) || undefined, fu_to: first(q.fu_to) || undefined,
+      // Today's Follow-ups KPI card → its filtered list (client Aug 2026).
+      bucket: first(q.bucket) || undefined,
     }, u.id);
   }
 
   @Get('summary') @RequirePermission('followup.read')
   summary(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U) { return this.fu.summary(s, u.id); }
+
+  // 8-bucket KPI strip for the Today's Follow-ups screen (client Aug 2026). Scope-enforced, IST.
+  @Get('stats') @RequirePermission('followup.read')
+  stats(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U) { return this.fu.stats(s, u.id); }
 
   @Post() @RequirePermission('followup.create')
   create(@Body() dto: CreateFollowUpDto, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {

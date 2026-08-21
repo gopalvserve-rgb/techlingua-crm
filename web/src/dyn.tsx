@@ -692,38 +692,64 @@ function TodayFollowups() {
   // DEF-05 — when a top-bar shortcut re-navigates here while this screen is already open
   // (Missed -> Upcoming/Due Today), the query param changes but the screen does not remount;
   // re-seed the preset from the new query so the chip + header follow the shortcut.
-  useReseedOnSearch(search, (s) => setFu(seedTodayFollowup(s)));
+  useReseedOnSearch(search, (s) => { setFu(seedTodayFollowup(s)); setBucket(undefined); });
+  // Client Aug 2026 — the KPI cards drive a bucket-scoped list (one of FOLLOWUP_BUCKETS). When a
+  // card is active it overrides the preset filter; picking from the preset control clears it.
+  const [bucket, setBucket] = useState<string | undefined>(undefined);
   const rq = new URLSearchParams({ limit: '100' });
-  if (fu.followup) rq.set('followup', fu.followup);
-  if (fu.fu_from) rq.set('fu_from', fu.fu_from);
-  if (fu.fu_to) rq.set('fu_to', fu.fu_to);
-  const fuKey = `${fu.followup ?? ''}~${fu.fu_from ?? ''}~${fu.fu_to ?? ''}`;
-  const fuLabel = FU_PRESETS.find((p) => p.key === fu.followup)?.label
-    ?? (fu.followup === 'custom' ? 'Custom range' : 'All follow-ups');
-  const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
+  if (bucket) {
+    rq.set('bucket', bucket);
+  } else {
+    if (fu.followup) rq.set('followup', fu.followup);
+    if (fu.fu_from) rq.set('fu_from', fu.fu_from);
+    if (fu.fu_to) rq.set('fu_to', fu.fu_to);
+  }
+  const fuKey = `${bucket ?? ''}~${fu.followup ?? ''}~${fu.fu_from ?? ''}~${fu.fu_to ?? ''}`;
+  const fuLabel = bucket
+    ? (FU_BUCKETS.find((b) => b.key === bucket)?.lab ?? 'Follow-ups')
+    : (FU_PRESETS.find((p) => p.key === fu.followup)?.label
+      ?? (fu.followup === 'custom' ? 'Custom range' : 'All follow-ups'));
+  const stats = useFetch<any>('/follow-ups/stats', [refreshTick]);
   const list = useFetch<any[]>(`/follow-ups?${rq.toString()}`, [fuKey, refreshTick]);
+  const st = stats.data ?? {};
   return (
     <>
+      {/* Client Aug 2026 — 8 KPI stat cards; each shows its count + is clickable to open the
+          matching filtered follow-up list (scope-respecting, IST) below. */}
+      <Kpis cols={4} items={FU_BUCKETS.map((b) => ({
+        lab: b.lab, val: String(st[b.key] ?? 0), ic: b.ic,
+        tone: ((b.key === 'overdue' || b.key === 'unreachable') && Number(st[b.key] ?? 0) > 0 ? 'down' : 'flat') as 'down' | 'flat',
+        onClick: () => { setBucket(b.key); setFu({}); },
+        navLabel: `${b.lab}: ${st[b.key] ?? 0}. Open the ${b.lab} follow-up list`,
+      }))} />
       <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <FollowupFilter value={fu} onChange={setFu} allowNoFollowup={false} idPrefix="today-fu" />
+        <FollowupFilter value={fu} onChange={(v) => { setFu(v); setBucket(undefined); }} allowNoFollowup={false} idPrefix="today-fu" />
+        {bucket && <button className="btn ghost" onClick={() => setBucket(undefined)}>Clear card filter</button>}
       </div>
-      <Kpis items={[
-        { lab: 'Due today', val: String(sum.data?.due_today ?? '0'), ic: 'clock' },
-        { lab: 'Overdue', val: String(sum.data?.overdue ?? '0'), ic: 'clock', tone: sum.data?.overdue > 0 ? 'down' : 'flat' },
-        { lab: 'Done today', val: String(sum.data?.done_today ?? '0'), ic: 'check' },
-        { lab: 'No-shows', val: '0', ic: 'bolt' },
-      ]} />
       {/* #14 — actionable: open the lead, mark done (confirm), overdue highlighted red. */}
       <div className="card">
         <div className="card-head">
           <h3><Ic k="clock" />{fuLabel}</h3>
-          <span className="more">{sum.data?.due_today ?? 0} due today · {sum.data?.overdue ?? 0} overdue</span>
+          <span className="more">{st.due_today ?? 0} due today · {st.overdue ?? 0} overdue</span>
         </div>
         <FollowupRows rows={list.data ?? []} onChanged={bump} empty={`No follow-ups for \u201c${fuLabel}\u201d`} />
       </div>
     </>
   );
 }
+
+/** The 8 Today's Follow-ups KPI cards (client Aug 2026). `key` matches the API bucket + the
+ *  /follow-ups?bucket=\u2026 list filter, so each card opens exactly its own list. */
+const FU_BUCKETS: Array<{ key: string; lab: string; ic: string }> = [
+  { key: 'overdue', lab: 'Overdue', ic: 'clock' },
+  { key: 'due_today', lab: 'Due Today', ic: 'clock' },
+  { key: 'next7', lab: 'Next 7 Days', ic: 'cal' },
+  { key: 'no_shows', lab: 'No-Shows', ic: 'bolt' },
+  { key: 'done_today', lab: 'Done Today', ic: 'check' },
+  { key: 'rescheduled', lab: 'Rescheduled', ic: 'cal' },
+  { key: 'hot_leads', lab: 'Hot Leads', ic: 'leads' },
+  { key: 'unreachable', lab: 'Unreachable', ic: 'bolt' },
+];
 
 /**
  * QUICK STATS — with the CUSTOM DATE RANGE the client asked for explicitly, now on the SHARED
@@ -959,14 +985,9 @@ function QuickContact() {
               <PhoneInput value={whatsapp} onChange={setWhatsapp} placeholder="WhatsApp Number" /></div>
             <div className="fld span2"><label>Email</label><input className="ainp" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           </div>
-          <div className="sechead">Custom Contact Property</div>
-          <div className="form-grid" style={{ padding: 0 }}>
-            <div className="fld"><label>Training Mode <span className="star">*</span></label>
-              <select className="ainp"><option value="">Select…</option><option>Online</option><option>Offline</option><option>Hybrid</option><option>Bootcamp</option></select></div>
-            <div className="fld"><label>Category</label><input className="ainp" placeholder="category" /></div>
-            <div className="fld"><label>Remarks</label><input className="ainp" placeholder="Remarks" /></div>
-            <div className="fld"><label>Course</label><input className="ainp" placeholder="course" /></div>
-          </div>
+          {/* Client Aug 2026 — the "Custom Contact Property" columns (Training Mode / Category /
+              Remarks / Course) were removed from Quick Contact; only the core contact fields
+              stay here. Those attributes are captured on the full Add Lead form instead. */}
         </div>
         <div className="stack">
           <div className="card"><div className="card-head"><h3><Ic k="bolt" />Campaigns</h3></div>
@@ -990,9 +1011,14 @@ function QuickContact() {
             </div></div>
         </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginTop: 18 }}>
         <button className="btn primary" style={{ padding: '11px 44px' }} onClick={search} disabled={busy}>
           <Ic k="leads" />Search
+        </button>
+        {/* Client Aug 2026 — a prominent Add lead button on Quick Contact opens the full
+            Add Lead flow directly (no need to search first). */}
+        <button className="btn" data-testid="qc-add-lead" style={{ padding: '11px 44px' }} onClick={() => openAdd('dash.quickcontact')}>
+          <Ic k="plus" />Add lead
         </button>
       </div>
       {results !== null && (
@@ -1695,7 +1721,10 @@ function Followups() {
           onChange={(v) => setF((x) => ({ ...x, statuses: v }))} />
         <DateRange value={{ from: f.from, to: f.to }} idPrefix="fu-dr"
           onChange={(v) => setF((x) => ({ ...x, from: v.from, to: v.to }))} />
+        {/* Client Aug 2026 — the Follow-up preset filter is now a single ROW OF BUTTONS
+            (segmented toggle group) instead of a dropdown; same emitted params + logic. */}
         <FollowupFilter value={{ followup: f.followup, fu_from: f.fu_from, fu_to: f.fu_to }} allowNoFollowup={false}
+          variant="buttons"
           onChange={(v) => setF((x) => ({ ...x, followup: v.followup, fu_from: v.fu_from, fu_to: v.fu_to }))}
           idPrefix="fu-preset" />
       </div>
@@ -1925,19 +1954,25 @@ function Branches() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
+  const { scope: gScope } = useScope();
   const [inc, setInc] = useState(false);
   // UAT-R3 #19 — Branch list filters: search on name/code (+ status via inc).
+  // Client Aug 2026 — a Vertical multi-select rolls the branch list by vertical: a branch shows
+  // only if it owns one of the picked verticals (a branch HAS verticals under it). Seeded from
+  // the global top-bar scope so it lands pre-narrowed. Applied client-side over ref.verticals.
   const [q, setQ] = useState('');
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
   const bparams = new URLSearchParams();
   if (inc) bparams.set('include_inactive', '1');
   if (q.trim()) bparams.set('q', q.trim());
   const list = useFetch<any[]>(`/branches${bparams.toString() ? `?${bparams}` : ''}`, [refreshTick, bparams.toString()]);
-  const rows = list.data ?? [];
+  const vBranchIds = new Set(ref.verticals.filter((v) => fVerticals.includes(Number(v.id))).map((v) => Number(v.branch_id)));
+  const rows = (list.data ?? []).filter((b: any) => !fVerticals.length || vBranchIds.has(Number(b.id)));
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('branch.update');
   const del = useDelete('Branch', '/branches', () => { list.reload(); ref.reload(); bump(); });
-  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdIds = rows.map((r: any) => Number(r.id));
   const _bdSel = useTableSelect(_bdIds);
   const _bd = useBulkDelete('Branch', '/branches/bulk-delete/impact', '/branches/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
@@ -1959,12 +1994,13 @@ function Branches() {
   return (
     <>
       <Blocks blocks={[{ type: 'tree', title: 'Hierarchy', nodes }]} />
-      <div className="filters">
+      <div className="filters" style={{ flexWrap: 'wrap', gap: 8 }}>
         <SearchChip q={q} setQ={setQ} ph="Search branch name / code\u2026" />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={ref.verticals} onChange={setFVerticals} />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Branch" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard fill title="Branches" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('branches.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
+      <TableCard fill title="Branches" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('branches.csv', rows)} onRefresh={() => list.reload()} />} cols={['Branch', 'Code', 'City', 'Verticals', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((b) => [
           { node: <span className="nm">{b.name}</span> } as Cell,

@@ -66,3 +66,39 @@ describe('FollowupFilter — dropdown with All Follow-up', () => {
     expect(FU_PRESETS.map((p) => p.key)).toEqual(['no_followup', 'missed', 'today', 'tomorrow', 'next7', 'next30']);
   });
 });
+
+/**
+ * BUTTONS variant (client Aug 2026) — the Follow-ups module renders the same presets as a
+ * single ROW OF BUTTONS (segmented toggle group) instead of a dropdown, emitting identical params.
+ */
+describe('FollowupFilter — buttons variant', () => {
+  const btns = () => screen.getAllByRole('button').map((b) => b.textContent);
+
+  it('renders a button per option (no <select>) in a single row', () => {
+    render(<FollowupFilter value={{}} onChange={() => {}} allowNoFollowup={false} variant="buttons" />);
+    expect(screen.queryByRole('combobox')).toBeNull();   // no <select> in the buttons variant
+    expect(btns()).toEqual([FU_ALL_LABEL, 'Missed', 'Today', 'Tomorrow', 'Next 7 Days', 'Next 30 Days', 'Custom']);
+  });
+
+  it('the active preset button is pressed and clicking one emits { followup: key }', () => {
+    const onChange = vi.fn();
+    render(<FollowupFilter value={{ followup: 'today' }} onChange={onChange} allowNoFollowup={false} variant="buttons" />);
+    const today = screen.getByRole('button', { name: 'Today' });
+    expect(today.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Next 7 Days' }));
+    expect(onChange).toHaveBeenCalledWith({ followup: 'next7' });
+  });
+
+  it('All Follow-up button clears the filter', () => {
+    const onChange = vi.fn();
+    render(<FollowupFilter value={{ followup: 'missed' }} onChange={onChange} allowNoFollowup={false} variant="buttons" />);
+    fireEvent.click(screen.getByRole('button', { name: FU_ALL_LABEL }));
+    expect(onChange).toHaveBeenCalledWith({});
+  });
+
+  it('Custom button reveals the From/To date inputs', () => {
+    render(<FollowupFilter value={{ followup: 'custom' }} onChange={() => {}} allowNoFollowup={false} variant="buttons" />);
+    expect(screen.getByLabelText('From')).toBeTruthy();
+    expect(screen.getByLabelText('To')).toBeTruthy();
+  });
+});

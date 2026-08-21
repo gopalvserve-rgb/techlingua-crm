@@ -50,13 +50,16 @@ export const FU_ALL_LABEL = 'All Follow-up';
  * meaningful — All Follow-up + the rest remain.
  */
 export function FollowupFilter({
-  value, onChange, allowNoFollowup = true, idPrefix = 'fu', style,
+  value, onChange, allowNoFollowup = true, idPrefix = 'fu', style, variant = 'dropdown',
 }: {
   value: FollowupValue;
   onChange: (v: FollowupValue) => void;
   allowNoFollowup?: boolean;
   idPrefix?: string;
   style?: React.CSSProperties;
+  /** Client Aug 2026 — the Follow-ups module shows these presets as a single ROW OF BUTTONS
+   *  (a segmented toggle group) instead of a dropdown. Same emitted params either way. */
+  variant?: 'dropdown' | 'buttons';
 }) {
   const active = value.followup || '';
   const presets = FU_PRESETS.filter((p) => allowNoFollowup || p.key !== 'no_followup');
@@ -67,6 +70,35 @@ export function FollowupFilter({
   };
   const setCustom = (k: 'fu_from' | 'fu_to', val: string) =>
     onChange({ followup: 'custom', fu_from: value.fu_from, fu_to: value.fu_to, [k]: val || undefined });
+
+  // BUTTONS variant — a segmented `.seltabs` group, one button per option in a single row.
+  if (variant === 'buttons') {
+    return (
+      <div className="fchip fu-btns" style={style} data-testid="followup-filter">
+        <Ic k="cal" />
+        <span className="dr-lbl">Follow-up</span>
+        <div className="seltabs fu-seltabs" role="group" aria-label="Follow-up filter" style={{ margin: 0 }}>
+          <button type="button" className={!active ? 'on' : ''} aria-pressed={!active} onClick={() => select('')}>{FU_ALL_LABEL}</button>
+          {presets.map((p) => (
+            <button type="button" key={p.key} className={active === p.key ? 'on' : ''}
+              aria-pressed={active === p.key} onClick={() => select(p.key)}>{p.label}</button>
+          ))}
+          <button type="button" className={active === 'custom' ? 'on' : ''}
+            aria-pressed={active === 'custom'} onClick={() => select('custom')}>Custom</button>
+        </div>
+        {active === 'custom' && (
+          <span className="fu-custom">
+            <label htmlFor={`${idPrefix}-from`} className="dr-lbl">From</label>
+            <input id={`${idPrefix}-from`} type="date" className="ainp dr-inp"
+              value={value.fu_from ?? ''} onChange={(e) => setCustom('fu_from', e.target.value)} />
+            <label htmlFor={`${idPrefix}-to`} className="dr-lbl">To</label>
+            <input id={`${idPrefix}-to`} type="date" className="ainp dr-inp"
+              value={value.fu_to ?? ''} onChange={(e) => setCustom('fu_to', e.target.value)} />
+          </span>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="fchip fu-drop" style={style} data-testid="followup-filter">

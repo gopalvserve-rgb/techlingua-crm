@@ -29,6 +29,40 @@ export interface FollowUpFilters {
    *  plus an optional custom range (fu_from/fu_to) used when followup='custom'. */
   followup?: FollowupPreset;
   fu_from?: string; fu_to?: string;
+  /** Today's Follow-ups KPI bucket (client Aug 2026) — one of FOLLOWUP_BUCKETS. Applies the
+   *  SAME predicate the /follow-ups/stats card counts use, so a card opens exactly its list. */
+  bucket?: string;
+}
+
+/**
+ * Today's Follow-ups KPI buckets (client Aug 2026). ONE definition drives both the
+ * /follow-ups/stats counts and the /follow-ups?bucket=… list filter, so every card's number
+ * equals the length of the list it opens. All windows are IST calendar days.
+ *   overdue · due_today · next7 · no_shows · done_today · rescheduled · hot_leads · unreachable
+ * The disposition-driven buckets (no_shows / rescheduled / unreachable) match on the disposition
+ * NAME (ILIKE) so any client-defined disposition with that wording rolls into the right bucket.
+ */
+export const FOLLOWUP_BUCKETS = [
+  'overdue', 'due_today', 'next7', 'no_shows', 'done_today', 'rescheduled', 'hot_leads', 'unreachable',
+] as const;
+export type FollowupBucket = (typeof FOLLOWUP_BUCKETS)[number];
+
+/** The SQL predicate for a KPI bucket (no bind params — literal windows + ILIKE literals).
+ *  Assumes the query joins follow_up f, lead l and m_disposition d (LEFT). */
+export function followupBucketSql(bucket: string): string | null {
+  const ist = (col: string) => `(${col} AT TIME ZONE 'Asia/Kolkata')::date`;
+  const today = `(now() AT TIME ZONE 'Asia/Kolkata')::date`;
+  switch (bucket) {
+    case 'overdue': return `f.status = 'pending' AND ${ist('f.scheduled_at')} < ${today}`;
+    case 'due_today': return `f.status = 'pending' AND ${ist('f.scheduled_at')} = ${today}`;
+    case 'next7': return `f.status = 'pending' AND ${ist('f.scheduled_at')} BETWEEN ${today} AND ${today} + 7`;
+    case 'no_shows': return `(d.name ILIKE '%no show%' OR d.name ILIKE '%no-show%' OR d.name ILIKE '%noshow%')`;
+    case 'done_today': return `f.status = 'done' AND ${ist('f.completed_at')} = ${today}`;
+    case 'rescheduled': return `(d.name ILIKE '%reschedul%' OR d.name ILIKE '%call back%' OR d.name ILIKE '%callback%')`;
+    case 'hot_leads': return `f.status = 'pending' AND l.temperature = 'hot'`;
+    case 'unreachable': return `(d.name ILIKE '%not reachable%' OR d.name ILIKE '%unreachable%' OR d.name ILIKE '%switched off%')`;
+    default: return null;
+  }
 }
 
 export interface CreateFollowUpDto {
@@ -154,6 +188,12 @@ export class FollowUpsService {
       const fdr = assertDateRange(f.fu_from, f.fu_to);
       where.push(`f.status = 'pending' AND (${followupWindowSql(fup, 'f.scheduled_at', params, fdr.from, fdr.to)})`);
     }
+    // Today's Follow-ups KPI card → filtered list (client Aug 2026). Same predicate as the count.
+    if (f.bucket) {
+      const pred = followupBucketSql(String(f.bucket));
+      if (!pred) throw new BadRequestException(`invalid bucket — expected one of: ${FOLLOWUP_BUCKETS.join(', ')}`);
+      where.push(pred);
+    }
     params.push(Math.min(Number(f.limit) || 100, 500));
     // priority sorts within the due DATE (high > medium > low), hot leads first inside a slot
     return this.db.query(
@@ -194,6 +234,26 @@ export class FollowUpsService {
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.created_by = $${params.length}
                                AND f.completed_at >= date_trunc('week', now()))::int AS reported_done_week
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
+        WHERE (${w}) AND f.is_active AND l.is_active
+          AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, params,
+    );
+  }
+
+  /**
+   * 8-card KPI strip for the Today's Follow-ups screen (client Aug 2026): scope-enforced, IST.
+   *   Overdue · Due Today · Next 7 Days · No-Shows · Done Today · Rescheduled · Hot Leads · Unreachable
+   * Each count uses followupBucketSql(bucket) — the SAME predicate /follow-ups?bucket=… filters by —
+   * so a card's number equals the length of the list it opens. Disposition buckets match on name.
+   */
+  async stats(scope: ResolvedScope, _userId: number) {
+    const params: unknown[] = [];
+    const w = this.resolver.buildScopeWhere(scope, FOLLOWUP_SCOPE_COLS, params);
+    const cnt = (b: string) => `COUNT(*) FILTER (WHERE ${followupBucketSql(b)})::int AS ${b}`;
+    return this.db.one(
+      `SELECT ${FOLLOWUP_BUCKETS.map(cnt).join(',\n              ')}
+         FROM follow_up f
+         JOIN lead l ON l.id = f.lead_id
+         LEFT JOIN m_disposition d ON d.id = f.disposition_id
         WHERE (${w}) AND f.is_active AND l.is_active
           AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, params,
     );
