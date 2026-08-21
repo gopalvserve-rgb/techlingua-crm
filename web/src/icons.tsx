@@ -64,6 +64,7 @@ export const I: Record<string, string> = {
   key: '<circle cx="8" cy="15" r="5"/><path d="M11.5 11.5L21 2M17 6l3 3M14 9l3 3"/>',
   power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 11-12.8 0"/>',
   swap: '<path d="M7 10l-4 4 4 4"/><path d="M3 14h14a4 4 0 004-4V4"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
 };
 
 /** Inline SVG icon, mirrors the prototype's svg() helper. */

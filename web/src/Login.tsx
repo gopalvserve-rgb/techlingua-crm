@@ -5,6 +5,17 @@ import { useAuth } from './auth';
 import { PhoneInput } from './phonefield';
 
 /**
+ * Android app download link (docs/dev/120). Points at the public API route
+ * /downloads/techlingua-crm.apk, which streams the APK from Cloudflare R2 same-origin.
+ * VITE_ANDROID_APK_URL can override at build time. Empty string hides the link.
+ * Never shown inside the Capacitor app itself.
+ */
+const ANDROID_APK_URL =
+  (import.meta as { env?: Record<string, string> }).env?.VITE_ANDROID_APK_URL ??
+  '/downloads/techlingua-crm.apk';
+const isNativeApp = typeof window !== 'undefined' && Boolean((window as unknown as { Capacitor?: unknown }).Capacitor);
+
+/**
  * Mobile-first sign-in (client update #1): Password | OTP toggle.
  * Password mode accepts identifier = mobile number OR email; OTP mode sends a
  * 6-digit code to a registered mobile (503 surfaces verbatim while no SMS
@@ -164,6 +175,14 @@ export function LoginPage() {
                 disabled={busy} onClick={requestOtp}>Resend OTP</button>
             )}
           </form>
+        )}
+        {!isNativeApp && ANDROID_APK_URL && (
+          <div style={{ textAlign: 'center', marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border, rgba(255,255,255,0.1))' }}>
+            <a href={ANDROID_APK_URL} download
+              style={{ fontSize: 12.5, color: 'var(--primary)', cursor: 'pointer', textDecoration: 'none' }}>
+              ⬇️  Download Android App
+            </a>
+          </div>
         )}
       </div>
     </div>

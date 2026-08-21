@@ -7,6 +7,7 @@ import { join } from 'path';
 import { AppModule } from './app.module';
 import { config } from './config';
 import { QuestionService } from './assessments/question.service';
+import { StorageService } from './storage/storage.service';
 
 async function bootstrap() {
   // bodyParser:false -> we register express.json ourselves with a bigger limit:
@@ -36,6 +37,33 @@ async function bootstrap() {
       cb(null, { origin: config.webOrigin, credentials: true });
     }
   });
+
+  // PUBLIC APK DOWNLOAD (docs/dev/120) — the Android app (Capacitor WebView shell) is hosted in
+  // R2 at `apk/techlingua-crm.apk`. These UNGUARDED routes stream the bytes from R2 same-origin so
+  // the in-CRM "Download Android App" link is a plain, stable URL with NO R2 creds exposed. They
+  // live OUTSIDE the `/api` global prefix and are registered BEFORE the SPA catch-all below so the
+  // SPA fallback never swallows them. No auth (public download), no DB writes.
+  {
+    const httpServer = app.getHttpAdapter().getInstance() as express.Express;
+    const APK_KEY = 'apk/techlingua-crm.apk';
+    const serveApk = async (_req: express.Request, res: express.Response) => {
+      try {
+        const storage = app.get(StorageService, { strict: false });
+        const { body } = await storage.getObject(APK_KEY);
+        res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+        res.setHeader('Content-Disposition', 'attachment; filename="techlingua-crm.apk"');
+        res.setHeader('Content-Length', String(body.length));
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.status(200).end(body);
+      } catch (e) {
+        res
+          .status(503)
+          .json({ statusCode: 503, message: 'Android app is not available for download yet.' });
+      }
+    };
+    httpServer.get('/downloads/techlingua-crm.apk', serveApk);
+    httpServer.get('/downloads/app.apk', serveApk);
+  }
 
   // Single-URL deployment: serve the built React app from api/public when present.
   // No-op in local dev (public/ absent) — the web app runs on Vite with its own proxy.

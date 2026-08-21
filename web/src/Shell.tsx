@@ -306,6 +306,14 @@ function UserMenu({ me, roleName, theme, setTheme, logout }: {
               </button>
             </div>
           </div>
+          {/* Android app download (docs/dev/120) — public APK streamed from R2 via the API's
+             /downloads route. Hidden when already running inside the Capacitor WebView app. */}
+          {typeof window !== 'undefined' && !(window as unknown as { Capacitor?: unknown }).Capacitor && (
+            <a className="um-item" role="menuitem" href="/downloads/techlingua-crm.apk" download
+              style={{ textDecoration: 'none' }} onClick={() => setOpen(false)}>
+              <Ic k="download" /> Download Android App
+            </a>
+          )}
           <button className="um-item danger" role="menuitem"
             onClick={() => { if (confirm('Sign out?')) logout(); }}>
             <Ic k="logout" /> Sign out
