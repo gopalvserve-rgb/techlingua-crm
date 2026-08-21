@@ -4332,6 +4332,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
     previous_institution: initial?.previous_institution ?? '',
     branch_id: String(initial?.branch_id ?? ''), vertical_id: String(initial?.vertical_id ?? ''),
     course_id: String(initial?.course_id ?? ''), owner_id: String(initial?.owner_id ?? ''),
+    placement_course_type: initial?.placement_course_type ?? '',
   }));
   // "Same as Permanent" starts on only when an existing record already mirrors them.
   const [same, setSame] = useState<boolean>(!!initial && !!initial.permanent_address && initial.permanent_address === initial.current_address);
@@ -4394,6 +4395,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
       qualification: f.qualification || null, institution: f.institution || null,
       board_university: f.board_university || null, passing_year: f.passing_year || null, previous_institution: f.previous_institution || null,
       branch_id: num(f.branch_id), vertical_id: num(f.vertical_id), course_id: num(f.course_id), owner_id: num(f.owner_id),
+      placement_course_type: f.placement_course_type ?? '',
       custom_fields: collectCf(cfDefs, (key) => cfVals[key]),
     };
     try {
@@ -4475,6 +4477,13 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
                 onChange={(e) => up('course_id', e.target.value)}>
                 <option value="">{f.vertical_id ? '— Select course —' : 'Choose a vertical first'}</option>
                 {cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="st-course-type">Course Type</label><MasterQuickAdd type="course_type" onAdded={(row) => up('placement_course_type', row.name)} />
+              <select id="st-course-type" className="ainp" value={f.placement_course_type} onChange={(e) => up('placement_course_type', e.target.value)}>
+                <option value="">— Select course type —</option>
+                {(ref.courseTypes ?? []).map((ct: any) => <option key={ct.id} value={ct.name}>{ct.name}</option>)}
               </select>
             </div>
             <div className="fld">

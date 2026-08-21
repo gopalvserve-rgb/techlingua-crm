@@ -16,7 +16,17 @@ export class DiscountMasterController {
 
   @Get()
   @RequirePermission('discount.read')
-  list() { return this.svc.list(); }
+  list(@Query() q: any) {
+    const many = (v?: string | string[]): number[] | undefined => {
+      if (v == null) return undefined;
+      const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','));
+      const out = [...new Set(parts.map((x) => Number(String(x).trim())).filter((n) => Number.isInteger(n) && n > 0))];
+      return out.length ? out : undefined;
+    };
+    return this.svc.list({
+      branch_ids: many(q?.branch_ids ?? q?.branch_id), vertical_ids: many(q?.vertical_ids ?? q?.vertical_id),
+    });
+  }
 
   /** The cap that applies for a (branch, vertical, course) — the form's hint. enrolment.read
    *  so a counsellor filling the enrolment form can see the ceiling before they exceed it. */

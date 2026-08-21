@@ -26,6 +26,8 @@ import {
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
 import { DateRange, fmtDateTimeIST } from './daterange';
 import { RowMenu, RowMenuItem } from './rowactions';
+import { FilterMulti } from './dyn';
+import { useScope } from './scope';
 
 /* ==================================================================== */
 /*  shared bits                                                          */
@@ -1438,14 +1440,24 @@ export function ReceiptViewModal({ r, onClose }: { r: any; onClose: () => void }
 
 export function FeeCollection() {
   const { can } = useAuth();
+  const ref = useRef_();
+  const { scope: gScope } = useScope();
   // SHARED date range on the receipt date (received_at). Default All time.
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  // Global top-bar scope (Branch › Vertical) seeds these; the in-panel filters narrow further.
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branches ?? []);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals ?? []);
   const fq = new URLSearchParams();
   if (range.from) fq.set('from', range.from);
   if (range.to) fq.set('to', range.to);
-  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  if (fBranches.length) fq.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) fq.set('vertical_ids', fVerticals.join(','));
+  const rangeKey = `${fq.toString()}`;
   const { data, reload } = useFetch<any[]>('/fees/receipts' + (fq.toString() ? `?${fq}` : ''), [rangeKey]);
-  const summary = useFetch<any>('/fees/summary');
+  const sQs = new URLSearchParams();
+  if (fBranches.length) sQs.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) sQs.set('vertical_ids', fVerticals.join(','));
+  const summary = useFetch<any>(`/fees/summary?${sQs.toString()}`, [sQs.toString()]);
   const [modal, setModal] = useState(false);
   const rows = data ?? [];
   const s = summary.data;
@@ -1475,6 +1487,8 @@ export function FeeCollection() {
         { lab: 'Receipts', val: String(s?.receipts ?? 0), ic: 'doc' },
       ]} />
       <div className="filters" style={{ marginBottom: 12 }}>
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={(ref.branches ?? []) as any} onChange={setFBranches} />
+        <FilterMulti label="Vertical" icon="ops" value={fVerticals} options={(ref.verticals ?? []) as any} onChange={setFVerticals} />
         <DateRange value={range} onChange={setRange} idPrefix="fees-dr" />
       </div>
       <PhaseNote>

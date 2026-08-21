@@ -84,9 +84,12 @@ export class PlanService {
     );
   }
 
-  async summary(scope: ResolvedScope) {
+  async summary(scope: ResolvedScope, f: { branch_ids?: number[]; vertical_ids?: number[] } = {}) {
     const params: unknown[] = [];
-    const w = this.resolver.buildScopeWhere(scope, PLAN_SCOPE_COLS, params);
+    const scopeW = [this.resolver.buildScopeWhere(scope, PLAN_SCOPE_COLS, params)];
+    if (f.branch_ids?.length) { params.push(f.branch_ids); scopeW.push(`e.branch_id = ANY($${params.length}::bigint[])`); }
+    if (f.vertical_ids?.length) { params.push(f.vertical_ids); scopeW.push(`e.vertical_id = ANY($${params.length}::bigint[])`); }
+    const w = scopeW.join(' AND ');
     const r = await this.db.one<any>(
       `SELECT count(*) FILTER (WHERE pp.status = 'active') AS active_plans,
               count(*) FILTER (WHERE pp.status = 'completed') AS completed_plans,

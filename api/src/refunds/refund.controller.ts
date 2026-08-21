@@ -35,7 +35,11 @@ export class RefundController {
 
   @Get('summary')
   @RequirePermission('refund.read')
-  summary(@CurrentScope() scope: ResolvedScope) { return this.svc.summary(scope); }
+  summary(@CurrentScope() scope: ResolvedScope, @Query() q: any) {
+    return this.svc.summary(scope, {
+      branch_ids: many(q?.branch_ids ?? q?.branch_id), vertical_ids: many(q?.vertical_ids ?? q?.vertical_id),
+    });
+  }
 
   @Get('meta')
   @RequirePermission('refund.read')

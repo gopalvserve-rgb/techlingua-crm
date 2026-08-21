@@ -17,6 +17,7 @@ import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { rowActions, ConfirmModal, Section } from './rowactions';
+import { useScope } from './scope';
 import { FilterMulti } from './dyn';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 import { fmtINR, minorToInput } from './money';
@@ -39,13 +40,14 @@ const capText = (r: { max_percent: number | null; max_amount_minor: number | nul
 export function DiscountMaster() {
   const { can } = useAuth();
   const rd = useRef_();
+  const { scope: gScope } = useScope();
   const mayCreate = can('discount.create');
   const mayUpdate = can('discount.update');
   const mayDelete = can('discount.delete');
   const mayApprove = can('discount.approve');
 
-  const [fB, setFB] = useState<number[]>([]);
-  const [fV, setFV] = useState<number[]>([]);
+  const [fB, setFB] = useState<number[]>(gScope.branches ?? []);
+  const [fV, setFV] = useState<number[]>(gScope.verticals ?? []);
   const [tick, setTick] = useState(0);
   const [add, setAdd] = useState(false);
   const [edit, setEdit] = useState<Rule | null>(null);

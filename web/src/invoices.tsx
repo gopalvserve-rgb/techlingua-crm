@@ -59,6 +59,7 @@ export function InvoicesScreen() {
   const [fStatus, setFStatus] = useState<string[]>([]);
   const [fSupply, setFSupply] = useState<string[]>([]);
   const [fBranches, setFBranches] = useState<number[]>(gScope.branches ?? []);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals ?? []);
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [create, setCreate] = useState(false);
   const [detail, setDetail] = useState<number | null>(null);
@@ -69,11 +70,15 @@ export function InvoicesScreen() {
   if (fStatus.length) qs.set('statuses', fStatus.join(','));
   if (fSupply.length) qs.set('supply_type', fSupply[0]);
   if (fBranches.length) qs.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) qs.set('vertical_ids', fVerticals.join(','));
   if (range.from) qs.set('from', range.from);
   if (range.to) qs.set('to', range.to);
   const key = `${qs.toString()}~${tick}`;
   const list = useFetch<any[]>(`/invoices?${qs.toString()}`, [key]);
-  const summary = useFetch<any>('/invoices/summary', [tick]);
+  const sQs = new URLSearchParams();
+  if (fBranches.length) sQs.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) sQs.set('vertical_ids', fVerticals.join(','));
+  const summary = useFetch<any>(`/invoices/summary?${sQs.toString()}`, [`${sQs.toString()}~${tick}`]);
   const rows = list.data ?? [];
   const s = summary.data;
 
@@ -114,6 +119,7 @@ export function InvoicesScreen() {
         <FilterMulti label="Status" icon="shield" value={fStatus as any} options={asOpts([['draft', 'Draft'], ['issued', 'Issued'], ['paid', 'Paid'], ['cancelled', 'Cancelled']]) as any} onChange={setFStatus as any} />
         <FilterMulti label="Supply" icon="grid" value={fSupply as any} options={asOpts([['intra', 'Intra-state (CGST+SGST)'], ['inter', 'Inter-state (IGST)']]) as any} onChange={setFSupply as any} />
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={(ref.branches ?? []) as any} onChange={setFBranches} />
+        <FilterMulti label="Vertical" icon="ops" value={fVerticals} options={(ref.verticals ?? []) as any} onChange={setFVerticals} />
         <DateRange value={range} onChange={setRange} idPrefix="inv-dr" />
       </div>
       <BulkBar count={count} entityLabel="Invoice" onDelete={() => openBulk(selected)} onClear={clear} note="Only draft / cancelled invoices are deleted; issued & paid are skipped." />

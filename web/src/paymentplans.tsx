@@ -185,7 +185,10 @@ export function PaymentPlansScreen() {
   if (fVerticals.length) qs.set('vertical_ids', fVerticals.join(','));
   const key = `${qs.toString()}~${tick}`;
   const list = useFetch<any[]>(`/payment-plans?${qs.toString()}`, [key]);
-  const summary = useFetch<any>('/payment-plans/summary', [tick]);
+  const sQs = new URLSearchParams();
+  if (fBranches.length) sQs.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) sQs.set('vertical_ids', fVerticals.join(','));
+  const summary = useFetch<any>(`/payment-plans/summary?${sQs.toString()}`, [`${sQs.toString()}~${tick}`]);
   const rows = list.data ?? [];
   const s = summary.data;
 

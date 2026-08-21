@@ -1291,6 +1291,8 @@ export class StudentService {
     str('board_university', 'board_university', 200);
     if (has('passing_year')) { const n = parseInt(String(dto.passing_year), 10); out.push(['passing_year', dto.passing_year == null || dto.passing_year === '' || !Number.isFinite(n) ? null : n]); }
     str('previous_institution', 'previous_institution', 200);
+    // Placement (dev/122) — course-type preference, stored as the master LABEL text.
+    str('placement_course_type', 'placement_course_type', 120);
 
     // Custom fields (client, Aug 2026) — the admin-defined student fields (entity='student')
     // persist into student.custom_fields, exactly as leads persist into lead.custom_fields

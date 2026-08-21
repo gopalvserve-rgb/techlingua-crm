@@ -147,9 +147,12 @@ export class RefundService {
     );
   }
 
-  async summary(scope: ResolvedScope) {
+  async summary(scope: ResolvedScope, f: { branch_ids?: number[]; vertical_ids?: number[] } = {}) {
     const params: unknown[] = [];
-    const w = this.resolver.buildScopeWhere(scope, REFUND_SCOPE_COLS, params);
+    const scopeW = [this.resolver.buildScopeWhere(scope, REFUND_SCOPE_COLS, params)];
+    if (f.branch_ids?.length) { params.push(f.branch_ids); scopeW.push(`rf.branch_id = ANY($${params.length}::bigint[])`); }
+    if (f.vertical_ids?.length) { params.push(f.vertical_ids); scopeW.push(`rf.vertical_id = ANY($${params.length}::bigint[])`); }
+    const w = scopeW.join(' AND ');
     const r = await this.db.one<any>(
       `SELECT COALESCE(sum(rf.amount_minor) FILTER (WHERE rf.status = 'approved'), 0) AS refunded_minor,
               count(*) FILTER (WHERE rf.status = 'pending') AS pending_n,

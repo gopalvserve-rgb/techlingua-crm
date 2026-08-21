@@ -147,9 +147,12 @@ export class InvoiceService {
     );
   }
 
-  async summary(scope: ResolvedScope) {
+  async summary(scope: ResolvedScope, f: { branch_ids?: number[]; vertical_ids?: number[] } = {}) {
     const params: unknown[] = [];
-    const w = this.resolver.buildScopeWhere(scope, INVOICE_SCOPE_COLS, params);
+    const scopeW = [this.resolver.buildScopeWhere(scope, INVOICE_SCOPE_COLS, params)];
+    if (f.branch_ids?.length) { params.push(f.branch_ids); scopeW.push(`gi.branch_id = ANY($${params.length}::bigint[])`); }
+    if (f.vertical_ids?.length) { params.push(f.vertical_ids); scopeW.push(`gi.vertical_id = ANY($${params.length}::bigint[])`); }
+    const w = scopeW.join(' AND ');
     const r = await this.db.one<any>(
       `SELECT count(*) FILTER (WHERE gi.status = 'draft')     AS draft,
               count(*) FILTER (WHERE gi.status = 'issued')    AS issued,

@@ -6,6 +6,14 @@ import { FeeService, MODE_LABELS, PAYMENT_MODES } from './fee.service';
 
 interface Me { id: number; name: string }
 
+/** parse a comma/array query param into a clean number[] */
+function many(v?: string | string[]): number[] | undefined {
+  if (v == null) return undefined;
+  const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split(','));
+  const out = [...new Set(parts.map((x) => Number(String(x).trim())).filter((n) => Number.isInteger(n) && n > 0))];
+  return out.length ? out : undefined;
+}
+
 /** Finance & Collections › Fee Collection — LITE. Every route carries @RequirePermission. */
 @Controller('fees')
 export class FeeController {
@@ -17,13 +25,16 @@ export class FeeController {
     return this.svc.list(scope, {
       mode: q?.mode, enrolment_id: q?.enrolment_id ? Number(q.enrolment_id) : undefined,
       q: q?.q, from: q?.from, to: q?.to, limit: q?.limit ? Number(q.limit) : undefined,
+      branch_ids: many(q?.branch_ids ?? q?.branch_id), vertical_ids: many(q?.vertical_ids ?? q?.vertical_id),
     });
   }
 
   @Get('summary')
   @RequirePermission('fee.read')
-  summary(@CurrentScope() scope: ResolvedScope) {
-    return this.svc.summary(scope);
+  summary(@CurrentScope() scope: ResolvedScope, @Query() q: any) {
+    return this.svc.summary(scope, {
+      branch_ids: many(q?.branch_ids ?? q?.branch_id), vertical_ids: many(q?.vertical_ids ?? q?.vertical_id),
+    });
   }
 
   @Get('meta')

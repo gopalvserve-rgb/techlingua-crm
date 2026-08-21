@@ -91,9 +91,11 @@ export class FeeService {
 
   /* ------------------------------------------------------------------ reads */
 
-  async list(scope: ResolvedScope, f: { mode?: string; enrolment_id?: number; q?: string; from?: string; to?: string; limit?: number } = {}) {
+  async list(scope: ResolvedScope, f: { mode?: string; enrolment_id?: number; q?: string; from?: string; to?: string; limit?: number; branch_ids?: number[]; vertical_ids?: number[] } = {}) {
     const params: unknown[] = [];
     const where = [`fr.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params)];
+    if (f.branch_ids?.length) { params.push(f.branch_ids); where.push(`fr.branch_id = ANY($${params.length}::bigint[])`); }
+    if (f.vertical_ids?.length) { params.push(f.vertical_ids); where.push(`fr.vertical_id = ANY($${params.length}::bigint[])`); }
     if (f.mode) { params.push(f.mode); where.push(`fr.mode = $${params.length}::varchar`); }
     if (f.enrolment_id) { params.push(Number(f.enrolment_id)); where.push(`fr.enrolment_id = $${params.length}::bigint`); }
     // DEF-DR-02: strict validation — malformed date -> 400, never a 500.
@@ -131,9 +133,12 @@ export class FeeService {
   }
 
   /** The Fee Collection screen's KPIs + the by-mode donut. */
-  async summary(scope: ResolvedScope) {
+  async summary(scope: ResolvedScope, f: { branch_ids?: number[]; vertical_ids?: number[] } = {}) {
     const params: unknown[] = [];
-    const w = this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params);
+    const scopeW = [this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params)];
+    if (f.branch_ids?.length) { params.push(f.branch_ids); scopeW.push(`fr.branch_id = ANY($${params.length}::bigint[])`); }
+    if (f.vertical_ids?.length) { params.push(f.vertical_ids); scopeW.push(`fr.vertical_id = ANY($${params.length}::bigint[])`); }
+    const w = scopeW.join(' AND ');
     const base = `FROM fee_receipt fr JOIN enrolment e ON e.id = fr.enrolment_id
                   WHERE fr.deleted_at IS NULL AND ${w}`;
     const r = await this.db.one<any>(
@@ -153,10 +158,13 @@ export class FeeService {
     // bigger thing (installment-wise, bucketed, with reminders); this is the one honest
     // number Phase 1 can stand behind, and the screen labels it as such.
     const pOut: unknown[] = [];
-    const wOut = this.resolver.buildScopeWhere(scope, {
+    const wOutParts = [this.resolver.buildScopeWhere(scope, {
       owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
-    }, pOut);
+    }, pOut)];
+    if (f.branch_ids?.length) { pOut.push(f.branch_ids); wOutParts.push(`e.branch_id = ANY($${pOut.length}::bigint[])`); }
+    if (f.vertical_ids?.length) { pOut.push(f.vertical_ids); wOutParts.push(`e.vertical_id = ANY($${pOut.length}::bigint[])`); }
+    const wOut = wOutParts.join(' AND ');
     const out = await this.db.one<any>(
       `SELECT COALESCE(sum(e.net_fee_minor - COALESCE(p.paid_minor, 0)), 0) AS outstanding_minor
          FROM enrolment e

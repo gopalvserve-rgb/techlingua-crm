@@ -62,8 +62,14 @@ export class DiscountMasterService {
   }
 
   /** The full list for the admin screen — with branch/vertical/course names. */
-  async list() {
+  async list(f: { branch_ids?: number[]; vertical_ids?: number[] } = {}) {
     const org = await this.orgId();
+    const params: unknown[] = [org];
+    const where = [`dm.org_id = $1::bigint`, `dm.deleted_at IS NULL`];
+    // A branch/vertical scope narrows to the rules that APPLY there: rules pinned to a
+    // selected branch/vertical PLUS the org-wide (NULL) rules that apply everywhere.
+    if (f.branch_ids?.length) { params.push(f.branch_ids); where.push(`(dm.branch_id IS NULL OR dm.branch_id = ANY($${params.length}::bigint[]))`); }
+    if (f.vertical_ids?.length) { params.push(f.vertical_ids); where.push(`(dm.vertical_id IS NULL OR dm.vertical_id = ANY($${params.length}::bigint[]))`); }
     return this.db.query<any>(
       `SELECT dm.id, dm.name, dm.branch_id, dm.vertical_id, dm.course_id, dm.course_level_id,
               dm.max_percent, dm.max_amount_minor, dm.active, dm.updated_at,
@@ -74,10 +80,10 @@ export class DiscountMasterService {
          LEFT JOIN vertical v ON v.id = dm.vertical_id
          LEFT JOIN m_course c ON c.id = dm.course_id
          LEFT JOIN course_level cl ON cl.id = dm.course_level_id
-        WHERE dm.org_id = $1::bigint AND dm.deleted_at IS NULL
+        WHERE ${where.join(' AND ')}
         ORDER BY (dm.course_level_id IS NOT NULL) DESC, (dm.course_id IS NOT NULL) DESC,
                  (dm.vertical_id IS NOT NULL) DESC, (dm.branch_id IS NOT NULL) DESC, dm.name`,
-      [org],
+      params,
     );
   }
 

@@ -69,7 +69,10 @@ export function RefundsScreen() {
   if (range.to) qs.set('to', range.to);
   const key = `${qs.toString()}~${tick}`;
   const list = useFetch<any[]>(`/refunds?${qs.toString()}`, [key]);
-  const summary = useFetch<any>('/refunds/summary', [tick]);
+  const sQs = new URLSearchParams();
+  if (fBranches.length) sQs.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) sQs.set('vertical_ids', fVerticals.join(','));
+  const summary = useFetch<any>(`/refunds/summary?${sQs.toString()}`, [`${sQs.toString()}~${tick}`]);
   const rows = list.data ?? [];
   const s = summary.data;
 
