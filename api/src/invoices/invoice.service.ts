@@ -318,6 +318,46 @@ export class InvoiceService {
     return out;
   }
 
+  /**
+   * GENERATE an invoice from a receipt or an enrolment (dev/116 "Generate Invoice" action).
+   * If a non-cancelled invoice already exists for the enrolment it is returned (open it);
+   * otherwise a draft is created from the enrolment's net fee and ISSUED. Issue can fail
+   * cleanly (e.g. the vertical has no GSTIN yet on UAT) — the draft is kept and the reason
+   * returned, so the caller degrades to "draft created, set GSTIN to issue" rather than 500.
+   */
+  async generate(dto: any, me: { id: number }, scope: ResolvedScope) {
+    let enrolmentId = dto?.enrolment_id ? Number(dto.enrolment_id) : null;
+    if (!enrolmentId && dto?.receipt_id) {
+      const rc = await this.db.one<any>(
+        `SELECT enrolment_id FROM fee_receipt WHERE id = $1::bigint AND deleted_at IS NULL`,
+        [Number(dto.receipt_id)],
+      );
+      if (!rc) throw new NotFoundException('Receipt not found');
+      enrolmentId = Number(rc.enrolment_id);
+    }
+    if (!enrolmentId || !Number.isInteger(enrolmentId)) {
+      throw new BadRequestException('Provide a receipt_id or enrolment_id to generate an invoice.');
+    }
+    // an existing non-cancelled invoice for this enrolment -> return it (scope-checked via get()).
+    const existing = await this.db.one<any>(
+      `SELECT gi.id FROM gst_invoice gi
+        WHERE gi.enrolment_id = $1::bigint AND gi.deleted_at IS NULL AND gi.status <> 'cancelled'
+        ORDER BY gi.id DESC LIMIT 1`,
+      [enrolmentId],
+    );
+    if (existing) {
+      const gi = await this.get(Number(existing.id), scope);
+      return { id: gi.id, invoice_no: gi.invoice_no ?? null, status: gi.status, existing: true, issued: gi.status !== 'draft' };
+    }
+    const created = await this.create({ enrolment_id: enrolmentId }, me, scope); // draft (scope-enforced)
+    try {
+      const iss = await this.issue(created.id, me, scope);
+      return { id: created.id, invoice_no: iss.invoice_no, status: iss.status, existing: false, issued: true };
+    } catch (e) {
+      return { id: created.id, invoice_no: null, status: 'draft', existing: false, issued: false, issue_error: (e as Error).message };
+    }
+  }
+
   async markPaid(id: number, me: { id: number }, scope: ResolvedScope) {
     const gi = await this.get(id, scope);
     if (gi.status !== 'issued') throw new BadRequestException(`Only an issued invoice can be marked paid. ${gi.invoice_no || 'This invoice'} is ${gi.status}.`);

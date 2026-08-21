@@ -21,6 +21,8 @@ export const I: Record<string, string> = {
   cal: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   filter: '<path d="M22 3H2l8 9.5V19l4 2v-8.5z"/>',
   export: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  print: '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="M5 5l14 14"/>',
   cfg: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
   bolt: '<path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/>',

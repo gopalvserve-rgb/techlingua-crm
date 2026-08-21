@@ -69,6 +69,12 @@ export class InvoiceController {
     return this.svc.create(dto, me, scope);
   }
 
+  @Post('generate')
+  @RequirePermission('invoice.create')
+  generate(@Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.generate(dto, me, scope);
+  }
+
   @Post(':id/issue')
   @RequirePermission('invoice.issue')
   issue(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {

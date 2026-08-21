@@ -76,4 +76,41 @@ export class FeeController {
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     return this.svc.remove(id, me, scope);
   }
+
+  /* ---- receipt actions (dev/116): Email / WhatsApp / Send-for-approval / Approve / Reject ---- */
+
+  /** Email the receipt PDF to the student (per-vertical SMTP). Degrades cleanly if unconfigured. */
+  @Post('receipts/:id/email')
+  @RequirePermission('fee.read')
+  email(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.emailReceipt(id, me, scope);
+  }
+
+  /** WhatsApp the receipt summary to the student. Degrades cleanly if unconfigured. */
+  @Post('receipts/:id/whatsapp')
+  @RequirePermission('fee.read')
+  whatsapp(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.whatsappReceipt(id, me, scope);
+  }
+
+  /** Send the receipt for approval (pending_approval in the reusable content-approval workflow). */
+  @Post('receipts/:id/submit-approval')
+  @RequirePermission('fee.collect')
+  submitApproval(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.submitApproval(id, me, scope);
+  }
+
+  /** Approve a receipt pending approval — authorized approver only (enrolment.approve). */
+  @Post('receipts/:id/approve')
+  @RequirePermission('enrolment.approve')
+  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.approveReceipt(id, me, scope);
+  }
+
+  /** Reject (send back) a receipt pending approval, with remarks — authorized approver only. */
+  @Post('receipts/:id/reject')
+  @RequirePermission('enrolment.approve')
+  reject(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.rejectReceipt(id, dto, me, scope);
+  }
 }

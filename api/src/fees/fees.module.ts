@@ -5,9 +5,10 @@ import { FeeController } from './fee.controller';
 import { FeeService } from './fee.service';
 import { PlansModule } from '../paymentplans/plans.module';
 import { NotificationEventsModule } from '../notificationevents/notification-events.module';
+import { MessagingModule } from '../messaging/messaging.module';
 
 @Module({
-  imports: [DatabaseModule, RbacModule, PlansModule, NotificationEventsModule],
+  imports: [DatabaseModule, RbacModule, PlansModule, NotificationEventsModule, MessagingModule],
   controllers: [FeeController],
   providers: [FeeService],
   exports: [FeeService],

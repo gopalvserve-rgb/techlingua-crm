@@ -25,6 +25,7 @@ import {
 } from './money';
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
 import { DateRange, fmtDateTimeIST } from './daterange';
+import { RowMenu, RowMenuItem } from './rowactions';
 
 /* ==================================================================== */
 /*  shared bits                                                          */
@@ -63,6 +64,105 @@ async function openPdf(path: string) {
     window.open(url, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e: any) { toast(e.message, true); }
+}
+
+/** Print a PDF the API streams: fetch the authed blob, open it, and ask the browser to print. */
+async function printPdf(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    const w = window.open(url, '_blank', 'noopener');
+    if (w) { try { w.addEventListener('load', () => { try { w.print(); } catch { /* pop-up print blocked */ } }); } catch { /* noop */ } }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
+
+/**
+ * dev/116 — the full receipt action set, shared by the Fee Receipt Records list AND the
+ * Fee Management (dues) list. `r` must carry: id, receipt_no, enrolment_id, and (for the
+ * invoice-aware labels) invoice_id / invoice_status / approval_status when the list provides
+ * them. Each action wires an existing capability and DEGRADES CLEANLY.
+ */
+export function receiptActionItems(r: any, opts: {
+  can: (p: string) => boolean;
+  onPreview?: () => void;
+  onEditPayment?: () => void;
+  onDelete?: () => void;
+  onChanged?: () => void;
+}): Array<RowMenuItem | false> {
+  const genInvoice = async () => {
+    try {
+      const res = await api.post<any>('/invoices/generate', { receipt_id: r.id });
+      if (res?.existing) toast(`Invoice ${res.invoice_no ?? ''} already exists — opening.`);
+      else if (res?.issued) toast(`Invoice ${res.invoice_no} generated.`);
+      else toast('Draft invoice created — set the vertical GSTIN to issue it.');
+      openPdf(`/invoices/${res.id}/pdf`);
+      opts.onChanged?.();
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const emailRec = async () => {
+    try {
+      const res = await api.post<any>(`/fees/receipts/${r.id}/email`);
+      if (res?.skipped === 'no_email') toast('The student has no email address on file.', true);
+      else if (res?.configured) toast('Receipt emailed to the student.');
+      else toast('Email is not configured — the attempt was logged, no email was sent.');
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const waRec = async () => {
+    try {
+      const res = await api.post<any>(`/fees/receipts/${r.id}/whatsapp`);
+      if (res?.skipped === 'no_phone') toast('The student has no phone number on file.', true);
+      else if (res?.configured) toast('Receipt sent on WhatsApp.');
+      else toast('WhatsApp is not configured — the attempt was logged, nothing was sent.');
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const sendApproval = async () => {
+    try { await api.post(`/fees/receipts/${r.id}/submit-approval`); toast('Receipt sent for approval.'); opts.onChanged?.(); }
+    catch (e: any) { toast(e.message, true); }
+  };
+  const approveRec = async () => {
+    try { await api.post(`/fees/receipts/${r.id}/approve`); toast('Receipt approved.'); opts.onChanged?.(); }
+    catch (e: any) { toast(e.message, true); }
+  };
+  const rejectRec = async () => {
+    const remarks = window.prompt('Reason for sending this receipt back?') ?? '';
+    if (!remarks.trim()) return;
+    try { await api.post(`/fees/receipts/${r.id}/reject`, { remarks }); toast('Receipt sent back.'); opts.onChanged?.(); }
+    catch (e: any) { toast(e.message, true); }
+  };
+  const cancelInvoice = async () => {
+    if (!r.invoice_id) { toast('No invoice yet — generate one first.', true); return; }
+    if (r.invoice_status === 'draft') {
+      if (!window.confirm('Delete the draft invoice?')) return;
+      try { await api.del(`/invoices/${r.invoice_id}`); toast('Draft invoice deleted.'); opts.onChanged?.(); }
+      catch (e: any) { toast(e.message, true); }
+      return;
+    }
+    const reason = window.prompt('Reason for cancelling this GST invoice?') ?? '';
+    try { await api.post(`/invoices/${r.invoice_id}/cancel`, { reason }); toast('Invoice cancelled (voided).'); opts.onChanged?.(); }
+    catch (e: any) { toast(e.message, true); }
+  };
+
+  const pending = r.approval_status === 'pending_approval';
+  const hasInvoice = !!r.invoice_id && r.invoice_status && r.invoice_status !== 'cancelled';
+  return [
+    opts.onPreview ? { label: 'Preview', icon: 'eye', onClick: opts.onPreview } : false,
+    { label: hasInvoice ? 'Open invoice' : 'Generate invoice', icon: 'finance', onClick: () => void genInvoice() },
+    { label: 'Download PDF', icon: 'doc', onClick: () => openPdf(`/fees/receipts/${r.id}/pdf`) },
+    { label: 'Print', icon: 'print', onClick: () => printPdf(`/fees/receipts/${r.id}/pdf`) },
+    'divider' as const,
+    { label: 'Email', icon: 'mail', onClick: () => void emailRec() },
+    { label: 'WhatsApp', icon: 'wa', onClick: () => void waRec() },
+    'divider' as const,
+    pending && opts.can('enrolment.approve') ? { label: 'Approve', icon: 'check', onClick: () => void approveRec() } : false,
+    pending && opts.can('enrolment.approve') ? { label: 'Reject (send back)', icon: 'ban', danger: true, onClick: () => void rejectRec() } : false,
+    !pending && opts.can('fee.collect') ? { label: 'Send for approval', icon: 'send', onClick: () => void sendApproval() } : false,
+    hasInvoice ? { label: 'Cancel invoice', icon: 'ban', danger: true, onClick: () => void cancelInvoice() } : false,
+    'divider' as const,
+    opts.onEditPayment && opts.can('fee.collect') ? { label: 'Edit payment', icon: 'pencil', onClick: opts.onEditPayment } : false,
+    opts.onDelete && opts.can('fee.delete') ? { label: 'Delete', icon: 'trash', danger: true, onClick: opts.onDelete } : false,
+  ];
 }
 
 /** The amber note that keeps a Phase-1 screen honest about a Phase-3 gap. */
@@ -1404,12 +1504,19 @@ export function FeeCollection() {
           dt(r.received_at),
           { node: <span>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '—'}</span> },
           {
-            node: <RowBtns items={[
-              ['eye', 'View receipt', () => setViewRec(r)],
-              ...(can('fee.collect') ? [['pencil', 'Edit payment', () => setEditRec(r)] as [string, string, () => void]] : []),
-              ['doc', 'Download receipt PDF', () => openPdf(`/fees/receipts/${r.id}/pdf`)],
-              ...(can('fee.delete') ? [['trash', 'Delete', () => void del(r)] as [string, string, () => void]] : []),
-            ]} />,
+            node: (
+              <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                <button className="icon-btn sm" title="Preview receipt" onClick={(e) => { e.stopPropagation(); setViewRec(r); }}><Ic k="eye" /></button>
+                <button className="icon-btn sm" title="Download PDF" onClick={(e) => { e.stopPropagation(); openPdf(`/fees/receipts/${r.id}/pdf`); }}><Ic k="doc" /></button>
+                <RowMenu items={receiptActionItems(r, {
+                  can,
+                  onPreview: () => setViewRec(r),
+                  onEditPayment: () => setEditRec(r),
+                  onDelete: () => void del(r),
+                  onChanged: bump,
+                })} />
+              </span>
+            ),
           },
         ])}
       />

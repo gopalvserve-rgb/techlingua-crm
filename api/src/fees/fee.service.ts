@@ -10,6 +10,8 @@ import { assertDateRange } from '../common/date.util';
 import { PlanService } from '../paymentplans/plan.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { PdfAssetService } from '../storage/pdf-asset.service';
+import { MessagingService } from '../messaging/messaging.service';
+import { ContentApprovalWorkflowService } from '../governance/content-approval.service';
 
 /**
  * LITE FEE — a collection entry and a receipt. That is the WHOLE Phase-1 scope
@@ -73,6 +75,12 @@ export class FeeService {
     /** Notification Events — fires receipt_generated / payment_successful / fee_fully_paid. Optional. */
     private readonly notifEvents?: NotificationEventService,
     private readonly pdfAssets?: PdfAssetService,
+    /** Outbound notifier — Email / WhatsApp the receipt. Degrades cleanly when a channel
+     *  has no credentials (a failed/not_configured send-log row, never a throw). Optional so
+     *  the unit tests can build FeeService without the messaging graph. */
+    private readonly messaging?: MessagingService,
+    /** Reusable approval workflow (docs/dev/67) — 'Send for approval' on a receipt. Optional. */
+    private readonly approvals?: ContentApprovalWorkflowService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -99,7 +107,9 @@ export class FeeService {
       `SELECT fr.id, fr.receipt_no, fr.amount_minor, fr.mode, fr.reference, fr.received_at, fr.note,
               fr.enrolment_id, e.enrolment_no, e.net_fee_minor,
               l.full_name AS lead_name, c.name AS course_name,
-              b.name AS branch_name, v.name AS vertical_name, u.name AS received_by_name
+              b.name AS branch_name, v.name AS vertical_name, u.name AS received_by_name,
+              ca.workflow_status AS approval_status,
+              inv.id AS invoice_id, inv.invoice_no, inv.status AS invoice_status
          FROM fee_receipt fr
          JOIN enrolment e ON e.id = fr.enrolment_id
          JOIN lead l ON l.id = e.lead_id
@@ -107,6 +117,12 @@ export class FeeService {
          JOIN vertical v ON v.id = fr.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id
          LEFT JOIN "user" u ON u.id = fr.received_by
+         LEFT JOIN content_approval ca ON ca.entity_type = 'fee_receipt' AND ca.entity_id = fr.id
+         LEFT JOIN LATERAL (
+           SELECT gi.id, gi.invoice_no, gi.status FROM gst_invoice gi
+            WHERE gi.enrolment_id = fr.enrolment_id AND gi.deleted_at IS NULL
+            ORDER BY (gi.status <> 'cancelled') DESC, gi.id DESC LIMIT 1
+         ) inv ON TRUE
         WHERE ${where.join(' AND ')}
         ORDER BY fr.received_at DESC
         LIMIT $${params.length}`,
@@ -180,7 +196,7 @@ export class FeeService {
     const w = this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params);
     const r = await this.db.one<any>(
       `SELECT fr.*, e.enrolment_no, e.net_fee_minor, e.lead_id,
-              l.full_name AS student_name, l.phone AS student_phone,
+              l.full_name AS student_name, l.phone AS student_phone, l.email AS student_email,
               c.name AS course_name, u.name AS received_by_name,
               b.name AS branch_name, b.address AS branch_address, b.contact_number AS branch_phone,
               b.email AS branch_email, v.name AS vertical_name,
@@ -505,5 +521,92 @@ export class FeeService {
       );
     });
     return { id, ok: true };
+  }
+  /* ------------------------------------------------------ receipt actions (dev/116) */
+
+  /**
+   * EMAIL the receipt PDF to the student (per-vertical SMTP). DEGRADES CLEANLY: with no SMTP
+   * configured the send lands as a not_configured/failed row in the send log and this returns
+   * `{ configured:false }` — it NEVER throws. Permission-gated (fee.read) + scope-enforced (get()).
+   */
+  async emailReceipt(id: number, me: { id: number }, scope: ResolvedScope) {
+    const r = await this.get(id, scope); // scope-enforced 404
+    if (!this.messaging) return { ok: false, skipped: 'messaging_unavailable', message: 'Messaging is not available.' };
+    const to = r.student_email ? String(r.student_email).trim() : '';
+    if (!to) return { ok: false, skipped: 'no_email', message: 'The student has no email address on file.' };
+    let pdf: { buffer: Buffer; filename: string } | null = null;
+    try { pdf = await this.pdf(id, scope); } catch { pdf = null; }
+    const amount = formatINR(Number(r.amount_minor));
+    const subject = `Fee receipt ${r.receipt_no} — ${r.enrolment_no}`;
+    const body = `<p>Dear ${r.student_name},</p><p>Please find attached your fee receipt <b>${r.receipt_no}</b> for ${amount}`
+      + `${r.course_name ? ` (${r.course_name})` : ''}. Thank you.</p>`;
+    const res = await this.messaging.sendNow({
+      channel: 'email', to, subject, body,
+      lead_id: r.lead_id ? Number(r.lead_id) : null,
+      vertical_id: Number(r.vertical_id), branch_id: Number(r.branch_id), actor_id: me.id,
+      attachments: pdf ? [{ filename: pdf.filename, content: pdf.buffer, contentType: 'application/pdf' }] : [],
+    });
+    const configured = res.status === 'sent';
+    return { ok: true, status: res.status, configured, not_configured: !configured, message: res.reason ?? null, message_log_id: res.id };
+  }
+
+  /** WhatsApp the receipt summary to the student. DEGRADES CLEANLY (see emailReceipt). */
+  async whatsappReceipt(id: number, me: { id: number }, scope: ResolvedScope) {
+    const r = await this.get(id, scope);
+    if (!this.messaging) return { ok: false, skipped: 'messaging_unavailable', message: 'Messaging is not available.' };
+    const to = r.student_phone ? String(r.student_phone).trim() : '';
+    if (!to) return { ok: false, skipped: 'no_phone', message: 'The student has no phone number on file.' };
+    const amount = formatINR(Number(r.amount_minor));
+    const body = `Dear ${r.student_name}, we have received your fee payment of ${amount} — receipt ${r.receipt_no} (${r.enrolment_no}). Thank you.`;
+    const res = await this.messaging.sendNow({
+      channel: 'whatsapp', to, body,
+      lead_id: r.lead_id ? Number(r.lead_id) : null,
+      vertical_id: Number(r.vertical_id), branch_id: Number(r.branch_id), actor_id: me.id,
+    });
+    const configured = res.status === 'sent';
+    return { ok: true, status: res.status, configured, not_configured: !configured, message: res.reason ?? null, message_log_id: res.id };
+  }
+
+  /**
+   * SEND FOR APPROVAL — route the receipt into the reusable content-approval workflow
+   * (docs/dev/67), setting it `pending_approval`. An authorized approver (enrolment.approve —
+   * Academic Admin / Finance / Org / Super) then approves or rejects. Scope-enforced (get()).
+   */
+  async submitApproval(id: number, me: { id: number }, scope: ResolvedScope) {
+    const r = await this.get(id, scope);
+    if (!this.approvals) throw new BadRequestException('The approval workflow is not available.');
+    const row = await this.approvals.submit('fee_receipt', id, { id: me.id });
+    await this.db.query(
+      `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
+       SELECT l.id, l.org_id, l.branch_id, 'note', $2, $3::bigint FROM lead l WHERE l.id = $1::bigint`,
+      [r.lead_id, `Receipt ${r.receipt_no} sent for approval`, me.id],
+    );
+    return { id, workflow_status: row.workflow_status };
+  }
+
+  /** APPROVE a receipt pending approval (authorized approver). Scope-enforced. */
+  async approveReceipt(id: number, me: { id: number }, scope: ResolvedScope) {
+    const r = await this.get(id, scope);
+    if (!this.approvals) throw new BadRequestException('The approval workflow is not available.');
+    const row = await this.approvals.approve('fee_receipt', id, { id: me.id });
+    await this.db.query(
+      `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
+       SELECT l.id, l.org_id, l.branch_id, 'note', $2, $3::bigint FROM lead l WHERE l.id = $1::bigint`,
+      [r.lead_id, `Receipt ${r.receipt_no} approved`, me.id],
+    );
+    return { id, workflow_status: row.workflow_status };
+  }
+
+  /** REJECT (send back) a receipt pending approval, with remarks. Scope-enforced. */
+  async rejectReceipt(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const r = await this.get(id, scope);
+    if (!this.approvals) throw new BadRequestException('The approval workflow is not available.');
+    const row = await this.approvals.reject('fee_receipt', id, { id: me.id }, dto?.remarks);
+    await this.db.query(
+      `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
+       SELECT l.id, l.org_id, l.branch_id, 'note', $2, $3::bigint FROM lead l WHERE l.id = $1::bigint`,
+      [r.lead_id, `Receipt ${r.receipt_no} approval sent back: ${String(dto?.remarks ?? '').slice(0, 200)}`, me.id],
+    );
+    return { id, workflow_status: row.workflow_status };
   }
 }

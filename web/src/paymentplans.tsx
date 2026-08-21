@@ -18,6 +18,7 @@ import { FilterMulti, EnumMulti, EnrolmentFeeSetupModal } from './dyn';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 import { CollectModal } from './sprint5';
+import { RowMenu, RowMenuItem } from './rowactions';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 async function openPdf(path: string) {
@@ -28,6 +29,103 @@ async function openPdf(path: string) {
     window.open(url, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e: any) { toast(e.message, true); }
+}
+
+/** Print a PDF the API streams (fetch authed blob, open, print). */
+async function printPdf(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    const w = window.open(url, '_blank', 'noopener');
+    if (w) { try { w.addEventListener('load', () => { try { w.print(); } catch { /* blocked */ } }); } catch { /* noop */ } }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
+
+/** The latest LIVE receipt for an enrolment (the list is received_at DESC), or null. */
+async function latestReceipt(enrolmentId: number): Promise<any | null> {
+  try { const recs = await api.get<any[]>(`/fees/receipts?enrolment_id=${enrolmentId}`); return (recs ?? [])[0] ?? null; }
+  catch { return null; }
+}
+
+/**
+ * dev/116 — the receipt action set for the Fee Management (dues) list. Rows here are
+ * ENROLMENTS, so receipt-based actions resolve the latest receipt first (a clean toast when
+ * none exists yet); Generate/Cancel Invoice work at the enrolment level. Degrades cleanly.
+ */
+function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged: () => void }): Array<RowMenuItem | false> {
+  const eid = Number(r.enrolment_id);
+  const needReceipt = async (): Promise<any | null> => {
+    const rec = await latestReceipt(eid);
+    if (!rec) { toast('No receipt yet for this enrolment — collect a payment first.', true); return null; }
+    return rec;
+  };
+  const preview = async () => { const rec = await needReceipt(); if (rec) openPdf(`/fees/receipts/${rec.id}/pdf`); };
+  const print = async () => { const rec = await needReceipt(); if (rec) printPdf(`/fees/receipts/${rec.id}/pdf`); };
+  const genInvoice = async () => {
+    try {
+      const res = await api.post<any>('/invoices/generate', { enrolment_id: eid });
+      if (res?.existing) toast(`Invoice ${res.invoice_no ?? ''} already exists — opening.`);
+      else if (res?.issued) toast(`Invoice ${res.invoice_no} generated.`);
+      else toast('Draft invoice created — set the vertical GSTIN to issue it.');
+      openPdf(`/invoices/${res.id}/pdf`); opts.onChanged();
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const emailRec = async () => {
+    const rec = await needReceipt(); if (!rec) return;
+    try { const res = await api.post<any>(`/fees/receipts/${rec.id}/email`);
+      if (res?.skipped === 'no_email') toast('The student has no email address on file.', true);
+      else if (res?.configured) toast('Receipt emailed to the student.');
+      else toast('Email is not configured — the attempt was logged, no email was sent.');
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const waRec = async () => {
+    const rec = await needReceipt(); if (!rec) return;
+    try { const res = await api.post<any>(`/fees/receipts/${rec.id}/whatsapp`);
+      if (res?.skipped === 'no_phone') toast('The student has no phone number on file.', true);
+      else if (res?.configured) toast('Receipt sent on WhatsApp.');
+      else toast('WhatsApp is not configured — the attempt was logged, nothing was sent.');
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const sendApproval = async () => {
+    const rec = await needReceipt(); if (!rec) return;
+    try { await api.post(`/fees/receipts/${rec.id}/submit-approval`); toast('Receipt sent for approval.'); opts.onChanged(); }
+    catch (e: any) { toast(e.message, true); }
+  };
+  const cancelInvoice = async () => {
+    try {
+      const invs = await api.get<any[]>(`/invoices?enrolment_id=${eid}`);
+      const live = (invs ?? []).filter((i) => i.status !== 'cancelled');
+      const inv = live.find((i) => ['issued', 'paid'].includes(i.status)) ?? live[0];
+      if (!inv) { toast('No invoice to cancel — generate one first.', true); return; }
+      if (inv.status === 'draft') {
+        if (!window.confirm('Delete the draft invoice?')) return;
+        await api.del(`/invoices/${inv.id}`); toast('Draft invoice deleted.'); opts.onChanged(); return;
+      }
+      const reason = window.prompt('Reason for cancelling this GST invoice?') ?? '';
+      await api.post(`/invoices/${inv.id}/cancel`, { reason }); toast('Invoice cancelled (voided).'); opts.onChanged();
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const del = async () => {
+    const rec = await needReceipt(); if (!rec) return;
+    if (!window.confirm(`Delete latest receipt ${rec.receipt_no} for ${fmtINR(rec.amount_minor)}? This is a correction, not a refund.`)) return;
+    try { await api.del(`/fees/receipts/${rec.id}`); toast('Receipt deleted.'); opts.onChanged(); }
+    catch (e: any) { toast(e.message, true); }
+  };
+  return [
+    { label: 'Preview receipt', icon: 'eye', onClick: () => void preview() },
+    { label: 'Generate invoice', icon: 'finance', onClick: () => void genInvoice() },
+    { label: 'Download PDF', icon: 'doc', onClick: () => void (async () => { const rec = await needReceipt(); if (rec) openPdf(`/fees/receipts/${rec.id}/pdf`); })() },
+    { label: 'Print', icon: 'print', onClick: () => void print() },
+    'divider' as const,
+    { label: 'Email', icon: 'mail', onClick: () => void emailRec() },
+    { label: 'WhatsApp', icon: 'wa', onClick: () => void waRec() },
+    'divider' as const,
+    opts.can('fee.collect') ? { label: 'Send for approval', icon: 'send', onClick: () => void sendApproval() } : false,
+    { label: 'Cancel invoice', icon: 'ban', danger: true, onClick: () => void cancelInvoice() },
+    opts.can('fee.delete') ? { label: 'Delete receipt', icon: 'trash', danger: true, onClick: () => void del() } : false,
+  ];
 }
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
 
@@ -458,13 +556,17 @@ export function FeeDuesScreen() {
           r.trainer_name || '—',
           r.owner_name || '—',
           {
-            node: <RowBtns items={[
-              ...(can('payment_plan.create') ? [['cfg', 'Fee setup (payment plan)', () => setPlanFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
-              ...(r.plan_id ? [['eye', 'View schedule', () => setPlanEditFor(Number(r.plan_id))] as [string, string, () => void]] : []),
-              ['bell', 'Send fee reminder', () => void remind(r)],
-              ...(can('fee.collect') ? [['rupee', 'Collect fee', () => setCollectFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
-              ['doc', 'Download latest receipt', () => void downloadReceipt(r)],
-            ]} />,
+            node: (
+              <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                <RowBtns items={[
+                  ...(can('payment_plan.create') ? [['cfg', 'Fee setup (payment plan)', () => setPlanFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
+                  ...(r.plan_id ? [['eye', 'View schedule', () => setPlanEditFor(Number(r.plan_id))] as [string, string, () => void]] : []),
+                  ['bell', 'Send fee reminder', () => void remind(r)],
+                  ...(can('fee.collect') ? [['rupee', 'Collect fee', () => setCollectFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
+                ]} />
+                <RowMenu label="Receipt & invoice actions" items={duesActionItems(r, { can, onChanged: after })} />
+              </span>
+            ),
           },
         ])} />
       {cfg && <ReminderConfigModal onClose={() => setCfg(false)} />}
