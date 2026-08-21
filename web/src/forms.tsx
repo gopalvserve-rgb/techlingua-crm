@@ -1003,6 +1003,12 @@ function LevelsField({ value, courseId, onChange }: {
   const remove = (i: number) => commit(rows.filter((_, j) => j !== i));
   return (
     <div className="sc-rows" data-levels-editor>
+      {/* dev/114 — Level is a self-manageable master (m_level). The picker below offers the
+          master's codes (RefData.courseLevels, via /courses/level-catalog); ＋ Master adds a new
+          level code to the master and it becomes selectable immediately (RefData reloads). */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2 }}>
+        <MasterQuickAdd type="level" />
+      </div>
       {rows.length === 0 && (
         <div className="empty-note" style={{ padding: '6px 2px', textAlign: 'left' }}>
           No levels — click <b>＋ Add level</b> to add levels (e.g. A1, A2, …), each with its own fee.

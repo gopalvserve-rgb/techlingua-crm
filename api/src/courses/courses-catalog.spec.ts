@@ -11,7 +11,7 @@ function build(rows: Record<string, unknown[]>) {
   const db = {
     query: async (sql: string) => {
       calls.push(sql.replace(/\s+/g, ' ').trim());
-      const key = ['m_course_type', 'course_level_def', 'course_delivery_def'].find((k) => sql.includes(k))!;
+      const key = ['m_course_type', 'm_level', 'course_delivery_def'].find((k) => sql.includes(k))!;
       return rows[key] ?? [];
     },
   } as unknown as DatabaseService;
@@ -21,7 +21,7 @@ function build(rows: Record<string, unknown[]>) {
 describe('CoursesService catalogs', () => {
   const seed = {
     m_course_type: [{ code: 'Diploma', label: 'Diploma', ordering: 10 }, { code: 'Certificate', label: 'Certificate', ordering: 20 }],
-    course_level_def: [{ code: 'A1', label: 'A1', ordering: 10 }, { code: 'A2', label: 'A2', ordering: 20 }],
+    m_level: [{ code: 'A1', label: 'A1', ordering: 10 }, { code: 'A2', label: 'A2', ordering: 20 }],
     course_delivery_def: [{ code: 'Offline', label: 'Offline', ordering: 10 }, { code: 'Online', label: 'Online', ordering: 20 }, { code: 'Hybrid', label: 'Hybrid', ordering: 30 }],
   };
 
@@ -32,10 +32,10 @@ describe('CoursesService catalogs', () => {
     expect(out.map((r: any) => r.code)).toEqual(['Diploma', 'Certificate']);
   });
 
-  it('levelCatalog reads course_level_def', async () => {
+  it('levelCatalog reads the m_level master ordered (dev/114)', async () => {
     const { svc, calls } = build(seed);
     const out = await svc.levelCatalog();
-    expect(calls[0]).toContain('FROM course_level_def');
+    expect(calls[0]).toContain('FROM m_level');
     expect(out.map((r: any) => r.code)).toEqual(['A1', 'A2']);
   });
 

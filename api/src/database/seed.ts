@@ -78,6 +78,11 @@ async function seed(c: PoolClient) {
     ['Diploma', 'DIPLOMA'], ['Certificate', 'CERT'], ['Foundation', 'FOUND'],
     ['Crash Course', 'CRASH'], ['Advanced Diploma', 'ADVDIP'], ['Workshop', 'WORKSHOP'],
   ]);
+  // Level master (dev/114) — self-manageable; the course form's Level picker reads it.
+  await master('m_level', [
+    ['A1', 'A1'], ['A2', 'A2'], ['B1', 'B1'], ['B2', 'B2'], ['C1', 'C1'], ['C2', 'C2'],
+    ['Beginner', 'BEGINNER'], ['Intermediate', 'INTERMEDIATE'], ['Advanced', 'ADVANCED'], ['Expert', 'EXPERT'],
+  ]);
   const metaSourceId = (await c.query(`SELECT id FROM m_source WHERE org_id=$1 AND code='META'`, [org])).rows[0].id as Id;
 
   // ---- hierarchy: branches > verticals > pipelines/stages > campaign > source

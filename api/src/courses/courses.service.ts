@@ -25,7 +25,16 @@ export class CoursesService {
     );
   }
   levelCatalog() {
-    return this.db.query(`SELECT code, label, ordering FROM course_level_def ORDER BY ordering, code`);
+    // dev/114 — Level is now a self-manageable master (m_level, migration 097). This endpoint
+    // stays as a BACK-COMPAT alias so existing callers (RefData `courseLevels`, the course form's
+    // Level picker) keep working unchanged: it returns code == label == name (the value stored in
+    // course_level.code / m_course.meta->>'level'), active values only, and now reflects whatever
+    // the client has added/edited/deactivated in Administration > Masters.
+    return this.db.query(
+      `SELECT name AS code, name AS label, sort_order AS ordering
+         FROM m_level WHERE deleted_at IS NULL AND is_active
+        ORDER BY sort_order, name`,
+    );
   }
   deliveryCatalog() {
     return this.db.query(`SELECT code, label, ordering FROM course_delivery_def ORDER BY ordering, code`);

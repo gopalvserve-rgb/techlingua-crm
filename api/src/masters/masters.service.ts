@@ -27,6 +27,10 @@ export const MASTER_TYPES: Record<string, { table: string; label: string; singul
   // self-manageable master. The course form's Course Type dropdown reads it (via /courses/type-catalog
   // back-compat alias) and the inline + Master adds new values; managed in Administration > Masters.
   course_type: { table: 'm_course_type', label: 'Course Types', singular: 'Course Type' },
+  // Level master (dev/114, migration 097) — was a fixed course_level_def catalog; now a
+  // self-manageable master. The course form's Level picker reads it (via /courses/level-catalog
+  // back-compat alias) and the inline + Master adds new level codes; managed in Administration > Masters.
+  level: { table: 'm_level', label: 'Levels', singular: 'Level' },
 };
 
 export interface MasterDto {
