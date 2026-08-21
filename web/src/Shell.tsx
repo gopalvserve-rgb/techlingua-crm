@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Ic } from './icons';
-import { APP, findScreen } from './specs';
+import { scopedApp, isMobileApp, isRouteAllowed, findScreen } from './specs';
 import { Blocks } from './renderer';
 import { DYN, ScreenCtx } from './dyn';
 import { AddModal, CampaignModal, SPEC_FORMS, headerActions, resolveAdd, addLike } from './forms';
@@ -43,6 +43,14 @@ export function Shell() {
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('tl_theme', theme); }, [theme]);
   useEffect(() => { setOpenMods((x) => ({ ...x, [mod]: true })); }, [mod]);
 
+  // Mobile-app scope (dev/121): inside the Android/Capacitor app (or ?app=mobile) the
+  // shell renders ONLY the operational Leads CRM. A hidden config/admin deep-link is
+  // not reachable — bounce it to the leads dashboard so config isn't opened by URL.
+  const mobileApp = isMobileApp();
+  useEffect(() => {
+    if (!isRouteAllowed(mod, sub)) nav('/m/dash/overview', { replace: true });
+  }, [mod, sub, nav]);
+
   // Aug 2026 — an optional 3rd arg carries list filter params so a KPI card opens its list
   // pre-filtered (e.g. go('leads','all',{ owner_id, temperature:'hot' })). Undefined/empty
   // values are dropped; with no params the URL is exactly as before.
@@ -61,7 +69,7 @@ export function Shell() {
   };
 
   const q = filter.toLowerCase().trim();
-  const visible = useMemo(() => APP.map((m) => {
+  const visible = useMemo(() => scopedApp().map((m) => {
     const subs = m.subs.filter((s) => !q || s.label.toLowerCase().includes(q) || m.label.toLowerCase().includes(q));
     return { m, subs, show: subs.length > 0 };
   }), [q]);
@@ -127,13 +135,14 @@ export function Shell() {
               onClick={() => go('dash', 'todayfollowups', { followup: 'next7' })}>
               <Ic k="cal" />
             </button>
+{!mobileApp && (
             <button className="icon-btn tb-shortcut" type="button" title="What's New / Features"
               aria-label="What's New / Features"
               onClick={() => go('help', 'features')}>
               <Ic k="bolt" />
-            </button>
+            </button>)}
           </div>
-          <button className="icon-btn" title="Site Map" onClick={() => go('map', 'all')}><Ic k="grid" /></button>
+          {!mobileApp && <button className="icon-btn" title="Site Map" onClick={() => go('map', 'all')}><Ic k="grid" /></button>}
           {/* Sprint 3 — the real notification centre. Reminders, overdue escalations,
               SLA breaches and assignments all land here; Sprint 4's WhatsApp/SMS/Email
               channels fan out from the same server-side message. */}

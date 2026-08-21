@@ -666,3 +666,58 @@ export const findScreen = (m: string, s: string): { mod: ModuleItem; sub: SubIte
   const sub = mod?.subs.find((x) => x.id === s);
   return mod && sub ? { mod, sub } : null;
 };
+
+/* ==================== Mobile-app scope (dev/121) ====================
+ * The Android app (Capacitor WebView over the live origin) must render ONLY the
+ * OPERATIONAL Leads CRM — operate leads and convert them into students — and hide
+ * ALL configuration/admin: Settings, Administration, Masters, Integrations, API
+ * management and every non-lead module (Students & Academics, Finance, HR,
+ * Assessment, Reports config, Workspace, Communication Intelligence, Calls, …),
+ * PLUS the config-only lead screens (Lead Scoring rules, Lead Capture / Integrations
+ * setup, Duplicate Rules, SLA & TAT, Custom Fields, Lead Source / Status masters,
+ * Branch / Vertical / Pipeline masters).
+ *
+ * Detection: the Capacitor build loads `…/?app=mobile`; on boot we read the flag
+ * from the URL query and persist it to sessionStorage so it survives client-side
+ * navigation. `window.Capacitor.isNativePlatform()` is a secondary signal, so the
+ * scope also applies inside the native wrapper even without the query string.
+ * On desktop/web (no flag) NOTHING changes — the full nav renders as before.
+ */
+export const MOBILE_ALLOW: Record<string, Set<string>> = {
+  // Lead-focused dashboard + operational lead touchpoints.
+  dash: new Set(['overview', 'quickcontact', 'mytasks', 'todayfollowups', 'quickstats', 'calendar', 'walkins', 'referrals']),
+  // Operate leads: list/add/edit/view/actions (+ Convert → Student from the sheet),
+  // Start Calling, Campaigns (operate/view), Follow-ups, Kanban, Import.
+  // Masters + config-only lead screens are deliberately excluded.
+  leads: new Set(['all', 'calling', 'campaigns', 'followups', 'pipeline', 'import']),
+};
+
+/** True when running inside the Android/Capacitor mobile wrapper (or `?app=mobile`). */
+export function isMobileApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get('app') === 'mobile') sessionStorage.setItem('tl_mobile_app', '1');
+    if (sessionStorage.getItem('tl_mobile_app') === '1') return true;
+  } catch { /* sessionStorage unavailable — fall through to the Capacitor check */ }
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
+}
+
+/** The nav tree the app actually renders: desktop/web = full {@link APP}; mobile =
+ *  APP restricted to the operational Leads CRM allowlist ({@link MOBILE_ALLOW}). */
+export function scopedApp(): ModuleItem[] {
+  if (!isMobileApp()) return APP;
+  return APP
+    .filter((m) => MOBILE_ALLOW[m.id])
+    .map((m) => ({ ...m, subs: m.subs.filter((s) => MOBILE_ALLOW[m.id].has(s.id)) }))
+    .filter((m) => m.subs.length > 0);
+}
+
+/** Route guard — is (mod,sub) reachable in the current mode? On web everything is
+ *  allowed; in the mobile app only the {@link MOBILE_ALLOW} allowlist is. */
+export function isRouteAllowed(m: string, s: string): boolean {
+  if (!isMobileApp()) return true;
+  const allow = MOBILE_ALLOW[m];
+  return !!allow && allow.has(s);
+}
