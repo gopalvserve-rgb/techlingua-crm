@@ -36,10 +36,10 @@ function TransferTargetPicker({ value, onChange }: {
       {sel('Vertical', 'grid', t.vertical, ref.verticals.filter((v) => !t.branch || Number(v.branch_id) === t.branch), (v) => push({ branch: t.branch, vertical: v }), !t.branch)}
       {sel('Pipeline', 'list', t.pipeline, ref.pipelines.filter((p) => !t.vertical || Number(p.vertical_id) === t.vertical), (v) => push({ branch: t.branch, vertical: t.vertical, pipeline: v }), !t.vertical)}
       {sel('Campaign', 'bolt', t.campaign, ref.campaigns.filter((c) => !t.pipeline || Number(c.pipeline_id) === t.pipeline), (v) => push({ ...t, campaign: v }), !t.pipeline)}
-      <div className="fld"><label>Owner after transfer</label>
+      <div className="fld"><label>Lead Counsellor after transfer</label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <label className="qc-src"><input type="radio" name="owner_mode" checked={value.owner_mode === 'keep'}
-            onChange={() => onChange({ ...t, owner_mode: 'keep' })} /> Keep the current owner</label>
+            onChange={() => onChange({ ...t, owner_mode: 'keep' })} /> Keep the current Lead Counsellor</label>
           <label className="qc-src"><input type="radio" name="owner_mode" checked={value.owner_mode === 'distribute'}
             onChange={() => onChange({ ...t, owner_mode: 'distribute' })} /> Assign via the target campaign's distribution (round-robin)</label>
         </div>

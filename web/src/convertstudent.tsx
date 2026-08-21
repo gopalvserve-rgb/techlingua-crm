@@ -206,7 +206,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
             <div>
               <div style={{ marginBottom: 10 }}>
                 Convert <b>{leadName || 'this lead'}</b> to a student. The student carries the lead's
-                name, phone, email, branch{lead?.branch_name ? <> (<b>{lead.branch_name}</b>)</> : null} and owner.
+                name, phone, email, branch{lead?.branch_name ? <> (<b>{lead.branch_name}</b>)</> : null} and Lead Counsellor.
                 Pick <b>one or more courses</b> — each becomes a separate course enrollment, and you can mix
                 <b> different verticals</b>.
               </div>
@@ -378,7 +378,7 @@ export function BulkConvertStudentsModal({ ids, onDone, onClose }: {
             <div>
               Convert the <b>{ids.length}</b> selected lead{ids.length === 1 ? '' : 's'} to
               students? Each becomes a student record from its own lead (name, phone, email,
-              branch, vertical, course, owner) and its lead is marked <b>WON</b>. Leads already
+              branch, vertical, course, Lead Counsellor) and its lead is marked <b>WON</b>. Leads already
               converted are skipped (no duplicate student). Enrolments, if any, are linked.
             </div>
           ) : (

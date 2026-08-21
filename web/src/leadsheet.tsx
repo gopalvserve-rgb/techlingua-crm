@@ -23,7 +23,7 @@ function activityTitle(a: Activity, sourceName?: string): { tt: string; td: stri
     case 'create': return { tt: `Lead captured${sourceName ? ` from ${sourceName}` : ''}`, td: a.note || 'Lead created' };
     case 'stage_change': return { tt: `Stage moved → ${a.to_value?.name ?? ''}`, td: a.from_value?.name ? `From ${a.from_value.name}` : 'Stage updated' };
     case 'status_change': return { tt: `Status → ${a.to_value?.name ?? ''}`, td: a.from_value?.name ? `From ${a.from_value.name}` : 'Status updated' };
-    case 'assign': return { tt: a.to_value?.owner_id ? 'Lead assigned' : 'Owner cleared', td: 'Ownership change' };
+    case 'assign': return { tt: a.to_value?.owner_id ? 'Lead assigned' : 'Lead Counsellor cleared', td: 'Lead Counsellor change' };
     case 'follow_up': return { tt: a.to_value?.action === 'completed' ? 'Follow-up completed' : a.to_value?.action === 'scheduled' ? `Follow-up scheduled · ${fmtDT(a.to_value?.scheduled_at)}` : 'Follow-up updated', td: a.note || '' };
     case 'note': return { tt: a.note || 'Note', td: 'Note added' };
     case 'field_change': return { tt: 'Lead details updated', td: Object.keys(a.to_value || {}).join(', ') };
@@ -309,7 +309,7 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
                       onChange={(e) => setEdits((x) => ({ ...x, full_name: e.target.value }))} />
                   : <span>{lead.full_name}</span>}
               </div></div>
-              <div className="f"><label>Owner</label><div className="iv">
+              <div className="f"><label>Lead Counsellor</label><div className="iv">
                 {editing && ref.users.length && can('lead.assign') ? sel('owner_id', selectableUsers(ref.users, ed('owner_id') ?? lead.owner_id)) : <span>{lead.owner_name || 'Unassigned'}</span>}
               </div></div>
               <div className="f"><label>Phone</label>
@@ -611,10 +611,10 @@ function ReassignModal({ lead, users, onClose, onDone }:
   return (
     <div className="add-scrim">
       <div className="add-modal" style={{ maxWidth: 460 }}>
-        <div className="ah"><h3><Ic k="users" />Reassign lead</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="ah"><h3><Ic k="users" />Reassign Lead Counsellor</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
         <div className="abody">
           <div className="fld">
-            <label>Current owner</label>
+            <label>Current Lead Counsellor</label>
             <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{lead.owner_name || 'Unassigned'}</div>
           </div>
           <div className="fld">
@@ -630,7 +630,7 @@ function ReassignModal({ lead, users, onClose, onDone }:
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}>
                 {history.slice(0, 5).map((a) => (
                   <div key={a.id}>
-                    {fmtDT(a.occurred_at)} — {a.to_value?.owner_id ? `assigned to ${nameOfUser(a.to_value.owner_id) ?? `#${a.to_value.owner_id}`}` : 'owner cleared'}
+                    {fmtDT(a.occurred_at)} — {a.to_value?.owner_id ? `assigned to ${nameOfUser(a.to_value.owner_id) ?? `#${a.to_value.owner_id}`}` : 'Lead Counsellor cleared'}
                     {a.actor_name ? ` (by ${a.actor_name})` : ''}
                   </div>
                 ))}

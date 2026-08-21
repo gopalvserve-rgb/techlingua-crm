@@ -139,7 +139,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'),
     F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'), F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course', 'select', 0, 0, 'master', 'courses'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Course Fee', 'number'), F('City / Location', 'text'),
-    F('Lead Owner / Assigned Counsellor', 'select', 0, 0, 'Users \u00b7 optional \u2014 leave blank and tick Round-Robin', 'users'),
+    F('Lead Counsellor', 'select', 0, 0, 'Users \u00b7 optional \u2014 leave blank and tick Round-Robin', 'users'),
     // dev/84 item 3 \u2014 round-robin on a MANUAL lead: tick to auto-assign the owner via the
     // campaign distribution engine (reuses the walk-in / campaign round-robin), counsellor optional.
     { ...F('Assign via Round-Robin', 'checkbox', 0, 0, 'auto-assign the lead via the campaign round-robin \u2014 counsellor can be left blank'), addOnly: true },
@@ -478,7 +478,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       campaign_id: need(ids['Campaign'], 'Pick a Campaign (Branch › Vertical › Pipeline › Campaign)'),
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
       course_id: ids['Course'],
-      owner_id: ids['Lead Owner / Assigned Counsellor'],
+      owner_id: ids['Lead Counsellor'],
       // dev/84 item 3 \u2014 when ticked, the API ignores owner_id and the campaign round-robin
       // engine assigns the owner (same flag shape as the walk-in round-robin).
       round_robin: vals['Assign via Round-Robin'] === '1',

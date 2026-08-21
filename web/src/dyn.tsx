@@ -148,7 +148,7 @@ const fmtDate = (v?: string | null) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Owner', 'Stage', 'Status', 'Next follow-up', 'Created on'];
+const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Lead Counsellor', 'Stage', 'Status', 'Next follow-up', 'Created on'];
 
 /* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
 const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
@@ -1340,7 +1340,7 @@ function LeadsAll() {
             to the selected Pipeline(s). Multi-select, ANDed with the other filters. */}
         <FilterMulti label="Stage" icon="list" value={f.stages} options={stOpts}
           onChange={(v) => setF((x) => ({ ...x, stages: v }))} />
-        <FilterMulti label="Owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
+        <FilterMulti label="Lead Counsellor" testid="fm-owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
           onChange={(v) => setF((x) => ({ ...x, owners: v }))} />
         {/* SHARED date-range control — filters the list by lead CREATED date (created_from/
             created_to). Default = All time so the list never hides existing leads. */}
@@ -1600,7 +1600,7 @@ function InboxDetail({ lead, openLead, canEditLead, canDeleteLead, del }: { lead
           <h5>Details</h5>
           <KV rows={[
             ['Course', lead.course_name || '—'],
-            ['Owner', lead.owner_name || 'Unassigned'],
+            ['Lead Counsellor', lead.owner_name || 'Unassigned'],
             ['Stage', lead.stage_name || '—'],
             ['Next follow-up', fmtDT(lead.next_follow_up_at)],
           ]} />
@@ -1709,7 +1709,7 @@ function Followups() {
           onChange={(v) => setHier({ pipelines: v })} />
         <FilterMulti label="Campaign" icon="bolt" value={f.campaigns} options={cOpts}
           onChange={(v) => setHier({ campaigns: v })} />
-        <FilterMulti label="Owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
+        <FilterMulti label="Lead Counsellor" testid="fm-owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
           onChange={(v) => setF((x) => ({ ...x, owners: v }))} />
         <FilterMulti label="Type" icon="cal" value={f.types} options={ref.followupTypes}
           onChange={(v) => setF((x) => ({ ...x, types: v }))} />
@@ -1728,7 +1728,7 @@ function Followups() {
           onChange={(v) => setF((x) => ({ ...x, followup: v.followup, fu_from: v.fu_from, fu_to: v.fu_to }))}
           idPrefix="fu-preset" />
       </div>
-      <TableCard fill title="Follow-ups" more={<ListActions onExport={() => downloadObjectsCsv('follow-ups.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Lead', 'Type', 'Priority', 'Owner', 'Due', 'Status', 'Disposition', 'Actions']}
+      <TableCard fill title="Follow-ups" more={<ListActions onExport={() => downloadObjectsCsv('follow-ups.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Lead', 'Type', 'Priority', 'Lead Counsellor', 'Due', 'Status', 'Disposition', 'Actions']}
         rows={rows.map((r) => [...r.row, rowActions({
           onView: () => openLead(r.leadId),
           onDelete: canDelete ? () => del.openDelete(r.id, r.name) : undefined,
@@ -3099,7 +3099,7 @@ function Users() {
       danger: next === 'disabled', confirmLabel: next === 'active' ? 'Activate' : 'Deactivate',
       body: next === 'active'
         ? <>Reactivate <b>{u.name}</b>? They can sign in again immediately.</>
-        : <>Deactivate <b>{u.name}</b>? They can no longer sign in and are skipped by every owner picker. Existing leads are untouched.</>,
+        : <>Deactivate <b>{u.name}</b>? They can no longer sign in and are skipped by every Lead Counsellor picker. Existing leads are untouched.</>,
       onConfirm: async () => { await api.patch(`/users/${u.id}/status`, { status: next }); toast(`${u.name} ${next === 'active' ? 'activated' : 'deactivated'}`); after(); },
     });
   };
@@ -5316,7 +5316,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                   ['Stage', dash(lead.stage_name)],
                   ['Status', dash(lead.status_name)],
                   ['Course (as lead)', dash(lead.course_name)],
-                  ['Owner', dash(lead.owner_name)],
+                  ['Lead Counsellor', dash(lead.owner_name)],
                   ['Created', dt(lead.created_at)],
                   ['Last activity', lead.last_activity_at ? dt(lead.last_activity_at) : '—'],
                 ]} />
@@ -5335,7 +5335,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                 <div className="sub" style={{ marginTop: 14, fontWeight: 600 }}>Follow-ups</div>
                 {fus.length ? (
                   <table className="minitbl" style={{ marginTop: 6 }}><thead><tr>
-                    <th>Scheduled</th><th>Type</th><th>Disposition</th><th>Status</th><th>Owner</th><th>Notes</th>
+                    <th>Scheduled</th><th>Type</th><th>Disposition</th><th>Status</th><th>Lead Counsellor</th><th>Notes</th>
                   </tr></thead>
                     <tbody>{fus.map((f: any) => (
                       <tr key={f.id}>

@@ -484,7 +484,7 @@ export function Sla() {
       <TableCard
         title="SLA breaches — manager view"
         icon="clock"
-        cols={['Lead', 'Owner', 'Policy', 'Stage', 'Target', 'Overdue by', 'Score']}
+        cols={['Lead', 'Lead Counsellor', 'Policy', 'Stage', 'Target', 'Overdue by', 'Score']}
         rows={rows.map((b) => [
           { node: <span className="nm">{b.lead_name}</span> } as Cell,
           b.owner_name || 'Unassigned',
@@ -767,7 +767,7 @@ export function Calendar() {
       </div></div>
 
       <TableCard title="This month" icon="cal"
-        cols={['When', 'What', 'Lead', 'Owner', 'Type']}
+        cols={['When', 'What', 'Lead', 'Lead Counsellor', 'Type']}
         rows={[
           ...(feed.data?.follow_ups ?? []).map((f) => [
             { mono: fmtDT(f.scheduled_at), dim: false } as Cell,
@@ -1171,7 +1171,7 @@ export function Referrals() {
         more={can('referral.create')
           ? <a onClick={() => openAdd('dash.referrals')} style={{ cursor: 'pointer', color: 'var(--primary)' }}>+ Add referral</a>
           : undefined}
-        cols={['Referrer', 'Type', 'New lead', 'Owner', 'Score', 'Reward', 'Status', 'Actions']}
+        cols={['Referrer', 'Type', 'New lead', 'Lead Counsellor', 'Score', 'Reward', 'Status', 'Actions']}
         rows={rows.map((r) => [
           { node: <span className="nm">{r.referrer_name}</span> } as Cell,
           r.referrer_type,
@@ -1216,7 +1216,7 @@ export function Referrals() {
               ['WhatsApp', <span className="mono">{view.referred_whatsapp || '—'}</span>],
               ['Email', view.referred_email || '—'],
               ['Course', view.course_name || '—'],
-              ['Owner', view.owner_name || '—'],
+              ['Lead Counsellor', view.owner_name || '—'],
               ['Lead', view.lead_id
                 ? <a style={{ cursor: 'pointer', color: 'var(--primary)' }}
                     onClick={() => { setView(null); openLead(Number(view.lead_id)); }}>Open lead #{view.lead_id}</a>

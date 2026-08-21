@@ -626,7 +626,7 @@ export function JourneyModal({ initial, onClose, onSaved }: {
                         <label htmlFor={`a-assign-${i}`}>Assign to</label>
                         <select id={`a-assign-${i}`} className="ainp" value={String(a.assign_to ?? 'owner')}
                           onChange={(e) => setAction(i, { assign_to: e.target.value })}>
-                          <option value="owner">The lead's owner</option>
+                          <option value="owner">The Lead Counsellor</option>
                           <option value="manager">Their manager</option>
                         </select>
                       </div>
@@ -647,7 +647,7 @@ export function JourneyModal({ initial, onClose, onSaved }: {
                         <label htmlFor={`a-who-${i}`}>Notify</label>
                         <select id={`a-who-${i}`} className="ainp" value={String(a.assign_to ?? 'owner')}
                           onChange={(e) => setAction(i, { assign_to: e.target.value })}>
-                          <option value="owner">The lead's owner</option>
+                          <option value="owner">The Lead Counsellor</option>
                           <option value="manager">Their manager</option>
                         </select>
                       </div>
