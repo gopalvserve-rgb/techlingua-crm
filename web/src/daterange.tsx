@@ -68,6 +68,27 @@ export const fmtDMYIST = (v?: string | null): string => {
   return `${pad(day)}-${pad(m)}-${y}`;
 };
 
+/**
+ * DD-MM-YYYY HH:mm of a TIMESTAMP as seen in IST — the app's India date+time convention, for
+ * created/updated/enrolled/status-changed/received timestamps (client: show date AND time). Like
+ * `fmtDMYIST` it routes through the app timezone so the wall-clock time is IST in ANY browser tz.
+ * A value with NO time component (a plain 'YYYY-MM-DD' date — DOB, due date) has no meaningful
+ * clock, so it degrades to date-only. Unparseable input also falls back to the date-only render.
+ */
+export const fmtDateTimeIST = (v?: string | null): string => {
+  if (v == null || v === '') return '—';
+  const s = String(v);
+  // A bare date ('YYYY-MM-DD', no time) carries no clock — show date only, never 00:00.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return fmtDMYIST(v);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return fmtDMYIST(v);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TZ, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const val = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+  return `${fmtDMYIST(v)} ${val('hour')}:${val('minute')}`;
+};
+
 export interface DateRangeValue { from?: string; to?: string }
 
 export type PresetKey = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom';

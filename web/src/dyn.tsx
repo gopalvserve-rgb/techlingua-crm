@@ -36,7 +36,7 @@ import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload } from './docu
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
-import { DateRange, presetRange, fmtDMYIST } from './daterange';
+import { DateRange, presetRange, fmtDMYIST, fmtDateTimeIST } from './daterange';
 import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
@@ -4724,6 +4724,10 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
 
   const dash = (v: any) => (v == null || v === '' ? '—' : v);
   const dmy = (v: any) => fmtDMYIST(v);
+  // client (dev/113): timestamps in the student profile show date AND time (IST) — enrolled,
+  // status-changed, receipts, lead/admission journey, transfers, history. Pure DATE fields
+  // (DOB, admission/registration/effective/due/session/issue dates) stay date-only via `dmy`.
+  const dt = (v: any) => fmtDateTimeIST(v);
   const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
   // Fee Management row actions — same endpoints as the standalone Fee Management screen (dev/76).
   const canFeeCollect = can('fee.collect');
@@ -4802,10 +4806,29 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             {/* dev/108 #1 — header shows the ADMISSION (converted) Branch › Vertical derived from
                 the student's enrolment(s), not the originating lead's stale branch/vertical. */}
             <div className="fbp-path" data-testid="stu-admission-path">
-              {[full.admission_branch_name ?? full.branch_name, full.admission_vertical_name ?? full.vertical_name].filter(Boolean).join(' › ') || '—'}
-              {Number(full.admission_vertical_count ?? 0) > 1
-                ? <span className="sub" style={{ marginLeft: 6 }}>+{Number(full.admission_vertical_count) - 1} more vertical{Number(full.admission_vertical_count) - 1 === 1 ? '' : 's'}</span>
-                : null}
+              {(() => {
+                // client (dev/113): show ALL verticals the student is admitted/enrolled across —
+                // no "+N more" truncation. `prof.vertical_ids` is the DISTINCT Branch/Vertical set
+                // (one per vertical). Group by branch for a compact "Branch › V1, V2" render, and
+                // list every branch when a student spans multiple branches.
+                const verts = (prof?.vertical_ids ?? []) as any[];
+                if (verts.length) {
+                  const byBranch = new Map<string, string[]>();
+                  for (const v of verts) {
+                    const b = String(v.branch_name ?? '').trim();
+                    const vn = String(v.vertical_name ?? '').trim();
+                    if (!vn) continue;
+                    const arr = byBranch.get(b) ?? [];
+                    if (!arr.includes(vn)) arr.push(vn);
+                    byBranch.set(b, arr);
+                  }
+                  const parts = Array.from(byBranch.entries())
+                    .map(([b, vs]) => [b, vs.join(', ')].filter(Boolean).join(' › '));
+                  if (parts.length) return parts.join('   ·   ');
+                }
+                // Fallback (profile not loaded yet / no enrolments): the primary admission path.
+                return [full.admission_branch_name ?? full.branch_name, full.admission_vertical_name ?? full.vertical_name].filter(Boolean).join(' › ') || '—';
+              })()}
             </div>
             <div className="fbp-tags">
               <span className="fbp-tag"><Ic k="book" />{activeCourses.length ? activeCourses.join(', ') : 'No course'}</span>
@@ -4982,7 +5005,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             {ac?.transfers?.length ? (
               <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Reason</th></tr></thead>
                 <tbody>{ac.transfers.map((t: any) => (
-                  <tr key={t.id}><td>{dmy(t.created_at)}</td><td>{t.from_batch_name ?? '—'}</td><td>{t.to_batch_name ?? '—'}</td><td>{t.reason ?? '—'}</td></tr>
+                  <tr key={t.id}><td>{dt(t.created_at)}</td><td>{t.from_batch_name ?? '—'}</td><td>{t.to_batch_name ?? '—'}</td><td>{t.reason ?? '—'}</td></tr>
                 ))}</tbody></table>
             ) : null}
           </Section>
@@ -4991,7 +5014,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Batch</th><th>By</th><th>Reason</th></tr></thead>
                 <tbody>{ac.branch_transfers.map((t: any) => (
                   <tr key={t.id}>
-                    <td>{dmy(t.created_at)}</td>
+                    <td>{dt(t.created_at)}</td>
                     <td>{[t.from_branch_name, t.from_vertical_name].filter(Boolean).join(' › ') || '—'}</td>
                     <td>{[t.to_branch_name, t.to_vertical_name].filter(Boolean).join(' › ') || '—'}</td>
                     <td>{t.to_batch_name ?? '—'}</td>
@@ -5108,7 +5131,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               ['Outstanding (snapshot)', full.status_outstanding_minor != null ? money(full.status_outstanding_minor) : '—'],
               ['Approved By', dash(full.status_approved_by_name)],
               ['Changed By', dash(full.status_changed_by_name)],
-              ['Changed At', full.status_changed_at ? fmtFull(full.status_changed_at) : '—'],
+              ['Changed At', full.status_changed_at ? dt(full.status_changed_at) : '—'],
             ]} />
             {canEdit && <button className="btn primary" style={{ marginTop: 8 }} onClick={() => setShowStatus(true)}><Ic k="flag" />Change status</button>}
           </Section>
@@ -5129,7 +5152,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             {(statusHist.data ?? []).length ? (
               <table className="minitbl"><thead><tr><th>When</th><th>From</th><th>To</th><th>Reason</th><th>Outstanding</th><th>Approved By</th><th>By</th></tr></thead>
                 <tbody>{(statusHist.data ?? []).map((h: any) => (
-                  <tr key={h.id}><td>{fmtFull(h.changed_at)}</td><td>{h.from_label ?? h.from_status ?? '—'}</td>
+                  <tr key={h.id}><td>{dt(h.changed_at)}</td><td>{h.from_label ?? h.from_status ?? '—'}</td>
                     <td>{renderCell(studentStatusCell(h.to_status))}</td><td>{dash(h.reason)}</td>
                     <td>{h.outstanding_minor != null ? money(h.outstanding_minor) : '—'}</td>
                     <td>{dash(h.approved_by_name)}</td><td>{dash(h.changed_by_name)}</td></tr>
@@ -5178,7 +5201,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                     <><b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }} data-testid={`enrol-balance-${e.id}`}>{money(e.outstanding_minor ?? 0)}</b>{Number(e.paid_minor ?? 0) > 0 && <div className="sub" style={{ fontSize: 10 }}>paid {money(e.paid_minor)}</div>}</>,
                     <>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</>,
                     e.batch_name ?? '—',
-                    e.start_date ? dmy(e.start_date) : dmy(e.created_at),
+                    e.start_date ? dt(e.start_date) : dt(e.created_at),
                     <span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span>,
                     <span style={{ whiteSpace: 'nowrap' }}>
                       {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolEditFor(e)} data-testid={`enrol-edit-${e.id}`}><Ic k="pencil" />Edit</button>}
@@ -5249,8 +5272,8 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                   ['Status', dash(lead.status_name)],
                   ['Course (as lead)', dash(lead.course_name)],
                   ['Owner', dash(lead.owner_name)],
-                  ['Created', dmy(lead.created_at)],
-                  ['Last activity', lead.last_activity_at ? fmtDT(lead.last_activity_at) : '—'],
+                  ['Created', dt(lead.created_at)],
+                  ['Last activity', lead.last_activity_at ? dt(lead.last_activity_at) : '—'],
                 ]} />
                 <div className="sub" style={{ marginTop: 14, fontWeight: 600 }}>Activity Timeline</div>
                 {acts.length ? (
@@ -5259,7 +5282,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                       <li key={a.id} style={{ marginBottom: 6 }} data-testid={`lj-act-${a.id}`}>
                         <span className="bdg b-slate" style={{ marginRight: 6 }}>{a.type}</span>
                         {a.note ? <span>{String(a.note)}</span> : (a.from_value != null || a.to_value != null ? <span className="sub">{sval(a.from_value)} → {sval(a.to_value)}</span> : null)}
-                        <span className="sub mono" style={{ marginLeft: 8 }}>{fmtDT(a.occurred_at)}{a.actor_name ? ` · ${a.actor_name}` : ''}</span>
+                        <span className="sub mono" style={{ marginLeft: 8 }}>{dt(a.occurred_at)}{a.actor_name ? ` · ${a.actor_name}` : ''}</span>
                       </li>
                     ))}
                   </ul>
@@ -5271,7 +5294,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                   </tr></thead>
                     <tbody>{fus.map((f: any) => (
                       <tr key={f.id}>
-                        <td>{fmtDT(f.scheduled_at)}</td>
+                        <td>{dt(f.scheduled_at)}</td>
                         <td>{dash(f.type_name)}</td>
                         <td>{dash(f.disposition_name)}</td>
                         <td>{dash(f.status)}</td>
@@ -5303,7 +5326,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                   </span>
                 </div>
                 {j.is_rejected && j.rejected && (
-                  <div className="notice warn" style={{ marginBottom: 8 }}><Ic k="x" /><div>Rejected — {j.rejected.reason}{j.rejected.by ? ` · by ${j.rejected.by}` : ''}{j.rejected.at ? ` · ${dmy(j.rejected.at)}` : ''}</div></div>
+                  <div className="notice warn" style={{ marginBottom: 8 }}><Ic k="x" /><div>Rejected — {j.rejected.reason}{j.rejected.by ? ` · by ${j.rejected.by}` : ''}{j.rejected.at ? ` · ${dt(j.rejected.at)}` : ''}</div></div>
                 )}
                 <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                   {j.stages.map((s: any, i: number) => (
@@ -5315,7 +5338,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                       <div style={{ flex: 1, paddingTop: 1 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                           <b style={{ color: s.status === 'pending' ? 'var(--muted, #94a3b8)' : 'inherit', fontWeight: s.status === 'current' ? 800 : 600 }}>{s.label}</b>
-                          {s.at && <span className="sub" style={{ fontSize: 11 }}>{dmy(s.at)}</span>}
+                          {s.at && <span className="sub" style={{ fontSize: 11 }}>{dt(s.at)}</span>}
                         </div>
                         {s.detail && <div className="sub" style={{ fontSize: 12 }}>{s.detail}</div>}
                         {s.by && <div className="sub" style={{ fontSize: 11 }}>by {s.by}</div>}
@@ -5412,7 +5435,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                       r.course_status ? renderCell(studentStatusCell(r.course_status)) : '—',
                       <b>{money(r.amount_minor)}</b>,
                       r.mode,
-                      dmy(r.received_at),
+                      dt(r.received_at),
                       <div className="rowacts">
                         <button className="icon-btn sm" title="View receipt" onClick={() => setFeeReceiptView({ ...r, lead_name: r.lead_name ?? full.full_name })}><Ic k="eye" /></button>
                         <button className="icon-btn sm" title="Download receipt PDF" onClick={() => openPdfAuthed(`/fees/receipts/${r.id}/pdf`)}><Ic k="doc" /></button>

@@ -24,7 +24,7 @@ import {
   DiscountType, LineDraft, computeTotals, fmtINR, minorToInput, parseRupees,
 } from './money';
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
-import { DateRange } from './daterange';
+import { DateRange, fmtDateTimeIST } from './daterange';
 
 /* ==================================================================== */
 /*  shared bits                                                          */
@@ -1320,7 +1320,7 @@ export function ReceiptViewModal({ r, onClose }: { r: any; onClose: () => void }
             <div><span className="kl">Amount</span><span className="kvv">{fmtINR(r.amount_minor)}</span></div>
             <div><span className="kl">Mode</span><span className="kvv">{String(r.mode).toUpperCase()}</span></div>
             <div><span className="kl">Reference</span><span className="kvv">{r.reference || '\u2014'}</span></div>
-            <div><span className="kl">Received</span><span className="kvv">{dt(r.received_at)}</span></div>
+            <div><span className="kl">Received</span><span className="kvv">{fmtDateTimeIST(r.received_at)}</span></div>
             <div className="span2"><span className="kl">Branch › Vertical › Course</span><span className="kvv">{path}</span></div>
             {r.note ? <div className="span2"><span className="kl">Note</span><span className="kvv">{r.note}</span></div> : null}
           </div>
