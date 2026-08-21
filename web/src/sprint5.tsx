@@ -14,7 +14,7 @@
  *   · no dues/ageing, no installment schedule, no refunds.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { api } from './api';
+import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, HBars, Kpis, TableCard } from './renderer';
@@ -55,7 +55,15 @@ const badge = (k: string): Cell => {
 const dt = (v: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
 /** Open a PDF the API streams. The route is permission-guarded server-side. */
-const openPdf = (path: string) => { window.open(`/api${path}`, '_blank', 'noopener'); };
+async function openPdf(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
 
 /** The amber note that keeps a Phase-1 screen honest about a Phase-3 gap. */
 const PhaseNote = ({ children }: { children: React.ReactNode }) => (

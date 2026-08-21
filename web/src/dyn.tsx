@@ -11,6 +11,18 @@ import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
 } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
+
+/** Open an auth-guarded PDF: fetch with the bearer token, then open the blob (window.open can't set headers). */
+async function openPdfAuthed(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
+
 import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
@@ -4730,7 +4742,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
       const recs = await api.get<any[]>(`/fees/receipts?enrolment_id=${enrolmentId}`);
       const latest = (recs ?? [])[0];
       if (!latest) { toast('No receipt yet for this enrolment.', true); return; }
-      window.open(`/api/fees/receipts/${latest.id}/pdf`, '_blank', 'noopener');
+      openPdfAuthed(`/fees/receipts/${latest.id}/pdf`);
     } catch (e) { toast((e as Error).message, true); }
   };
 
@@ -5403,7 +5415,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                       dmy(r.received_at),
                       <div className="rowacts">
                         <button className="icon-btn sm" title="View receipt" onClick={() => setFeeReceiptView({ ...r, lead_name: r.lead_name ?? full.full_name })}><Ic k="eye" /></button>
-                        <button className="icon-btn sm" title="Download receipt PDF" onClick={() => window.open(`/api/fees/receipts/${r.id}/pdf`, '_blank', 'noopener')}><Ic k="doc" /></button>
+                        <button className="icon-btn sm" title="Download receipt PDF" onClick={() => openPdfAuthed(`/fees/receipts/${r.id}/pdf`)}><Ic k="doc" /></button>
                       </div>,
                     ];
                     return <tr key={r.id} data-testid={`receipt-row-${r.id}`}>{receiptCols.visibleIdx.map((ci) => <td key={ci}>{cells[ci]}</td>)}</tr>;

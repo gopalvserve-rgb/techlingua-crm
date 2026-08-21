@@ -8,7 +8,7 @@
  * it carries every control EXCEPT bulk-delete — declared, not silently omitted.
  */
 import { useMemo, useState } from 'react';
-import { api } from './api';
+import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, HBars, TableCard } from './renderer';
@@ -20,7 +20,15 @@ import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete
 import { CollectModal } from './sprint5';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
-const openPdf = (path: string) => { window.open(`/api${path}`, '_blank', 'noopener'); };
+async function openPdf(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
 
 const PLAN_TYPE_LABEL: Record<string, string> = { full: 'Full', installment: 'Installment', emi: 'EMI', custom: 'Custom' };

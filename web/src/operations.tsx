@@ -14,11 +14,23 @@
  *                        → close, with a branded PO PDF.
  */
 import { useMemo, useState } from 'react';
-import { api } from './api';
+import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
+
+/** Open an auth-guarded PDF: fetch with the bearer token, then open the blob (window.open can't set headers). */
+async function openPdfAuthed(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
+
 import { rowActions, ConfirmModal, DetailModal, Section, KV } from './rowactions';
 import { DateRange } from './daterange';
 import { useScope } from './scope';
@@ -577,7 +589,7 @@ export function ProcurementScreen() {
           fmtINR(r.total_minor),
           { b: PO_STATUS[r.status] ?? [r.status, 'b-gray'] } as Cell,
           rowActions({
-            extra: [{ k: 'eye', title: 'Open', onClick: () => setView(r) }, { k: 'doc', title: 'PDF', onClick: () => window.open(`/api/purchase-orders/${r.id}/pdf`, '_blank', 'noopener') }],
+            extra: [{ k: 'eye', title: 'Open', onClick: () => setView(r) }, { k: 'doc', title: 'PDF', onClick: () => openPdfAuthed(`/purchase-orders/${r.id}/pdf`) }],
             onDelete: can('procurement.delete') ? () => setDel(r) : undefined,
           }),
         ])} />
@@ -701,7 +713,7 @@ function PODetail({ id, onClose, onChanged }: { id: number; onClose: () => void;
   return (
     <DetailModal title={`Purchase order — ${po.po_no}`} icon="doc" width={820} onClose={onClose}
       footer={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button className="btn" onClick={() => window.open(`/api/purchase-orders/${id}/pdf`, '_blank', 'noopener')}><Ic k="doc" />PDF</button>
+        <button className="btn" onClick={() => openPdfAuthed(`/purchase-orders/${id}/pdf`)}><Ic k="doc" />PDF</button>
         {po.status === 'draft' && can('procurement.update') && <button className="btn" onClick={() => setStatus('sent', 'PO marked sent')} disabled={busy}>Mark sent</button>}
         {(po.status === 'sent' || po.status === 'draft') && can('procurement.receive') && <button className="btn primary" onClick={() => setConfirmRecv(true)} disabled={busy}><Ic k="check" />Receive → stock</button>}
         {po.status === 'received' && can('procurement.update') && <button className="btn" onClick={() => setStatus('closed', 'PO closed')} disabled={busy}>Close</button>}
