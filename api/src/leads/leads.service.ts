@@ -134,6 +134,25 @@ const LEAD_UPDATABLE = [
   'next_follow_up_at', 'custom_fields', 'is_active',
 ] as const;
 
+/** dev/117 — auto Lead-Status from the stage a lead is moved to.
+ *  The pipeline stage TYPE (open|won|lost) is authoritative: a WON-type stage forces
+ *  Status = Won, a LOST-type stage forces Status = Lost. As a NAME fallback (for live
+ *  pipelines that named a terminal stage "Enrolled" / "Closed" without setting its type),
+ *  an open/untyped stage whose NAME reads as enrolled/won or closed/lost/loss still fires,
+ *  so the client rule "Enrolled -> Won" and "Closed -> Loss" holds regardless of how the
+ *  live stage_type was configured. Stage TYPE always wins over the name fallback. */
+export function autoStatusFromStage(stageType: string | null, stageName: string | null): 'WON' | 'LOST' | null {
+  if (stageType === 'won') return 'WON';
+  if (stageType === 'lost') return 'LOST';
+  if (stageType === 'open' || stageType == null || stageType === '') {
+    const n = (stageName ?? '').toLowerCase();
+    if (/enrol/.test(n) || /\bwon\b/.test(n)) return 'WON';
+    if (/clos/.test(n) || /lost/.test(n) || /loss/.test(n)) return 'LOST';
+  }
+  return null;
+}
+
+
 const LEAD_SELECT = `
   SELECT l.id, l.full_name, l.phone, l.email, l.alt_phone, l.whatsapp_phone, l.dob,
          l.priority, l.temperature, l.score,
@@ -884,6 +903,7 @@ export class LeadsService {
     // to a LOST/closed stage forces Status = Lost. Resolved here so the forced status flows
     // through the SAME set()/activity path as a manual status change.
     let newStageType: string | null = null;
+    let newStageName: string | null = null;
     if (dto.stage_id !== undefined && Number(dto.stage_id) !== Number(before.stage_id)) {
       const stage = await this.db.one<{ id: string; name: string; pipeline_id: string; stage_type: string }>(
         `SELECT id, name, pipeline_id, stage_type FROM pipeline_stage WHERE id = $1`, [Number(dto.stage_id)],
@@ -895,12 +915,12 @@ export class LeadsService {
       set('stage_id', Number(dto.stage_id));
       activities.push({ type: 'stage_change', from: { id: before.stage_id, name: from?.name }, to: { id: stage.id, name: stage.name } });
       newStageType = stage.stage_type ?? null;
+      newStageName = stage.name ?? null;
     }
     // Effective target status: the auto-rule (won→Won, lost→Lost) WINS over an explicit
     // status in the same PATCH, so convert / a stage move to Enrolled always lands on Won.
     // An 'open' (unrelated) stage move never touches status — a manually set status is kept.
-    const forcedStatusCode: 'WON' | 'LOST' | null =
-      newStageType === 'won' ? 'WON' : newStageType === 'lost' ? 'LOST' : null;
+    const forcedStatusCode: 'WON' | 'LOST' | null = autoStatusFromStage(newStageType, newStageName);
     let targetStatusId: number | null = null;
     if (forcedStatusCode) {
       const row = await this.db.one<{ id: string }>(
@@ -928,6 +948,17 @@ export class LeadsService {
     }
     if (dto.team_id !== undefined) set('team_id', dto.team_id == null ? null : Number(dto.team_id));
 
+    // dev/117 item 1 — the lead's Source (m/source master value) is editable on the edit form.
+    // A new source must be inside the caller's scope, exactly like create/transfer resolve it.
+    if (dto.source_id !== undefined && dto.source_id != null && Number(dto.source_id) !== Number(before.source_id)) {
+      await this.enforcer.assertRefInScope(scope, 'source', Number(dto.source_id), actorId);
+      const toSrc = await this.db.one<{ name: string }>(`SELECT name FROM source WHERE id = $1`, [Number(dto.source_id)]);
+      if (!toSrc) throw new BadRequestException('unknown source');
+      const fromSrc = await this.db.one<{ name: string }>(`SELECT name FROM source WHERE id = $1`, [before.source_id]);
+      set('source_id', Number(dto.source_id));
+      activities.push({ type: 'field_change', from: null, to: { source_id: { from: fromSrc?.name, to: toSrc.name } } });
+    }
+
     for (const col of LEAD_UPDATABLE) {
       if (dto[col] === undefined) continue;
       let val = col === 'custom_fields' ? JSON.stringify(dto[col] ?? {}) : dto[col];
@@ -946,7 +977,7 @@ export class LeadsService {
     // 200 no-op returning the current entity (kanban drag-to-same-column,
     // double-save). 400 stays reserved for a body with nothing recognisable.
     if (!sets.length && !dto.note) {
-      const recognised = ['stage_id', 'status_id', 'owner_id', 'team_id', 'note', ...LEAD_UPDATABLE];
+      const recognised = ['stage_id', 'status_id', 'owner_id', 'team_id', 'source_id', 'note', ...LEAD_UPDATABLE];
       const touched = recognised.some((k) => dto[k] !== undefined);
       if (!touched) throw new BadRequestException('nothing to update');
       return before;

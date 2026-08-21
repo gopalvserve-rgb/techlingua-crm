@@ -301,6 +301,14 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
           <div className="sheet-sec">
             <h5>Lead details</h5>
             <div className="kv">
+              {/* dev/117 item 1 — Lead Name (full_name) is EDITABLE on the edit form (was
+                  header-only / read-only). View mode stays read-only. Persists via PATCH. */}
+              <div className="f"><label>Name</label><div className="iv">
+                {canUpdate
+                  ? <input type="text" value={String(ed('full_name') ?? '')}
+                      onChange={(e) => setEdits((x) => ({ ...x, full_name: e.target.value }))} />
+                  : <span>{lead.full_name}</span>}
+              </div></div>
               <div className="f"><label>Owner</label><div className="iv">
                 {editing && ref.users.length && can('lead.assign') ? sel('owner_id', selectableUsers(ref.users, ed('owner_id') ?? lead.owner_id)) : <span>{lead.owner_name || 'Unassigned'}</span>}
               </div></div>
@@ -321,7 +329,13 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
                   ? <PhoneInput value={String(ed('alt_phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, alt_phone: v }))} />
                   : <div className="iv"><span className="mono">{lead.alt_phone || '\u2014'}</span></div>}
               </div>
-              <div className="f"><label>Source</label><div className="iv">{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</div></div>
+              {/* dev/117 item 1 — Source is the lead's Source-master value, EDITABLE here on the
+                  edit form (was read-only). View mode + no options fall back to the read-only name. */}
+              <div className="f"><label>Source</label><div className="iv">
+                {canUpdate && (ref.sources.length || extra['source_id']?.length)
+                  ? sel('source_id', withExtra('source_id', ref.sources), false)
+                  : <span>{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</span>}
+              </div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">
                 {ref.courses.length || extra['course_id']?.length ? sel('course_id', courseOpts()) : <span>{lead.course_name || '—'}</span>}
               </div>
