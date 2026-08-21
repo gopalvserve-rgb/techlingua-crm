@@ -5396,7 +5396,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                     <td>{e.status}</td>
                     <td><div className="rowacts">
                       {canPlanCreate && <button className="icon-btn sm" title="Fee setup (payment plan)" onClick={() => setFeePlanFor(Number(e.id))}><Ic k="cfg" /></button>}
-                      {e.plan_id ? <button className="icon-btn sm" title="Edit plan / schedule" onClick={() => setFeePlanEditFor(Number(e.plan_id))}><Ic k="pencil" /></button> : null}
+                      {e.plan_id ? <button className="icon-btn sm" title="View schedule" onClick={() => setFeePlanEditFor(Number(e.plan_id))}><Ic k="eye" /></button> : null}
                       <button className="icon-btn sm" title="Send fee reminder" onClick={() => void feeRemind(Number(e.id))}><Ic k="bell" /></button>
                       {canFeeCollect && <button className="icon-btn sm" title="Collect fee" onClick={() => setFeeCollectFor(Number(e.id))}><Ic k="rupee" /></button>}
                       <button className="icon-btn sm" title="Download latest receipt" onClick={() => void feeDownloadReceipt(Number(e.id))}><Ic k="doc" /></button>
