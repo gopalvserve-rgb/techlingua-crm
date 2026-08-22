@@ -36,7 +36,7 @@ import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload } from './docu
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
-import { DateRange, presetRange, fmtDMYIST, fmtDateTimeIST } from './daterange';
+import { DateRange, presetRange, matchPreset, fmtDMYIST, fmtDateTimeIST } from './daterange';
 import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
@@ -350,6 +350,23 @@ function DashOverview() {
   const TODAY = new Date().toISOString().slice(0, 10);           // matches the server's CURRENT_DATE (UTC)
   const leadsTo = (filter: Record<string, string | number | undefined>) => () => go('leads', 'all', filter);
 
+  // dev/125 — the leads KPI card must REFLECT the selected date filter, not be stuck on
+  // "Today's leads". The count already tracks the range (server narrows the whole cohort, so
+  // `kpis.total` is all-time when no preset is picked and the range-count once one is), and the
+  // drill-through opens the leads list on the SAME created-date window; here we make the label
+  // and value match the active preset resolved from the shared DateRange value.
+  const leadsPreset = matchPreset(range);
+  const LEADS_CARD_LABEL: Record<string, string> = {
+    all: 'All-time Leads', today: "Today's Leads", yesterday: "Yesterday's Leads",
+    week: "This Week's Leads", month: "This Month's Leads", custom: 'Leads (custom range)',
+  };
+  const leadsCardLabel = LEADS_CARD_LABEL[leadsPreset] ?? 'Leads';
+  // `kpis.total` is the scope+range-narrowed lead count (all-time when no preset is active).
+  const leadsCardVal = k?.total ?? 0;
+  // The created-date window the card drills into: empty (all leads) for All time, else the range.
+  const leadsRangeFilter = leadsPreset === 'all'
+    ? {} : { created_from: range.from, created_to: range.to };
+
   // a counsellor's KPI strip is about THEIR work; a manager's is about the unit.
   const kpiItems = personal ? [
     { lab: 'My leads', val: String(k?.total ?? 0), ic: 'leads',
@@ -368,8 +385,8 @@ function DashOverview() {
     { lab: 'New today', val: String(k?.today ?? 0), ic: 'users',
       onClick: leadsTo({ owner_id: myId, created_from: TODAY, created_to: TODAY }), navLabel: `New today: ${k?.today ?? 0}. Open my leads created today` },
   ] : [
-    { lab: "Today's leads", val: String(k?.today ?? 0), ic: 'leads',
-      onClick: leadsTo({ created_from: TODAY, created_to: TODAY }), navLabel: `Today's leads: ${k?.today ?? 0}. Open leads created today` },
+    { lab: leadsCardLabel, val: String(leadsCardVal), ic: 'leads',
+      onClick: leadsTo(leadsRangeFilter), navLabel: `${leadsCardLabel}: ${leadsCardVal}. Open the leads behind this number` },
     { lab: 'Conversions', val: String(k?.won ?? 0), ic: 'check',
       onClick: leadsTo({ won: 1 }), navLabel: `Conversions: ${k?.won ?? 0}. Open won Leads` },
     { lab: 'Pending follow-ups', val: String(fu?.pending ?? 0), ic: 'clock',

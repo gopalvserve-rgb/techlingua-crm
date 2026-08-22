@@ -73,8 +73,19 @@ describe('StudentService.convert', () => {
     expect(out.already).toBe(false);
     expect((out as any).student_no).toBe('STU-0001');
     expect(has(issued, /INSERT INTO student/)).toBe(true);
-    expect(has(issued, /UPDATE lead SET stage_id/)).toBe(true);           // WON
+    expect(has(issued, /UPDATE lead SET stage_id/)).toBe(true);           // WON stage move
+    // dev/125 — convert must ALSO set Lead Status = Won (code WON), not leave it at New.
+    expect(has(issued, /UPDATE lead SET status_id = ms\.id[\s\S]*ms\.code = 'WON'/)).toBe(true);
     expect(has(issued, /INSERT INTO lead_activity/)).toBe(true);          // activity
+  });
+
+  it('dev/125 — sets Lead Status to Won (code WON) even when the lead is ALREADY on the won stage', async () => {
+    // lead.stage_id === won stage id -> the stage-move early-returns, but the status-set must
+    // still have run first, so a lead that drifted to Status=New still ends up Won.
+    const { svc, issued } = make({ lead: LEAD({ stage_id: 77 }), wonStage: { id: 77, name: 'Won' } });
+    await svc.convert({ lead_id: 10 }, { id: 5 }, scopeAll);
+    expect(has(issued, /UPDATE lead SET status_id = ms\.id[\s\S]*ms\.code = 'WON'/)).toBe(true);
+    expect(has(issued, /UPDATE lead SET stage_id/)).toBe(false);          // already on won stage -> no move
   });
 
   it('is IDEMPOTENT — an already-converted lead returns the existing student, makes no new one', async () => {

@@ -1869,6 +1869,18 @@ export class StudentService {
     );
     const stage = st.rows[0];
     if (!stage) return;
+    // dev/125 (dev/95 item 2) — converting a lead to a student auto-sets its Lead Status to
+    // WON, keyed on the status master CODE (not a configurable name), idempotent. This is the
+    // SAME status-set the enrolment-approval winLead() does; it was missing here, so convert
+    // moved the lead to the WON stage but left Status = New. Runs even when the lead is already
+    // on the won stage but its status had drifted, so a converted lead always ends up Won.
+    await c.query(
+      `UPDATE lead SET status_id = ms.id, updated_at = now()
+         FROM m_status ms
+        WHERE lead.id = $1::bigint AND ms.org_id = lead.org_id AND ms.code = 'WON'
+          AND lead.status_id IS DISTINCT FROM ms.id`,
+      [lead.id],
+    );
     if (Number(lead.stage_id) === Number(stage.id)) return;
     await c.query(`UPDATE lead SET stage_id = $2::bigint, updated_at = now() WHERE id = $1::bigint`, [lead.id, stage.id]);
     await c.query(

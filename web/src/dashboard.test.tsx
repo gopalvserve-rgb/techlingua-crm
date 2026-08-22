@@ -11,6 +11,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { DYN, ScreenCtx } from './dyn';
+import { presetRange } from './daterange';
 
 vi.mock('./auth', () => ({
   useAuth: () => ({ can: () => true, me: { user: { id: 3, name: 'Asha Rao' } } }),
@@ -342,12 +343,31 @@ describe('card-links — every meaningful KPI card opens its filtered list (and 
     draw('dashOverview');
     await screen.findByText('My branch');
 
-    clickBtn(/Today's leads: 3\. /);     expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { created_from: TODAY, created_to: TODAY });
+    // dev/125 — the leads card REFLECTS the selected date filter. With no preset picked the
+    // dashboard is all-time, so the card reads "All-time Leads" (count = kpis.total) and drills
+    // into the unfiltered Leads list.
+    clickBtn(/All-time Leads: 12\. /);   expect(CTX.go).toHaveBeenCalledWith('leads', 'all', {});
     clickBtn(/Conversions: 2\. /);       expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { won: 1 });
     clickBtn(/Pending follow-ups: 5\. /);expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
     clickBtn(/SLA breaches: 2\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { sla_breached: 1 });
     clickBtn(/Walk-ins today: 2\. /);    expect(CTX.go).toHaveBeenCalledWith('dash', 'walkins');
     clickBtn(/Unassigned: 0\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { unassigned: 1 });
+  });
+
+  it('dev/125 — the leads KPI card TITLE follows the selected date filter (not stuck on "Today")', async () => {
+    ROUTES = { '/dashboard': BRANCH_MGR, '/follow-ups': [], '/leads': { total: 0, rows: [] } };
+    draw('dashOverview');
+    await screen.findByText('My branch');
+    // Default (no preset) -> All time.
+    expect(screen.getByRole('button', { name: /All-time Leads: 12\. /})).toBeTruthy();
+    // Pick the "Today" preset chip -> the card TITLE flips + drill-through carries that day window.
+    const t = presetRange('today');
+    fireEvent.click(screen.getByRole('button', { name: 'Today' }));
+    const todayCard = await screen.findByRole('button', { name: /Today's Leads: 12\. /});
+    expect(todayCard).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /All-time Leads/ })).toBeNull();
+    CTX.go.mockClear(); fireEvent.click(todayCard);
+    expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { created_from: t.from, created_to: t.to });
   });
 
   it('QUICK STATS — every card with a sensible destination links (client UAT Aug 2026); only the rate stays informational', async () => {
