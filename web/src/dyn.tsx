@@ -740,7 +740,7 @@ function TodayFollowups() {
         navLabel: `${b.lab}: ${st[b.key] ?? 0}. Open the ${b.lab} follow-up list`,
       }))} />
       <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <FollowupFilter value={fu} onChange={(v) => { setFu(v); setBucket(undefined); }} allowNoFollowup={false} idPrefix="today-fu" />
+        <FollowupFilter value={fu} onChange={(v) => { setFu(v); setBucket(undefined); }} allowNoFollowup={false} idPrefix="today-fu" variant="buttons" />
         {bucket && <button className="btn ghost" onClick={() => setBucket(undefined)}>Clear card filter</button>}
       </div>
       {/* #14 — actionable: open the lead, mark done (confirm), overdue highlighted red. */}

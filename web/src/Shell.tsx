@@ -95,8 +95,16 @@ export function Shell() {
   // like `leadsAll` earlier) lets `main` scroll normally and the roles `.tbl-fill` card falls
   // back to `.tbl-scroll{max-height:62vh; overflow:auto}` with its sticky header — matrix, rows
   // and the full ⋯ Edit/Delete menu all visible. Mirrors the known-good Students container.
-  const LIST_SCROLL = new Set(['campaigns', 'users', 'audit', 'errorLogs', 'walkIns',
-    'sources', 'branches', 'verticals', 'pipelines', 'courses', 'followups']);
+  // dev/126 (client, Aug 2026): the Leads-area MASTER screens (Branch, Vertical, Pipeline,
+  // Campaign, Lead Source) render extra content ABOVE the results table — Branch shows a tall
+  // "Hierarchy" tree, and all of them carry a filter/bulk band. In `.main--list` full-height flex
+  // (overflow:hidden) that tall header squeezed the table body to a ~26px sliver on Branch (and
+  // the client reported Pipeline not scrolling either), so the list was cut off and unreachable.
+  // Exactly the Roles/Leads class of bug — the fix is the SAME: drop these from LIST_SCROLL so
+  // `main` scrolls normally and each `.tbl-fill` card falls back to `.tbl-scroll{max-height:62vh;
+  // overflow:auto}` with its sticky header. Mirrors the known-good Students/Roles container; every
+  // Leads master now scrolls consistently and reaches the last row.
+  const LIST_SCROLL = new Set(['users', 'audit', 'errorLogs', 'walkIns', 'courses', 'followups']);
   const curDyn = (findScreen(mod, sub)?.sub.spec as any)?.dyn as string | undefined;
   const listScroll = !!curDyn && LIST_SCROLL.has(curDyn);
 

@@ -111,7 +111,17 @@ const sameRaw = (a: Raw, b: Raw) => (['branches', 'verticals', 'pipelines', 'cam
 
 export function GlobalScopeProvider({ children }: { children: ReactNode }) {
   const ref = useRef_();
+  // `raw` = the LIVE selection the top-bar checkboxes drive (updates instantly on every tick).
   const [raw, setRaw] = useState<Raw>(() => readLS());
+  // dev/126 — PERF: the scope-lag fix. Every scope-dependent screen keys its fetches off the
+  // context `params`/`key`. Previously those changed on EVERY checkbox tick, so a single Branch
+  // pick fired the whole dashboard's request set (dashboard + follow-ups + leads + ai + reports),
+  // and rattling through several units fired that storm once PER tick — the janky lag the client
+  // felt. We now DEBOUNCE the committed scope: the checkboxes (and their cascade) still update
+  // instantly from `raw`, but the `params`/`key`/`active` that drive data-fetching settle ~250ms
+  // after the user stops toggling — so a burst of selections collapses into ONE batched refetch
+  // and the selector itself feels instant.
+  const [committed, setCommitted] = useState<Raw>(raw);
 
   // Re-validate the persisted scope against the RBAC-limited RefData once it has loaded.
   useEffect(() => {
@@ -123,12 +133,22 @@ export function GlobalScopeProvider({ children }: { children: ReactNode }) {
     try { localStorage.setItem(LS_KEY, JSON.stringify(raw)); } catch { /* jsdom */ }
   }, [raw]);
 
+  // Debounce raw -> committed: batch rapid multi-select ticks into a single downstream refetch.
+  useEffect(() => {
+    if (sameRaw(raw, committed)) return;
+    const t = setTimeout(() => setCommitted(raw), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [raw]);
+
   const value = useMemo<ScopeCtx>(() => {
     const set = (level: ScopeLevel, ids: number[]) => setRaw((prev) => {
       const key = ({ branch: 'branches', vertical: 'verticals', pipeline: 'pipelines', campaign: 'campaigns' } as const)[level];
       return normalize({ ...prev, [key]: posInts(ids) }, ref);
     });
     const one = (a: number[]) => (a.length === 1 ? a[0] : undefined);
+    // `scope` is the LIVE selection (raw) so the top-bar checkboxes + the Branch>Vertical cascade
+    // react with zero delay; the data layer below reads the DEBOUNCED `committed` snapshot.
     const scope: GlobalScope = {
       branches: raw.branches, verticals: raw.verticals, pipelines: raw.pipelines, campaigns: raw.campaigns,
       branch: one(raw.branches), vertical: one(raw.verticals), pipeline: one(raw.pipelines), campaign: one(raw.campaigns),
@@ -139,15 +159,16 @@ export function GlobalScopeProvider({ children }: { children: ReactNode }) {
       params[idsKey] = arr.join(',');
       if (arr.length === 1) params[oneKey] = String(arr[0]); // back-compat singular
     };
-    put('branch_ids', 'branch_id', raw.branches);
-    put('vertical_ids', 'vertical_id', raw.verticals);
-    put('pipeline_ids', 'pipeline_id', raw.pipelines);
-    put('campaign_ids', 'campaign_id', raw.campaigns);
+    put('branch_ids', 'branch_id', committed.branches);
+    put('vertical_ids', 'vertical_id', committed.verticals);
+    put('pipeline_ids', 'pipeline_id', committed.pipelines);
+    put('campaign_ids', 'campaign_id', committed.campaigns);
     const key = ['branches', 'verticals', 'pipelines', 'campaigns']
-      .map((k) => (raw as any)[k].join('.')).join('-');
-    return { scope, set, clear: () => setRaw({ branches: [], verticals: [], pipelines: [], campaigns: [] }), params, key, active: Object.keys(params).length > 0 };
+      .map((k) => (committed as any)[k].join('.')).join('-');
+    const clear = () => { setRaw({ branches: [], verticals: [], pipelines: [], campaigns: [] }); };
+    return { scope, set, clear, params, key, active: Object.keys(params).length > 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [raw, ref.loaded]);
+  }, [raw, committed, ref.loaded]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -180,9 +201,11 @@ export function ScopeSelector() {
   const ref = useRef_();
   const { scope, set, clear, active } = useScope();
 
-  const verticals = ref.verticals.filter((v) => !scope.branches.length || scope.branches.includes(Number((v as any).branch_id)));
-  const pipelines = ref.pipelines.filter((p) => !scope.verticals.length || scope.verticals.includes(Number((p as any).vertical_id)));
-  const campaigns = ref.campaigns.filter((c) => !scope.pipelines.length || scope.pipelines.includes(Number((c as any).pipeline_id)));
+  // Memoized so the child option arrays keep a STABLE identity between unrelated re-renders — the
+  // top-bar pickers (and their internal filter effects) then don't churn on every scope tick.
+  const verticals = useMemo(() => ref.verticals.filter((v) => !scope.branches.length || scope.branches.includes(Number((v as any).branch_id))), [ref.verticals, scope.branches]);
+  const pipelines = useMemo(() => ref.pipelines.filter((p) => !scope.verticals.length || scope.verticals.includes(Number((p as any).vertical_id))), [ref.pipelines, scope.verticals]);
+  const campaigns = useMemo(() => ref.campaigns.filter((c) => !scope.pipelines.length || scope.pipelines.includes(Number((c as any).pipeline_id))), [ref.campaigns, scope.pipelines]);
 
   return (
     <div className="scope" role="group" aria-label="Global scope">

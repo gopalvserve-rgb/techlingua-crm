@@ -12,8 +12,8 @@
  *      is PRUNED on load, and the old single-value shape is migrated — the selector can never claim
  *      a unit the user isn't allowed to see.
  */
-import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, act, waitFor } from '@testing-library/react';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, act } from '@testing-library/react';
 import { GlobalScopeProvider, useScope, ScopeLevel } from './scope';
 
 const REF = {
@@ -37,12 +37,17 @@ function Probe() {
   return <div data-testid="probe" data-params={JSON.stringify(s.params)} data-active={String(s.active)}
     data-branches={s.scope.branches.join(',')} data-verticals={s.scope.verticals.join(',')} />;
 }
-const draw = () => render(<GlobalScopeProvider><Probe /></GlobalScopeProvider>);
+// dev/126 — the committed scope (params/key that drive fetches) is DEBOUNCED ~250ms so rapid
+// multi-select ticks batch into one refetch. `scope.branches` etc. stay immediate. Tests use fake
+// timers + flush() to settle that debounce before reading params.
+const flush = () => act(() => { vi.advanceTimersByTime(300); });
+const draw = () => { const r = render(<GlobalScopeProvider><Probe /></GlobalScopeProvider>); flush(); return r; };
 const params = () => JSON.parse(screen.getByTestId('probe').getAttribute('data-params') || '{}');
 const attr = (k: string) => screen.getByTestId('probe').getAttribute(k) || '';
-const set = (l: ScopeLevel, ids: number[]) => act(() => ctl.set(l, ids));
+const set = (l: ScopeLevel, ids: number[]) => { act(() => ctl.set(l, ids)); flush(); };
 
-beforeEach(() => { cleanup(); localStorage.clear(); });
+beforeEach(() => { cleanup(); localStorage.clear(); vi.useFakeTimers(); });
+afterEach(() => { vi.useRealTimers(); });
 
 describe('multi-select params', () => {
   it('MULTIPLE branches emit branch_ids CSV and NO singular branch_id', () => {
@@ -96,7 +101,7 @@ describe('clear', () => {
   it('resets to the whole scope', () => {
     draw();
     set('branch', [9, 10]);
-    act(() => ctl.clear());
+    act(() => ctl.clear()); flush();
     expect(params()).toEqual({});
     expect(attr('data-active')).toBe('false');
   });
@@ -117,17 +122,17 @@ describe('persistence + RBAC', () => {
     expect(params()).toMatchObject({ branch_ids: '9,10', vertical_ids: '1,2' });
   });
 
-  it('RBAC: an out-of-scope id is pruned on load', async () => {
+  it('RBAC: an out-of-scope id is pruned on load', () => {
     localStorage.setItem('tl_global_scope', JSON.stringify({ branches: [999] }));
-    draw();
-    await waitFor(() => expect(attr('data-branches')).toBe(''));
+    draw(); // load-time re-validate prunes 999, then the debounced commit settles via flush()
+    expect(attr('data-branches')).toBe('');
     expect(params().branch_ids).toBeUndefined();
   });
 
-  it('RBAC: a child whose parent does not match is pruned (no cross-branch scope)', async () => {
+  it('RBAC: a child whose parent does not match is pruned (no cross-branch scope)', () => {
     localStorage.setItem('tl_global_scope', JSON.stringify({ branches: [9], verticals: [2] }));
     draw();
-    await waitFor(() => expect(attr('data-verticals')).toBe(''));
+    expect(attr('data-verticals')).toBe('');
     expect(attr('data-branches')).toBe('9');
     expect(params()).toEqual({ branch_ids: '9', branch_id: '9' });
   });

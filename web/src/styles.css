@@ -483,6 +483,9 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .verify{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:var(--surface-3);color:var(--text-muted);border:1px solid var(--border);cursor:pointer}
 .verify:hover{color:var(--text)}
 .verify.wa{color:var(--success);background:var(--success-soft);border-color:transparent}
+/* dev/126 — base ＋Master / quick-add link style so it is ALWAYS blue + clickable, even when not nested inside a <label> (e.g. LevelsField, label-sibling MasterQuickAdd usages). */
+.mlink{color:var(--primary);cursor:pointer;text-decoration:none}
+.mlink:hover{text-decoration:underline}
 .fld label .mlink,.kv .f label .mlink{margin-left:8px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--primary);font-size:10px;cursor:pointer}
 .form-err{color:var(--danger);background:var(--danger-soft);border:1px solid color-mix(in srgb,var(--danger) 30%,transparent);border-radius:9px;padding:9px 12px;font-size:12.5px;margin-bottom:12px}
 .qc-src{display:flex;align-items:center;gap:10px;padding:9px 4px;font-size:12.5px;color:var(--text);cursor:pointer}
