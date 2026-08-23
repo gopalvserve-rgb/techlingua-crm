@@ -219,15 +219,19 @@ describe('LeadIngestionService', () => {
       const { svc } = makeIngestion(db);
       await svc.ingest({ full_name: 'A', phone: '9811100121', external_id: 'W1' }, ctx());
       expect(st.leads[0].owner_id).toBe(11);
-      st.leads[0].stage_id = 59;                                   // the counsellor lost it
+      st.leads[0].stage_id = 59;                                   // the counsellor lost it (Closed)
+      st.leads[0].status_id = 35;                                  // ... and Status = Lost (dev/130 DEFECT 1)
       const out = await svc.ingest({ full_name: 'A', phone: '9811100121', email: 'back@x.com', external_id: 'W2' }, ctx());
       expect(out.action).toBe('merge_and_reopen');
       expect(out.reopened).toBe(true);
-      expect(Number(st.leads[0].stage_id)).toBe(51);               // back to the default OPEN stage
+      // dev/130 (DEFECT 1) — a re-opened Closed+Lost lead ends up with ALL THREE:
+      expect(Number(st.leads[0].stage_id)).toBe(51);               //  (a) an OPEN stage (default)
+      expect(Number(st.leads[0].status_id)).toBe(31);              //  (b) a NON-Lost, OPEN status ('New', id 31)
+      expect(st.leads[0].owner_id).toBe(12);                       //  (c) the NEXT round-robin agent
       expect(st.leads[0].email).toBe('back@x.com');
-      expect(st.leads[0].owner_id).toBe(12);                       // re-assigned to the NEXT round-robin agent
       expect(out.owner_id).toBe(12);
       expect(st.activities.some((a) => a.type === 'stage_change' && String(a.note).includes('re-opened'))).toBe(true);
+      expect(st.activities.some((a) => a.type === 'status_change')).toBe(true);
       expect(st.activities.some((a) => a.type === 'assign' && String(a.note).includes('round-robin'))).toBe(true);
       expect(st.merges[0].reopened).toBe(true);
     });

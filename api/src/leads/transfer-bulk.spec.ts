@@ -314,4 +314,49 @@ describe('LeadsService.transfer — re-dedup on re-parent (dev/129 bug #1)', () 
       && c.params.some((p: any) => String(p ?? '').includes('merge & reopen')));
     expect(assign).toBeTruthy();
   });
+
+  // dev/130 (ITEM 2, docx #5): re-dedup must re-fire for a BRANCH re-parent, not only a
+  // campaign one — the in-scope lookup is scoped to the TARGET branch and the moved lead is
+  // (re)linked to the branch-scope match.
+  it('BRANCH scope: a re-parent into another branch re-fires the rule scoped to the new branch', async () => {
+    const ctx: any = {
+      camp: { ...CAMP, duplicacy_config: { check_scope: 'this_branch', match_key: 'phone', on_duplicate: 'flag' } },
+      before: leadBefore({ phone: '+919811100401' }),   // was branch 9 -> moves to branch 2
+      existingSource: { id: '55' },
+      reMatch: { id: '303', owner_id: '20', pipeline_id: '4', campaign_id: '5', stage_type: 'open' },
+    };
+    const { svc } = make(ctx);
+    await svc.transfer(101, { campaign_id: 5 }, 9, scope);
+    // the in-scope duplicate lookup was scoped by the TARGET branch (2), not campaign
+    const look = ctx.calls.find((c: any) => /FROM lead l LEFT JOIN pipeline_stage st ON st\.id = l\.stage_id/.test(c.sql));
+    expect(look).toBeTruthy();
+    expect(/AND l\.branch_id = \$\d+/.test(look.sql)).toBe(true);
+    expect(look.params).toContain(2);                                // target.branch_id
+    const link = ctx.calls.find((c: any) => /UPDATE lead SET is_duplicate = TRUE, duplicate_of_id = \$2/.test(c.sql));
+    expect(Number(link.params[1])).toBe(303);
+    const note = ctx.calls.find((c: any) => /INSERT INTO lead_activity/.test(c.sql)
+      && String(c.params[7] ?? '').includes('(this_branch)'));
+    expect(note).toBeTruthy();
+  });
+
+  // ... and for a VERTICAL re-parent.
+  it('VERTICAL scope: a re-parent into another vertical re-fires the rule scoped to the new vertical', async () => {
+    const ctx: any = {
+      camp: { ...CAMP, duplicacy_config: { check_scope: 'this_vertical', match_key: 'phone', on_duplicate: 'flag' } },
+      before: leadBefore({ phone: '+919811100402' }),  // was vertical 8 -> moves to vertical 3
+      existingSource: { id: '55' },
+      reMatch: { id: '404', owner_id: '20', pipeline_id: '4', campaign_id: '5', stage_type: 'open' },
+    };
+    const { svc } = make(ctx);
+    await svc.transfer(101, { campaign_id: 5 }, 9, scope);
+    const look = ctx.calls.find((c: any) => /FROM lead l LEFT JOIN pipeline_stage st ON st\.id = l\.stage_id/.test(c.sql));
+    expect(look).toBeTruthy();
+    expect(/AND l\.vertical_id = \$\d+/.test(look.sql)).toBe(true);
+    expect(look.params).toContain(3);                                // target.vertical_id
+    const link = ctx.calls.find((c: any) => /UPDATE lead SET is_duplicate = TRUE, duplicate_of_id = \$2/.test(c.sql));
+    expect(Number(link.params[1])).toBe(404);
+    const note = ctx.calls.find((c: any) => /INSERT INTO lead_activity/.test(c.sql)
+      && String(c.params[7] ?? '').includes('(this_vertical)'));
+    expect(note).toBeTruthy();
+  });
 });

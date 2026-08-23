@@ -6,6 +6,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import {
   MergeDiff, computeMergeDiff, describeDiff, diffIsEmpty, mergedCustomFields, MERGEABLE_FIELDS,
 } from './merge.util';
+import { autoStatusFromStage } from '../leads/auto-status.util';
 
 /**
  * DUPLICATE MERGE ENGINE (NeoDove §4) — the half migration 018 left as a seam.
@@ -91,6 +92,7 @@ export class LeadMergeService {
     let reopened = false;
     let reopenFrom: { id: number; name: string } | null = null;
     let reopenTo: { id: number; name: string } | null = null;
+    let reopenStatus: { code: string; id: number } | null = null;
     if (opts.action === 'merge_and_reopen') {
       const cur = (await c.query(
         `SELECT s.id, s.name, s.stage_type FROM pipeline_stage s WHERE s.id = $1`, [target.stage_id],
@@ -107,6 +109,20 @@ export class LeadMergeService {
           reopened = true;
           reopenFrom = { id: Number(cur.id), name: String(cur.name) };
           reopenTo = { id: Number(open.id), name: String(open.name) };
+          // dev/130 (DEFECT 1): a re-opened lead must NOT keep its terminal status (Lost/Won).
+          // Reset it to an OPEN status consistent with the reopened stage, via the SAME
+          // autoStatusFromStage mapping — an ordinary open stage ("New Enquiry") -> the org's
+          // 'NEW' status; a stage still named "Enrolled"/"Closed" -> Won/Lost. A Stage=New
+          // Enquiry + Status=Lost contradiction can no longer be persisted.
+          const statusCode = autoStatusFromStage('open', String(open.name)) ?? 'NEW';
+          const stRow = (await c.query(
+            `SELECT id FROM m_status WHERE org_id = $1 AND code = $2 ORDER BY id ASC LIMIT 1`,
+            [org, statusCode],
+          )).rows[0];
+          if (stRow) {
+            set('status_id', Number(stRow.id));
+            reopenStatus = { code: statusCode, id: Number(stRow.id) };
+          }
         }
       }
     }
@@ -158,6 +174,12 @@ export class LeadMergeService {
     if (diff.note) await log('note', null, null, diff.note);
     if (reopened) {
       await log('stage_change', reopenFrom, reopenTo, 'Closed lead re-opened by duplicate merge (campaign rule: merge & reopen)');
+      // dev/130 (DEFECT 1): the status was reset off the terminal (Lost/Won) value in the SAME
+      // UPDATE above — record it on the timeline so the read path + audit trail agree.
+      if (reopenStatus) {
+        await log('status_change', null, { id: reopenStatus.id, code: reopenStatus.code },
+          'Lead Status reset to an OPEN status on re-open (was terminal) — matches the re-opened stage');
+      }
     }
 
     // 6) audit (channel workers never pass through the HTTP AuditInterceptor)

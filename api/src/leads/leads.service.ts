@@ -35,6 +35,10 @@ import { SlaService } from '../sla/sla.service';
 export { LEAD_SCOPE_COLS, FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
 import { LEAD_SCOPE_COLS, FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
 
+/** Stage -> Lead Status auto-rule helper — leaf util, re-exported so import sites are unchanged. */
+export { autoStatusFromStage } from './auto-status.util';
+import { autoStatusFromStage } from './auto-status.util';
+
 /**
  * Lead search clause (client update #2): `q` matches name (ILIKE), email (ILIKE)
  * and phone — digits-normalised CONTAINS, country-code agnostic (a fragment like
@@ -1024,6 +1028,7 @@ export class LeadsService {
     // to a LOST/closed stage forces Status = Lost. Resolved here so the forced status flows
     // through the SAME set()/activity path as a manual status change.
     let newStageType: string | null = null;
+    let newStageName: string | null = null;
     if (dto.stage_id !== undefined && Number(dto.stage_id) !== Number(before.stage_id)) {
       const stage = await this.db.one<{ id: string; name: string; pipeline_id: string; stage_type: string }>(
         `SELECT id, name, pipeline_id, stage_type FROM pipeline_stage WHERE id = $1`, [Number(dto.stage_id)],
@@ -1035,12 +1040,15 @@ export class LeadsService {
       set('stage_id', Number(dto.stage_id));
       activities.push({ type: 'stage_change', from: { id: before.stage_id, name: from?.name }, to: { id: stage.id, name: stage.name } });
       newStageType = stage.stage_type ?? null;
+      newStageName = stage.name ?? null;
     }
     // Effective target status: the auto-rule (won→Won, lost→Lost) WINS over an explicit
     // status in the same PATCH, so convert / a stage move to Enrolled always lands on Won.
     // An 'open' (unrelated) stage move never touches status — a manually set status is kept.
-    const forcedStatusCode: 'WON' | 'LOST' | null =
-      newStageType === 'won' ? 'WON' : newStageType === 'lost' ? 'LOST' : null;
+    // dev/130: the forced status now comes from the SHARED autoStatusFromStage mapping (stage
+    // TYPE authoritative, NAME fallback for a terminal stage mis-typed 'open') — the SAME rule
+    // that re-opening a closed lead uses, so status and stage can never contradict.
+    const forcedStatusCode: 'WON' | 'LOST' | null = autoStatusFromStage(newStageType, newStageName);
     let targetStatusId: number | null = null;
     if (forcedStatusCode) {
       const row = await this.db.one<{ id: string }>(
@@ -1067,6 +1075,15 @@ export class LeadsService {
       activities.push({ type: 'assign', from: { owner_id: before.owner_id }, to: { owner_id: ownerId } });
     }
     if (dto.team_id !== undefined) set('team_id', dto.team_id == null ? null : Number(dto.team_id));
+    // dev/117 (#195): Lead SOURCE is editable from the edit form. A change is scope-checked
+    // (the caller must be able to see the target source) and logged like any other field.
+    if (dto.source_id !== undefined && dto.source_id !== null
+        && Number(dto.source_id) !== Number(before.source_id)) {
+      const sid = Number(dto.source_id);
+      await this.enforcer.assertRefInScope(scope, 'source', sid, actorId);
+      set('source_id', sid);
+      fieldChanges['source_id'] = { from: Number(before.source_id), to: sid };
+    }
 
     for (const col of LEAD_UPDATABLE) {
       if (dto[col] === undefined) continue;
@@ -1086,7 +1103,7 @@ export class LeadsService {
     // 200 no-op returning the current entity (kanban drag-to-same-column,
     // double-save). 400 stays reserved for a body with nothing recognisable.
     if (!sets.length && !dto.note) {
-      const recognised = ['stage_id', 'status_id', 'owner_id', 'team_id', 'note', ...LEAD_UPDATABLE];
+      const recognised = ['stage_id', 'status_id', 'owner_id', 'team_id', 'source_id', 'note', ...LEAD_UPDATABLE];
       const touched = recognised.some((k) => dto[k] !== undefined);
       if (!touched) throw new BadRequestException('nothing to update');
       return before;

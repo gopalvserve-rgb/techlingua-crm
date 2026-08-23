@@ -144,7 +144,14 @@ export function makeFakeDb(init: Partial<FakeState> = {}) {
     if (s.startsWith('SELECT id, name, is_default, sort_order FROM pipeline_stage')) {
       return st.stages.slice().sort((a, b) => Number(b.is_default) - Number(a.is_default) || a.sort_order - b.sort_order);
     }
+    // m_status lookup by CODE. dev/130: re-open resolves the OPEN status by code = $2 (param),
+    // e.g. 'NEW' -> New status. Keep the legacy literal-'NEW' match too.
     if (s.includes('FROM m_status WHERE org_id') && s.includes("'NEW'")) return [{ id: 31 }];
+    if (s.includes('FROM m_status WHERE org_id') && s.includes('code = $2')) {
+      const byCode: Record<string, number> = { NEW: 31, WON: 34, LOST: 35 };
+      const id = byCode[String(params[1])];
+      return id ? [{ id }] : [];
+    }
     if (s.startsWith('SELECT field_key FROM custom_field_def')) return [{ field_key: 'batch' }, { field_key: 'ref' }];
 
     // ---- idempotency ledger ----------------------------------------------

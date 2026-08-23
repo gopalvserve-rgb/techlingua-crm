@@ -118,9 +118,14 @@ describe('LeadMergeService — manual merge of two existing leads', () => {
     const { db, st } = makeFakeDb();
     seed(st);
     st.leads[0].stage_id = 59;                    // Lost
+    st.leads[0].status_id = 35;                   // ... and Status = Lost (dev/130 DEFECT 1)
     const res = await svcOf(db).mergeLeads(201, 202, 9, true);
     expect(res.reopened).toBe(true);
     expect(Number(st.leads[0].stage_id)).toBe(51);
+    // dev/130 (DEFECT 1): the status must NOT stay Lost — it is reset to the OPEN 'New' status
+    // (id 31) so Stage and Status can never contradict on the re-opened lead.
+    expect(Number(st.leads[0].status_id)).toBe(31);
+    expect(st.activities.some((a: any) => a.type === 'status_change')).toBe(true);
     expect(st.leads[0].owner_id).toBe(11);        // the closed lead's owner is preserved
   });
 
