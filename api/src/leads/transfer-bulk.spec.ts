@@ -29,7 +29,14 @@ function answer(sql: string, params: any[], ctx: any) {
   if (/SELECT id FROM source WHERE campaign_id = \$1 AND deleted_at IS NULL AND is_active/.test(sql)) return ctx.existingSource;
   if (/INSERT INTO source/.test(sql)) return { id: '77' };                                  // created source
   if (/FROM pipeline_stage WHERE pipeline_id = \$1 AND is_active/.test(sql)) return { id: '70' }; // entry stage
-  if (/SELECT \* FROM lead WHERE id = \$1 AND deleted_at IS NULL/.test(sql)) return ctx.before;
+  // dev/129 re-dedup on reparent — the in-scope duplicate lookup (self excluded)
+  if (/FROM lead l LEFT JOIN pipeline_stage st ON st\.id = l\.stage_id/.test(sql)) return ctx.reMatch ?? null;
+  if (/SELECT distribution_config FROM campaign WHERE id = \$1/.test(sql)) return ctx.matchCampDist ?? { distribution_config: {} };
+  if (/UPDATE lead SET is_duplicate/.test(sql)) return { rows: [] };                        // (re)link / clear duplicate flag
+  if (/UPDATE lead SET owner_id = \$1, updated_at = now\(\) WHERE id = \$2/.test(sql)) return { rows: [] }; // reopen round-robin
+  if (/SELECT \* FROM lead WHERE id = \$1 AND deleted_at IS NULL/.test(sql)) {
+    return (ctx.matchRow && String(params[0]) === String(ctx.matchRow.id)) ? ctx.matchRow : ctx.before;
+  }
   if (/UPDATE lead SET branch_id/.test(sql)) return { rows: [{ id: params[params.length - 1] }] };  // transfer UPDATE RETURNING *
   if (/UPDATE lead SET paused/.test(sql)) return { rows: [{ id: params[0] }] };             // pause UPDATE RETURNING id
   if (/UPDATE lead SET deleted_at = now\(\)/.test(sql)) return { rows: ctx.noDelete ? [] : [{ id: params[0] }] };  // bulk soft-delete RETURNING id
@@ -223,5 +230,88 @@ describe('LeadsService.bulkDelete + bulkDeleteImpact', () => {
   it('empty selection -> 400', async () => {
     const { svc } = make({ scoped: [] });
     await expect(svc.bulkDelete([], 9, scope)).rejects.toThrow(/non-empty/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dev/129 (bug #1): re-parent re-runs the NEW campaign's duplicate rule against
+// the new scope — the Duplicates panel + the configured action reflect where the
+// lead now lives.
+// ---------------------------------------------------------------------------
+describe('LeadsService.transfer — re-dedup on re-parent (dev/129 bug #1)', () => {
+  const CAMP_DUP = (on_duplicate: string) => ({
+    ...CAMP, duplicacy_config: { check_scope: 'this_campaign', match_key: 'phone', on_duplicate },
+  });
+
+  it("FLAG scope: a re-parented lead that now matches an in-scope lead is (re)linked is_duplicate + logged", async () => {
+    const ctx: any = {
+      camp: CAMP_DUP('flag'),
+      before: leadBefore({ phone: '+919811100301' }),
+      existingSource: { id: '55' },
+      reMatch: { id: '202', owner_id: '20', pipeline_id: '4', campaign_id: '5', stage_type: 'open' },
+    };
+    const { svc } = make(ctx);
+    await svc.transfer(101, { campaign_id: 5 }, 9, scope);
+    const link = ctx.calls.find((c: any) => /UPDATE lead SET is_duplicate = TRUE, duplicate_of_id = \$2/.test(c.sql));
+    expect(link).toBeTruthy();
+    expect(Number(link.params[1])).toBe(202);                        // linked to the in-scope match
+    const note = ctx.calls.find((c: any) => /INSERT INTO lead_activity/.test(c.sql)
+      && String(c.params[7] ?? '').includes('Re-evaluated duplicates for the new scope'));
+    expect(note).toBeTruthy();
+  });
+
+  it('no duplicate in the new scope clears a stale duplicate flag', async () => {
+    const ctx: any = {
+      camp: CAMP_DUP('flag'),
+      before: leadBefore({ phone: '+919811100302', is_duplicate: true, duplicate_of_id: '500' }),
+      existingSource: { id: '55' },
+      reMatch: null,                                                 // nothing matches in the new scope
+    };
+    const { svc } = make(ctx);
+    await svc.transfer(101, { campaign_id: 5 }, 9, scope);
+    const clear = ctx.calls.find((c: any) => /UPDATE lead SET is_duplicate = FALSE, duplicate_of_id = NULL/.test(c.sql));
+    expect(clear).toBeTruthy();
+  });
+
+  it('MERGE & REOPEN scope: a re-parent that matches a CLOSED in-scope lead reopens it + round-robin', async () => {
+    const applyMerge = jest.fn().mockResolvedValue({ merge_id: 1, diff: {}, reopened: true, owner_id: 20 });
+    const ctx: any = {
+      camp: CAMP_DUP('merge_and_reopen'),
+      before: leadBefore({ phone: '+919811100303' }),
+      existingSource: { id: '55' },
+      reMatch: { id: '202', owner_id: '20', pipeline_id: '4', campaign_id: '5', stage_type: 'lost' },
+      matchRow: { id: '202', org_id: '1', branch_id: '2', owner_id: '20', pipeline_id: '4', stage_id: '59' },
+      matchCampDist: { distribution_config: { mode: 'equal', agent_user_ids: [30] } },
+    };
+    ctx.calls = [];
+    const q = (sql: string, params: any[] = []) => Promise.resolve(answer(sql, params, ctx));
+    const client = { query: (sql: string, params: any[] = []) => Promise.resolve(answer(sql, params, ctx)) };
+    const db: any = {
+      query: (sql: string, params: any[] = []) => q(sql, params).then((r: any) => Array.isArray(r) ? r : (r?.rows ?? (r ? [r] : []))),
+      one: (sql: string, params: any[] = []) => q(sql, params).then((r: any) => (Array.isArray(r) ? (r[0] ?? null) : r)),
+      tx: (fn: any) => fn(client),
+    };
+    const resolver = { buildScopeWhere: jest.fn().mockReturnValue('TRUE') } as any;
+    const enforcer = { assertRefInScope: jest.fn().mockResolvedValue(undefined) } as any;
+    const ingestion = {
+      resolvePool: jest.fn().mockResolvedValue({ pool: [30], note: 'auto-assigned: equal round-robin' }),
+      pickOwner: jest.fn().mockResolvedValue(30),
+    } as any;
+    const scoring = { safeRescore: jest.fn().mockResolvedValue(undefined) } as any;
+    const sla = { safe: jest.fn().mockResolvedValue(undefined), onStageChanged: jest.fn() } as any;
+    const merge = { applyMerge } as any;
+    const svc = new LeadsService(db, resolver, enforcer, ingestion, scoring, sla, undefined, undefined, merge);
+    jest.spyOn(svc, 'get').mockResolvedValue({ id: 101 } as any);
+
+    await svc.transfer(101, { campaign_id: 5 }, 9, scope);
+    expect(applyMerge).toHaveBeenCalled();                            // moved lead folded into the match
+    expect(ingestion.pickOwner).toHaveBeenCalled();                   // reopened lead handed to round-robin
+    const own = ctx.calls.find((c: any) => /UPDATE lead SET owner_id = \$1, updated_at = now\(\) WHERE id = \$2/.test(c.sql));
+    expect(own).toBeTruthy();
+    expect(Number(own.params[0])).toBe(30);                           // next round-robin agent
+    expect(Number(own.params[1])).toBe(202);                          // on the reopened match
+    const assign = ctx.calls.find((c: any) => /INSERT INTO lead_activity/.test(c.sql)
+      && c.params.some((p: any) => String(p ?? '').includes('merge & reopen')));
+    expect(assign).toBeTruthy();
   });
 });

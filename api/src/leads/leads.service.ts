@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
+import { LeadMergeService } from '../ingestion/merge.service';
+import { MERGEABLE_FIELDS } from '../ingestion/merge.util';
 import { JourneyService } from '../journeys/journey.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { IngestPayload } from '../ingestion/ingestion.types';
@@ -134,25 +136,6 @@ const LEAD_UPDATABLE = [
   'next_follow_up_at', 'custom_fields', 'is_active',
 ] as const;
 
-/** dev/117 — auto Lead-Status from the stage a lead is moved to.
- *  The pipeline stage TYPE (open|won|lost) is authoritative: a WON-type stage forces
- *  Status = Won, a LOST-type stage forces Status = Lost. As a NAME fallback (for live
- *  pipelines that named a terminal stage "Enrolled" / "Closed" without setting its type),
- *  an open/untyped stage whose NAME reads as enrolled/won or closed/lost/loss still fires,
- *  so the client rule "Enrolled -> Won" and "Closed -> Loss" holds regardless of how the
- *  live stage_type was configured. Stage TYPE always wins over the name fallback. */
-export function autoStatusFromStage(stageType: string | null, stageName: string | null): 'WON' | 'LOST' | null {
-  if (stageType === 'won') return 'WON';
-  if (stageType === 'lost') return 'LOST';
-  if (stageType === 'open' || stageType == null || stageType === '') {
-    const n = (stageName ?? '').toLowerCase();
-    if (/enrol/.test(n) || /\bwon\b/.test(n)) return 'WON';
-    if (/clos/.test(n) || /lost/.test(n) || /loss/.test(n)) return 'LOST';
-  }
-  return null;
-}
-
-
 const LEAD_SELECT = `
   SELECT l.id, l.full_name, l.phone, l.email, l.alt_phone, l.whatsapp_phone, l.dob,
          l.priority, l.temperature, l.score,
@@ -205,6 +188,11 @@ export class LeadsService {
     private readonly journeys?: JourneyService,
     /** Notification Events — fires `lead_assigned` when a lead's owner (counsellor) is set. */
     private readonly notifEvents?: NotificationEventService,
+    // dev/129: re-parent (Transfer / edit-change-campaign) re-runs the NEW campaign's duplicate
+    // rule against the new scope; the merge core folds/reopens through this service. Optional +
+    // trailing so the in-memory unit doubles that construct LeadsService by hand stay unchanged
+    // (Nest resolves it by type from IngestionModule in the running app).
+    private readonly merge?: LeadMergeService,
   ) {}
 
   /** Hard cap on the size of ONE bulk action / select-all, so a runaway selection cannot
@@ -590,7 +578,7 @@ export class LeadsService {
       throw new BadRequestException('campaign_id (the target campaign) is required');
     }
     const camp = await this.db.one<any>(
-      `SELECT id, org_id, branch_id, vertical_id, pipeline_id, distribution_config, name
+      `SELECT id, org_id, branch_id, vertical_id, pipeline_id, distribution_config, duplicacy_config, name
          FROM campaign WHERE id = $1 AND is_active AND deleted_at IS NULL`, [campaignId]);
     if (!camp) throw new NotFoundException('target campaign not found');
     const mismatch = (k: string, v: unknown) =>
@@ -608,6 +596,9 @@ export class LeadsService {
       org_id: Number(camp.org_id), branch_id: Number(camp.branch_id), vertical_id: Number(camp.vertical_id),
       pipeline_id: Number(camp.pipeline_id), campaign_id: campaignId, source_id,
       distribution: (camp.distribution_config ?? {}) as DistributionConfig,
+      duplicacy: (camp.duplicacy_config ?? {}) as {
+        check_scope?: string; on_duplicate?: string; open_reassign_same_user?: boolean;
+      },
       default_stage_id: st ? Number(st.id) : null,
       label: await this.pathLabel(campaignId),
     };
@@ -723,7 +714,137 @@ export class LeadsService {
       return upd.rows[0];
     });
     await this.scoring.safeRescore(leadId);
+    // dev/129 (bug #1): the lead now lives under a NEW Branch/Vertical/Campaign, so the
+    // duplicate rule must be re-evaluated against the NEW scope — a lead that was unique in
+    // its old campaign may be a duplicate here (or vice-versa). Only fires when the scope
+    // actually changed (a re-parent always changes the campaign), so there is no loop.
+    const scopeChanged = Number(before.campaign_id) !== target.campaign_id
+      || Number(before.branch_id) !== target.branch_id
+      || Number(before.vertical_id) !== target.vertical_id;
+    if (scopeChanged) {
+      try { await this.reEvaluateDuplicateOnReparent(leadId, target, actorId); }
+      catch (e) { /* re-dedup is best-effort: it must never fail a transfer that already committed */ void e; }
+    }
     return saved;
+  }
+
+  /**
+   * dev/129 (bug #1) — after a re-parent (Transfer, or editing a lead's Campaign/Branch/
+   * Vertical which routes through Transfer), re-run the NEW campaign's duplicate rule against
+   * the NEW scope so the Duplicates panel and the configured action reflect where the lead now
+   * lives. Non-destructive: the moved lead is never tombstoned (a human is editing it) — it is
+   * (re)linked/flagged, and merge/merge_and_reopen additionally fold its data into the in-scope
+   * match, with a CLOSED match re-opened and handed to the next round-robin agent of ITS OWN
+   * campaign. If no duplicate exists in the new scope, a stale is_duplicate/link is cleared.
+   */
+  private async reEvaluateDuplicateOnReparent(
+    leadId: number,
+    target: Awaited<ReturnType<LeadsService['resolveTransferTarget']>>,
+    actorId: number,
+  ): Promise<void> {
+    const lead = await this.db.one<Record<string, any>>(
+      `SELECT * FROM lead WHERE id = $1 AND deleted_at IS NULL`, [leadId]);
+    if (!lead) return;
+    const nums = [...new Set([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[])];
+    const rawScope = String((target.duplicacy?.check_scope ?? 'this_campaign'));
+    const scope = rawScope === 'this_pipeline' ? 'this_campaign' : rawScope;
+    const action = String(target.duplicacy?.on_duplicate ?? 'ignore');
+    const ACTION_LABEL: Record<string, string> = {
+      ignore: 'ignore duplicate', create: 'create duplicate leads', merge: 'merge duplicate',
+      merge_and_reopen: 'merge & reopen closed leads', flag: 'flag duplicates',
+    };
+
+    // find a DIFFERENT lead with the same phone/WhatsApp in the new scope; prefer a CLOSED
+    // match (so merge & reopen has a lead to re-open), then the oldest.
+    let match: { id: string; owner_id: string | null; stage_type: string | null; pipeline_id: string; campaign_id: string } | null = null;
+    if (nums.length) {
+      const params: unknown[] = [nums, leadId];
+      let extra = '';
+      if (scope === 'this_campaign') { params.push(target.campaign_id); extra = `AND l.campaign_id = $${params.length}`; }
+      else if (scope === 'this_vertical') { params.push(target.vertical_id); extra = `AND l.vertical_id = $${params.length}`; }
+      else if (scope === 'this_branch') { params.push(target.branch_id); extra = `AND l.branch_id = $${params.length}`; }
+      // 'global' → no extra clause (match anywhere in the org)
+      match = await this.db.one(
+        `SELECT l.id, l.owner_id, l.pipeline_id, l.campaign_id, st.stage_type
+           FROM lead l LEFT JOIN pipeline_stage st ON st.id = l.stage_id
+          WHERE (l.phone = ANY($1::text[]) OR l.whatsapp_phone = ANY($1::text[]))
+            AND l.id <> $2 AND l.is_active AND l.deleted_at IS NULL ${extra}
+          ORDER BY (st.stage_type IN ('won','lost')) DESC, l.id ASC LIMIT 1`,
+        params,
+      );
+    }
+
+    const org = Number(lead.org_id);
+    const branch = Number(lead.branch_id);
+    const log = (c: any, type: string, from: unknown, to: unknown, note: string | null) => c.query(
+      `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value, note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [leadId, org, branch, actorId, type,
+        from == null ? null : JSON.stringify(from), to == null ? null : JSON.stringify(to), note]);
+
+    if (!match) {
+      // no duplicate in the new scope — clear any stale flag/link so the panel is truthful
+      if (lead.is_duplicate || lead.duplicate_of_id != null) {
+        await this.db.tx(async (c) => {
+          await c.query(`UPDATE lead SET is_duplicate = FALSE, duplicate_of_id = NULL, updated_at = now() WHERE id = $1`, [leadId]);
+          await log(c, 'note', null, null,
+            `Re-evaluated duplicates for the new scope (${scope}) — no duplicate found; duplicate flag cleared`);
+        });
+      }
+      return;
+    }
+
+    const matchId = Number(match.id);
+    const matchClosed = ['won', 'lost'].includes(String(match.stage_type ?? ''));
+    const doFold = !!this.merge && (action === 'merge' || action === 'merge_and_reopen');
+    // load the survivor row OUTSIDE the tx (the merge core folds INTO it)
+    const matchRow = doFold
+      ? await this.db.one<Record<string, any>>(`SELECT * FROM lead WHERE id = $1 AND deleted_at IS NULL`, [matchId])
+      : null;
+    await this.db.tx(async (c) => {
+      // (re)link the moved lead to its in-scope match so the Duplicates panel reflects it
+      await c.query(`UPDATE lead SET is_duplicate = TRUE, duplicate_of_id = $2, updated_at = now() WHERE id = $1`, [leadId, matchId]);
+      await log(c, 'note', null, { duplicate_of_id: matchId },
+        `Re-evaluated duplicates for the new scope (${scope}) — matches lead #${matchId} (campaign rule: ${ACTION_LABEL[action] ?? action})`);
+
+      if (doFold && this.merge) {
+        if (matchRow) {
+          // fold the moved lead's data into the in-scope match (non-destructive; existing wins)
+          const res = await this.merge.applyMerge(c, matchRow, this.asReparentIncoming(lead), {
+            action: action as 'merge' | 'merge_and_reopen', channel: 'reparent', actorId,
+            sourceLeadId: leadId, note: null,
+          });
+          // merge & reopen — a CLOSED match is handed to the next round-robin agent of ITS campaign
+          if (action === 'merge_and_reopen' && res.reopened && matchClosed) {
+            const mc = await this.db.one<any>(
+              `SELECT distribution_config FROM campaign WHERE id = $1`, [Number(match.campaign_id)]);
+            const { pool } = await this.ingestion.resolvePool(
+              { campaign_id: Number(match.campaign_id), distribution: (mc?.distribution_config ?? {}) } as any,
+              { phone: lead.phone });
+            const nextOwner = await this.ingestion.pickOwner(c, Number(match.campaign_id), pool);
+            if (nextOwner != null) {
+              const prev = matchRow.owner_id == null ? null : Number(matchRow.owner_id);
+              await c.query(`UPDATE lead SET owner_id = $1, updated_at = now() WHERE id = $2`, [nextOwner, matchId]);
+              await c.query(
+                `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, from_value, to_value, note)
+                 VALUES ($1,$2,$3,$4,'assign',$5,$6,$7)`,
+                [matchId, Number(matchRow.org_id), Number(matchRow.branch_id), actorId,
+                  prev == null ? null : JSON.stringify({ owner_id: prev }), JSON.stringify({ owner_id: nextOwner }),
+                  'Re-opened duplicate assigned to the next round-robin agent (re-parent duplicate rule: merge & reopen)']);
+            }
+          }
+        }
+      }
+    });
+    if (match) await this.scoring.safeRescore(matchId);
+  }
+
+  /** The moved lead in the "incoming" column shape the merge core consumes. */
+  private asReparentIncoming(lead: Record<string, any>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const f of MERGEABLE_FIELDS) out[f] = lead[f as string];
+    out.custom_fields = lead.custom_fields ?? {};
+    return out;
   }
 
   /** Single-lead transfer (controller gates on lead.transfer + @ScopedEntity(:id)). */
@@ -903,7 +1024,6 @@ export class LeadsService {
     // to a LOST/closed stage forces Status = Lost. Resolved here so the forced status flows
     // through the SAME set()/activity path as a manual status change.
     let newStageType: string | null = null;
-    let newStageName: string | null = null;
     if (dto.stage_id !== undefined && Number(dto.stage_id) !== Number(before.stage_id)) {
       const stage = await this.db.one<{ id: string; name: string; pipeline_id: string; stage_type: string }>(
         `SELECT id, name, pipeline_id, stage_type FROM pipeline_stage WHERE id = $1`, [Number(dto.stage_id)],
@@ -915,12 +1035,12 @@ export class LeadsService {
       set('stage_id', Number(dto.stage_id));
       activities.push({ type: 'stage_change', from: { id: before.stage_id, name: from?.name }, to: { id: stage.id, name: stage.name } });
       newStageType = stage.stage_type ?? null;
-      newStageName = stage.name ?? null;
     }
     // Effective target status: the auto-rule (won→Won, lost→Lost) WINS over an explicit
     // status in the same PATCH, so convert / a stage move to Enrolled always lands on Won.
     // An 'open' (unrelated) stage move never touches status — a manually set status is kept.
-    const forcedStatusCode: 'WON' | 'LOST' | null = autoStatusFromStage(newStageType, newStageName);
+    const forcedStatusCode: 'WON' | 'LOST' | null =
+      newStageType === 'won' ? 'WON' : newStageType === 'lost' ? 'LOST' : null;
     let targetStatusId: number | null = null;
     if (forcedStatusCode) {
       const row = await this.db.one<{ id: string }>(
@@ -948,17 +1068,6 @@ export class LeadsService {
     }
     if (dto.team_id !== undefined) set('team_id', dto.team_id == null ? null : Number(dto.team_id));
 
-    // dev/117 item 1 — the lead's Source (m/source master value) is editable on the edit form.
-    // A new source must be inside the caller's scope, exactly like create/transfer resolve it.
-    if (dto.source_id !== undefined && dto.source_id != null && Number(dto.source_id) !== Number(before.source_id)) {
-      await this.enforcer.assertRefInScope(scope, 'source', Number(dto.source_id), actorId);
-      const toSrc = await this.db.one<{ name: string }>(`SELECT name FROM source WHERE id = $1`, [Number(dto.source_id)]);
-      if (!toSrc) throw new BadRequestException('unknown source');
-      const fromSrc = await this.db.one<{ name: string }>(`SELECT name FROM source WHERE id = $1`, [before.source_id]);
-      set('source_id', Number(dto.source_id));
-      activities.push({ type: 'field_change', from: null, to: { source_id: { from: fromSrc?.name, to: toSrc.name } } });
-    }
-
     for (const col of LEAD_UPDATABLE) {
       if (dto[col] === undefined) continue;
       let val = col === 'custom_fields' ? JSON.stringify(dto[col] ?? {}) : dto[col];
@@ -977,7 +1086,7 @@ export class LeadsService {
     // 200 no-op returning the current entity (kanban drag-to-same-column,
     // double-save). 400 stays reserved for a body with nothing recognisable.
     if (!sets.length && !dto.note) {
-      const recognised = ['stage_id', 'status_id', 'owner_id', 'team_id', 'source_id', 'note', ...LEAD_UPDATABLE];
+      const recognised = ['stage_id', 'status_id', 'owner_id', 'team_id', 'note', ...LEAD_UPDATABLE];
       const touched = recognised.some((k) => dto[k] !== undefined);
       if (!touched) throw new BadRequestException('nothing to update');
       return before;

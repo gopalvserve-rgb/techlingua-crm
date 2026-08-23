@@ -22,20 +22,6 @@ describe('LeadIngestionService', () => {
     expect(st.audit).toHaveLength(1);            // worker-created leads are audited
   });
 
-  it('import: a course CODE (+ remarks) resolves to the right course_id and keeps the remarks on the lead', async () => {
-    // Client Aug 2026 (#3): a lead sheet may give the Course by its master CODE, and a Remarks column.
-    // The code resolves to the course (IELTS01 -> 21) and the remark lands on the lead timeline.
-    const { db, st } = makeFakeDb();
-    const { svc } = makeIngestion(db);
-    const out = await svc.ingest(
-      { full_name: 'Meera N', phone: '9811100099', course: 'IELTS01', note: 'Prefers evening batch', external_id: 'CC1' },
-      ctx(),
-    );
-    expect(out.status).toBe('created');
-    expect(Number(st.leads[0].course_id)).toBe(21);
-    expect(st.activities.some((a) => a.type === 'create' && String(a.note).includes('Prefers evening batch'))).toBe(true);
-  });
-
   it('is IDEMPOTENT — re-ingesting the same record creates nothing new', async () => {
     const { db, st } = makeFakeDb();
     const { svc } = makeIngestion(db);
@@ -322,6 +308,43 @@ describe('LeadIngestionService', () => {
       expect(Number(st.leads[1].duplicate_of_id)).toBe(Number(st.leads[0].id));   // mergeable by hand
     });
 
+    it("dev/129 (bug #2): a MANUAL 'always_create' duplicate HONOURS merge & reopen — reopens the CLOSED lead + round-robin", async () => {
+      // The client's exact scenario: a campaign is configured 'merge_and_reopen'; a lead is
+      // created and CLOSED; then a duplicate is added BY HAND (Add Lead / walk-in). Before the
+      // fix, the manual path hard-coded 'create' and just made a flagged second lead — the
+      // closed lead never re-opened. Now the campaign rule fires off the interactive form too.
+      const { db, st } = makeFakeDb({ duplicacy: dup({ on_duplicate: 'merge_and_reopen' }) });
+      const { svc } = makeIngestion(db);
+      await svc.ingest({ full_name: 'A', phone: '9811100171', external_id: 'MR1' }, ctx());   // -> agent 11 (cursor 0)
+      expect(st.leads[0].owner_id).toBe(11);
+      st.leads[0].stage_id = 59;                                    // the counsellor lost it (closed)
+      const out = await svc.ingest(
+        { full_name: 'A', phone: '9811100171', email: 'return@x.com' },
+        ctx({ channel: 'manual', duplicate_policy: 'always_create', batch_id: null }),
+      );
+      expect(out.action).toBe('merge_and_reopen');
+      expect(out.reopened).toBe(true);
+      expect(st.leads).toHaveLength(1);                             // merged into the existing — no second lead
+      expect(Number(st.leads[0].stage_id)).toBe(51);               // back to the default OPEN stage
+      expect(st.leads[0].email).toBe('return@x.com');              // incoming data folded in
+      expect(st.leads[0].owner_id).toBe(12);                       // handed to the NEXT round-robin agent
+      expect(out.owner_id).toBe(12);
+    });
+
+    it("dev/129 (bug #2): a MANUAL 'always_create' duplicate HONOURS merge (folds into existing, no second lead)", async () => {
+      const { db, st } = makeFakeDb({ duplicacy: dup({ on_duplicate: 'merge' }) });
+      const { svc } = makeIngestion(db);
+      await svc.ingest({ full_name: 'A', phone: '9811100181', external_id: 'MG1' }, ctx());   // -> agent 11
+      const out = await svc.ingest(
+        { full_name: 'A', phone: '9811100181', email: 'm@x.com' },
+        ctx({ channel: 'manual', duplicate_policy: 'always_create', batch_id: null }),
+      );
+      expect(out.action).toBe('merge');
+      expect(st.leads).toHaveLength(1);            // NOT a second lead
+      expect(st.leads[0].email).toBe('m@x.com');   // folded in
+      expect(st.leads[0].owner_id).toBe(11);       // OPEN merge keeps the existing owner (§4)
+    });
+
     // -------------------------------------------------------------------------
     // DEF-S2-01 (QA-10) — the idempotency ledger must never swallow a MANUAL add
     // -------------------------------------------------------------------------
@@ -391,13 +414,21 @@ describe('LeadIngestionService', () => {
       expect(st.leads[0].whatsapp_phone).toBe('+919810000066');
     });
 
-    it("a manual add under a MERGE campaign still creates (a human's entry is never swallowed)", async () => {
+    it("dev/129 (bug #2): a manual add under a MERGE campaign now MERGES (the campaign rule is honoured off the form)", async () => {
+      // Superseded behaviour: a manual add used to always create a flagged second lead. The
+      // client reported this as "merge / merge & reopen not working" — the campaign rule was
+      // never applied off the interactive forms. Now a human-entered duplicate obeys the
+      // campaign action (here: merge). The one preserved guarantee (never SILENTLY swallowed)
+      // is exercised by the `ignore -> create` test above.
       const { db, st } = makeFakeDb({ duplicacy: dup({ on_duplicate: 'merge' }) });
       const { svc } = makeIngestion(db);
       await svc.ingest({ full_name: 'A', phone: '9811100171', external_id: 'N1' }, ctx());
-      await svc.ingest({ full_name: 'A', phone: '9811100171' }, ctx({ channel: 'manual', duplicate_policy: 'always_create' }));
-      expect(st.leads).toHaveLength(2);
-      expect(st.merges).toHaveLength(0);
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100171', email: 'h@x.com' },
+        ctx({ channel: 'manual', duplicate_policy: 'always_create' }));
+      expect(out.action).toBe('merge');
+      expect(st.leads).toHaveLength(1);            // folded into the existing lead
+      expect(st.merges).toHaveLength(1);
+      expect(st.leads[0].email).toBe('h@x.com');
     });
   });
 

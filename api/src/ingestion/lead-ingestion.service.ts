@@ -584,9 +584,16 @@ export class LeadIngestionService {
 
     // 3) duplicate check (phone + WhatsApp cross-match, campaign-configured scope — #22)
     const dup = await this.findDuplicate([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[], target);
-    const action: DuplicateAction = policy === 'always_create'
-      ? 'create'
-      : ((target.duplicacy.on_duplicate ?? 'ignore') as DuplicateAction);
+    // Client change (Aug 2026, dev/129): a HUMAN-entered lead (manual Add Lead / walk-in /
+    // referral — `always_create`) now honours the campaign's configured duplicate action
+    // too. In particular MERGE and MERGE & REOPEN must fire when a desk duplicate matches an
+    // existing (or CLOSED) lead — previously `always_create` hard-coded `create`, so those
+    // rules never ran off the interactive forms (the client's "merge & reopen not working").
+    // The one guarantee DEF-S2-01 preserved is kept: a human lead is NEVER silently swallowed
+    // — an `ignore` rule falls back to `create` (land + flag), and the fresh idempotency key
+    // (dedupeKey's `always_create` branch) still prevents a replay-skip of a deliberate re-add.
+    let action: DuplicateAction = (target.duplicacy.on_duplicate ?? 'ignore') as DuplicateAction;
+    if (policy === 'always_create' && action === 'ignore') action = 'create';
     const dupOpen = dup ? !['won', 'lost'].includes(String(dup.stage_type ?? '')) : false;
 
     // 3a) IGNORE — drop the incoming record, keep the existing lead
@@ -623,8 +630,11 @@ export class LeadIngestionService {
           // is handed to the campaign's NEXT round-robin agent (not kept with the
           // old owner). Only fires when the lead was genuinely reopened (res.reopened)
           // and the campaign has an eligible pool; an empty pool leaves the owner as-is.
+          // dev/129: the round-robin re-hand-off on reopen now also fires for a human-entered
+          // duplicate (`always_create`), not only automated channels — a walk-in / manual add
+          // that re-opens a CLOSED lead is fresh work and goes to the next round-robin agent.
           let reopenOwner: number | null = null;
-          if (action === 'merge_and_reopen' && res.reopened && policy === 'campaign') {
+          if (action === 'merge_and_reopen' && res.reopened) {
             const conditionCtx: Record<string, unknown> = {
               ...lead.custom_fields, ...payload,
               full_name: lead.full_name, phone: lead.phone, email: lead.email,
