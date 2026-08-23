@@ -779,8 +779,9 @@ export function StudentLookup({ onPick }: { onPick: (id: number, row: any) => vo
     const t = setTimeout(() => {
       if (q.trim().length < 2) { setOpts([]); return; }
       setBusy(true);
-      api.get<{ rows: any[] }>(`/students?q=${encodeURIComponent(q.trim())}&limit=8`)
-        .then((r) => setOpts(r.rows ?? [])).catch(() => setOpts([])).finally(() => setBusy(false));
+      // GET /students returns a BARE ARRAY (unlike /leads which returns { rows }); handle both.
+      api.get<any>(`/students?q=${encodeURIComponent(q.trim())}&limit=8`)
+        .then((r) => setOpts(Array.isArray(r) ? r : (r?.rows ?? []))).catch(() => setOpts([])).finally(() => setBusy(false));
     }, 250);
     return () => clearTimeout(t);
   }, [q]);
