@@ -2690,7 +2690,8 @@ function Campaigns() {
   const { refreshTick, bump, go } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
-  const sum = useFetch<Summary>('/leads/summary', [refreshTick]);
+  // dev/131 (task #213 item 3) — the summary drives the rolled-up cards (Won/Lost/Revenue/Active/Closed),
+  // narrowed by the Lead Counsellor filter when set.
   const [inc, setInc] = useState(false);
   // UAT-R3 #19 — Campaign list filters follow Branch \u2192 Vertical \u2192 Pipeline (+ search, status);
   // each child resets when its parent changes and the API honours the params.
@@ -2699,12 +2700,18 @@ function Campaigns() {
   const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
   const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
   const [fPipelines, setFPipelines] = useState<number[]>(gScope.pipelines);
+  // dev/131 (task #213 item 2) — Lead Counsellor (owner) filter: narrows the rolled-up KPI cards,
+  // the per-campaign lead counts, and the campaign_id link opened into the Leads list.
+  const [fOwners, setFOwners] = useState<number[]>([]);
   const cparams = new URLSearchParams();
   if (inc) cparams.set('include_inactive', '1');
   if (fBranches.length) cparams.set('branch_ids', fBranches.join(','));
   if (fVerticals.length) cparams.set('vertical_ids', fVerticals.join(','));
   if (fPipelines.length) cparams.set('pipeline_ids', fPipelines.join(','));
   if (q.trim()) cparams.set('q', q.trim());
+  const sumParams = new URLSearchParams();
+  if (fOwners.length) sumParams.set('owner_ids', fOwners.join(','));
+  const sum = useFetch<any>(`/leads/summary${sumParams.toString() ? `?${sumParams}` : ''}`, [refreshTick, sumParams.toString()]);
   const list = useFetch<any[]>(`/campaigns${cparams.toString() ? `?${cparams}` : ''}`, [refreshTick, cparams.toString()]);
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
@@ -2718,22 +2725,34 @@ function Campaigns() {
   const [counts, setCounts] = useState<Record<number, number>>({});
   useEffect(() => {
     let dead = false;
+    const ownerQs = fOwners.length ? `&owner_ids=${fOwners.join(',')}` : '';
     Promise.all(rows.map((c) =>
-      api.get<{ total: number }>(`/leads?campaign_id=${c.id}&limit=1`)
+      api.get<{ total: number }>(`/leads?campaign_id=${c.id}&limit=1${ownerQs}`)
         .then((r) => [Number(c.id), r.total] as const).catch(() => [Number(c.id), 0] as const),
     )).then((pairs) => { if (!dead) setCounts(Object.fromEntries(pairs)); });
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list.data, refreshTick]);
+  }, [list.data, refreshTick, fOwners.join(',')]);
+  const k = sum.data?.kpis;
+  // Carry the Lead Counsellor narrow into every card / count link so the Leads list opens pre-filtered.
+  const ownerNav: Record<string, string> = fOwners.length ? { owner_ids: fOwners.join(',') } : {};
   return (
     <>
-      <Kpis items={[
+      {/* dev/131 (task #213 item 3) — rolled-up cards across the current scope (+ Lead Counsellor filter):
+          Active campaigns · Leads MTD · Won · Lost · Revenue · Active leads · Closed. Won/Lost open the
+          filtered Leads list; Revenue comes from collected fee receipts (the Finance dashboard source). */}
+      <Kpis cols={4} items={[
         { lab: 'Active campaigns', val: String(rows.filter((c) => c.is_active !== false).length), ic: 'bolt' },
-        { lab: 'Leads (MTD)', val: String(sum.data?.kpis.mtd ?? '0'), ic: 'leads',
-          onClick: () => go('leads', 'all', { created_from: `${new Date().toISOString().slice(0, 7)}-01` }),
-          navLabel: `Leads this month: ${sum.data?.kpis.mtd ?? 0}. Open leads created month-to-date` },
-        { lab: 'Avg CPL', val: '\u2014', ic: 'rupee' },
-        { lab: 'Best conv%', val: '\u2014', ic: 'target' },
+        { lab: 'Leads (MTD)', val: String(k?.mtd ?? '0'), ic: 'leads',
+          onClick: () => go('leads', 'all', { created_from: `${new Date().toISOString().slice(0, 7)}-01`, ...ownerNav }),
+          navLabel: `Leads this month: ${k?.mtd ?? 0}. Open leads created month-to-date` },
+        { lab: 'Won', val: String(k?.won ?? 0), ic: 'check',
+          onClick: () => go('leads', 'all', { won: 1, ...ownerNav }), navLabel: `Won leads: ${k?.won ?? 0}. Open the won leads` },
+        { lab: 'Lost', val: String(k?.lost ?? 0), ic: 'x',
+          onClick: () => go('leads', 'all', { lost: 1, ...ownerNav }), navLabel: `Lost leads: ${k?.lost ?? 0}. Open the lost leads` },
+        { lab: 'Revenue', val: fmtINR(Number(k?.revenue_minor ?? 0)), ic: 'rupee' },
+        { lab: 'Active leads', val: String(k?.active ?? 0), ic: 'leads' },
+        { lab: 'Closed', val: String(k?.closed ?? 0), ic: 'archive' },
       ]} />
       <div className="filters">
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
@@ -2743,6 +2762,7 @@ function Campaigns() {
           onChange={(v) => { setFVerticals(v); setFPipelines([]); }} />
         <FilterMulti label="Pipeline" icon="list" value={fPipelines}
           options={ref.pipelines.filter((p) => !fVerticals.length || fVerticals.includes(Number(p.vertical_id)))} onChange={setFPipelines} />
+        <FilterMulti label="Lead Counsellor" testid="fm-owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
         <SearchChip q={q} setQ={setQ} ph="Search campaign name\u2026" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
@@ -2762,7 +2782,9 @@ function Campaigns() {
             src ? ({ b: [src.name, 'b-indigo'] } as Cell) : '\u2014',
             { mono: utm === '\u2014' ? '\u2014' : `utm=${utm}`, dim: true } as Cell,
             cost ? `\u20b9${cost.toLocaleString('en-IN')}` : '\u2014',
-            String(leads),
+            // dev/131 (task #213 item 1) — the LEADS count links to the Leads list pre-filtered to this
+            // campaign (reusing the campaign_ids query param the dashboard KPI links use), + owner narrow.
+            { node: <a className="mlink" data-testid={`camp-leads-${c.id}`} style={{ cursor: 'pointer' }} onClick={() => go('leads', 'all', { campaign_ids: c.id, ...ownerNav })}>{leads}</a> } as Cell,
             cost && leads ? ({ mono: `\u20b9${Math.round(cost / leads)}` } as Cell) : '\u2014',
             DIST_LABEL[(c.distribution_config as any)?.mode] ?? '\u2014',
             toggleCell({

@@ -1863,7 +1863,16 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
                 : <select className="ainp" disabled={!verticalId} value={pipelineId ?? ''} onChange={(e) => setPipelineId(e.target.value ? Number(e.target.value) : undefined)}>
                 <option value="">{verticalId ? 'Select…' : 'Select Vertical first…'}</option>{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>}</div>
-            <div className="fld"><label>Campaign Type <span className="star">*</span></label>{sel(['Digital', 'Print', 'Event', 'Referral Drive', 'Tele-calling'], vals['type'] ?? '', (x) => setVals((s) => ({ ...s, type: x })))}</div>
+            {/* dev/131 (task #213 item 4) — Campaign Type is a self-manageable master (m_campaign_type).
+                The select reads ref.campaignTypes; ＋ Master adds a new type inline (blue .mlink). A legacy
+                value not in the master still shows so an old campaign never loses its type. */}
+            <div className="fld"><label>Campaign Type <span className="star">*</span>
+              {!initial ? <MasterQuickAdd type="campaign_type" onAdded={(row) => setVals((s) => ({ ...s, type: row.name }))} /> : null}</label>
+              <select className="ainp" data-testid="campaign-type-select" value={vals['type'] ?? ''} onChange={(e) => setVals((s) => ({ ...s, type: e.target.value }))}>
+                <option value="">Select…</option>
+                {(ref.campaignTypes ?? []).map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
+                {vals['type'] && !(ref.campaignTypes ?? []).some((t) => t.name === vals['type']) ? <option value={vals['type']}>{vals['type']}</option> : null}
+              </select></div>
             <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? '', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
             <div className="fld"><label>Start Date <span className="star">*</span></label><input className="ainp" type="date" value={vals['start'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, start: e.target.value }))} /></div>
             <div className="fld"><label>End Date</label><input className="ainp" type="date" value={vals['end'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, end: e.target.value }))} /></div>

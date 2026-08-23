@@ -55,7 +55,7 @@ function intMinor(v: unknown): number | null {
  * the fee, carry a per-level discount when the scope is level-wise. Throws (plain Error) on
  * an unknown level, a duplicate, or a bad fee/discount — the caller turns it into a 400.
  */
-export function resolveLevels(master: MasterLevel[], input: unknown, scope: DiscountScope): ResolvedLevel[] {
+export function resolveLevels(master: MasterLevel[], input: unknown, scope: DiscountScope, standardFeeMinor = 0): ResolvedLevel[] {
   if (input == null) return [];
   if (!Array.isArray(input)) throw new Error('levels must be an array');
   const byId = new Map<number, MasterLevel>();
@@ -77,7 +77,10 @@ export function resolveLevels(master: MasterLevel[], input: unknown, scope: Disc
     if (seen.has(key)) throw new Error(`Duplicate level "${m.code}" — each level can be selected once`);
     seen.add(key);
     const overrideFee = intMinor(r.fee_minor);
-    const feeMinor = overrideFee != null ? overrideFee : Math.trunc(Number(m.fee_minor) || 0);
+    let feeMinor = overrideFee != null ? overrideFee : Math.trunc(Number(m.fee_minor) || 0);
+    // Item 10 (dev/131): a level whose fee is left BLANK/ZERO falls back to the course's Standard
+    // Fee (m_course.meta.fee, passed in as standardFeeMinor) instead of being priced at ₹0.
+    if ((!Number.isFinite(feeMinor) || feeMinor <= 0) && Number(standardFeeMinor) > 0) feeMinor = Math.trunc(Number(standardFeeMinor));
     if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new Error(`Level "${m.code}": fee must be zero or more`);
     // Per-level discount (level scope only). Prefer the natural (discount_type, discount_value):
     // `amount` → rupees, `percent` → a % of THIS level's fee; else fall back to a raw

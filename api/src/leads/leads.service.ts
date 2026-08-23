@@ -1245,15 +1245,26 @@ export class LeadsService {
 
   // ---- dashboard summary (all scope-filtered) ------------------------------
 
-  async summary(scope: ResolvedScope, userId: number) {
+  async summary(scope: ResolvedScope, userId: number, ownerIds?: number[]) {
     const p1: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p1);
+    // Campaign module (dev/131, task #213 item 2): optional Lead Counsellor (owner) narrow on the
+    // rolled-up cards. Kept on its OWN param array (pk) so the extra $ placeholder is only bound to
+    // the kpis query, never to by_stage/series which reuse p1 verbatim.
+    const ownerIn = [...new Set((ownerIds ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    const pk = p1.slice();
+    let ownerClause = '';
+    if (ownerIn.length) { pk.push(ownerIn); ownerClause = ` AND l.owner_id = ANY($${pk.length}::bigint[])`; }
     const kpis = await this.db.one(
       `SELECT COUNT(*)::int AS total,
               COUNT(*) FILTER (WHERE (l.created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS today,
               COUNT(*) FILTER (WHERE l.created_at >= date_trunc('month', now()))::int AS mtd,
               COUNT(*) FILTER (WHERE st.stage_type = 'won')::int AS won,
               COUNT(*) FILTER (WHERE st.stage_type = 'won' AND (l.updated_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS won_today,
+              -- Campaign module (dev/131, task #213 item 3): rolled-up Lost / Active(open) / Closed.
+              COUNT(*) FILTER (WHERE st.stage_type = 'lost')::int AS lost,
+              COUNT(*) FILTER (WHERE st.stage_type IN ('won','lost'))::int AS closed,
+              COUNT(*) FILTER (WHERE st.stage_type IS NULL OR st.stage_type NOT IN ('won','lost'))::int AS active,
               COUNT(*) FILTER (WHERE l.temperature = 'hot')::int AS hot,
               COUNT(*) FILTER (WHERE l.temperature = 'warm')::int AS warm,
               COUNT(*) FILTER (WHERE l.temperature = 'cold')::int AS cold,
@@ -1262,7 +1273,7 @@ export class LeadsService {
          LEFT JOIN pipeline_stage st ON st.id = l.stage_id
          LEFT JOIN source so ON so.id = l.source_id
          LEFT JOIN m_source ms ON ms.id = so.master_source_id
-        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL`, p1.slice(),
+        WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL${ownerClause}`, pk,
     );
     const byStage = await this.db.query(
       `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, st.pipeline_id, COUNT(l.id)::int AS ct
@@ -1297,6 +1308,22 @@ export class LeadsService {
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
         WHERE (${wf}) AND f.is_active AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, p2,
     );
-    return { kpis, by_stage: byStage, series, follow_ups: fu };
+    // Campaign module (dev/131, task #213 item 3): Revenue rolled up across the SAME scope, taken
+    // from the finance source the Finance dashboard uses — collected fee receipts joined to their
+    // enrolment (so branch/vertical/pipeline/campaign + counsellor scope all resolve). Never widens.
+    const RECEIPT_SCOPE_COLS: ScopeColumnMap = {
+      owner: 'e.counsellor_id', team: 'e.team_id', branch: 'fr.branch_id',
+      vertical: 'fr.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
+    };
+    const rp: unknown[] = [];
+    const rw = this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, rp);
+    let revOwner = '';
+    if (ownerIn.length) { rp.push(ownerIn); revOwner = ` AND e.counsellor_id = ANY($${rp.length}::bigint[])`; }
+    const rev = await this.db.one<{ revenue_minor: string }>(
+      `SELECT COALESCE(SUM(fr.amount_minor), 0)::bigint AS revenue_minor
+         FROM fee_receipt fr JOIN enrolment e ON e.id = fr.enrolment_id
+        WHERE fr.deleted_at IS NULL AND (${rw})${revOwner}`, rp,
+    );
+    return { kpis: { ...kpis, revenue_minor: Number(rev?.revenue_minor ?? 0) }, by_stage: byStage, series, follow_ups: fu };
   }
 }

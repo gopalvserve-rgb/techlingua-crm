@@ -205,6 +205,14 @@ export class StudentService {
     return rows.map((r) => ({ id: Number(r.id), code: String(r.code), label: r.label ?? null, fee_minor: Number(r.fee_minor ?? 0) }));
   }
 
+  /** Course Standard Fee (m_course.meta.fee, rupees -> paise). Item 10 (dev/131): the fallback a
+   *  blank/zero level fee uses so a level is never silently priced at ₹0. Returns 0 when unset. */
+  private async fetchStandardFeeMinor(courseId: number): Promise<number> {
+    const row = await this.db.one<any>(`SELECT meta->>'fee' AS fee FROM m_course WHERE id = $1::bigint`, [courseId]);
+    const rupees = Number(row?.fee ?? 0);
+    return Number.isFinite(rupees) && rupees > 0 ? Math.round(rupees * 100) : 0;
+  }
+
   /**
    * ENROLLMENT LEVEL RE-MODEL (batch 2). Given a course + the selected `levels[]`, resolve the
    * line-items (snapshot each level's fee), compute the COMBINED Total = Σ level fees, apply the
@@ -227,8 +235,9 @@ export class StudentService {
     const master = await this.fetchMasterLevels(courseId);
     if (!master.length) throw new BadRequestException('This course has no levels configured — enrol it on its Standard Fee instead.');
     const scope: DiscountScope = String(dto?.discount_scope ?? '').trim().toLowerCase() === 'level' ? 'level' : 'overall';
+    const stdFeeMinor = await this.fetchStandardFeeMinor(courseId);
     let levels: ResolvedLevel[];
-    try { levels = resolveLevels(master, levelsInput, scope); }
+    try { levels = resolveLevels(master, levelsInput, scope, stdFeeMinor); }
     catch (e) { throw new BadRequestException((e as Error).message); }
     if (!levels.length) return null;
     const total = sumLevelFees(levels);
@@ -2434,7 +2443,8 @@ export class StudentService {
       discScope = String(dto?.discount_scope ?? enr.discount_scope ?? 'overall').trim().toLowerCase() === 'level' ? 'level' : 'overall';
       const master = await this.fetchMasterLevels(courseId);
       if (!master.length) throw new BadRequestException('This course has no levels configured.');
-      try { resolvedLevels = resolveLevels(master, dtoLevels, discScope); }
+      const stdFeeMinor = await this.fetchStandardFeeMinor(courseId);
+      try { resolvedLevels = resolveLevels(master, dtoLevels, discScope, stdFeeMinor); }
       catch (e) { throw new BadRequestException((e as Error).message); }
       feeFinal = sumLevelFees(resolvedLevels);
       if (discScope === 'level') {
@@ -2573,8 +2583,9 @@ export class StudentService {
     const input = Array.isArray(dto?.levels) ? dto.levels
       : (dto?.course_level_id != null || dto?.code != null ? [dto] : []);
     if (!input.length) throw new BadRequestException('Choose a level to add.');
+    const stdFeeMinor = await this.fetchStandardFeeMinor(courseId);
     let newLevels: ResolvedLevel[];
-    try { newLevels = resolveLevels(master, input, scopeD); }
+    try { newLevels = resolveLevels(master, input, scopeD, stdFeeMinor); }
     catch (e) { throw new BadRequestException((e as Error).message); }
     // must not already be part of this enrolment (the unique index would 23505 anyway)
     const existing = await this.db.query<any>(`SELECT lower(code) AS code FROM enrolment_level WHERE enrolment_id = $1::bigint`, [enrolmentId]);

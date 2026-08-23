@@ -15,6 +15,7 @@ export const MASTER_LABELS: Record<string, string> = {
   qualification: 'Qualification', budget: 'Budget', status: 'Lead Status',
   tag: 'Tag', followup_type: 'Follow-up Type', disposition: 'Disposition',
   training: 'Training Mode', visit_purpose: 'Purpose of Visit', walkin_status: 'Walk-in Status',
+  ticket_category: 'Ticket Category', course_type: 'Course Type', level: 'Level', campaign_type: 'Campaign Type',
 };
 
 /** "Data Science & AI" -> "DATA_SCIENCE_AI" — editable suggestion, never forced. */
@@ -38,6 +39,22 @@ export function AddMasterModal({ type, onClose, onCreated, initial }: {
   const [parentId, setParentId] = useState<number | undefined>(initial?.parent_id ? Number(initial.parent_id) : undefined);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Level master (dev/131, task #214 item 8): a Level follows Branch -> Vertical and carries a Fee +
+  // Duration, stored in the master's meta. The generic /masters list already filters by
+  // meta.branch_id / meta.vertical_id, so persisting them here makes the Level master branch/vertical-scoped.
+  const isLevel = type === 'level';
+  const lmeta = ((initial as any)?.meta ?? {}) as Record<string, unknown>;
+  const [branches, setBranches] = useState<Named[]>([]);
+  const [verticals, setVerticals] = useState<Named[]>([]);
+  const [lBranch, setLBranch] = useState<number | undefined>(lmeta.branch_id ? Number(lmeta.branch_id) : undefined);
+  const [lVertical, setLVertical] = useState<number | undefined>(lmeta.vertical_id ? Number(lmeta.vertical_id) : undefined);
+  const [lFee, setLFee] = useState<string>(lmeta.fee != null ? String(lmeta.fee) : '');
+  const [lDuration, setLDuration] = useState<string>(lmeta.duration != null ? String(lmeta.duration) : '');
+  useEffect(() => {
+    if (!isLevel) return;
+    api.get<Named[]>('/branches').then(setBranches).catch(() => setBranches([]));
+    api.get<Named[]>('/verticals').then(setVerticals).catch(() => setVerticals([]));
+  }, [isLevel]);
 
   // Parent link is data-driven: /masters lists {type, label, parent} per master.
   useEffect(() => {
@@ -55,11 +72,18 @@ export function AddMasterModal({ type, onClose, onCreated, initial }: {
     if (parentType && !parentId) return setErr(`Pick a ${MASTER_LABELS[parentType] ?? parentType}`);
     setBusy(true); setErr(null);
     try {
-      const body = {
+      const body: Record<string, unknown> = {
         name: name.trim(),
         code: code.trim() || undefined,
         parent_id: parentType ? parentId : undefined,
       };
+      if (isLevel) {
+        body.meta = {
+          ...lmeta,
+          branch_id: lBranch ?? null, vertical_id: lVertical ?? null,
+          fee: lFee.trim() === '' ? null : Number(lFee), duration: lDuration.trim() || null,
+        };
+      }
       const row = initial
         ? await api.patch<Named>(`/masters/${type}/${initial.id}`, body)
         : await api.post<Named>(`/masters/${type}`, body);
@@ -95,6 +119,36 @@ export function AddMasterModal({ type, onClose, onCreated, initial }: {
               <input className="ainp" value={code}
                 onChange={(e) => { setCode(e.target.value); setCodeTouched(true); }} />
             </div>
+            {isLevel && (
+              <>
+                <div className="fld">
+                  <label>Branch<span className="fhint">optional · scopes this level</span></label>
+                  <select className="ainp" data-testid="level-branch" value={lBranch ?? ''}
+                    onChange={(e) => { setLBranch(e.target.value ? Number(e.target.value) : undefined); setLVertical(undefined); }}>
+                    <option value="">All branches</option>
+                    {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+                <div className="fld">
+                  <label>Vertical<span className="fhint">optional · filtered by Branch</span></label>
+                  <select className="ainp" data-testid="level-vertical" value={lVertical ?? ''}
+                    onChange={(e) => setLVertical(e.target.value ? Number(e.target.value) : undefined)}>
+                    <option value="">{lBranch ? 'All verticals in branch' : 'All verticals'}</option>
+                    {verticals.filter((v) => !lBranch || Number((v as any).branch_id) === lBranch).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                </div>
+                <div className="fld">
+                  <label>Fee<span className="fhint">₹ · the level fee; blank falls back to the course Standard Fee</span></label>
+                  <input className="ainp" type="number" min={0} data-testid="level-fee" placeholder="e.g. 15000" value={lFee}
+                    onChange={(e) => setLFee(e.target.value)} />
+                </div>
+                <div className="fld">
+                  <label>Duration<span className="fhint">free text · e.g. 3 Months, 40 Hours</span></label>
+                  <input className="ainp" data-testid="level-duration" placeholder="e.g. 3 Months" value={lDuration}
+                    onChange={(e) => setLDuration(e.target.value)} />
+                </div>
+              </>
+            )}
             {parentType && (
               <div className="fld">
                 <label>{MASTER_LABELS[parentType] ?? parentType} <span className="star">*</span><span className="fhint">parent</span></label>

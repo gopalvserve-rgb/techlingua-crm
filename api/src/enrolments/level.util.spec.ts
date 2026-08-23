@@ -62,3 +62,24 @@ describe('combined Net — overall vs level-wise', () => {
     expect(total - disc).toBe(5500000 - 300000); // ₹52,000
   });
 });
+
+describe('resolveLevels — blank/zero level fee falls back to the course Standard Fee (dev/131 item 10)', () => {
+  const MASTER0: MasterLevel[] = [
+    { id: 21, code: 'A1', label: 'A1', fee_minor: 0 },        // blank fee
+    { id: 22, code: 'A2', label: 'A2', fee_minor: 1200000 },  // ₹12,000 set
+  ];
+  it('uses the standard fee for a level whose master fee is blank/zero', () => {
+    const levels = resolveLevels(MASTER0, [{ course_level_id: 21 }, { course_level_id: 22 }], 'overall', 900000); // std ₹9,000
+    expect(levels[0].fee_minor).toBe(900000); // fell back to standard
+    expect(levels[1].fee_minor).toBe(1200000); // kept its own fee
+    expect(sumLevelFees(levels)).toBe(900000 + 1200000);
+  });
+  it('an explicit blank/zero fee override also falls back to the standard fee', () => {
+    const levels = resolveLevels(MASTER0, [{ course_level_id: 22, fee_minor: 0 }], 'overall', 500000);
+    expect(levels[0].fee_minor).toBe(500000);
+  });
+  it('without a standard fee a blank level stays ₹0 (unchanged back-compat)', () => {
+    const levels = resolveLevels(MASTER0, [{ course_level_id: 21 }], 'overall');
+    expect(levels[0].fee_minor).toBe(0);
+  });
+});

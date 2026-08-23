@@ -31,6 +31,10 @@ export const MASTER_TYPES: Record<string, { table: string; label: string; singul
   // self-manageable master. The course form's Level picker reads it (via /courses/level-catalog
   // back-compat alias) and the inline + Master adds new level codes; managed in Administration > Masters.
   level: { table: 'm_level', label: 'Levels', singular: 'Level' },
+  // Campaign Type master (dev/131, task #213 item 4) — was a hard-coded inline select on the
+  // Create/Edit Campaign form; now a self-manageable master. campaign.campaign_type stores the
+  // picked LABEL text and the master NAME == that label, so existing campaigns keep rendering.
+  campaign_type: { table: 'm_campaign_type', label: 'Campaign Types', singular: 'Campaign Type' },
 };
 
 export interface MasterDto {

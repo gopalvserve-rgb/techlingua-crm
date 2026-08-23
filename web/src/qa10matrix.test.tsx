@@ -87,6 +87,8 @@ const REF = {
   users: [{ id: 3, name: 'Asha Rao', status: 'active' }, { id: 4, name: 'Ravi Nair', status: 'active' }],
   states: [{ id: 1, name: 'Delhi' }],
   cities: [{ id: 2, name: 'New Delhi', parent_id: 1 }],
+  // Campaign Type master (dev/131) — TWO rows so the phantom-field probe can switch it.
+  campaignTypes: [{ id: 101, name: 'Digital' }, { id: 102, name: 'Print' }],
   loaded: true,
   reload: () => undefined,
 };

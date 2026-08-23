@@ -37,6 +37,7 @@ export interface RefData {
    *  Delivery Mode (GET /courses/*-catalog). id == code == label (human-readable). */
   courseTypes: Named[];
   courseLevels: Named[];
+  campaignTypes: Named[];
   deliveryModes: Named[];
   /** DEF-2 — Branch City/State are real masters, so the Branch form can select them. */
   states: Named[];
@@ -49,7 +50,7 @@ const EMPTY: RefData = {
   branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], masterSources: [], stages: [],
   users: [], statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
   trainings: [], visitPurposes: [], walkinStatuses: [], ticketCategories: [],
-  courseTypes: [], courseLevels: [], deliveryModes: [],
+  courseTypes: [], courseLevels: [], deliveryModes: [], campaignTypes: [],
   states: [], cities: [],
   loaded: false, reload: () => undefined,
 };
@@ -82,7 +83,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
       const [branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
         trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
-        courseTypes, courseLevels, deliveryModes] = await Promise.all([
+        courseTypes, courseLevels, deliveryModes, campaignTypes] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
@@ -106,13 +107,15 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), async () => (await api.get<any[]>('/courses/type-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
         safe(can('master.read'), async () => (await api.get<any[]>('/courses/level-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
         safe(can('master.read'), async () => (await api.get<any[]>('/courses/delivery-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
+        // Campaign Type master (dev/131, task #213 item 4) — the campaign form's Campaign Type select.
+        safe(can('master.read'), () => api.get<Named[]>('/masters/campaign_type'), []),
       ]);
       if (dead) return;
       setData({
         branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
         trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
-        courseTypes, courseLevels, deliveryModes,
+        courseTypes, courseLevels, deliveryModes, campaignTypes,
         loaded: true, reload: () => setTick((t) => t + 1),
       });
     })();

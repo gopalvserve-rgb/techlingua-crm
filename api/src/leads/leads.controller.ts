@@ -62,8 +62,11 @@ export class LeadsController {
 
   /** Scoped dashboard numbers: KPIs, per-stage counts, 14-day series, follow-up counters. */
   @Get('summary') @RequirePermission('lead.read')
-  summary(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
-    return this.leads.summary(s, u.id);
+  summary(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query() q: Record<string, string | string[]>) {
+    // Campaign module (dev/131, task #213 item 2): an optional Lead Counsellor (owner) filter
+    // narrows the rolled-up KPI cards (Won / Lost / Revenue / Active / Closed) the same way the
+    // clickable lead-count link narrows the leads list. No owner_ids => unchanged scope-only cards.
+    return this.leads.summary(s, u.id, nums(q.owner_ids));
   }
 
   // Bulk actions — "select all matching filter": just the in-scope ids for the current
