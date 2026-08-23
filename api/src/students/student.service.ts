@@ -566,7 +566,11 @@ export class StudentService {
               pp.id AS plan_id,
               COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
               (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
-                 FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary
+                 FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
+              -- Client Aug 2026 (#4b) — Due Fee for the Fee Management columns (aligns the fee
+              -- view with the Course Enrollment list): net fee minus receipts collected.
+              GREATEST(0, e.net_fee_minor - COALESCE((SELECT sum(fr2.amount_minor) FROM fee_receipt fr2
+                     WHERE fr2.enrolment_id = e.id AND fr2.deleted_at IS NULL), 0))::bigint AS outstanding_minor
          FROM enrolment e
          LEFT JOIN m_course co ON co.id = e.course_id
          LEFT JOIN batch bt ON bt.id = e.batch_id

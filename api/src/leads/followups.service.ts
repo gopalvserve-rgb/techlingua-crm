@@ -73,6 +73,9 @@ export interface CreateFollowUpDto {
    *  Optional, NULL when not supplied (the UI defaults it to the current user).
    *  Independent of created_by — "Reported by Me" still keys off created_by. */
   report_to_id?: number | null;
+  /** Client Aug 2026 (#2) — Branch + Vertical on the task; optional, nullable. */
+  branch_id?: number | null;
+  vertical_id?: number | null;
 }
 
 export const FOLLOWUP_PRIORITIES = ['low', 'medium', 'high'] as const;
@@ -107,7 +110,12 @@ const FU_SELECT = `
          ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name, cu.name AS creator_name,
          ru.name AS report_to_name,
          l.full_name AS lead_name, l.phone AS lead_phone, l.temperature, l.score,
-         co.name AS course_name, st.name AS stage_name, b.name AS branch_name, v.name AS vertical_name,
+         co.name AS course_name, st.name AS stage_name,
+         -- Client Aug 2026 (#2) — task carries its OWN branch/vertical; fall back to the lead's
+         -- path when unset. The effective id is exposed so the Edit form prefills consistently.
+         COALESCE(f.branch_id, l.branch_id) AS branch_id,
+         COALESCE(f.vertical_id, l.vertical_id) AS vertical_id,
+         COALESCE(fb.name, b.name) AS branch_name, COALESCE(fv.name, v.name) AS vertical_name,
          (l.deleted_at IS NOT NULL) AS lead_deleted
     FROM follow_up f
     JOIN lead l ON l.id = f.lead_id
@@ -119,7 +127,9 @@ const FU_SELECT = `
     LEFT JOIN m_course co ON co.id = l.course_id
     LEFT JOIN pipeline_stage st ON st.id = l.stage_id
     JOIN branch b ON b.id = l.branch_id
-    JOIN vertical v ON v.id = l.vertical_id`;
+    JOIN vertical v ON v.id = l.vertical_id
+    LEFT JOIN branch fb ON fb.id = f.branch_id
+    LEFT JOIN vertical fv ON fv.id = f.vertical_id`;
 
 /** Follow-ups CRUD + today's/overdue lists. Scope flows through the lead path. */
 @Injectable()
@@ -284,10 +294,11 @@ export class FollowUpsService {
     const remindAt = dto.remind_at ?? await this.defaultRemindAt(dto.scheduled_at);
     const created = await this.db.tx(async (c) => {
       const ins = await c.query(
-        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by, report_to_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by, report_to_id, branch_id, vertical_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
         [dto.lead_id, owner, dto.type_id ?? null, dto.disposition_id ?? null,
-          dto.scheduled_at, remindAt, dto.notes ?? null, priority, actorId, reportTo],
+          dto.scheduled_at, remindAt, dto.notes ?? null, priority, actorId, reportTo,
+          dto.branch_id ?? null, dto.vertical_id ?? null],
       );
       await c.query(
         `UPDATE lead SET next_follow_up_at = LEAST(COALESCE(next_follow_up_at, $2::timestamptz), $2::timestamptz),
@@ -367,6 +378,9 @@ export class FollowUpsService {
     if (dto.disposition_id !== undefined) set('disposition_id', dto.disposition_id);
     if (dto.owner_id !== undefined) set('owner_id', dto.owner_id);
     if (dto.report_to_id !== undefined) set('report_to_id', await this.resolveReportTo(dto.report_to_id));
+    // Client Aug 2026 (#2) — persist task Branch/Vertical (null clears them).
+    if (dto.branch_id !== undefined) set('branch_id', dto.branch_id ?? null);
+    if (dto.vertical_id !== undefined) set('vertical_id', dto.vertical_id ?? null);
     if (dto.priority !== undefined) set('priority', assertPriority(dto.priority));
     if (dto.notes !== undefined) set('notes', dto.notes);
     if (!sets.length) throw new BadRequestException('nothing to update');

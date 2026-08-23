@@ -426,6 +426,11 @@ const EXEMPT: Record<string, Allow> = {
   },
   'dash.referrals': {
     Pipeline: 'cascade filter only — a referral has no pipeline column; it is derived from the Campaign',
+    // Client Aug 2026 (#3) — a SEARCH helper shown only for an Existing-Student referrer. Picking a
+    // student AUTO-FILLS the other referrer fields (name/phone/branch/vertical/course) from
+    // GET /students/:id; it carries no payload of its own, so it never reaches the request body.
+    // Its search + autofill are proven behaviourally (StudentLookup) — here it is display-only.
+    'Find Existing Student': 'type "studentlookup" — an existing-student search that auto-fills the other referrer fields; it has no own payload and never reaches the body (client Aug 2026 #3)',
   },
   'leads.pipelinemaster': {
     Branch: 'cascade filter only — a pipeline\'s parent is the VERTICAL (pipeline.vertical_id); the branch is derived from it, so sending both could contradict itself',
@@ -872,6 +877,8 @@ const bespokeCases: Case[] = [
     name: 'Edit Referral  [DEF-S34-03]',
     render: () => render(<AddModal formKey="dash.referrals" onClose={() => undefined}
       edit={referralEditSpec(REFERRAL_ROW, () => undefined) as EditSpec} />),
+    // Client Aug 2026 (#3) — the existing-student search helper carries no payload (see EXEMPT['dash.referrals']).
+    allow: { 'Find Existing Student': 'type "studentlookup" — search helper that auto-fills other referrer fields; no own payload (client Aug 2026 #3)' },
     path: /^\/referrals\/6$/,
   },
 

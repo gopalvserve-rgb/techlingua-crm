@@ -503,6 +503,9 @@ export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
     'Title': f.notes ?? '',
     'Task Type': f.type_name ?? '',
     'Related Lead': f.lead_name ?? '',
+    // Client Aug 2026 (#2) — Branch/Vertical prefill on task edit.
+    'Branch': f.branch_name ?? '',
+    'Vertical': f.vertical_name ?? '',
     'Assigned To': f.owner_name ?? '',
     'Report To': f.report_to_name ?? '',
     'Due Date': dtLocal(f.scheduled_at),
@@ -512,6 +515,8 @@ export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
   initialIds: {
     'Task Type': f.type_id == null ? undefined : Number(f.type_id),
     'Related Lead': f.lead_id == null ? undefined : Number(f.lead_id),
+    'Branch': f.branch_id == null ? undefined : Number(f.branch_id),
+    'Vertical': f.vertical_id == null ? undefined : Number(f.vertical_id),
     'Assigned To': f.owner_id == null ? undefined : Number(f.owner_id),
     'Report To': f.report_to_id == null ? undefined : Number(f.report_to_id),
   },
@@ -521,6 +526,8 @@ export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
       type_id: ids['Task Type'] ?? null,
       owner_id: ids['Assigned To'] ?? undefined,
       report_to_id: ids['Report To'] ?? null,
+      branch_id: ids['Branch'] ?? null,
+      vertical_id: ids['Vertical'] ?? null,
       scheduled_at: need(vals['Due Date'], 'Due date is required'),
       priority: (vals['Priority'] || 'Medium').toLowerCase(),
       notes: [vals['Title'], vals['Description']].filter(Boolean).join(' \u2014 ') || undefined,
@@ -949,6 +956,14 @@ function QuickContact() {
   const pipelines = ref.pipelines.filter((p) => !scope.vertical || Number(p.vertical_id) === scope.vertical);
   const campaigns = ref.campaigns.filter((c) => !scope.pipeline || Number(c.pipeline_id) === scope.pipeline);
 
+  // Client Aug 2026 (#1) — Quick Contact no longer shows the Campaign select + Contact Source
+  // config block on the right. Instead we surface the chosen Branch › Vertical path and a
+  // read-only Campaign overview (a summary of the campaign context, not config inputs).
+  const branchName = ref.branches.find((b) => Number(b.id) === scope.branch)?.name;
+  const verticalName = ref.verticals.find((v) => Number(v.id) === scope.vertical)?.name;
+  const pipelineName = ref.pipelines.find((p) => Number(p.id) === scope.pipeline)?.name;
+  const campaignName = ref.campaigns.find((c) => Number(c.id) === scope.campaign)?.name;
+
   const search = async () => {
     const q = (phone || altPhone || whatsapp || name).trim();
     // phone values carry "+<dial><national>" — search by digits, country-agnostic
@@ -1007,24 +1022,32 @@ function QuickContact() {
               stay here. Those attributes are captured on the full Add Lead form instead. */}
         </div>
         <div className="stack">
-          <div className="card"><div className="card-head"><h3><Ic k="bolt" />Campaigns</h3></div>
+          {/* Client Aug 2026 (#1) — the Campaign select + Contact Source config block are removed.
+              The right column now shows the chosen Branch › Vertical and a read-only Campaign
+              overview (the campaign context summary, not config inputs). Campaign is still chosen
+              in the Lead Details — Scope grid on the left, which drives this overview. */}
+          <div className="card"><div className="card-head"><h3><Ic k="branch" />Branch › Vertical</h3></div>
             <div className="card-pad">
-              {/* UAT-R2 #3 — Quick Contact showed ALL org campaigns here. Constrain to the
-                  chosen Branch › Vertical › Pipeline path (same `campaigns` list as the scope
-                  select above); disabled with a hint until a Pipeline is picked. */}
-              <select className="ainp" disabled={!scope.pipeline}
-                value={scope.campaign ?? ''} onChange={(e) => setScope((s) => ({ ...s, campaign: e.target.value ? Number(e.target.value) : undefined }))}>
-                <option value="">{scope.pipeline ? 'Select Campaigns' : 'Select a Pipeline first…'}</option>
-                {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              {branchName ? (
+                <div className="bvpath" data-testid="qc-bv-path" style={{ fontWeight: 600, fontSize: 15 }}>
+                  {branchName}{verticalName ? <> <span style={{ opacity: .5 }}>›</span> {verticalName}</> : ''}
+                </div>
+              ) : (
+                <div className="sub" data-testid="qc-bv-path">Select a Branch (and Vertical) in Lead Details — Scope.</div>
+              )}
             </div></div>
-          <div className="card"><div className="card-head"><h3><Ic k="leads" />Contact Source</h3></div>
-            <div className="card-pad">
-              {['FILE_UPLOAD', 'WALK_IN_LEAD', 'INCOMING_IVR', 'WORKFLOW', 'GOOGLE_SHEET'].map((nm) => (
-                <label className="qc-src" key={nm}><input type="checkbox" />{nm}</label>
-              ))}
-              <a className="mlink" style={{ marginLeft: 4, display: 'inline-block', marginTop: 6 }}
-                onClick={() => toast('More sources connect under Marketing › Lead Source Master')}>View More…</a>
+          <div className="card"><div className="card-head"><h3><Ic k="bolt" />Campaign overview</h3></div>
+            <div className="card-pad" data-testid="qc-campaign-overview">
+              {scope.campaign ? (
+                <table className="kv" style={{ width: '100%', fontSize: 13 }}><tbody>
+                  <tr><td className="sub" style={{ paddingRight: 10 }}>Campaign</td><td style={{ fontWeight: 600 }}>{campaignName ?? '—'}</td></tr>
+                  <tr><td className="sub" style={{ paddingRight: 10 }}>Pipeline</td><td>{pipelineName ?? '—'}</td></tr>
+                  <tr><td className="sub" style={{ paddingRight: 10 }}>Vertical</td><td>{verticalName ?? '—'}</td></tr>
+                  <tr><td className="sub" style={{ paddingRight: 10 }}>Branch</td><td>{branchName ?? '—'}</td></tr>
+                </tbody></table>
+              ) : (
+                <div className="sub">Pick a Campaign in Lead Details — Scope to see its context summary here.</div>
+              )}
             </div></div>
         </div>
       </div>
@@ -4730,6 +4753,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const [enrolHistFor, setEnrolHistFor] = useState<any | null>(null);
   const [enrolXferFor, setEnrolXferFor] = useState<any | null>(null);
   const [enrolEditFor, setEnrolEditFor] = useState<any | null>(null); // client feedback item 6 — Edit enrolment
+  const [enrolViewFor, setEnrolViewFor] = useState<any | null>(null); // client Aug 2026 (#4a) — read-only View enrolment
   const [enrolLevelFor, setEnrolLevelFor] = useState<any | null>(null); // batch 2 — Add level (upgrade) to an enrolment
   // client refinement (dev/80) — Fee Management actions on the profile Fees tab (reuse standalone components)
   const [feePlanFor, setFeePlanFor] = useState<number | null>(null);        // fee setup -> PlanCreateModal
@@ -5266,7 +5290,10 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                     e.start_date ? dt(e.start_date) : dt(e.created_at),
                     <span className="sub">{String(e.effective_lms_access ?? '').toUpperCase()}</span>,
                     <span style={{ whiteSpace: 'nowrap' }}>
-                      {canEdit && <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolEditFor(e)} data-testid={`enrol-edit-${e.id}`}><Ic k="pencil" />Edit</button>}
+                      {/* Client Aug 2026 (#4a) — read-only View, visible to everyone (incl. users
+                          without edit permission) so they can still see the full enrolment details. */}
+                      <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolViewFor(e)} data-testid={`enrol-view-${e.id}`}><Ic k="eye" />View</button>
+                      {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolEditFor(e)} data-testid={`enrol-edit-${e.id}`}><Ic k="pencil" />Edit</button></>}
                       {canEdit && e.status !== 'cancelled' && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolLevelFor(e)} data-testid={`enrol-addlevel-${e.id}`}><Ic k="plus" />Add level</button></>}
                       {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button></>}
                       {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolXferFor(e)} data-testid={`enrol-xfer-${e.id}`}><Ic k="swap" />Transfer course</button></>}
@@ -5446,16 +5473,24 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           <Section title="Fee Management">
             {fees?.enrolments?.length ? (
               <table className="minitbl"><thead><tr>
-                <th>Enrolment</th><th>Course</th><th>Branch &rsaquo; Vertical</th><th>Net Fee</th><th>Plan</th><th>Status</th><th>Actions</th>
+                {/* Client Aug 2026 (#4b) — the SAME columns as the Course Enrollment list:
+                    Roll No, Enrolment No, Branch, Vertical, Course, Level, Total, Net, Fee Plan,
+                    Due, Status (+ Actions). Aligns the fee view with dev/109/115. */}
+                <th>Roll Number</th><th>Enrolment Number</th><th>Branch</th><th>Vertical</th><th>Course</th><th>Level</th><th>Total Fee</th><th>Net Fee</th><th>Fee Plan</th><th>Due Fee</th><th>Status</th><th>Actions</th>
               </tr></thead>
                 <tbody>{fees.enrolments.map((e: any) => (
-                  <tr key={e.id}>
-                    <td className="mono">{e.enrolment_no}</td>
+                  <tr key={e.id} data-testid={`fee-enrol-row-${e.id}`}>
+                    <td className="mono" data-testid={`fee-roll-no-${e.id}`}>{e.student_vertical_no ?? '—'}</td>
+                    <td className="mono">{e.enrolment_no ?? '—'}</td>
+                    <td>{e.branch_name ?? '—'}</td>
+                    <td>{e.vertical_name ?? '—'}</td>
                     <td>{e.course_name ?? '—'}</td>
-                    <td>{[e.branch_name, e.vertical_name].filter(Boolean).join(' \u203a ') || '—'}</td>
-                    <td>{money(e.net_fee_minor)}</td>
-                    <td>{e.payment_plan}</td>
-                    <td>{e.status}</td>
+                    <td>{e.level_summary ? <b>{e.level_summary}</b> : <span className="sub">{'—'}</span>}</td>
+                    <td>{money(e.total_fee_minor ?? e.gross_fee_minor ?? e.fee_minor)}</td>
+                    <td><b>{money(e.net_fee_minor)}</b></td>
+                    <td>{e.payment_plan ?? '—'}</td>
+                    <td><b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }} data-testid={`fee-due-${e.id}`}>{money(e.outstanding_minor ?? 0)}</b></td>
+                    <td>{e.course_status ? renderCell(studentStatusCell(e.course_status)) : (e.status ?? '—')}</td>
                     <td><div className="rowacts">
                       {canPlanCreate && <button className="icon-btn sm" title="Fee setup (payment plan)" onClick={() => setFeePlanFor(Number(e.id))}><Ic k="cfg" /></button>}
                       {e.plan_id ? <button className="icon-btn sm" title="View schedule" onClick={() => setFeePlanEditFor(Number(e.plan_id))}><Ic k="eye" /></button> : null}
@@ -5543,6 +5578,9 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
         <EditEnrolmentModal student={full} enrolment={enrolEditFor} canManageSensitive={canStatusManage}
           onClose={() => setEnrolEditFor(null)}
           onDone={() => { setEnrolEditFor(null); reloadEnrol(); loadProfile(); }} />
+      )}
+      {enrolViewFor && (
+        <ViewEnrolmentModal enrolment={enrolViewFor} onClose={() => setEnrolViewFor(null)} />
       )}
       {enrolXferFor && (
         <TransferEnrolmentCourseModal student={full} enrolment={enrolXferFor}
@@ -6371,6 +6409,50 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
           </div>
         </>
       )}
+    </DetailModal>
+  );
+}
+
+/**
+ * VIEW ENROLMENT (client Aug 2026 #4a) — a READ-ONLY version of the Edit enrolment details, so a
+ * user WITHOUT update permission can still see everything the Edit modal edits: course, levels,
+ * fee, discount, net, plan, status and dates. No inputs, no save — pure display, built from the
+ * enrolment row the Course Enrollment list already has (same shape used by the Edit modal).
+ */
+export function ViewEnrolmentModal({ enrolment: e, onClose }: { enrolment: any; onClose: () => void }) {
+  const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
+  const dt = (v: any) => fmtDateTimeIST(v);
+  const disc = Number(e.discount_amount_minor ?? e.discount_minor ?? 0);
+  const discLabel = disc > 0
+    ? `${money(disc)}${e.discount_type === 'percent' ? ` (${Number(e.discount_value)}%)` : ''}`
+    : '—';
+  const path = e.path || [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' › ');
+  return (
+    <DetailModal title={`View enrollment — ${e.course_name ?? e.enrolment_no ?? ''}`} icon="eye" onClose={onClose} width={640}
+      footer={<button className="btn" onClick={onClose} data-testid="enrol-view-close"><Ic k="x" />Close</button>}>
+      <div className="notice" style={{ marginBottom: 10 }}>
+        <Ic k="eye" /><div>Read-only view of this enrollment. {path || '—'}</div>
+      </div>
+      <div data-testid="enrol-view-body">
+        <KV rows={[
+          ['Roll Number', <span className="mono">{e.student_vertical_no ?? '—'}</span>],
+          ['Enrolment Number', <span className="mono">{e.enrolment_no ?? '—'}</span>],
+          ['Branch', e.branch_name ?? '—'],
+          ['Vertical', e.vertical_name ?? '—'],
+          ['Course', e.course_name ?? '—'],
+          ['Level(s)', e.level_summary ? <b>{e.level_summary}</b> : '—'],
+          ['Total Fee', money(e.total_fee_minor ?? e.gross_fee_minor ?? e.fee_minor)],
+          ['Discount', discLabel],
+          ['Net Fee', <b>{money(e.net_fee_minor)}</b>],
+          ['Fee Plan', e.payment_plan ?? '—'],
+          ['Paid', money(e.paid_minor ?? 0)],
+          ['Due Fee', <b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }}>{money(e.outstanding_minor ?? 0)}</b>],
+          ['Status', e.course_status ? renderCell(studentStatusCell(e.course_status)) : '—'],
+          ['Batch', e.batch_name ?? '—'],
+          ['Start / Created', e.start_date ? dt(e.start_date) : dt(e.created_at)],
+          ['LMS Access', <span className="sub">{String(e.effective_lms_access ?? '').toUpperCase() || '—'}</span>],
+        ]} />
+      </div>
     </DetailModal>
   );
 }

@@ -169,7 +169,12 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Convert to Lead', 'checkbox', 0, 0, 'creates the lead and assigns it to the counsellor', undefined, 0, '1'),
     F('Remarks', 'textarea')] },
   'dash.referrals': { title: 'Add Referral', fields: [
-    F('Referrer Type', 'select', 1, ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner']), F('Referrer Name', 'text', 1, 0, 'Student / Employee name'),
+    F('Referrer Type', 'select', 1, ['Existing Student', 'Parent', 'Employee', 'Alumni', 'Partner'], '', undefined, 0, 'Existing Student'),
+    // Client Aug 2026 (#3) — existing-student search: pick a student and auto-fill the referrer
+    // name / phone / branch / vertical / course. Shows only when Referrer Type = Existing Student;
+    // brand-new referrers still type everything in manually.
+    F('Find Existing Student', 'studentlookup', 0, 0, 'Search by name / phone / student id to auto-fill'),
+    F('Referrer Name', 'text', 1, 0, 'Student / Employee name'),
     F('Referrer Contact Number', 'tel', 1), F('Referred Person Name', 'text', 1), F('Referred Person Contact Number', 'tel', 1, 0, 'de-dup key'),
     F('Referred Person WhatsApp Number', 'tel'), F('Referred Person Email', 'email'), F('Relationship to Referrer', 'text'),
     F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
@@ -320,8 +325,12 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Priority', 'select', 0, ['Low', 'Medium', 'High'], 'default: Medium'),
     { ...F('Next Follow-up Date', 'datetime', 1), min: 'today' as const }, F('Remarks', 'textarea')] },
   // client update #5 — Assigned To / Report To show the logged-in user as "Myself" (top of list, default).
+  // Client Aug 2026 (#2) — Branch + Vertical are first-class on a Task. They cascade via the
+  // shared CASCADE (Vertical filters by Branch) and are persisted on the follow-up/task record.
   'dash.mytasks': { title: 'Add Task', fields: [
     F('Title', 'text', 1), F('Task Type', 'select', 0, 0, 'master', 'followupTypes'), F('Related Lead', 'leadlookup', 1, 0, 'Search lead'),
+    F('Branch', 'select', 0, 0, 'Branch (task scope)', 'branches'),
+    F('Vertical', 'select', 0, 0, 'Vertical (filtered by the Branch)', 'verticals'),
     F('Assigned To', 'select', 0, 0, 'Users', 'users', 1),
     F('Report To', 'select', 0, 0, 'Users · the assignee reports progress to them', 'users', 1),
     { ...F('Due Date', 'datetime', 1), min: 'today' as const }, F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea')] },
@@ -506,6 +515,9 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       type_id: ids['Task Type'],
       owner_id: ids['Assigned To'],
       report_to_id: ids['Report To'] ?? null,
+      // Client Aug 2026 (#2) — Branch + Vertical persisted on the task.
+      branch_id: ids['Branch'] ?? null,
+      vertical_id: ids['Vertical'] ?? null,
       scheduled_at: need(vals['Due Date'], 'Due date is required'),
       priority: (vals['Priority'] || 'Medium').toLowerCase(),
       notes: [vals['Title'], vals['Description']].filter(Boolean).join(' — ') || undefined,
@@ -745,6 +757,48 @@ export function LeadLookup({ value, onPick, inputId }: {
             <div className="lrow" key={o.id} style={{ cursor: 'pointer', padding: '8px 12px' }}
               onClick={() => { setQ(`${o.full_name} · ${o.phone}`); setOpts([]); onPick(o.id, o.full_name); }}>
               <div className="gr"><div className="t1">{o.full_name}</div><div className="t2 mono">{o.phone}</div></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Client Aug 2026 (#3) — Add Referral: when the referrer is an EXISTING student, search the
+ * student directory (by name / phone / student id) and pick them, so the counsellor does not
+ * re-type known info. Reuses the same GET /students?q= search the Student Management list uses;
+ * the picked student's id is handed up so the form can auto-fill from GET /students/:id.
+ */
+export function StudentLookup({ onPick }: { onPick: (id: number, row: any) => void }) {
+  const [q, setQ] = useState('');
+  const [opts, setOpts] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (q.trim().length < 2) { setOpts([]); return; }
+      setBusy(true);
+      api.get<{ rows: any[] }>(`/students?q=${encodeURIComponent(q.trim())}&limit=8`)
+        .then((r) => setOpts(r.rows ?? [])).catch(() => setOpts([])).finally(() => setBusy(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  return (
+    <div>
+      <input className="ainp" data-testid="referral-student-search"
+        placeholder="Search existing student by name / phone / student id…" value={q}
+        onChange={(e) => setQ(e.target.value)} />
+      {busy && <div className="sub" style={{ padding: '4px 2px' }}>Searching…</div>}
+      {opts.length > 0 && (
+        <div className="card" style={{ marginTop: 4, maxHeight: 180, overflowY: 'auto' }}>
+          {opts.map((o) => (
+            <div className="lrow" key={o.id} style={{ cursor: 'pointer', padding: '8px 12px' }}
+              onClick={() => { setQ(`${o.full_name} · ${o.phone ?? ''}`); setOpts([]); onPick(Number(o.id), o); }}>
+              <div className="gr">
+                <div className="t1">{o.full_name}</div>
+                <div className="t2 mono">{[o.student_no, o.phone].filter(Boolean).join(' · ')}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -1368,6 +1422,22 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       );
     }
     if (t === 'leadlookup') return <LeadLookup value={v} onPick={(id, label) => setField(f.label, label, id)} />;
+    if (t === 'studentlookup') return (
+      <StudentLookup onPick={async (id, row) => {
+        // Optimistic fill from the search row, then reconcile with the authoritative record.
+        const apply = (s: any) => {
+          // Order matters: Branch first (clears Vertical/Course), then Vertical (clears Course),
+          // then Course, then the plain text fields — so the cascade never wipes a value we set.
+          if (s.branch_id != null) setField('Branch', s.branch_name ?? '', Number(s.branch_id));
+          if (s.vertical_id != null) setField('Vertical', s.vertical_name ?? '', Number(s.vertical_id));
+          if (s.course_id != null) setField('Course Interested', s.course_name ?? '', Number(s.course_id));
+          if (s.full_name) setField('Referrer Name', String(s.full_name));
+          if (s.phone) setField('Referrer Contact Number', String(s.phone));
+        };
+        apply(row);
+        try { const full = await api.get<any>(`/students/${id}`); apply(full); } catch { /* keep the row fill */ }
+      }} />
+    );
     if (t === 'date') return <input className="ainp" type="date" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
     if (t === 'datetime') {
       // #19 — min='today' blocks a past Date of Visit in the picker (server also validates).
@@ -1480,7 +1550,12 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
             </div>
           )}
           <div className="form-grid">
-            {[...spec.fields, ...cfFields].filter((f) => !(f.addOnly && edit)).map((f) => {
+            {[...spec.fields, ...cfFields]
+              .filter((f) => !(f.addOnly && edit))
+              // Client Aug 2026 (#3) — the existing-student search shows only when the referrer
+              // is an Existing Student; other referrer types keep the manual-entry path.
+              .filter((f) => f.type !== 'studentlookup' || vals['Referrer Type'] === 'Existing Student')
+              .map((f) => {
               const t = f.type || 'text';
               const span2 = t === 'textarea' || t === 'table' || t === 'levels';
               // 'checkbox' renders its own caption next to the box — don't print the hint twice
