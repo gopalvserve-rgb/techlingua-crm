@@ -22,6 +22,20 @@ describe('LeadIngestionService', () => {
     expect(st.audit).toHaveLength(1);            // worker-created leads are audited
   });
 
+  it('import: a course CODE (+ remarks) resolves to the right course_id and keeps the remarks on the lead', async () => {
+    // Client Aug 2026 (#3): a lead sheet may give the Course by its master CODE, and a Remarks column.
+    // The code resolves to the course (IELTS01 -> 21) and the remark lands on the lead timeline.
+    const { db, st } = makeFakeDb();
+    const { svc } = makeIngestion(db);
+    const out = await svc.ingest(
+      { full_name: 'Meera N', phone: '9811100099', course: 'IELTS01', note: 'Prefers evening batch', external_id: 'CC1' },
+      ctx(),
+    );
+    expect(out.status).toBe('created');
+    expect(Number(st.leads[0].course_id)).toBe(21);
+    expect(st.activities.some((a) => a.type === 'create' && String(a.note).includes('Prefers evening batch'))).toBe(true);
+  });
+
   it('is IDEMPOTENT — re-ingesting the same record creates nothing new', async () => {
     const { db, st } = makeFakeDb();
     const { svc } = makeIngestion(db);

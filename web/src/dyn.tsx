@@ -234,7 +234,7 @@ function leadRow(l: any): Cell[] {
     { b: [l.status_name || '—', 'b-gray'] },
     { node: <span className="mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span> },
     // dev/84 item 9 — Lead creation date (DD-MM-YYYY IST), sortable (Newest/Oldest) + exported.
-    { node: <span className="mono sub">{fmtDMYIST(l.created_at)}</span> },
+    { node: <span className="mono sub">{fmtDateTimeIST(l.created_at)}</span> },
   ];
 }
 
@@ -1227,6 +1227,11 @@ function LeadsAll() {
   // the filter from the new query so the shortcut takes effect. Manual chip edits never touch the
   // URL, so they are preserved.
   useReseedOnSearch(search, (s) => setF(seedLeadFilters(s)));
+  // Pagination (client Aug 2026): the Leads list pages server-side (50/page) with prev/next +
+  // numbered pages and a "Showing X\u2013Y of N" count. Filters/scope/sort/date-range carry across
+  // pages; changing any filter returns to page 1 (see the filterKey effect below).
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(0);
   const params = new URLSearchParams();
   // Multi-select -> CSV array params (owner_ids, status_ids, branch_ids, ...). OR within a filter,
   // AND across filters; the API also still accepts the old singular params for card links.
@@ -1253,7 +1258,10 @@ function LeadsAll() {
   if (f.unassigned) params.set('unassigned', '1');
   if (f.sort && f.sort !== 'recent') params.set('sort', f.sort);
   if (f.q.trim()) params.set('q', f.q.trim());
-  params.set('limit', '100');
+  // The filter signature WITHOUT paging — a change here resets to page 1; paging alone does not.
+  const filterKey = params.toString();
+  params.set('limit', String(PAGE_SIZE));
+  params.set('offset', String(page * PAGE_SIZE));
   const data = useFetch<{ total: number; rows: any[] }>(`/leads?${params.toString()}`, [refreshTick, params.toString()]);
   const del = useDelete('Lead', '/leads', () => bump());
 
@@ -1290,6 +1298,8 @@ function LeadsAll() {
   // changing the filter (or a refresh) clears the selection — it can no longer be trusted to
   // still match what the user sees.
   useEffect(() => { setSel(new Set()); setSelCap(null); }, [params.toString(), refreshTick]);
+  // A filter / scope / sort / date-range change (NOT a page change) returns to the first page.
+  useEffect(() => { setPage(0); }, [filterKey, refreshTick]);
   const toggleOne = (id: number) => setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const allLoadedSelected = rows.length > 0 && rows.every((r: any) => sel.has(Number(r.id)));
   const toggleAllLoaded = () => setSel((p) => {
@@ -1481,6 +1491,10 @@ function LeadsAll() {
         <InboxLeads rows={rows} openLead={openLead}
           canEditLead={canEditLead} canDeleteLead={canDeleteLead} del={del} />
       )}
+      {(data.data?.total ?? 0) > 0 && (
+        <LeadsPager page={page} pageSize={PAGE_SIZE} total={data.data?.total ?? 0}
+          shown={rows.length} loading={data.loading} onPage={setPage} />
+      )}
       {transferLead && <LeadTransferModal leadId={transferLead.id} leadName={transferLead.name}
         onDone={bump} onClose={() => setTransferLead(null)} />}
       {flagLead && <RedFlagModal leadId={flagLead.id} leadName={flagLead.name} flagged={flagLead.flagged}
@@ -1519,6 +1533,36 @@ type LeadsViewProps = {
 };
 
 const stageBadgeClass = (t?: string) => (t === 'won' ? 'b-green' : t === 'lost' ? 'b-rose' : 'b-cyan');
+
+function LeadsPager({ page, pageSize, total, shown, onPage, loading }:
+  { page: number; pageSize: number; total: number; shown: number; onPage: (p: number) => void; loading?: boolean }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : page * pageSize + 1;
+  const to = page * pageSize + shown;
+  const lo = Math.max(0, page - 2), hi = Math.min(pages - 1, page + 2);
+  const win: number[] = [];
+  for (let i = lo; i <= hi; i++) win.push(i);
+  return (
+    <div className="card" data-testid="leads-pager"
+      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', flexWrap: 'wrap' }}>
+      <span className="sub" style={{ fontSize: 12 }} data-testid="pg-range">
+        Showing <b>{from}</b>{'\u2013'}<b>{to}</b> of <b>{total}</b> lead{total === 1 ? '' : 's'}
+      </span>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn" data-testid="pg-prev" disabled={page <= 0 || loading} onClick={() => onPage(page - 1)}>
+          <Ic k="chev" />Prev</button>
+        {lo > 0 && (<><button className="fchip" onClick={() => onPage(0)}>1</button><span className="sub">{'\u2026'}</span></>)}
+        {win.map((p) => (
+          <button key={p} className={`fchip${p === page ? ' on' : ''}`} data-testid={`pg-${p + 1}`}
+            aria-current={p === page ? 'page' : undefined} onClick={() => onPage(p)}>{p + 1}</button>
+        ))}
+        {hi < pages - 1 && (<><span className="sub">{'\u2026'}</span><button className="fchip" onClick={() => onPage(pages - 1)}>{pages}</button></>)}
+        <button className="btn" data-testid="pg-next" disabled={page >= pages - 1 || loading} onClick={() => onPage(page + 1)}>
+          Next<Ic k="chev" /></button>
+      </div>
+    </div>
+  );
+}
 
 function ModernLeads({ rows, total, openLead, canEditLead, canDeleteLead, del }: LeadsViewProps & { total: number }) {
   return (

@@ -35,7 +35,7 @@ export const LEAD_IMPORT_FIELDS: FieldDef[] = [
   { key: 'score', label: 'Lead Score', aliases: ['score', 'leadscore'], hint: '0-100' },
   { key: 'next_follow_up_at', label: 'Next Follow-up', aliases: ['nextfollowup', 'followupdate', 'followup', 'nextfollowupdate'], hint: 'YYYY-MM-DD or DD/MM/YYYY' },
   { key: 'tags', label: 'Tags', aliases: ['tag', 'tags', 'labels'], hint: 'Comma-separated tag names' },
-  { key: 'note', label: 'Note', aliases: ['note', 'notes', 'remark', 'remarks', 'comment', 'comments', 'message'] },
+  { key: 'note', label: 'Remarks / Note', aliases: ['note', 'notes', 'remark', 'remarks', 'comment', 'comments', 'message'] },
   { key: 'external_id', label: 'External ID', aliases: ['externalid', 'id', 'leadid', 'recordid', 'refid', 'reference'], hint: 'Source record id — makes re-import idempotent' },
 ];
 
