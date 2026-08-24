@@ -44,10 +44,30 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
   const [unread, setUnread] = useState(0);
   const [busy, setBusy] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  // dev/132 ITEM C — ids we've already surfaced as a popup toast. `null` until the first poll,
+  // which SEEDS the set silently (so logging in never floods the screen with old unread rows).
+  const seenRef = useRef<Set<number> | null>(null);
 
   const poll = useCallback(async () => {
-    try { setUnread((await api.get<{ unread: number }>('/notifications/count')).unread); }
-    catch { /* the bell must never break the shell */ }
+    try {
+      // one lightweight poll: the unread rows (for popups) + the authoritative badge count.
+      const list = await api.get<Notif[]>('/notifications?unread=1&limit=20');
+      try { setUnread((await api.get<{ unread: number }>('/notifications/count')).unread); }
+      catch { setUnread(list.length); }
+      // ITEM C — real-time popup/toast for lead created/assigned, follow-up missed, SLA breach,
+      // reminder due, task assigned/due, red flag. Only NEW (unseen) events toast — never a re-toast.
+      if (seenRef.current === null) {
+        seenRef.current = new Set(list.map((n) => n.id));   // first run: seed, don't toast
+      } else {
+        // oldest-first so a burst pops in chronological order
+        for (const n of [...list].reverse()) {
+          if (!seenRef.current.has(n.id)) {
+            seenRef.current.add(n.id);
+            toast(`${n.title}${n.body ? ` — ${n.body}` : ''}`, n.severity === 'error');
+          }
+        }
+      }
+    } catch { /* the bell must never break the shell */ }
   }, []);
 
   const load = useCallback(async () => {
@@ -59,7 +79,7 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
 
   useEffect(() => {
     void poll();
-    const t = setInterval(() => { void poll(); }, 60_000);   // the worker ticks every 30 s
+    const t = setInterval(() => { void poll(); }, 45_000);   // ITEM C — poll unread every 45s for popups
     return () => clearInterval(t);
   }, [poll]);
 

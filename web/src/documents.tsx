@@ -242,3 +242,100 @@ export function VerticalLogoUpload({ verticalId, initialUrl, onDone }: { vertica
 }
 
 const fmtSizePub = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/* ---- dev/132 ITEM B — vertical MULTIPLE bank accounts + UPI id + payment QR ---- */
+
+export type VertBank = { name: string; account_no: string; ifsc: string; branch: string; account_holder: string; active: boolean };
+export type VertPayments = { banks: VertBank[]; upi_id: string };
+
+const emptyBank = (active = false): VertBank => ({ name: '', account_no: '', ifsc: '', branch: '', account_holder: '', active });
+
+/** Controlled editor: add-more bank rows with a "Required/active" radio, plus a UPI id field.
+ *  Calls onChange with the current value on every edit so the parent can submit it. */
+export function VerticalBanksEditor({ initial, onChange }: { initial?: VertPayments; onChange: (v: VertPayments) => void }) {
+  const [banks, setBanks] = useState<VertBank[]>(() => {
+    const b = (initial?.banks ?? []).map((x) => ({ ...emptyBank(), ...x, active: !!x.active }));
+    return b.length ? b : [emptyBank(true)];
+  });
+  const [upi, setUpi] = useState<string>(initial?.upi_id ?? '');
+  const emit = (nb: VertBank[], nu: string) => onChange({ banks: nb, upi_id: nu });
+  const setRow = (i: number, patch: Partial<VertBank>) => {
+    setBanks((xs) => { const nx = xs.map((b, j) => (j === i ? { ...b, ...patch } : b)); emit(nx, upi); return nx; });
+  };
+  const setActive = (i: number) => {
+    setBanks((xs) => { const nx = xs.map((b, j) => ({ ...b, active: j === i })); emit(nx, upi); return nx; });
+  };
+  const addRow = () => setBanks((xs) => { const nx = [...xs, emptyBank(xs.length === 0)]; emit(nx, upi); return nx; });
+  const delRow = (i: number) => setBanks((xs) => {
+    let nx = xs.filter((_, j) => j !== i);
+    if (nx.length && !nx.some((b) => b.active)) nx = nx.map((b, j) => ({ ...b, active: j === 0 }));
+    emit(nx, upi); return nx;
+  });
+  const setUpiV = (v: string) => { setUpi(v); emit(banks, v); };
+
+  return (
+    <div className="fld span2" data-testid="vert-banks-editor">
+      <label>Bank Accounts <span className="fhint">tick the ONE required / active bank for this vertical</span></label>
+      {banks.map((b, i) => (
+        <div key={i} className="bankrow" style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6 }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              <input type="radio" name="vert-active-bank" checked={!!b.active} onChange={() => setActive(i)} data-testid={`vert-bank-active-${i}`} />
+              Required / active
+            </label>
+            <span style={{ marginLeft: 'auto' }} />
+            <button type="button" className="ax2" title="Remove bank" onClick={() => delRow(i)} data-testid={`vert-bank-del-${i}`}><Ic k="trash" /></button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+            <input className="ainp" placeholder="Bank name" value={b.name} onChange={(e) => setRow(i, { name: e.target.value })} data-testid={`vert-bank-name-${i}`} />
+            <input className="ainp" placeholder="Account no." value={b.account_no} onChange={(e) => setRow(i, { account_no: e.target.value })} />
+            <input className="ainp" placeholder="IFSC" value={b.ifsc} onChange={(e) => setRow(i, { ifsc: e.target.value.toUpperCase() })} />
+            <input className="ainp" placeholder="Bank branch" value={b.branch} onChange={(e) => setRow(i, { branch: e.target.value })} />
+            <input className="ainp" placeholder="Account holder name" value={b.account_holder} onChange={(e) => setRow(i, { account_holder: e.target.value })} />
+          </div>
+        </div>
+      ))}
+      <button type="button" className="setcond" onClick={addRow} data-testid="vert-bank-add"><Ic k="plus" />Add bank account</button>
+      <div style={{ marginTop: 12 }}>
+        <label>UPI ID <span className="fhint">VPA for QR / UPI collections — e.g. techlingua@hdfcbank</span></label>
+        <input className="ainp" placeholder="name@bank" value={upi} onChange={(e) => setUpiV(e.target.value)} data-testid="vert-upi-id" />
+      </div>
+    </div>
+  );
+}
+
+/** QR image uploader (R2, presigned) — mirrors VerticalLogoUpload; needs the vertical id. */
+export function VerticalQrUpload({ verticalId, initialUrl, onDone }: { verticalId: number; initialUrl?: string | null; onDone?: (qrUrl: string | null) => void }) {
+  const base = `/verticals/${verticalId}/qr`;
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [url, setUrl] = useState<string | null>(initialUrl ?? null);
+  const IMG_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/svg+xml']);
+  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (fileRef.current) fileRef.current.value = '';
+    if (!f) return;
+    if (f.type && !IMG_MIME.has(f.type.toLowerCase())) { toast('Choose a JPG, PNG, WEBP or SVG image.', true); return; }
+    if (f.size > 5 * 1024 * 1024) { toast('The QR must be under 5 MB.', true); return; }
+    setBusy(true);
+    try {
+      const { r2_key } = await uploadToR2(base, f);
+      const out = await api.post<{ qr_url: string | null }>(base, { r2_key, content_type: f.type || 'image/png' });
+      setUrl(out.qr_url ?? null);
+      toast('Payment QR updated'); onDone?.(out.qr_url ?? null);
+    } catch (ex) { toast((ex as Error).message || 'Upload failed', true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="lrow" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ width: 64, height: 64, borderRadius: 10, border: '1px solid var(--line)', background: 'var(--panel2, #f4f5f7)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }} data-testid="vert-qr-preview">
+        {url ? <img src={url} alt="Payment QR" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} /> : <Ic k="grid" />}
+      </div>
+      <div>
+        <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPick} data-testid="vert-qr-file" />
+        <button type="button" className="btn sm" disabled={busy} onClick={() => fileRef.current?.click()} data-testid="vert-qr-upload">
+          <Ic k="export" />{busy ? 'Uploading…' : (url ? 'Change QR' : 'Upload QR')}
+        </button>
+        <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>UPI / payment QR · JPG, PNG, WEBP or SVG · up to 5 MB</div>
+      </div>
+    </div>
+  );
+}

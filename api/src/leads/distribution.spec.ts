@@ -72,3 +72,30 @@ describe('matchCondition — first matching rule wins', () => {
     expect(matchCondition([{ field: 'x', value: 1, assign_to_user_ids: [] as number[] }], { x: 1 })).toBeNull();
   });
 });
+
+/**
+ * dev/132 ITEM D (task #218) — the round-robin turn is PERSISTENT (turn-wise), never
+ * reset per day/month. The DB stores a single monotonically-increasing cursor per
+ * campaign (campaign_distribution_state.last_agent_idx, bumped once per assignment);
+ * the modulo is applied at pick time. This pins the client's exact scenario:
+ * 4 agents, only 3 leads today -> tomorrow's first lead goes to the 4th agent.
+ */
+describe('turn-wise round-robin persists across days/months', () => {
+  const pool = [101, 102, 103, 104]; // 4 agents
+  it('3 leads on day 1 then day 2 first lead -> the 4th agent (no daily reset)', () => {
+    // day 1: three leads bump the persistent cursor 0,1,2
+    const day1 = [0, 1, 2].map((c) => pickFromPool(pool, c));
+    expect(day1).toEqual([101, 102, 103]);
+    // day 2 (or next month): the cursor CONTINUES at 3 — it is never reset to 0
+    expect(pickFromPool(pool, 3)).toBe(104); // the 4th agent, as the client expects
+    // day 2 second lead wraps back to the 1st agent
+    expect(pickFromPool(pool, 4)).toBe(101);
+  });
+  it('a full month of assignments keeps advancing the same cursor', () => {
+    // 30 assignments over a month => cursors 0..29, each = (cursor % 4) agent
+    const seq = Array.from({ length: 30 }, (_, c) => pickFromPool(pool, c));
+    expect(seq[0]).toBe(101);
+    expect(seq[29]).toBe(pool[29 % 4]); // 29 % 4 = 1 -> 102, proving no month reset
+    expect(seq[29]).toBe(102);
+  });
+});

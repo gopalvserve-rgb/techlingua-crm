@@ -48,6 +48,13 @@ export class HierarchyController {
   @Post('verticals/:id/logo') @RequirePermission('vertical.update') @ScopedEntity('vertical')
   verticalLogoAttach(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.h.attachLogo(id, dto); }
 
+  // dev/132 ITEM B — vertical payment QR (R2, presigned): request a PUT url, then attach the r2_key.
+  @Post('verticals/:id/qr/upload-url') @RequirePermission('vertical.update') @ScopedEntity('vertical')
+  verticalQrUploadUrl(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.h.qrUploadUrl(id, dto); }
+
+  @Post('verticals/:id/qr') @RequirePermission('vertical.update') @ScopedEntity('vertical')
+  verticalQrAttach(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.h.attachQr(id, dto); }
+
   // ---- pipelines & stages ----
   @Get('pipelines') @RequirePermission('pipeline.read')
   listPipelines(@CurrentScope() s: ResolvedScope, @Query() query: Record<string, string | string[]>, @Query('vertical_id') verticalId?: string, @Query('include_inactive') inc?: string, @Query('branch_id') branchId?: string, @Query('q') q?: string) {

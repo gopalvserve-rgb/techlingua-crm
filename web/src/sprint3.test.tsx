@@ -313,11 +313,14 @@ describe('dur() — the language a TAT report speaks', () => {
 
 /* ============================== CALENDAR ============================== */
 
+// dev/132 ITEM A — dates are pinned to the CURRENT month so they land on the visible grid
+// (the calendar's default range is now This Month), keeping this fixture deterministic.
+const _cm = (day: number) => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), day, 10, 0, 0).toISOString(); };
 const CAL_NOT_CONFIGURED = {
   range: { from: '2026-07-01', to: '2026-07-31' },
-  events: [{ id: 1, title: 'IELTS demo — Priya', type: 'demo', starts_at: '2026-07-20T10:00:00.000Z', lead_id: 100 }],
+  events: [{ id: 1, title: 'IELTS demo — Priya', type: 'demo', starts_at: _cm(20), lead_id: 100 }],
   follow_ups: [{
-    id: 5, lead_id: 100, lead_name: 'Asha Rao', scheduled_at: '2026-07-18T05:00:00.000Z',
+    id: 5, lead_id: 100, lead_name: 'Asha Rao', scheduled_at: _cm(18),
     status: 'pending', type_name: 'Call', overdue: true, owner_name: 'Ravi',
   }],
   sync: {
@@ -341,7 +344,7 @@ describe('Calendar — the in-app calendar works; the SYNC degrades cleanly', ()
   it('renders follow-ups AND events on the grid, with overdue highlighted', async () => {
     ROUTES = { '/calendar': CAL_NOT_CONFIGURED };
     draw(<Calendar />);
-    await screen.findByText('This month');
+    await screen.findByText(/In selected range/);
     const evs = document.querySelectorAll('.cal-ev');
     expect(evs.length).toBeGreaterThanOrEqual(2);
     expect(document.querySelectorAll('.cal-ev.overdue').length).toBe(1);   // the pending, past follow-up
@@ -390,7 +393,7 @@ describe('Calendar — the in-app calendar works; the SYNC degrades cleanly', ()
       },
     };
     draw(<Calendar />);
-    await screen.findByText('This month');
+    await screen.findByText(/In selected range/);
     expect(screen.queryByText(/not configured/i)).toBeNull();
   });
 });
@@ -555,5 +558,44 @@ describe('Notification centre (the bell) — the seam Sprint 4 plugs into', () =
     get.mockRejectedValueOnce(new Error('boom'));
     render(<NotificationBell />);
     expect(await screen.findByLabelText('Notifications')).toBeTruthy();
+  });
+});
+
+/* dev/132 ITEM A — the calendar's date-range shortcuts drive the feed + show a total count. */
+describe('Calendar — date-range shortcuts + total count (dev/132 ITEM A)', () => {
+  const FEED = {
+    configured: true,
+    sync: { configured: true },
+    follow_ups: [
+      { id: 1, lead_id: 11, lead_name: 'Asha', type_name: 'Call', status: 'pending', overdue: false, scheduled_at: '2026-08-10T05:00:00Z', owner_name: 'Rep' },
+      { id: 2, lead_id: 12, lead_name: 'Ben', type_name: 'Call', status: 'pending', overdue: true, scheduled_at: '2026-08-11T05:00:00Z', owner_name: 'Rep' },
+    ],
+    events: [
+      { id: 5, title: 'Demo', type: 'demo', starts_at: '2026-08-12T05:00:00Z', lead_id: 13, lead_name: 'Cy', owner_name: 'Rep' },
+    ],
+  };
+  beforeEach(() => { ROUTES = { '/calendar': FEED }; get.mockClear(); });
+
+  it('renders the total count of results in the active range', async () => {
+    draw(<Calendar />);
+    const count = await screen.findByTestId('cal-count');
+    expect(count.textContent).toContain('2 follow-ups');
+    expect(count.textContent).toContain('1 event');
+    expect(count.textContent).toContain('1 overdue');
+  });
+
+  it('the date-range shortcuts (This Week / All time) re-drive the /calendar query', async () => {
+    draw(<Calendar />);
+    await screen.findByTestId('cal-count');
+    const calls0 = get.mock.calls.filter((c) => String(c[0]).startsWith('/calendar')).length;
+    fireEvent.click(screen.getByRole('button', { name: 'This Week' }));
+    await waitFor(() => {
+      const calls1 = get.mock.calls.filter((c) => String(c[0]).startsWith('/calendar')).length;
+      expect(calls1).toBeGreaterThan(calls0);
+    });
+    // the query always carries an explicit from/to window the calendar filters on
+    const lastCal = [...get.mock.calls].reverse().find((c) => String(c[0]).startsWith('/calendar'))![0] as string;
+    expect(lastCal).toMatch(/from=\d{4}-\d{2}-\d{2}/);
+    expect(lastCal).toMatch(/to=\d{4}-\d{2}-\d{2}/);
   });
 });

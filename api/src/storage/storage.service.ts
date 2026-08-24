@@ -103,6 +103,11 @@ export class StorageService {
     return `verticals/${verticalId}/logo/${randomUUID()}-${this.safeName(fileName)}`;
   }
 
+  /** verticals/<vid>/qr/<uuid>-<filename> — the vertical UPI / payment QR image (private, presigned). */
+  verticalQrKey(verticalId: number, fileName: string): string {
+    return `verticals/${verticalId}/qr/${randomUUID()}-${this.safeName(fileName)}`;
+  }
+
   /** documents/<kind>/<docNo>.pdf — the generated business PDFs. */
   pdfKey(kind: string, docNo: string | number): string {
     const safeKind = this.safeName(kind).toLowerCase();

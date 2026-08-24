@@ -88,7 +88,38 @@ export class HierarchyService {
     if ('bank_ifsc' in dto) { const f = HierarchyService.text(dto.bank_ifsc as string | null, 15); out.bank_ifsc = f ? f.toUpperCase() : f; }
     if ('bank_branch' in dto) out.bank_branch = HierarchyService.text(dto.bank_branch as string | null, 160);
     if ('bank_account_holder' in dto) out.bank_account_holder = HierarchyService.text(dto.bank_account_holder as string | null, 200);
+    // dev/132 ITEM B — UPI id + MULTIPLE bank accounts (one active/required). The active bank
+    // is also mirrored into the legacy single-bank columns above so existing readers keep working.
+    if ('upi_id' in dto) out.upi_id = HierarchyService.text(dto.upi_id as string | null, 120);
+    if ('banks' in dto) {
+      const banks = HierarchyService.normBanks(dto.banks);
+      out.banks = banks;
+      const active = (banks.find((b) => b.active) ?? banks[0]) as Record<string, string> | undefined;
+      out.bank_name = active ? (active.name || null) : null;
+      out.bank_account_no = active ? (active.account_no || null) : null;
+      out.bank_ifsc = active ? (active.ifsc || null) : null;
+      out.bank_branch = active ? (active.branch || null) : null;
+      out.bank_account_holder = active ? (active.account_holder || null) : null;
+    }
     return out;
+  }
+
+  /** Normalise the vertical bank-accounts array: trim/cap each field, drop empty rows, and
+   *  guarantee EXACTLY ONE active/required bank (first flagged, else the first row). */
+  static normBanks(v: unknown): Array<Record<string, unknown>> {
+    if (!Array.isArray(v)) return [];
+    const rows = v.map((b: any) => ({
+      name: HierarchyService.text(b?.name as string | null, 160) ?? '',
+      account_no: HierarchyService.text(b?.account_no as string | null, 40) ?? '',
+      ifsc: (HierarchyService.text(b?.ifsc as string | null, 15) ?? '').toUpperCase(),
+      branch: HierarchyService.text(b?.branch as string | null, 160) ?? '',
+      account_holder: HierarchyService.text(b?.account_holder as string | null, 200) ?? '',
+      active: !!b?.active,
+    })).filter((b) => b.name || b.account_no);
+    if (rows.length && !rows.some((b) => b.active)) rows[0].active = true;
+    let seen = false;
+    for (const b of rows) { if (b.active) { if (seen) b.active = false; else seen = true; } }
+    return rows;
   }
 
   /**
@@ -235,13 +266,19 @@ export class HierarchyService {
         try { r.logo_url = await this.storage!.presignGet(String(r.logo_r2_key), 300, 'logo'); }
         catch { r.logo_url = null; }
       }
+      // dev/132 ITEM B — a short-lived presigned URL for the payment QR image too.
+      if (r && r.qr_r2_key) {
+        try { r.qr_url = await this.storage!.presignGet(String(r.qr_r2_key), 300, 'qr'); }
+        catch { r.qr_url = null; }
+      }
     }));
     return rows;
   }
 
   async createVertical(dto: { branch_id: number; name: string; code: string; smtp_config?: object; gateway_config?: object; head_user_id?: number | null; description?: string | null; is_active?: boolean;
     gstin?: string | null; billing_address?: string | null; phone?: string | null; email?: string | null; display_name?: string | null;
-    bank_name?: string | null; bank_account_no?: string | null; bank_ifsc?: string | null; bank_branch?: string | null; bank_account_holder?: string | null }, actorId: number) {
+    bank_name?: string | null; bank_account_no?: string | null; bank_ifsc?: string | null; bank_branch?: string | null; bank_account_holder?: string | null;
+    banks?: unknown; upi_id?: string | null }, actorId: number) {
     if (!dto?.branch_id || !dto?.name || !dto?.code) throw new BadRequestException('branch_id, name and code are required');
     const branch = await this.db.one<{ org_id: string }>(`SELECT org_id FROM branch WHERE id = $1 AND deleted_at IS NULL`, [dto.branch_id]);
     if (!branch) throw new NotFoundException('branch not found');
@@ -249,21 +286,30 @@ export class HierarchyService {
     // name, bank details) are validated (India-first, loose) and stored on the vertical so the
     // vertical's GST invoices can snapshot them as the seller identity (055 fallback: branch).
     const idn = this.normVerticalIdentity(dto as Record<string, unknown>);
+    // dev/132 ITEM B — banks[]/upi on create. If no banks[] array was sent but the legacy
+    // single-bank fields were, seed a one-row banks[] so the Add form's single bank persists.
+    let banks = (idn.banks as Array<Record<string, unknown>> | undefined) ?? [];
+    if (!('banks' in (dto as Record<string, unknown>)) && (idn.bank_name || idn.bank_account_no)) {
+      banks = [{ name: idn.bank_name ?? '', account_no: idn.bank_account_no ?? '', ifsc: idn.bank_ifsc ?? '',
+        branch: idn.bank_branch ?? '', account_holder: idn.bank_account_holder ?? '', active: true }];
+    }
     // DEF-S2-04: Vertical Head + Description are on the Add form and MUST be in the
     // INSERT (they were only in the PATCH whitelist, so Add silently dropped them).
     const rows = await this.db.query(
       `INSERT INTO vertical (org_id, branch_id, name, code, smtp_config, gateway_config,
                              head_user_id, description, is_active,
                              gstin, billing_address, phone, email, display_name,
-                             bank_name, bank_account_no, bank_ifsc, bank_branch, bank_account_holder, created_by)
+                             bank_name, bank_account_no, bank_ifsc, bank_branch, bank_account_holder,
+                             banks, upi_id, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, TRUE),
-               $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
+               $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21,$22) RETURNING *`,
       [Number(branch.org_id), dto.branch_id, dto.name.trim(), dto.code.trim().toUpperCase(),
         JSON.stringify(dto.smtp_config ?? {}), JSON.stringify(dto.gateway_config ?? {}),
         dto.head_user_id ?? null, dto.description?.trim() ? dto.description.trim() : null,
         dto.is_active ?? null,
         idn.gstin ?? null, idn.billing_address ?? null, idn.phone ?? null, idn.email ?? null, idn.display_name ?? null,
         idn.bank_name ?? null, idn.bank_account_no ?? null, idn.bank_ifsc ?? null, idn.bank_branch ?? null, idn.bank_account_holder ?? null,
+        JSON.stringify(banks), idn.upi_id ?? null,
         actorId],
     );
     return rows[0];
@@ -275,7 +321,8 @@ export class HierarchyService {
     return this.genericUpdate('vertical', id, clean,
       ['name', 'code', 'smtp_config', 'gateway_config', 'head_user_id', 'description', 'is_active',
         'gstin', 'billing_address', 'phone', 'email', 'display_name',
-        'bank_name', 'bank_account_no', 'bank_ifsc', 'bank_branch', 'bank_account_holder']);
+        'bank_name', 'bank_account_no', 'bank_ifsc', 'bank_branch', 'bank_account_holder',
+        'banks', 'upi_id']);
   }
 
   /* ---- vertical logo (R2, presigned) — mirrors the student photo flow (dev/77) ---- */
@@ -308,6 +355,36 @@ export class HierarchyService {
     let logo_url: string | null = null;
     try { if (this.storage) logo_url = await this.storage.presignGet(key, 300, 'logo'); } catch { /* R2 off — key persists */ }
     return { id, logo_r2_key: key, logo_url };
+  }
+
+  /* ---- vertical payment QR (R2, presigned) — dev/132 ITEM B, mirrors the logo flow ---- */
+
+  /** Presigned PUT for the vertical payment QR image. */
+  async qrUploadUrl(id: number, dto: { file_name?: string; content_type?: string }) {
+    const v = await this.db.one<{ id: string }>(`SELECT id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!v) throw new NotFoundException('vertical not found');
+    if (!this.storage) throw new BadRequestException('File storage is not configured.');
+    const ct = String(dto?.content_type ?? '').toLowerCase();
+    if (ct && !HierarchyService.IMG_MIME.has(ct)) throw new BadRequestException('The QR must be a JPG, PNG, WEBP or SVG image.');
+    const key = this.storage.verticalQrKey(id, String(dto?.file_name ?? 'qr.png'));
+    const url = await this.storage.presignPut(key, ct || 'image/png', 300);
+    return { url, r2_key: key, expires_in: 300 };
+  }
+
+  /** Attach an uploaded payment QR: stores the R2 key and returns a fresh presigned qr_url. */
+  async attachQr(id: number, dto: { r2_key?: string; content_type?: string }) {
+    const v = await this.db.one<{ id: string }>(`SELECT id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!v) throw new NotFoundException('vertical not found');
+    const key = String(dto?.r2_key ?? '').trim();
+    if (!key || !key.startsWith(`verticals/${id}/qr/`)) throw new BadRequestException('Upload the QR first (missing or invalid r2_key).');
+    const ct = String(dto?.content_type ?? '').toLowerCase();
+    if (ct && !HierarchyService.IMG_MIME.has(ct)) throw new BadRequestException('The QR must be a JPG, PNG, WEBP or SVG image.');
+    const rows = await this.db.query(
+      `UPDATE vertical SET qr_r2_key = $1, updated_at = now() WHERE id = $2 AND deleted_at IS NULL RETURNING id, qr_r2_key`, [key, id]);
+    if (!rows.length) throw new NotFoundException('vertical not found');
+    let qr_url: string | null = null;
+    try { if (this.storage) qr_url = await this.storage.presignGet(key, 300, 'qr'); } catch { /* R2 off — key persists */ }
+    return { id, qr_r2_key: key, qr_url };
   }
 
   // ---- pipelines + stages -------------------------------------------------

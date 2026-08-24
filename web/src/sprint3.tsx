@@ -653,12 +653,31 @@ export function Calendar() {
   const { openLead, refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const monthWindow = (d: Date) => ({ from: ymd(new Date(d.getFullYear(), d.getMonth(), 1)), to: ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)) });
+  // ITEM A (dev/132) — the shared date-range shortcuts (All time / Today / Yesterday / This Week /
+  // This Month / Custom) now drive the calendar feed AND the total count, not just the visible month.
+  const [range, setRange] = useState<{ from?: string; to?: string }>(() => monthWindow(new Date()));
   const [add, setAdd] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const last = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-  const feed = useFetch<CalFeed>(`/calendar?from=${ymd(first)}&to=${ymd(last)}`, [cursor.getTime(), refreshTick]);
+  // "All time" = an effectively-unbounded window (the /calendar API always needs a window).
+  const qFrom = range.from ?? '2015-01-01';
+  const qTo = range.to ?? ymd(new Date(new Date().getFullYear() + 2, 11, 31));
+  const feed = useFetch<CalFeed>(`/calendar?from=${qFrom}&to=${qTo}`, [qFrom, qTo, refreshTick]);
+  // picking a preset/custom range realigns the month grid to the range's first day.
+  const applyRange = (v: { from?: string; to?: string }) => {
+    setRange(v);
+    if (v.from) { const d = new Date(v.from); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); }
+  };
+  const navMonth = (delta: number) => {
+    const m = new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1);
+    setCursor(m); setRange(monthWindow(m));
+  };
+  const fuCount = feed.data?.follow_ups?.length ?? 0;
+  const evCount = feed.data?.events?.length ?? 0;
+  const overdueCount = (feed.data?.follow_ups ?? []).filter((f) => f.overdue && f.status === 'pending').length;
 
   /** day (yyyy-mm-dd) -> the things happening that day */
   const byDay = useMemo(() => {
@@ -715,18 +734,16 @@ export function Calendar() {
 
       <div className="cal-head">
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn" aria-label="Previous month"
-            onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}>
+          <button className="btn" aria-label="Previous month" onClick={() => navMonth(-1)}>
             <Ic k="chev" />
           </button>
           <h3 style={{ margin: 0, fontFamily: 'var(--f-display)', fontSize: 15 }}>
             {cursor.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}
           </h3>
-          <button className="btn" aria-label="Next month"
-            onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}>
+          <button className="btn" aria-label="Next month" onClick={() => navMonth(1)}>
             <Ic k="chev" />
           </button>
-          <button className="btn" onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); }}>
+          <button className="btn" onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); setRange(monthWindow(d)); }}>
             Today
           </button>
         </div>
@@ -738,6 +755,14 @@ export function Calendar() {
             <button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />Add event</button>
           )}
         </div>
+      </div>
+
+      {/* ITEM A — date-range shortcuts drive the feed; count reflects the active range */}
+      <div className="cal-filter" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', margin: '2px 0 12px' }}>
+        <DateRange value={range} onChange={applyRange} idPrefix="cal-dr" />
+        <span className="cal-count" data-testid="cal-count" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>
+          {fuCount} follow-up{fuCount === 1 ? '' : 's'} · {evCount} event{evCount === 1 ? '' : 's'}{overdueCount ? ` · ${overdueCount} overdue` : ''}
+        </span>
       </div>
 
       <div className="card"><div className="card-pad" style={{ paddingTop: 12 }}>
@@ -766,7 +791,7 @@ export function Calendar() {
         </div>
       </div></div>
 
-      <TableCard title="This month" icon="cal"
+      <TableCard title={`In selected range — ${fuCount + evCount} result${fuCount + evCount === 1 ? '' : 's'}`} icon="cal"
         cols={['When', 'What', 'Lead', 'Lead Counsellor', 'Type']}
         rows={[
           ...(feed.data?.follow_ups ?? []).map((f) => [

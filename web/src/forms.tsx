@@ -301,11 +301,10 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Billing Address', 'textarea', 0, 0, 'printed on the vertical\u2019s GST invoices & receipts'),
     F('Phone', 'tel', 0, 0, 'vertical contact number'),
     F('Email', 'email', 0, 0, 'vertical contact email'),
-    F('Bank Name', 'text', 0, 0, 'for fee remittance details'),
-    F('Bank Account No.', 'text'),
-    F('IFSC Code', 'text', 0, 0, 'e.g. HDFC0000123'),
-    F('Bank Branch', 'text'),
-    F('Account Holder Name', 'text'),
+    // dev/132 ITEM B — bank accounts are now MULTIPLE (add-more rows with a required/active
+    // checkbox) + UPI + QR, managed by the VerticalBanksEditor on the EDIT form. The single
+    // UPI id is here so it can be set at Add time too.
+    F('UPI ID', 'text', 0, 0, 'VPA for QR / UPI collections — e.g. techlingua@hdfcbank'),
     F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.users': { title: 'Add User', fields: [
     F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
@@ -556,11 +555,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       billing_address: vals['Billing Address'] || undefined,
       phone: vals['Phone'] || undefined,
       email: vals['Email'] || undefined,
-      bank_name: vals['Bank Name'] || undefined,
-      bank_account_no: vals['Bank Account No.'] || undefined,
-      bank_ifsc: vals['IFSC Code'] ? String(vals['IFSC Code']).trim().toUpperCase() : undefined,
-      bank_branch: vals['Bank Branch'] || undefined,
-      bank_account_holder: vals['Account Holder Name'] || undefined,
+      upi_id: vals['UPI ID'] || undefined,
       is_active: vals['Status'] !== 'Inactive',
     });
     return { msg: 'Vertical created', row };
@@ -1867,7 +1862,8 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
                 The select reads ref.campaignTypes; ＋ Master adds a new type inline (blue .mlink). A legacy
                 value not in the master still shows so an old campaign never loses its type. */}
             <div className="fld"><label>Campaign Type <span className="star">*</span>
-              {!initial ? <MasterQuickAdd type="campaign_type" onAdded={(row) => setVals((s) => ({ ...s, type: row.name }))} /> : null}</label>
+              {/* dev/132 (ITEM E) — the ＋ Master quick-add renders on BOTH add and edit (was add-only). */}
+              <MasterQuickAdd type="campaign_type" onAdded={(row) => setVals((s) => ({ ...s, type: row.name }))} /></label>
               <select className="ainp" data-testid="campaign-type-select" value={vals['type'] ?? ''} onChange={(e) => setVals((s) => ({ ...s, type: e.target.value }))}>
                 <option value="">Select…</option>
                 {(ref.campaignTypes ?? []).map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}

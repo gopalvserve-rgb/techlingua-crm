@@ -5,6 +5,7 @@ import { LeadMergeService } from '../ingestion/merge.service';
 import { MERGEABLE_FIELDS } from '../ingestion/merge.util';
 import { JourneyService } from '../journeys/journey.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
+import { NotifierService } from '../notifications/notifier.service';
 import { IngestPayload } from '../ingestion/ingestion.types';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
@@ -197,6 +198,9 @@ export class LeadsService {
     // trailing so the in-memory unit doubles that construct LeadsService by hand stay unchanged
     // (Nest resolves it by type from IngestionModule in the running app).
     private readonly merge?: LeadMergeService,
+    // dev/132 ITEM C — in-app popup/bell notifications for lead created/assigned + red flag.
+    // Optional + trailing so hand-constructed unit doubles stay unchanged.
+    private readonly notifier?: NotifierService,
   ) {}
 
   /** Hard cap on the size of ONE bulk action / select-all, so a runaway selection cannot
@@ -489,6 +493,16 @@ export class LeadsService {
     // Sprint 3 — a NEW lead: start its first-response SLA clock + TAT, then score it.
     await this.sla.safe(() => this.sla.onLeadCreated(Number(lead.id)), 'sla.onLeadCreated');
     await this.scoring.safeRescore(Number(lead.id));
+    // dev/132 ITEM C — pop a bell/toast that a new lead landed (to its counsellor, else the creator).
+    try {
+      const notifyUser = lead.owner_id ? Number(lead.owner_id) : actorId;
+      await this.notifier?.notify({
+        userId: notifyUser, type: lead.owner_id ? 'assignment' : 'system', severity: 'info',
+        title: lead.owner_id ? 'New lead assigned to you' : 'New lead created',
+        body: `${lead.full_name}${lead.phone ? ` · ${lead.phone}` : ''}`,
+        link: { type: 'lead', id: Number(lead.id) },
+      });
+    } catch { /* the bell must never break lead creation */ }
     const scored = await this.db.one<Record<string, any>>(
       `SELECT score, temperature, score_breakdown FROM lead WHERE id = $1`, [Number(lead.id)],
     );
@@ -514,6 +528,11 @@ export class LeadsService {
     // Notification Events — a counsellor was assigned. dedupe on owner so re-assigning to a
     // DIFFERENT counsellor fires again, but a no-op re-save does not.
     await this.notifEvents?.safeFire('lead_assigned', { lead_id: Number(id), dedupe: `${id}:${ownerId}` });
+    // dev/132 ITEM C — in-app bell/toast to the newly-assigned counsellor.
+    try {
+      await this.notifier?.notify({ userId: Number(ownerId), type: 'assignment', severity: 'info',
+        title: 'Lead assigned to you', body: `Lead #${id}`, link: { type: 'lead', id: Number(id) } });
+    } catch { /* non-fatal */ }
     return out;
   }
 
@@ -1200,8 +1219,8 @@ export class LeadsService {
   /** Add a red-flag remark: store the entry, set the flagged state, log the timeline. */
   async addRedFlag(id: number, remark: string, actorId: number) {
     if (!remark?.trim()) throw new BadRequestException('remark is required');
-    const lead = await this.db.one<{ org_id: string; branch_id: string }>(
-      `SELECT org_id, branch_id FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    const lead = await this.db.one<{ org_id: string; branch_id: string; owner_id: string | null }>(
+      `SELECT org_id, branch_id, owner_id FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!lead) throw new NotFoundException('lead not found');
     const text = remark.trim();
     const entry = await this.db.tx(async (c) => {
@@ -1222,6 +1241,14 @@ export class LeadsService {
           JSON.stringify({ action: 'flagged' }), text]);
       return rf.rows[0];
     });
+    // dev/132 ITEM C — bell/toast: a lead was red-flagged (to its counsellor, and the actor).
+    try {
+      const targets = [lead.owner_id ? Number(lead.owner_id) : null, actorId].filter((v): v is number => !!v);
+      await this.notifier?.notifyMany([...new Set(targets)], {
+        type: 'system', severity: 'warn', title: 'Lead red-flagged',
+        body: text.slice(0, 140), link: { type: 'lead', id: Number(id) },
+      });
+    } catch { /* non-fatal */ }
     return { ok: true, is_red_flagged: true, entry };
   }
 

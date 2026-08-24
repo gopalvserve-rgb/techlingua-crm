@@ -7,6 +7,7 @@ import { FOLLOWUP_SCOPE_COLS } from '../rbac/scope-cols';
 import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { SettingsService } from '../common/settings.service';
+import { NotifierService } from '../notifications/notifier.service';
 import { assertActiveUser } from './active-user.util';
 import { assertDateRange, SQL_TODAY, istDay, assertFollowupPreset, followupWindowSql, FollowupPreset } from '../common/date.util';
 
@@ -141,6 +142,8 @@ export class FollowUpsService {
     private readonly scoring: ScoringService,
     private readonly sla: SlaService,
     private readonly settings: SettingsService,
+    // dev/132 ITEM C — in-app popup when a task/follow-up is assigned to a colleague.
+    private readonly notifier?: NotifierService,
   ) {}
 
   async list(scope: ResolvedScope, f: FollowUpFilters, userId: number) {
@@ -318,6 +321,15 @@ export class FollowUpsService {
       return ins.rows[0];
     });
     await this.scoring.safeRescore(dto.lead_id);
+    // dev/132 ITEM C — bell/toast to the assignee when a task is assigned to someone else.
+    if (owner !== actorId) {
+      try {
+        await this.notifier?.notify({ userId: owner, type: 'assignment', severity: 'info',
+          title: 'New task assigned to you',
+          body: dto.notes ? String(dto.notes).slice(0, 140) : `Follow-up on lead #${dto.lead_id}`,
+          link: { type: 'follow_up', id: Number(created.id) } });
+      } catch { /* non-fatal */ }
+    }
     return created;
   }
 

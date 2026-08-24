@@ -32,7 +32,8 @@ import {
 } from './rowactions';
 import { UserPicker } from './userpicker';
 import { useColumnVisibility, ColumnsButton } from './colprefs';
-import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload } from './documents';
+import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload, VerticalQrUpload, VerticalBanksEditor } from './documents';
+import type { VertPayments } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
@@ -2189,7 +2190,13 @@ function Verticals() {
   const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
+  // dev/132 ITEM B — the banks[]/UPI editor is a controlled `extra`; it writes its latest value
+  // here so the edit submit can send it. Reset whenever a different vertical is opened for edit.
+  const payRef = useRef<VertPayments>({ banks: [], upi_id: '' });
   const canEdit = can('vertical.update');
+  useEffect(() => {
+    if (edit) payRef.current = { banks: (edit.banks ?? []) as any[], upi_id: String(edit.upi_id ?? '') };
+  }, [edit]);
   const del = useDelete('Vertical', '/verticals', () => { list.reload(); ref.reload(); bump(); });
   const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
   const _bdSel = useTableSelect(_bdIds);
@@ -2244,13 +2251,16 @@ function Verticals() {
               ['Logo', view.logo_url ? renderCell({ node: <img src={view.logo_url} alt="logo" style={{ height: 32, maxWidth: 96, objectFit: 'contain' }} /> } as any) : '\u2014'],
             ]} />
           </Section>
-          <Section title="Bank Details">
+          <Section title="Bank Accounts & Payments">
             <KV rows={[
-              ['Bank name', view.bank_name ?? '\u2014'],
-              ['Account no.', <span className="mono">{view.bank_account_no ?? '\u2014'}</span>],
-              ['IFSC', <span className="mono">{view.bank_ifsc ?? '\u2014'}</span>],
-              ['Branch', view.bank_branch ?? '\u2014'],
-              ['Account holder', view.bank_account_holder ?? '\u2014'],
+              ...(((view.banks ?? []) as any[]).length
+                ? ((view.banks ?? []) as any[]).map((b: any, i: number) => [
+                    `Bank ${i + 1}${b.active ? ' (active)' : ''}`,
+                    <span>{b.name || '\u2014'}{b.account_no ? ` \u00b7 A/c ${b.account_no}` : ''}{b.ifsc ? ` \u00b7 ${b.ifsc}` : ''}{b.branch ? ` \u00b7 ${b.branch}` : ''}{b.account_holder ? ` \u00b7 ${b.account_holder}` : ''}</span>,
+                  ] as [string, any])
+                : [['Bank', '\u2014'] as [string, any]]),
+              ['UPI ID', <span className="mono">{view.upi_id ?? '\u2014'}</span>],
+              ['Payment QR', view.qr_url ? renderCell({ node: <img src={view.qr_url} alt="Payment QR" style={{ height: 96, maxWidth: 96, objectFit: 'contain' }} /> } as any) : '\u2014'],
             ]} />
           </Section>
           <Section title="Record">
@@ -2273,8 +2283,7 @@ function Verticals() {
               // dev/88 — billing / document identity + bank details.
               'Display Name': edit.display_name ?? '', 'GST Number': edit.gstin ?? '',
               'Billing Address': edit.billing_address ?? '', 'Phone': edit.phone ?? '', 'Email': edit.email ?? '',
-              'Bank Name': edit.bank_name ?? '', 'Bank Account No.': edit.bank_account_no ?? '',
-              'IFSC Code': edit.bank_ifsc ?? '', 'Bank Branch': edit.bank_branch ?? '', 'Account Holder Name': edit.bank_account_holder ?? '',
+              'UPI ID': edit.upi_id ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
             initialIds: { 'Vertical Head': edit.head_user_id ? Number(edit.head_user_id) : undefined },
@@ -2283,10 +2292,19 @@ function Verticals() {
             // dev/88 — the LOGO uploader (R2, presigned, live preview) lives in the edit form,
             // where the vertical id exists (upload targets /verticals/:id/logo).
             extra: (
-              <div className="fld span2" style={{ marginTop: 4 }}>
-                <label>Logo <span className="fhint">image \u00b7 R2 \u00b7 shown on this vertical\u2019s documents</span></label>
-                <VerticalLogoUpload verticalId={Number(edit.id)} initialUrl={edit.logo_url ?? null} />
-              </div>
+              <>
+                <div className="fld span2" style={{ marginTop: 4 }}>
+                  <label>Logo <span className="fhint">image \u00b7 R2 \u00b7 shown on this vertical\u2019s documents</span></label>
+                  <VerticalLogoUpload verticalId={Number(edit.id)} initialUrl={edit.logo_url ?? null} />
+                </div>
+                {/* dev/132 ITEM B \u2014 multiple bank accounts (one required/active) + UPI id + payment QR */}
+                <VerticalBanksEditor initial={{ banks: (edit.banks ?? []) as any[], upi_id: String(edit.upi_id ?? '') }}
+                  onChange={(v) => { payRef.current = v; }} />
+                <div className="fld span2" style={{ marginTop: 4 }}>
+                  <label>Payment QR <span className="fhint">UPI / payment QR image \u00b7 R2</span></label>
+                  <VerticalQrUpload verticalId={Number(edit.id)} initialUrl={edit.qr_url ?? null} />
+                </div>
+              </>
             ),
             submit: async (vals, ids) => {
               await api.patch(`/verticals/${edit.id}`, {
@@ -2299,11 +2317,9 @@ function Verticals() {
                 billing_address: vals['Billing Address'] || null,
                 phone: vals['Phone'] || null,
                 email: vals['Email'] || null,
-                bank_name: vals['Bank Name'] || null,
-                bank_account_no: vals['Bank Account No.'] || null,
-                bank_ifsc: vals['IFSC Code'] ? String(vals['IFSC Code']).trim().toUpperCase() : null,
-                bank_branch: vals['Bank Branch'] || null,
-                bank_account_holder: vals['Account Holder Name'] || null,
+                // dev/132 ITEM B — the multi-bank editor + UPI value (payRef) is the source of truth.
+                banks: payRef.current.banks,
+                upi_id: payRef.current.upi_id || null,
                 is_active: vals['Status'] !== 'Inactive',
               });
               return 'Vertical updated';

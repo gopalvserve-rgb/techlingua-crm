@@ -639,7 +639,7 @@ export class LeadIngestionService {
               ...lead.custom_fields, ...payload,
               full_name: lead.full_name, phone: lead.phone, email: lead.email,
               priority: lead.priority, temperature: lead.temperature, score: lead.score,
-              source_id: target.source_id, course_id: lead.course_id, city_id: lead.city_id,
+              source: target.source_id, source_id: target.source_id, course_id: lead.course_id, city_id: lead.city_id,
               state_id: lead.state_id, budget_id: lead.budget_id, qualification_id: lead.qualification_id,
             };
             const { pool } = await this.resolvePool(target, conditionCtx);
@@ -703,7 +703,7 @@ export class LeadIngestionService {
         ...lead.custom_fields, ...payload,
         full_name: lead.full_name, phone: lead.phone, email: lead.email,
         priority: lead.priority, temperature: lead.temperature, score: lead.score,
-        source_id: target.source_id, course_id: lead.course_id, city_id: lead.city_id,
+        source: target.source_id, source_id: target.source_id, course_id: lead.course_id, city_id: lead.city_id,
         state_id: lead.state_id, budget_id: lead.budget_id, qualification_id: lead.qualification_id,
       };
       const r = await this.resolvePool(target, conditionCtx);
