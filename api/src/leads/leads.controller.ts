@@ -269,6 +269,9 @@ export class FollowUpsController {
       followup: (first(q.followup) as any) || undefined, fu_from: first(q.fu_from) || undefined, fu_to: first(q.fu_to) || undefined,
       // Today's Follow-ups KPI card → its filtered list (client Aug 2026).
       bucket: first(q.bucket) || undefined,
+      // MY TASK overhaul (dev/133) — task-specific filters + card→list.
+      task_status: first(q.task_status) || undefined, task_statuses: strs(q.task_statuses),
+      entity_type: first(q.entity_type) || undefined, card: first(q.card) || undefined,
     }, u.id);
   }
 
@@ -278,6 +281,12 @@ export class FollowUpsController {
   // 8-bucket KPI strip for the Today's Follow-ups screen (client Aug 2026). Scope-enforced, IST.
   @Get('stats') @RequirePermission('followup.read')
   stats(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U) { return this.fu.stats(s, u.id); }
+
+  // MY TASK overhaul (dev/133) — Related-To record picker: GET /follow-ups/entity-search?type=&q=
+  @Get('entity-search') @RequirePermission('followup.read')
+  entitySearch(@Query('type') type: string, @Query('q') q: string, @Query('limit') limit?: string) {
+    return this.fu.entitySearch(type, q, num(limit ?? undefined));
+  }
 
   @Post() @RequirePermission('followup.create')
   create(@Body() dto: CreateFollowUpDto, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {

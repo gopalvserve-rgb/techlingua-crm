@@ -299,18 +299,24 @@ describe('#13(c) — the task-summary KPI tiles open the My Tasks list', () => {
     expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { owner_id: 3 });
   });
 
-  it('the My Tasks screen summary tiles are NOT clickable-looking-but-dead', async () => {
-    // On dash.mytasks the KPI tiles summarise the very list below them, so they are pure
-    // display — they must carry NO button role (nothing that looks clickable yet does nothing).
+  it('the My Tasks cards are live filter buttons (dev/133 item 7 — card→filtered list)', async () => {
+    // MY TASK overhaul (dev/133): the 6 cards (Open Tasks · Due Today · Overdue · In Progress ·
+    // Completed · Due Next 7D) each show a live count for the current view AND, on click, filter
+    // the list below to exactly that set. They are now REAL, accessible buttons.
     ROUTES = {
-      '/follow-ups/summary': { my_open: 4, my_due_today: 2, my_overdue: 1, my_done_week: 3,
-        reported_open: 0, reported_due_today: 0, reported_overdue: 0, reported_done_week: 0 },
+      '/follow-ups/summary': {
+        my_open_all: 4, my_due_today: 2, my_overdue: 1, my_in_progress: 3, my_completed: 5, my_next7: 2,
+        reported_open_all: 0, reported_due_today: 0, reported_overdue: 0, reported_in_progress: 0,
+        reported_completed: 0, reported_next7: 0,
+      },
       '/follow-ups': [],
     };
     draw('myTasks');
-    expect(await screen.findByText('Open tasks')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Open tasks/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Overdue/ })).toBeNull();
+    expect(await screen.findByText('Open Tasks')).toBeTruthy();
+    // Every card is a navigating button now (the client asked for card→filtered list).
+    expect(screen.getByRole('button', { name: /Open Tasks: 4\. Filter My Tasks to this set/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Overdue: 1\. Filter My Tasks to this set/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Due Next 7D: 2\. Filter My Tasks to this set/ })).toBeTruthy();
   });
 });
 

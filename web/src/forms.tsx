@@ -131,6 +131,25 @@ export function buildUserAssignments(
   return [...rows, ...extra];
 }
 
+/* MY TASK overhaul (dev/133) — Related-To types + Task Status maps (used by the task form spec). */
+export const TASK_ENTITY_OPTS = [
+  'Lead', 'Student', 'Admission', 'Enrollment', 'Course', 'Batch', 'Payment',
+  'Invoice', 'Follow-up', 'Employer', 'Placement', 'Trainer', 'Staff',
+];
+export const TASK_STATUS_KEY: Record<string, string> = {
+  'In Progress': 'in_progress', 'On Hold': 'on_hold', 'Completed': 'completed',
+};
+export const TASK_STATUS_LABEL: Record<string, string> = {
+  in_progress: 'In Progress', on_hold: 'On Hold', completed: 'Completed', overdue: 'Overdue',
+};
+export const TASK_ENTITY_KEY: Record<string, string> = {
+  Lead: 'lead', Student: 'student', Admission: 'admission', Enrollment: 'enrollment',
+  Course: 'course', Batch: 'batch', Payment: 'payment', Invoice: 'invoice',
+  'Follow-up': 'followup', Employer: 'employer', Placement: 'placement',
+  Trainer: 'trainer', Staff: 'staff',
+};
+
+
 export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> = {
   'leads.all': { title: 'Add Lead', fields: [
     F('Name', 'text', 1), F('Mobile Number', 'tel', 1, 0, 'de-dup key'), F('Alternate Number', 'tel'), F('WhatsApp Number', 'tel'), F('Email ID', 'email'),
@@ -330,9 +349,14 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Title', 'text', 1), F('Task Type', 'select', 0, 0, 'master', 'followupTypes'), F('Related Lead', 'leadlookup', 1, 0, 'Search lead'),
     F('Branch', 'select', 0, 0, 'Branch (task scope)', 'branches'),
     F('Vertical', 'select', 0, 0, 'Vertical (filtered by the Branch)', 'verticals'),
+    // MY TASK overhaul (dev/133) — Related-To entity link (type + searchable record) + Task Status.
+    F('Related To', 'select', 0, TASK_ENTITY_OPTS, 'link this task to a record of this type'),
+    F('Related Record', 'entitylookup', 0, 0, 'search the record of the chosen type'),
+    F('Task Status', 'select', 0, ['In Progress', 'On Hold', 'Completed'], 'Overdue is derived from the due date'),
     F('Assigned To', 'select', 0, 0, 'Users', 'users', 1),
     F('Report To', 'select', 0, 0, 'Users · the assignee reports progress to them', 'users', 1),
-    { ...F('Due Date', 'datetime', 1), min: 'today' as const }, F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea')] },
+    { ...F('Due Date', 'datetime', 1), min: 'today' as const }, F('Priority', 'select', 0, ['Low', 'Medium', 'High']), F('Description', 'textarea'),
+    F('Completion Remark', 'textarea', 0, 0, 'outcome captured when the task is Completed')] },
   // Support & Tickets (post-Phase-1 client request) — an INTERNAL staff ticket. Category is
   // the Ticket Category MASTER (＋Master quick-add). Branch/Vertical are SENT (they set the
   // ticket's RBAC scope) — so, unlike the lead forms where they are cascade-only, they are
@@ -517,6 +541,13 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       // Client Aug 2026 (#2) — Branch + Vertical persisted on the task.
       branch_id: ids['Branch'] ?? null,
       vertical_id: ids['Vertical'] ?? null,
+      // MY TASK overhaul (dev/133) — Related-To entity link, task status, and kind='task' so the
+      // lead-activity timeline labels it "Task" (not "Follow-up").
+      entity_type: vals['Related To'] ? TASK_ENTITY_KEY[vals['Related To']] : null,
+      entity_id: vals['Related To'] ? (ids['Related Record'] ?? null) : null,
+      task_status: TASK_STATUS_KEY[vals['Task Status']] || 'in_progress',
+      completion_note: vals['Completion Remark'] || null,
+      kind: 'task',
       scheduled_at: need(vals['Due Date'], 'Due date is required'),
       priority: (vals['Priority'] || 'Medium').toLowerCase(),
       notes: [vals['Title'], vals['Description']].filter(Boolean).join(' — ') || undefined,
@@ -795,6 +826,51 @@ export function StudentLookup({ onPick }: { onPick: (id: number, row: any) => vo
                 <div className="t1">{o.full_name}</div>
                 <div className="t2 mono">{[o.student_no, o.phone].filter(Boolean).join(' · ')}</div>
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * MY TASK overhaul (dev/133) — the "Related To" record picker. A task can be linked to a
+ * record of one of 13 TYPES; this searches that type via GET /follow-ups/entity-search and
+ * hands the picked {id,label} up. Depends on the sibling "Related To" TYPE select (passed in
+ * as `type`); disabled until a type is chosen. Mirrors the LeadLookup/StudentLookup pattern.
+ */
+export function EntityLookup({ type, value, onPick }: {
+  type?: string; value: string; onPick: (id: number | undefined, label: string) => void;
+}) {
+  const key = type ? TASK_ENTITY_KEY[type] : undefined;
+  const [q, setQ] = useState(value);
+  const [opts, setOpts] = useState<Array<{ id: number; label: string }>>([]);
+  useEffect(() => { setQ(value); }, [value]);
+  useEffect(() => { setOpts([]); }, [key]);
+  useEffect(() => {
+    if (!key) { setOpts([]); return; }
+    const t = setTimeout(() => {
+      // Empty query is allowed — the endpoint returns the first matches so the user can pick
+      // without typing (short lists like Trainer/Staff).
+      api.get<Array<{ id: number; label: string }>>(
+        `/follow-ups/entity-search?type=${encodeURIComponent(key)}&q=${encodeURIComponent(q.trim())}&limit=10`)
+        .then((r) => setOpts(Array.isArray(r) ? r : [])).catch(() => setOpts([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, key]);
+  return (
+    <div>
+      <input className="ainp" data-testid="task-entity-search"
+        placeholder={key ? `Search ${type}\u2026` : 'Pick a "Related To" type first'}
+        disabled={!key} value={q}
+        onChange={(e) => { setQ(e.target.value); onPick(undefined, e.target.value); }} />
+      {opts.length > 0 && (
+        <div className="card" style={{ marginTop: 4, maxHeight: 160, overflowY: 'auto' }}>
+          {opts.map((o) => (
+            <div className="lrow" key={o.id} style={{ cursor: 'pointer', padding: '8px 12px' }}
+              onClick={() => { setQ(o.label); setOpts([]); onPick(o.id, o.label); }}>
+              <div className="gr"><div className="t1">{o.label}</div></div>
             </div>
           ))}
         </div>
@@ -1259,6 +1335,8 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (label === 'Branch' || label === 'Vertical') {
       for (const cf of spec.fields) if (cf.src === 'courses' && !clear.includes(cf.label)) clear.push(cf.label);
     }
+    // MY TASK overhaul (dev/133) — changing the Related-To TYPE clears the picked record.
+    if (label === 'Related To' && !clear.includes('Related Record')) clear.push('Related Record');
     setVals((x) => { const n = { ...x, [label]: value }; for (const k of clear) delete n[k]; return n; });
     setIds((x) => { const n = { ...x, [label]: id }; for (const k of clear) delete n[k]; return n; });
   };
@@ -1418,6 +1496,8 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
       );
     }
     if (t === 'leadlookup') return <LeadLookup value={v} onPick={(id, label) => setField(f.label, label, id)} />;
+    // MY TASK overhaul (dev/133) — Related-To record picker, driven by the sibling 'Related To' type.
+    if (t === 'entitylookup') return <EntityLookup type={vals['Related To']} value={v} onPick={(id, label) => setField(f.label, label, id)} />;
     if (t === 'studentlookup') return (
       <StudentLookup onPick={async (id, row) => {
         // Optimistic fill from the search row, then reconcile with the authoritative record.

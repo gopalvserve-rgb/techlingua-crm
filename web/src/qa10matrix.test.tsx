@@ -466,6 +466,14 @@ EXEMPT['students.courses'] = {
   Levels: 'type "levels" \u2014 a structured multi-row per-level fee editor persisted via PUT /courses/:id/levels; proven in courselevels.test.tsx',
 };
 EXEMPT['admin.courseconfig'] = EXEMPT['students.courses'];
+// MY TASK overhaul (dev/133) — the Related-To RECORD picker is a search-and-pick widget (like the
+// referral existing-student search): it depends on the sibling "Related To" TYPE and its entity_id
+// only reaches the body after an async /follow-ups/entity-search pick, which the single-field probe
+// cannot drive. Its own behaviour is covered in taskmodule.test.tsx. Related To (entity_type),
+// Task Status (task_status) and Completion Remark (completion_note) ARE probed normally.
+EXEMPT['dash.mytasks'] = {
+  'Related Record': 'type "entitylookup" — a search-and-pick record picker; entity_id only reaches the body after an async entity-search pick, so the differential probe cannot drive it (covered in taskmodule.test.tsx)',
+};
 EXEMPT['dash.quickcontact'] = EXEMPT['leads.all'];
 EXEMPT['leads.pipeline'] = EXEMPT['leads.all'];
 EXEMPT['admin.pipelines'] = EXEMPT['leads.pipelinemaster'];

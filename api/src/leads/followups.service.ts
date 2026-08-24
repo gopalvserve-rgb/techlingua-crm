@@ -10,6 +10,10 @@ import { SettingsService } from '../common/settings.service';
 import { NotifierService } from '../notifications/notifier.service';
 import { assertActiveUser } from './active-user.util';
 import { assertDateRange, SQL_TODAY, istDay, assertFollowupPreset, followupWindowSql, FollowupPreset } from '../common/date.util';
+import {
+  TASK_ENTITY_TYPES, assertEntityType, ENTITY_SOURCES, entityLabelCaseSql, TASK_STATUS_EFF_SQL,
+  assertTaskStatus, taskCardSql, TaskEntityType,
+} from './task-entities';
 
 export interface FollowUpFilters {
   lead_id?: number; owner_id?: number; status?: string;
@@ -33,6 +37,12 @@ export interface FollowUpFilters {
   /** Today's Follow-ups KPI bucket (client Aug 2026) — one of FOLLOWUP_BUCKETS. Applies the
    *  SAME predicate the /follow-ups/stats card counts use, so a card opens exactly its list. */
   bucket?: string;
+  /** MY TASK overhaul (dev/133) — task-specific filters. */
+  task_status?: string;            // in_progress | on_hold | completed | overdue (single)
+  task_statuses?: string[];        // multi-select of the above
+  entity_type?: string;            // Related-To type filter
+  /** My-Tasks KPI card → its filtered list. One of TASK_CARDS. */
+  card?: string;
 }
 
 /**
@@ -77,6 +87,16 @@ export interface CreateFollowUpDto {
   /** Client Aug 2026 (#2) — Branch + Vertical on the task; optional, nullable. */
   branch_id?: number | null;
   vertical_id?: number | null;
+  /** MY TASK overhaul (dev/133) — Related-To entity link (both or neither). */
+  entity_type?: string | null;
+  entity_id?: number | null;
+  /** user-set task status (in_progress | on_hold | completed). */
+  task_status?: string;
+  /** completion outcome/remark captured when a task is marked completed. */
+  completion_note?: string | null;
+  /** 'task' when created from the My Task module; 'follow_up' otherwise (drives the
+   *  lead-activity timeline label). Defaults to 'follow_up'. */
+  kind?: 'task' | 'follow_up';
 }
 
 export const FOLLOWUP_PRIORITIES = ['low', 'medium', 'high'] as const;
@@ -110,6 +130,11 @@ const FU_SELECT = `
          f.status, f.priority, f.remind_at, f.notes, f.created_at, f.created_by, f.report_to_id,
          ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name, cu.name AS creator_name,
          ru.name AS report_to_name,
+         -- MY TASK overhaul (dev/133): task-nature columns + derived status + related-entity label.
+         f.kind, f.task_status, f.completion_note, f.completed_by, cbu.name AS completed_by_name,
+         f.entity_type, f.entity_id,
+         (${TASK_STATUS_EFF_SQL}) AS task_status_eff,
+         (${entityLabelCaseSql('f.entity_type', 'f.entity_id')}) AS entity_label,
          l.full_name AS lead_name, l.phone AS lead_phone, l.temperature, l.score,
          co.name AS course_name, st.name AS stage_name,
          -- Client Aug 2026 (#2) — task carries its OWN branch/vertical; fall back to the lead's
@@ -125,6 +150,7 @@ const FU_SELECT = `
     LEFT JOIN "user" u ON u.id = f.owner_id
     LEFT JOIN "user" cu ON cu.id = f.created_by
     LEFT JOIN "user" ru ON ru.id = f.report_to_id
+    LEFT JOIN "user" cbu ON cbu.id = f.completed_by
     LEFT JOIN m_course co ON co.id = l.course_id
     LEFT JOIN pipeline_stage st ON st.id = l.stage_id
     JOIN branch b ON b.id = l.branch_id
@@ -207,6 +233,29 @@ export class FollowUpsService {
       if (!pred) throw new BadRequestException(`invalid bucket — expected one of: ${FOLLOWUP_BUCKETS.join(', ')}`);
       where.push(pred);
     }
+    // MY TASK overhaul (dev/133) — task-specific filters. Task Status folds in the DERIVED
+    // 'overdue' (a pending task past due), so filtering by it uses the same predicate the
+    // effective-status read and the cards use — one definition, never divergent.
+    const taskStatusWhere = (v: string) => {
+      switch (v) {
+        case 'in_progress': return `f.task_status = 'in_progress' AND f.task_status <> 'completed' AND f.status <> 'done'`;
+        case 'on_hold': return `f.task_status = 'on_hold' AND f.status <> 'done'`;
+        case 'completed': return `(f.task_status = 'completed' OR f.status = 'done')`;
+        case 'overdue': return `f.status = 'pending' AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date`;
+        default: throw new BadRequestException(`invalid task_status — expected in_progress|on_hold|completed|overdue`);
+      }
+    };
+    if (f.task_status) where.push(taskStatusWhere(String(f.task_status)));
+    if (f.task_statuses?.length) {
+      where.push('(' + f.task_statuses.map((v) => taskStatusWhere(String(v))).map((p) => `(${p})`).join(' OR ') + ')');
+    }
+    if (f.entity_type) { params.push(assertEntityType(f.entity_type)); where.push(`f.entity_type = $${params.length}`); }
+    // My-Tasks KPI card -> its filtered list (same predicate as the count).
+    if (f.card) {
+      const pred = taskCardSql(String(f.card));
+      if (!pred) throw new BadRequestException(`invalid card`);
+      where.push(pred);
+    }
     params.push(Math.min(Number(f.limit) || 100, 500));
     // priority sorts within the due DATE (high > medium > low), hot leads first inside a slot
     return this.db.query(
@@ -245,7 +294,20 @@ export class FollowUpsService {
               COUNT(*) FILTER (WHERE f.status = 'pending' AND f.created_by = $${params.length}
                                AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date < (now() AT TIME ZONE 'Asia/Kolkata')::date)::int AS reported_overdue,
               COUNT(*) FILTER (WHERE f.status = 'done' AND f.created_by = $${params.length}
-                               AND f.completed_at >= date_trunc('week', now()))::int AS reported_done_week
+                               AND f.completed_at >= date_trunc('week', now()))::int AS reported_done_week,
+              -- MY TASK overhaul (dev/133) — the 6 My-Tasks cards, per view (assigned=owner, reported=creator).
+              -- Open = not completed; In Progress = user-set in_progress & not completed; Completed = completed
+              -- (task_status or legacy done); Next 7D = pending within the next 7 IST days.
+              COUNT(*) FILTER (WHERE f.owner_id = $${params.length} AND f.task_status <> 'completed' AND f.status <> 'done')::int AS my_open_all,
+              COUNT(*) FILTER (WHERE f.owner_id = $${params.length} AND f.task_status = 'in_progress' AND f.status <> 'done')::int AS my_in_progress,
+              COUNT(*) FILTER (WHERE f.owner_id = $${params.length} AND (f.task_status = 'completed' OR f.status = 'done'))::int AS my_completed,
+              COUNT(*) FILTER (WHERE f.owner_id = $${params.length} AND f.status = 'pending'
+                               AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN (now() AT TIME ZONE 'Asia/Kolkata')::date AND (now() AT TIME ZONE 'Asia/Kolkata')::date + 7)::int AS my_next7,
+              COUNT(*) FILTER (WHERE f.created_by = $${params.length} AND f.task_status <> 'completed' AND f.status <> 'done')::int AS reported_open_all,
+              COUNT(*) FILTER (WHERE f.created_by = $${params.length} AND f.task_status = 'in_progress' AND f.status <> 'done')::int AS reported_in_progress,
+              COUNT(*) FILTER (WHERE f.created_by = $${params.length} AND (f.task_status = 'completed' OR f.status = 'done'))::int AS reported_completed,
+              COUNT(*) FILTER (WHERE f.created_by = $${params.length} AND f.status = 'pending'
+                               AND (f.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN (now() AT TIME ZONE 'Asia/Kolkata')::date AND (now() AT TIME ZONE 'Asia/Kolkata')::date + 7)::int AS reported_next7
          FROM follow_up f JOIN lead l ON l.id = f.lead_id
         WHERE (${w}) AND f.is_active AND l.is_active
           AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, params,
@@ -272,6 +334,29 @@ export class FollowUpsService {
     );
   }
 
+  /**
+   * MY TASK overhaul (dev/133) — the Related-To record picker. Given a TYPE (one of the 13),
+   * search that type's table by name/no and return [{ id, label }]. Fixed enum → each type
+   * resolves to a concrete table/label via ENTITY_SOURCES (single source of truth). Single
+   * tenant, so org-wide search is fine; only live (non-deleted / active) rows are offered.
+   */
+  async entitySearch(type: string, q: string, limit = 10): Promise<Array<{ id: number; label: string }>> {
+    const et: TaskEntityType = assertEntityType(type) as TaskEntityType;
+    if (!et) throw new BadRequestException('entity_type is required');
+    const src = ENTITY_SOURCES[et];
+    const params: unknown[] = [];
+    const clauses = [src.where];
+    const term = String(q ?? '').trim();
+    if (term) { params.push(`%${term}%`); clauses.push(`(${src.search}) ILIKE $${params.length}`); }
+    params.push(Math.min(Number(limit) || 10, 25));
+    const rows = await this.db.query<{ id: number; label: string }>(
+      `SELECT x.id, (${src.label}) AS label FROM ${src.from}
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY label ASC LIMIT $${params.length}`, params,
+    );
+    return rows;
+  }
+
   async create(dto: CreateFollowUpDto, actorId: number, scope: ResolvedScope) {
     if (!dto?.lead_id || !dto?.scheduled_at) throw new BadRequestException('lead_id and scheduled_at are required');
     assertNotPastSchedule(dto.scheduled_at);   // UAT-R2 #12 — no back-dated due dates
@@ -285,6 +370,15 @@ export class FollowUpsService {
     // DEF-1: an explicitly named task owner must be an ACTIVE user (400 otherwise).
     if (dto.owner_id != null) await this.assertActiveUser(dto.owner_id, 'owner_id');
     const reportTo = await this.resolveReportTo(dto.report_to_id);
+    // MY TASK overhaul (dev/133) — Related-To entity link (type validated; id required when a
+    // type is chosen), user-set task status, and the task/follow_up kind.
+    const entityType = assertEntityType(dto.entity_type);
+    if (entityType && !(dto.entity_id != null && Number(dto.entity_id) > 0)) {
+      throw new BadRequestException('entity_id is required when entity_type is set');
+    }
+    const entityId = entityType ? Number(dto.entity_id) : null;
+    const taskStatus = dto.task_status !== undefined ? assertTaskStatus(dto.task_status) : 'in_progress';
+    const kind = dto.kind === 'task' ? 'task' : 'follow_up';
     const lead = await this.db.one<{ org_id: string; branch_id: string; owner_id: string | null }>(
       `SELECT org_id, branch_id, owner_id FROM lead WHERE id = $1 AND is_active AND deleted_at IS NULL`, [dto.lead_id],
     );
@@ -297,11 +391,11 @@ export class FollowUpsService {
     const remindAt = dto.remind_at ?? await this.defaultRemindAt(dto.scheduled_at);
     const created = await this.db.tx(async (c) => {
       const ins = await c.query(
-        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by, report_to_id, branch_id, vertical_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        `INSERT INTO follow_up (lead_id, owner_id, type_id, disposition_id, scheduled_at, remind_at, notes, priority, created_by, report_to_id, branch_id, vertical_id, entity_type, entity_id, task_status, kind)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
         [dto.lead_id, owner, dto.type_id ?? null, dto.disposition_id ?? null,
           dto.scheduled_at, remindAt, dto.notes ?? null, priority, actorId, reportTo,
-          dto.branch_id ?? null, dto.vertical_id ?? null],
+          dto.branch_id ?? null, dto.vertical_id ?? null, entityType ?? null, entityId, taskStatus, kind],
       );
       await c.query(
         `UPDATE lead SET next_follow_up_at = LEAST(COALESCE(next_follow_up_at, $2::timestamptz), $2::timestamptz),
@@ -312,7 +406,7 @@ export class FollowUpsService {
         `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, to_value, note)
          VALUES ($1,$2,$3,$4,'follow_up',$5,$6)`,
         [dto.lead_id, Number(lead.org_id), Number(lead.branch_id), actorId,
-          JSON.stringify({ follow_up_id: ins.rows[0].id, scheduled_at: dto.scheduled_at, action: 'scheduled' }),
+          JSON.stringify({ follow_up_id: ins.rows[0].id, scheduled_at: dto.scheduled_at, action: 'scheduled', kind }),
           dto.notes ?? null],
       );
       // scheduling a follow-up IS the counsellor responding — it stops the
@@ -370,10 +464,41 @@ export class FollowUpsService {
     const sets: string[] = [];
     const params: unknown[] = [];
     const set = (col: string, val: unknown) => { params.push(val); sets.push(`${col} = $${params.length}`); };
-    if (dto.complete || dto.status === 'done') { set('status', 'done'); sets.push(`completed_at = now()`); }
-    else if (dto.status !== undefined) {
-      if (!['pending', 'done', 'overdue'].includes(String(dto.status))) throw new BadRequestException('invalid status');
-      set('status', dto.status);
+    // MY TASK overhaul (dev/133) — completing a task (legacy `complete`/status=done OR the new
+    // task_status='completed') captures the outcome: completed_at + completed_by + optional
+    // completion_note, and keeps the legacy `status`='done' + task_status='completed' in sync.
+    const completing = dto.complete || dto.status === 'done' || dto.task_status === 'completed';
+    if (completing) {
+      set('status', 'done');
+      set('task_status', 'completed');
+      sets.push(`completed_at = now()`);
+      set('completed_by', actorId);
+      if (dto.completion_note !== undefined) set('completion_note', dto.completion_note ?? null);
+    } else {
+      if (dto.status !== undefined) {
+        if (!['pending', 'done', 'overdue'].includes(String(dto.status))) throw new BadRequestException('invalid status');
+        set('status', dto.status);
+      }
+      // A user-set task_status (in_progress | on_hold). Moving OFF completed reopens the task.
+      if (dto.task_status !== undefined) {
+        const ts = assertTaskStatus(dto.task_status);
+        set('task_status', ts);
+        if ((before.task_status === 'completed' || before.status === 'done')) {
+          set('status', 'pending'); sets.push(`completed_at = NULL`); set('completed_by', null);
+        }
+      }
+      if (dto.completion_note !== undefined) set('completion_note', dto.completion_note ?? null);
+    }
+    // Related-To entity link (type validated; clearing the type clears the id).
+    if (dto.entity_type !== undefined) {
+      const et = assertEntityType(dto.entity_type);
+      if (et && !(dto.entity_id != null && Number(dto.entity_id) > 0)) {
+        throw new BadRequestException('entity_id is required when entity_type is set');
+      }
+      set('entity_type', et ?? null);
+      set('entity_id', et ? Number(dto.entity_id) : null);
+    } else if (dto.entity_id !== undefined) {
+      set('entity_id', dto.entity_id ?? null);
     }
     if (dto.scheduled_at !== undefined) {
       // UAT-R2 #12 — moving a due date into the past is refused, but only when the due
@@ -407,7 +532,7 @@ export class FollowUpsService {
          VALUES ($1,$2,$3,$4,'follow_up',$5,$6,$7)`,
         [before.lead_id, Number(before.org_id), Number(before.branch_id), actorId,
           JSON.stringify({ follow_up_id: id, status: before.status }),
-          JSON.stringify({ follow_up_id: id, status: upd.rows[0].status, action: done ? 'completed' : 'updated' }),
+          JSON.stringify({ follow_up_id: id, status: upd.rows[0].status, action: done ? 'completed' : 'updated', kind: (before as any).kind ?? 'follow_up' }),
           dto.notes ?? null],
       );
       await c.query(`UPDATE lead SET last_activity_at = now() WHERE id = $1`, [before.lead_id]);

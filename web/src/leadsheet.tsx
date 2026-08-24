@@ -18,13 +18,19 @@ interface Activity { id: number; type: string; from_value: any; to_value: any; n
 
 const fmtDT = (s?: string | null) => (s ? new Date(s).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 
-function activityTitle(a: Activity, sourceName?: string): { tt: string; td: string } {
+export function activityTitle(a: Activity, sourceName?: string): { tt: string; td: string } {
   switch (a.type) {
     case 'create': return { tt: `Lead captured${sourceName ? ` from ${sourceName}` : ''}`, td: a.note || 'Lead created' };
     case 'stage_change': return { tt: `Stage moved → ${a.to_value?.name ?? ''}`, td: a.from_value?.name ? `From ${a.from_value.name}` : 'Stage updated' };
     case 'status_change': return { tt: `Status → ${a.to_value?.name ?? ''}`, td: a.from_value?.name ? `From ${a.from_value.name}` : 'Status updated' };
     case 'assign': return { tt: a.to_value?.owner_id ? 'Lead assigned' : 'Lead Counsellor cleared', td: 'Lead Counsellor change' };
-    case 'follow_up': return { tt: a.to_value?.action === 'completed' ? 'Follow-up completed' : a.to_value?.action === 'scheduled' ? `Follow-up scheduled · ${fmtDT(a.to_value?.scheduled_at)}` : 'Follow-up updated', td: a.note || '' };
+    // dev/133 BUG FIX #8 — a task and a follow-up share the follow_up table; the timeline label
+    // must reflect the REAL type. The activity carries `kind` ('task' | 'follow_up') written at
+    // create/update time — a task now reads "Task …", not "Follow-up …".
+    case 'follow_up': {
+      const noun = a.to_value?.kind === 'task' ? 'Task' : 'Follow-up';
+      return { tt: a.to_value?.action === 'completed' ? `${noun} completed` : a.to_value?.action === 'scheduled' ? `${noun} scheduled · ${fmtDT(a.to_value?.scheduled_at)}` : `${noun} updated`, td: a.note || '' };
+    }
     case 'note': return { tt: a.note || 'Note', td: 'Note added' };
     case 'field_change': return { tt: 'Lead details updated', td: Object.keys(a.to_value || {}).join(', ') };
     // Start Calling (§4.1): the outcome an agent logged while working a handed-out batch

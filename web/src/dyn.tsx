@@ -23,7 +23,7 @@ async function openPdfAuthed(path: string) {
   } catch (e: any) { toast(e.message, true); }
 }
 
-import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload } from './forms';
+import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload, TASK_ENTITY_OPTS, TASK_ENTITY_KEY, TASK_STATUS_KEY, TASK_STATUS_LABEL } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { RoleModal } from './rolemodal';
@@ -498,6 +498,9 @@ const dtLocal = (isoStr?: string | null): string => {
 };
 const capFirst = (x?: string) => (x ? x[0].toUpperCase() + x.slice(1) : x);
 
+const ENTITY_LABEL_FROM_KEY: Record<string, string> = Object.fromEntries(
+  Object.entries(TASK_ENTITY_KEY).map(([label, key]) => [key, label]));
+
 export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
   title: `Edit Task \u2014 ${f.lead_name}`,
   initialVals: {
@@ -507,28 +510,39 @@ export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
     // Client Aug 2026 (#2) — Branch/Vertical prefill on task edit.
     'Branch': f.branch_name ?? '',
     'Vertical': f.vertical_name ?? '',
+    // MY TASK overhaul (dev/133) — Related-To + Task Status + completion prefill.
+    'Related To': f.entity_type ? (ENTITY_LABEL_FROM_KEY[f.entity_type] ?? '') : '',
+    'Related Record': f.entity_label ?? '',
+    'Task Status': TASK_STATUS_LABEL[f.task_status] ?? 'In Progress',
     'Assigned To': f.owner_name ?? '',
     'Report To': f.report_to_name ?? '',
     'Due Date': dtLocal(f.scheduled_at),
     'Priority': capFirst(f.priority) ?? 'Medium',
     'Description': '',
+    'Completion Remark': f.completion_note ?? '',
   },
   initialIds: {
     'Task Type': f.type_id == null ? undefined : Number(f.type_id),
     'Related Lead': f.lead_id == null ? undefined : Number(f.lead_id),
     'Branch': f.branch_id == null ? undefined : Number(f.branch_id),
     'Vertical': f.vertical_id == null ? undefined : Number(f.vertical_id),
+    'Related Record': f.entity_id == null ? undefined : Number(f.entity_id),
     'Assigned To': f.owner_id == null ? undefined : Number(f.owner_id),
     'Report To': f.report_to_id == null ? undefined : Number(f.report_to_id),
   },
   lock: ['Related Lead'],
   submit: async (vals, ids) => {
+    const relType = vals['Related To'] ? TASK_ENTITY_KEY[vals['Related To']] : null;
     await api.patch(`/follow-ups/${f.id}`, {
       type_id: ids['Task Type'] ?? null,
       owner_id: ids['Assigned To'] ?? undefined,
       report_to_id: ids['Report To'] ?? null,
       branch_id: ids['Branch'] ?? null,
       vertical_id: ids['Vertical'] ?? null,
+      entity_type: relType,
+      entity_id: relType ? (ids['Related Record'] ?? null) : null,
+      task_status: TASK_STATUS_KEY[vals['Task Status']] || 'in_progress',
+      completion_note: vals['Completion Remark'] || null,
       scheduled_at: need(vals['Due Date'], 'Due date is required'),
       priority: (vals['Priority'] || 'Medium').toLowerCase(),
       notes: [vals['Title'], vals['Description']].filter(Boolean).join(' \u2014 ') || undefined,
@@ -538,6 +552,23 @@ export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
   },
 });
 
+// MY TASK overhaul (dev/133) — display helpers for the task rows.
+const ENTITY_TYPE_LABEL: Record<string, string> = Object.fromEntries(
+  TASK_ENTITY_OPTS.map((lbl) => [TASK_ENTITY_KEY[lbl], lbl]));
+function TaskStatusBadge({ s }: { s?: string }) {
+  if (!s) return null;
+  const tone: Record<string, string> = {
+    in_progress: 'var(--primary)', on_hold: 'var(--warning, #b8860b)',
+    completed: 'var(--success, #1a7f37)', overdue: 'var(--danger)',
+  };
+  return (
+    <span data-testid="task-status-badge" style={{
+      marginLeft: 6, fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 10,
+      color: '#fff', background: tone[s] || 'var(--text-dim)', verticalAlign: 'middle',
+    }}>{TASK_STATUS_LABEL[s] || s}</span>
+  );
+}
+
 function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { rows: any[]; more?: string; title?: string; empty?: string; onOpenList?: () => void }) {
   const { bump, openLead } = useScreen();
   const { can } = useAuth();
@@ -545,11 +576,13 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { row
   const [edit, setEdit] = useState<any | null>(null);
   // #13(b) — a confirmation popup before marking a task done (no accidental one-click).
   const [confirmDone, setConfirmDone] = useState<any | null>(null);
+  const [outcome, setOutcome] = useState('');
   const [busy, setBusy] = useState(false);
   const complete = async () => {
     if (!confirmDone) return;
     setBusy(true);
-    try { await api.patch(`/follow-ups/${confirmDone.id}`, { complete: true }); toast('Task marked done'); setConfirmDone(null); bump(); }
+    // MY TASK overhaul (dev/133) — completing captures the outcome/remark + completed_by/at (server).
+    try { await api.patch(`/follow-ups/${confirmDone.id}`, { complete: true, completion_note: outcome || null }); toast('Task marked done'); setConfirmDone(null); setOutcome(''); bump(); }
     catch (e: any) { toast(e.message, true); }
     finally { setBusy(false); }
   };
@@ -568,10 +601,14 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { row
           <div className="lrow" key={f.id}>
             <div className="chk" onClick={() => setConfirmDone(f)} title="Mark done" />
             <div className="gr" style={{ cursor: 'pointer' }} onClick={() => openLead(f.lead_id)}>
-              <div className="t1">{f.type_name || 'Follow-up'} — {f.lead_name}</div>
+              <div className="t1">{f.type_name || 'Task'} — {f.lead_name}<TaskStatusBadge s={f.task_status_eff || f.task_status} /></div>
               <div className="t2">
-                {f.notes || `${f.course_name || ''}`}
+                {f.notes ? <>{f.notes} · </> : null}
+                <span data-testid="task-assignee">Assignee: {f.owner_name || '—'}</span>
+                {f.entity_type ? <span data-testid="task-related"> · {ENTITY_TYPE_LABEL[f.entity_type] || f.entity_type}: {f.entity_label || '—'}</span> : null}
                 {f.report_to_name ? <span style={{ color: 'var(--text-dim)' }}> · Reports to {f.report_to_name}</span> : null}
+                {(f.task_status_eff === 'completed' || f.status === 'done') && f.completion_note
+                  ? <span style={{ color: 'var(--text-dim)' }}> · Outcome: {f.completion_note}</span> : null}
               </div>
             </div>
             <PrioSelect id={Number(f.id)} value={f.priority} onChanged={bump} disabled={!canEdit} />
@@ -589,9 +626,14 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { row
       )}
       {confirmDone && (
         <ConfirmModal title="Mark task as done?"
-          body={`\u201c${confirmDone.type_name || 'Follow-up'} \u2014 ${confirmDone.lead_name}\u201d will be marked done.`}
+          body={<div>
+            <div style={{ marginBottom: 8 }}>{`\u201c${confirmDone.type_name || 'Task'} \u2014 ${confirmDone.lead_name}\u201d will be marked Completed.`}</div>
+            <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Completion outcome / remark (optional)</label>
+            <textarea className="ainp" data-testid="task-completion-note" value={outcome}
+              onChange={(e) => setOutcome(e.target.value)} placeholder="e.g. Spoke to lead, enrolment confirmed" />
+          </div>}
           confirmLabel="Mark done" busy={busy}
-          onConfirm={complete} onClose={() => setConfirmDone(null)} />
+          onConfirm={complete} onClose={() => { setConfirmDone(null); setOutcome(''); }} />
       )}
     </div>
   );
@@ -665,44 +707,75 @@ function TodayFollowupCard({ rows, count, onChanged, onOpenList }: { rows: any[]
 function MyTasks() {
   const { refreshTick } = useScreen();
   const { params: sp, key: scopeKey } = useScope();
-  // client update #4 — two views: Assigned to Me (owner) | Reported by Me (creator)
+  const ref = useRef_();
+  // client update #4 — two views: Assigned to Me (owner) | Created by Me (creator).
+  // dev/133 — "Reported by Me" is renamed to "Created by Me" everywhere.
   const [view, setView] = useState<'assigned' | 'reported'>('assigned');
+  // MY TASK overhaul (dev/133) — the 6 cards drive the list; 'open' is the default set.
+  const [card, setCard] = useState<string>('open');
   // SHARED date range on the task DUE date (scheduled_at). Default All time — never hide open tasks.
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
-  // Follow-up filter REMOVED from the Task module (client UAT Aug 2026) — it belongs on
-  // Leads / Follow-ups, not on My Tasks. The date-range filter on the task due date stays.
-  const rq = new URLSearchParams({ view, status: 'pending', limit: '50' });
+  // Task-specific filters (client item 5): Task Status, Related-To type, Assignee.
+  const [tstatuses, setTstatuses] = useState<string[]>([]);
+  const [entityType, setEntityType] = useState<string>('');
+  const [owners, setOwners] = useState<number[]>([]);
+  const rq = new URLSearchParams({ view, card, limit: '50' });
   if (range.from) rq.set('from', range.from);
   if (range.to) rq.set('to', range.to);
-  const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
+  for (const ts of tstatuses) rq.append('task_statuses', ts);
+  if (entityType) rq.set('entity_type', entityType);
+  for (const o of owners) rq.append('owner_ids', String(o));
+  const fkey = [view, card, range.from ?? '', range.to ?? '', tstatuses.join(','), entityType, owners.join(',')].join('~');
   const sum = useFetch<any>('/follow-ups/summary', [refreshTick]);
-  const list = useFetch<any[]>(withScope(`/follow-ups?${rq.toString()}`, sp), [view, rangeKey, refreshTick, scopeKey]);
+  const list = useFetch<any[]>(withScope(`/follow-ups?${rq.toString()}`, sp), [fkey, refreshTick, scopeKey]);
   const s = sum.data ?? {};
-  const k = view === 'assigned'
-    ? { open: s.my_open, due: s.my_due_today, over: s.my_overdue, done: s.my_done_week }
-    : { open: s.reported_open, due: s.reported_due_today, over: s.reported_overdue, done: s.reported_done_week };
+  const pick = (a: string, b: string) => (view === 'assigned' ? s[a] : s[b]);
+  // The 6 My-Tasks cards (client docx): each shows a live count for the current view and,
+  // on click, filters the list to exactly that set (card→list, same predicate as the count).
+  const CARDS: Array<{ id: string; lab: string; ic: string; val: number }> = [
+    { id: 'open', lab: 'Open Tasks', ic: 'check', val: pick('my_open_all', 'reported_open_all') ?? 0 },
+    { id: 'due_today', lab: 'Due Today', ic: 'clock', val: pick('my_due_today', 'reported_due_today') ?? 0 },
+    { id: 'overdue', lab: 'Overdue', ic: 'clock', val: pick('my_overdue', 'reported_overdue') ?? 0 },
+    { id: 'in_progress', lab: 'In Progress', ic: 'bolt', val: pick('my_in_progress', 'reported_in_progress') ?? 0 },
+    { id: 'completed', lab: 'Completed', ic: 'check', val: pick('my_completed', 'reported_completed') ?? 0 },
+    { id: 'next7', lab: 'Due Next 7D', ic: 'cal', val: pick('my_next7', 'reported_next7') ?? 0 },
+  ];
+  const TASK_STATUS_OPTS = [
+    { id: 'in_progress', name: 'In Progress' }, { id: 'on_hold', name: 'On Hold' },
+    { id: 'completed', name: 'Completed' }, { id: 'overdue', name: 'Overdue' },
+  ];
+  const openLabel = view === 'assigned' ? (s.my_open_all ?? 0) : (s.reported_open_all ?? 0);
   return (
     <>
       <div className="seltabs" style={{ marginBottom: 14 }}>
         <button className={view === 'assigned' ? 'on' : ''} onClick={() => setView('assigned')}>
-          Assigned to Me{s.my_open != null ? ` (${s.my_open})` : ''}
+          Assigned to Me{s.my_open_all != null ? ` (${s.my_open_all})` : ''}
         </button>
         <button className={view === 'reported' ? 'on' : ''} onClick={() => setView('reported')}>
-          Reported by Me{s.reported_open != null ? ` (${s.reported_open})` : ''}
+          Created by Me{s.reported_open_all != null ? ` (${s.reported_open_all})` : ''}
         </button>
       </div>
-      <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+      <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         <DateRange value={range} onChange={setRange} idPrefix="mytasks-dr" />
+        <EnumMulti label="Task Status" icon="check" value={tstatuses} options={TASK_STATUS_OPTS} onChange={setTstatuses} testid="fm-taskstatus" />
+        <div className="fmulti" data-testid="fm-relatedto">
+          <span className="fmulti-lbl"><Ic k="link" />Related To</span>
+          <select className="ainp" style={{ minWidth: 140 }} value={entityType} onChange={(e) => setEntityType(e.target.value)}>
+            <option value="">All types</option>
+            {TASK_ENTITY_OPTS.map((lbl) => <option key={lbl} value={TASK_ENTITY_KEY[lbl]}>{lbl}</option>)}
+          </select>
+        </div>
+        <FilterMulti label="Assignee" testid="fm-assignee" icon="users" value={owners} options={selectableUsers(ref.users)} onChange={setOwners} />
       </div>
-      <Kpis items={[
-        { lab: 'Open tasks', val: String(k.open ?? '0'), ic: 'check' },
-        { lab: 'Due today', val: String(k.due ?? '0'), ic: 'clock' },
-        { lab: 'Overdue', val: String(k.over ?? '0'), ic: 'clock', tone: 'down', delta: k.over > 0 ? 'needs attention' : undefined },
-        { lab: 'Done this week', val: String(k.done ?? '0'), ic: 'check' },
-      ]} />
-      <MyTaskCard rows={list.data ?? []} more={`${k.open ?? 0} open`}
-        title={view === 'assigned' ? 'Assigned to Me' : 'Reported by Me'}
-        empty={view === 'assigned' ? 'No open tasks assigned to you' : 'No open tasks reported by you'} />
+      {/* MY TASK overhaul (dev/133) — 6 cards; the active card is highlighted; clicking filters the list. */}
+      <Kpis cols={6} items={CARDS.map((c) => ({
+        lab: c.lab, val: String(c.val), ic: c.ic,
+        tone: (card === c.id ? 'up' : undefined) as any, delta: card === c.id ? 'showing' : undefined,
+        onClick: () => setCard(c.id), navLabel: `${c.lab}: ${c.val}. Filter My Tasks to this set`,
+      }))} />
+      <MyTaskCard rows={list.data ?? []} more={`${openLabel} open`}
+        title={view === 'assigned' ? 'Assigned to Me' : 'Created by Me'}
+        empty={view === 'assigned' ? 'No tasks in this view' : 'No tasks you created in this view'} />
     </>
   );
 }
@@ -4080,7 +4153,7 @@ const WHATS_NEW: Array<{ t: string; d: string }> = [
 ];
 const FEATURE_MODULES: Array<{ t: string; d: string; mod?: string; sub?: string }> = [
   { t: 'Leads', d: 'Capture, three list views, filters, scoring, SLA, transfer & bulk actions.', mod: 'leads', sub: 'all' },
-  { t: 'My Tasks & Follow-ups', d: 'Assigned/Reported tasks, reminders, the new follow-up date filter.', mod: 'dash', sub: 'mytasks' },
+  { t: 'My Tasks & Follow-ups', d: 'Assigned/Created tasks, reminders, the new follow-up date filter.', mod: 'dash', sub: 'mytasks' },
   { t: 'Dashboard & Quick Stats', d: 'Role-aware KPIs, funnel, sparklines — all date-range aware.', mod: 'dash', sub: 'overview' },
   { t: 'Campaigns & Masters', d: 'Branch › Vertical › Pipeline › Campaign › Source hierarchy + course masters.', mod: 'leads', sub: 'campaigns' },
   { t: 'Analytics & Reports', d: 'Funnel, TAT, Activity, Campaign ROI + a custom Report Builder.', mod: 'analytics', sub: 'funnel' },
