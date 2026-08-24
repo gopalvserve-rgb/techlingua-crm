@@ -403,7 +403,7 @@ describe('Counsellor Performance', () => {
     // revenue booked appears in the row AND the KPI strip; collected only in the row.
     // The assertion that matters is that they are DIFFERENT numbers, both rendered.
     expect(screen.getAllByText('₹2,25,000.00').length).toBeGreaterThan(0);   // revenue booked
-    expect(screen.getByText('₹50,000.00')).toBeTruthy();                     // collected
+    expect(screen.getAllByText('₹50,000.00').length).toBeGreaterThan(0);     // collected (row + Row-2 KPI)
   });
 
   it('explains that "Activity" is not a call count — telephony is out of scope', async () => {

@@ -58,6 +58,7 @@ import {
 import {
   CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure, CollectModal, ReceiptViewModal,
 } from './sprint5';
+import { TargetIncentive } from './targetincentive';
 import { fmtINR, enrolDiscount, previewSchedule, EnrolDiscountType } from './money';
 import {
   ActivityReport, Announcements, CampaignRoiReport, FunnelReport, KnowledgeBase, Notes,
@@ -957,7 +958,7 @@ function TargetBars() {
 
   return (
     <HBars title="This month vs target" rows={rows}
-      empty="Targets are set under Performance › Monthly Targets — progress bars appear once targets exist" />
+      empty="Targets are set under Performance › Target & Incentive — progress bars appear once targets exist" />
   );
 }
 
@@ -7619,6 +7620,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   quotations: Quotations,
   saleClosure: SaleClosure,
   monthlyTargets: MonthlyTargets,
+  targetIncentive: TargetIncentive,
   counsellorPerformance: CounsellorPerformance,
   feeCollection: FeeCollection,
   branches: Branches,

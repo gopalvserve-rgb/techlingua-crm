@@ -269,10 +269,6 @@ const NON_PUBLIC_MACHINE_ROUTES = new Set(['GET /error-logs/_test/boom']);
  * Every entry states what it is and what closing it would mean.
  */
 const UNREACHABLE_BACKLOG: Record<string, string> = {
-  'GET /teams':
-    'TEAMS HAS NO LIST OR CREATE SCREEN. The UI only ever reads /teams/:id (via the user sheet and the delete/impact path), so teams can be viewed and deleted but never listed or created from the app. PROJECT_STATUS §2 sells "users, teams, roles" as built. CLIENT-VISIBLE GAP — Manager decision.',
-  'POST /teams':
-    'The other half of the same gap: no New Team form exists anywhere in web/src.',
   'GET /assignments':
     'USER->ROLE/UNIT ASSIGNMENTS have no dedicated screen; the user modal posts its assignments inside the user payload. Possibly a superseded endpoint — verify before wiring or deleting.',
   'POST /assignments':

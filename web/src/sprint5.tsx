@@ -18,13 +18,13 @@ import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, HBars, Kpis, TableCard } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { LeadLookup, MasterQuickAdd } from './forms';
 import {
   DiscountType, LineDraft, computeTotals, fmtINR, minorToInput, parseRupees,
 } from './money';
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
-import { DateRange, fmtDateTimeIST } from './daterange';
+import { DateRange, fmtDateTimeIST, presetRange } from './daterange';
 import { RowMenu, RowMenuItem } from './rowactions';
 import { FilterMulti } from './dyn';
 import { useScope } from './scope';
@@ -1230,63 +1230,87 @@ export function MonthlyTargets() {
 /* ==================================================================== */
 
 export function CounsellorPerformance() {
-  const now = new Date();
-  const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-  const [range, setRange] = useState({ from: first, to: '' });
-  const qs = `from=${range.from}${range.to ? `&to=${range.to}` : ''}`;
-  const { data } = useFetch<any[]>(`/performance/leaderboard?${qs}`, [qs]);
-  const summary = useFetch<any>(`/performance/summary?${qs}`, [qs]);
+  const ref = useRef_();
+  const [range, setRange] = useState<{ from?: string; to?: string }>(presetRange('month'));
+  const [flt, setFlt] = useState<{ branch?: string; vertical?: string; user?: string }>({});
+
+  const qs = new URLSearchParams();
+  if (range.from) qs.set('from', range.from);
+  if (range.to) qs.set('to', range.to);
+  if (flt.branch) qs.set('branch_id', flt.branch);
+  if (flt.vertical) qs.set('vertical_id', flt.vertical);
+  if (flt.user) qs.set('user_id', flt.user);
+  const q = qs.toString();
+
+  const { data } = useFetch<any[]>(`/performance/leaderboard?${q}`, [q]);
+  const summary = useFetch<any>(`/performance/summary?${q}`, [q]);
   const rows = data ?? [];
   const s = summary.data;
 
-  const tat = (m: number | null) => (m === null ? '—' : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`);
+  const tat = (m: number | null) => (m === null ? '\u2014' : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`);
+  const pctVal = (v: number | null | undefined) => (v === null || v === undefined ? '\u2014' : `${v}%`);
 
   return (
     <>
-      <div className="page-actions">
-        <div className="fchip"><Ic k="cal" />
-          <input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-            aria-label="From" style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} />
-        </div>
-        <div className="fchip"><Ic k="cal" />
-          <input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-            aria-label="To" style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} />
-        </div>
+      <div className="page-actions" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <DateRange value={range} onChange={setRange} idPrefix="cp-dr" />
+        <select className="ainp" style={{ maxWidth: 180 }} aria-label="Branch"
+          value={flt.branch ?? ''} onChange={(e) => setFlt((f) => ({ ...f, branch: e.target.value || undefined }))}>
+          <option value="">All branches</option>
+          {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <select className="ainp" style={{ maxWidth: 180 }} aria-label="Vertical"
+          value={flt.vertical ?? ''} onChange={(e) => setFlt((f) => ({ ...f, vertical: e.target.value || undefined }))}>
+          <option value="">All verticals</option>
+          {ref.verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+        <select className="ainp" style={{ maxWidth: 200 }} aria-label="Counsellor"
+          value={flt.user ?? ''} onChange={(e) => setFlt((f) => ({ ...f, user: e.target.value || undefined }))}>
+          <option value="">All counsellors</option>
+          {selectableUsers(ref.users).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
       </div>
+
+      {/* Row 1 — Sales */}
       <Kpis items={[
-        { lab: 'Leads', val: String(s?.leads ?? 0), ic: 'leads' },
+        { lab: 'Leads Assigned', val: String(s?.leads ?? 0), ic: 'leads' },
+        { lab: 'Leads Contacted', val: String(s?.leads_contacted ?? 0), ic: 'wa' },
         { lab: 'Enrolments', val: String(s?.enrolments ?? 0), ic: 'check' },
-        // OBS-S16-05: this is NOT the funnel's conversion and must not share its name —
-        // the denominator is the counsellor's OWN leads. QA-16 saw 50% and 100% at the
-        // same moment, both captioned "Conversion".
-        { lab: CONVERSION_LABEL_COUNSELLOR, val: s ? `${s.conversion_pct}%` : '—', ic: 'target' },
-        { lab: 'Revenue booked', val: s ? fmtINR(s.revenue_minor) : '—', ic: 'rupee' },
+        { lab: CONVERSION_LABEL_COUNSELLOR, val: s ? pctVal(s.conversion_pct) : '\u2014', ic: 'target' },
       ]} />
+      {/* Row 2 — Financial & Productivity */}
+      <Kpis items={[
+        { lab: 'Revenue Booked', val: s ? fmtINR(s.revenue_minor) : '\u2014', ic: 'rupee' },
+        { lab: 'Revenue Collected', val: s ? fmtINR(s.collected_minor) : '\u2014', ic: 'rupee' },
+        { lab: 'Meetings Scheduled', val: String(s?.meetings ?? 0), ic: 'clock' },
+        { lab: 'Follow-up Adherence', val: s ? pctVal(s.adherence_pct) : '\u2014', ic: 'perf' },
+      ]} />
+
       <TableCard
         title="Leaderboard" icon="perf"
-        cols={['#', 'Counsellor', 'Leads', 'Activity', 'Conv%', 'Enrol', 'Revenue booked', 'Collected', 'TAT', 'Adherence']}
+        cols={['#', 'Counsellor', 'Leads', 'Contacted', 'Activity', 'Conv%', 'Enrol', 'Meetings', 'Revenue booked', 'Collected', 'TAT', 'Adherence']}
         empty="Leaderboard fills as leads & closures accumulate"
         rows={rows.map((r, i): Cell[] => [
           String(i + 1),
           { node: <b>{r.user_name}</b> },
           String(r.leads),
+          String(r.leads_contacted ?? 0),
           String(r.activities),
           { b: [`${r.conversion_pct}%`, r.conversion_pct >= 20 ? 'b-green' : r.conversion_pct >= 10 ? 'b-indigo' : 'b-gray'] },
           String(r.enrolments),
+          String(r.meetings ?? 0),
           { mono: fmtINR(r.revenue_minor) },
           { mono: fmtINR(r.collected_minor) },
           tat(r.tat_median_minutes),
-          r.adherence_pct === null ? '—' : `${r.adherence_pct}%`,
+          r.adherence_pct === null ? '\u2014' : `${r.adherence_pct}%`,
         ])}
       />
       <div className="card" style={{ marginTop: 12 }}>
         <div className="card-pad">
           <div className="sub" style={{ marginTop: 0 }}>
-            <b>Activity</b> counts timeline events logged (dispositions, follow-ups, notes) — telephony is out of scope,
-            so this is not a call count and is not labelled as one.
-            <b> Revenue booked</b> is the net fee of approved enrolments closed in the range; <b>Collected</b> is cash actually receipted.
-            They are different numbers and are shown separately on purpose.
-            <b> TAT</b> is the median first-response time from the SLA clock. <b>Adherence</b> is follow-ups completed on time.
+            <b>Row 1 (Sales):</b> Leads Assigned · Leads Contacted (leads with an activity logged — telephony is out of scope, so this is not a call count) · Enrolments · Conversion % (enrolments / owned leads).
+            <b> Row 2 (Financial &amp; Productivity):</b> Revenue Booked (net fee of approved enrolments) · Revenue Collected (cash receipted) · Meetings Scheduled (calendar meetings) · Follow-up Adherence (follow-ups completed on time). They are different numbers and are shown separately on purpose.
+            All figures respect the calendar range and the Branch / Vertical / Counsellor filter above.
           </div>
         </div>
       </div>

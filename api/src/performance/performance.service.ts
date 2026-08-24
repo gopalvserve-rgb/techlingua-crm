@@ -5,6 +5,8 @@ import { ResolvedScope } from '../rbac/rbac.types';
 import { ENROLMENT_COUNTS_AS_SOLD, ENROLMENT_REVENUE_COLUMN, counsellorConversionPct } from '../reports/shared-metrics';
 import { toDateString } from '../common/date.util';
 
+export interface PerfFilter { from?: string; to?: string; branchId?: number; verticalId?: number; userId?: number }
+
 /**
  * COUNSELLOR PERFORMANCE — "leads handled, calls, conversion %, revenue, TAT,
  * follow-up adherence & enrolments, with a leaderboard" (§5 / the prototype's own
@@ -80,7 +82,7 @@ export class PerformanceService {
    * One query. Every per-counsellor aggregate is a LATERAL against the SAME scoped user
    * set, so a counsellor cannot appear in one column and vanish from another.
    */
-  async leaderboard(scope: ResolvedScope, f: { from?: string; to?: string } = {}) {
+  async leaderboard(scope: ResolvedScope, f: PerfFilter = {}) {
     const from = toDateString(f.from) ?? null;
     const to = toDateString(f.to) ?? null;
 
@@ -95,6 +97,16 @@ export class PerformanceService {
       owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
     }, params);
+    // OPTIONAL dashboard filter (Branch / Vertical / Counsellor) — narrows WITHIN the
+    // RBAC scope, it does not widen it. Each value is pushed once and the SAME $N is
+    // reused for the lead and enrolment fragments (they filter the same records).
+    const leadF: string[] = [];
+    const enrF: string[] = [];
+    if (f.branchId) { params.push(f.branchId); leadF.push(`l.branch_id = $${params.length}`); enrF.push(`e.branch_id = $${params.length}`); }
+    if (f.verticalId) { params.push(f.verticalId); leadF.push(`l.vertical_id = $${params.length}`); enrF.push(`e.vertical_id = $${params.length}`); }
+    if (f.userId) { params.push(f.userId); leadF.push(`l.owner_id = $${params.length}`); enrF.push(`e.counsellor_id = $${params.length}`); }
+    const leadFilter = leadF.length ? ` AND ${leadF.join(' AND ')}` : '';
+    const enrFilter = enrF.length ? ` AND ${enrF.join(' AND ')}` : '';
 
     // `$1`/`$2` are the window; NULL means "no bound". The explicit ::date casts are the
     // Sprint-3 `$3`-cast lesson — an inferred parameter type is a live-only failure.
@@ -105,11 +117,11 @@ export class PerformanceService {
        ),
        scoped_leads AS (
          SELECT l.id, l.owner_id, l.created_at
-           FROM lead l WHERE l.deleted_at IS NULL AND ${leadWhere}
+           FROM lead l WHERE l.deleted_at IS NULL AND ${leadWhere}${leadFilter}
        ),
        scoped_enr AS (
          SELECT e.id, e.counsellor_id, e.created_at, e.net_fee_minor, e.status
-           FROM enrolment e WHERE e.deleted_at IS NULL AND ${enrWhere}
+           FROM enrolment e WHERE e.deleted_at IS NULL AND ${enrWhere}${enrFilter}
        ),
        people AS (
          SELECT DISTINCT owner_id AS user_id FROM scoped_leads WHERE owner_id IS NOT NULL
@@ -140,6 +152,18 @@ export class PerformanceService {
               (SELECT count(*) FROM lead_activity la JOIN scoped_leads sl ON sl.id = la.lead_id, win w
                 WHERE la.actor_id = p.user_id
                   AND la.occurred_at >= w.d_from AND la.occurred_at < w.d_to) AS activities,
+              -- LEADS CONTACTED (Part 2 Row 1) — owned leads with >=1 activity logged
+              -- in the window. "Contacted" honestly means "an activity was recorded",
+              -- since telephony is out of scope and there is no call log to count.
+              (SELECT count(DISTINCT sl.id) FROM scoped_leads sl
+                 JOIN lead_activity la ON la.lead_id = sl.id, win w
+                WHERE sl.owner_id = p.user_id
+                  AND la.occurred_at >= w.d_from AND la.occurred_at < w.d_to) AS leads_contacted,
+              -- MEETINGS SCHEDULED (Part 2 Row 2) — calendar_event of type 'meeting'
+              -- owned by the counsellor, starting in the window.
+              (SELECT count(*) FROM calendar_event ce, win w
+                WHERE ce.owner_id = p.user_id AND ce.deleted_at IS NULL AND ce.type = 'meeting'
+                  AND ce.starts_at >= w.d_from AND ce.starts_at < w.d_to) AS meetings,
               -- follow_up's due column is scheduled_at (005_lead.sql). There is no
               -- due_at on this table; there IS one on lead_sla, which is a different
               -- clock entirely. Pinned by sprint5-sql-schema.spec.ts.
@@ -185,6 +209,8 @@ export class PerformanceService {
         revenue_minor: Number(r.revenue_minor ?? 0),
         collected_minor: Number(r.collected_minor ?? 0),
         activities: Number(r.activities ?? 0),
+        leads_contacted: Number(r.leads_contacted ?? 0),
+        meetings: Number(r.meetings ?? 0),
         followups_due: due,
         followups_ontime: ontime,
         // "—" not 0%: a counsellor with nothing due has not failed to do anything.
@@ -208,12 +234,17 @@ export class PerformanceService {
    * Scoped on the ENROLMENT (the same fragment the leaderboard's enrolment aggregates use),
    * so a counsellor's total is his own and cannot return branch numbers.
    */
-  private async collectedMinor(scope: ResolvedScope, f: { from?: string; to?: string }): Promise<number> {
+  private async collectedMinor(scope: ResolvedScope, f: PerfFilter): Promise<number> {
     const params: unknown[] = [toDateString(f.from) ?? null, toDateString(f.to) ?? null];
     const enrWhere = this.resolver.buildScopeWhere(scope, {
       owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
     }, params);
+    const enrF: string[] = [];
+    if (f.branchId) { params.push(f.branchId); enrF.push(`e.branch_id = $${params.length}`); }
+    if (f.verticalId) { params.push(f.verticalId); enrF.push(`e.vertical_id = $${params.length}`); }
+    if (f.userId) { params.push(f.userId); enrF.push(`e.counsellor_id = $${params.length}`); }
+    const enrFilter = enrF.length ? ` AND ${enrF.join(' AND ')}` : '';
     const r = await this.db.one<any>(
       `WITH win AS (
          SELECT COALESCE($1::date, date_trunc('month', now())::date) AS d_from,
@@ -222,7 +253,7 @@ export class PerformanceService {
        SELECT COALESCE(sum(fr.amount_minor), 0) AS collected_minor
          FROM fee_receipt fr
          JOIN enrolment e ON e.id = fr.enrolment_id, win w
-        WHERE fr.deleted_at IS NULL AND e.deleted_at IS NULL AND ${enrWhere}
+        WHERE fr.deleted_at IS NULL AND e.deleted_at IS NULL AND ${enrWhere}${enrFilter}
           AND fr.received_at >= w.d_from AND fr.received_at < w.d_to`,
       params,
     );
@@ -230,20 +261,28 @@ export class PerformanceService {
   }
 
   /** The KPI strip above the leaderboard — the same window, the same scope. */
-  async summary(scope: ResolvedScope, f: { from?: string; to?: string } = {}) {
+  async summary(scope: ResolvedScope, f: PerfFilter = {}) {
     const rows = await this.leaderboard(scope, f);
-    const sum = (k: 'leads' | 'enrolments' | 'revenue_minor') =>
+    const sum = (k: 'leads' | 'enrolments' | 'revenue_minor' | 'leads_contacted' | 'meetings') =>
       rows.reduce((a, r) => a + (r[k] as number), 0);
     const leads = sum('leads');
     const enrolments = sum('enrolments');
+    // Follow-up adherence across the scoped set (Part 2 Row 2): kept-on-time / due.
+    const due = rows.reduce((a, r) => a + (r.followups_due as number), 0);
+    const ontime = rows.reduce((a, r) => a + (r.followups_ontime as number), 0);
     return {
       counsellors: rows.length,
       leads,
+      leads_contacted: sum('leads_contacted'),
       enrolments,
       conversion_pct: counsellorConversionPct(enrolments, leads),
       revenue_minor: sum('revenue_minor'),
       // NOT `sum('collected_minor')` — see collectedMinor(). This is the money, not the rows.
       collected_minor: await this.collectedMinor(scope, f),
+      meetings: sum('meetings'),
+      followups_due: due,
+      followups_ontime: ontime,
+      adherence_pct: due > 0 ? Math.round((ontime * 1000) / due) / 10 : null,
       best: rows[0] ? { user_name: rows[0].user_name, enrolments: rows[0].enrolments } : null,
     };
   }
