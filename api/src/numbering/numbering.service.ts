@@ -36,7 +36,7 @@ import { DatabaseService } from '../database/database.service';
  *      it is NOT a migration. Flagged in PROJECT_STATUS §4.
  */
 
-export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'refund', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog', 'employee', 'assessment_certificate', 'student_vertical'] as const;
+export const NUMBER_KINDS = ['quotation', 'enrolment', 'receipt', 'invoice', 'refund', 'lead', 'support', 'student', 'enrollment', 'admission', 'po', 'asset', 'catalog', 'employee', 'assessment_certificate', 'student_vertical', 'royalty_invoice'] as const;
 export type NumberKind = (typeof NUMBER_KINDS)[number];
 
 /** The default series a lazily-created row gets. A fresh database must never come up
@@ -88,6 +88,9 @@ export const KIND_DEFAULTS: Record<string, { prefix: string; reset: string; labe
   // Per branch/vertical if a more specific series row exists, org-wide otherwise (MOST-SPECIFIC-WINS),
   // reset per Indian FY like invoices -> SID-2026-27/0001. Does NOT replace student.student_no (STU-).
   student_vertical: { prefix: 'SID-', reset: 'fy', label: 'Vertical-wise Student IDs' },
+  // Phase 4 Batch 2 — ROYALTY invoices billed to a franchise. ROY-<FY>/#### (reset per
+  // Indian FY like the GST invoice series). A SEPARATE series from student invoices (INV-).
+  royalty_invoice: { prefix: 'ROY-', reset: 'fy', label: 'Royalty invoices' },
 };
 
 export interface SeriesRow {

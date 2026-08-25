@@ -8,7 +8,7 @@
  * DEFERRED to the next Phase-4 batch: franchise-owner login/RBAC + partner portal,
  * royalty invoicing/payment tracking, franchise-level targets.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -16,6 +16,7 @@ import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { DateRange, DateRangeValue } from './daterange';
 import { fmtINR, minorToInput } from './money';
+import { downloadMatrixCsv } from './listtools';
 
 type Named = { id: number | string; name: string };
 
@@ -513,6 +514,605 @@ export function RoyaltyStatementScreen() {
           ])}
         />
       )}
+    </>
+  );
+}
+
+/* ==================================================================== */
+/*  PHASE 4 BATCH 2 — royalty ops & lifecycle                           */
+/* ==================================================================== */
+
+const INV_STATUS: Record<string, [string, string]> = {
+  draft: ['Draft', 'b-gray'], issued: ['Issued', 'b-indigo'], paid: ['Paid', 'b-green'], cancelled: ['Cancelled', 'b-rose'],
+};
+const invBadge = (s: string): [string, string] => INV_STATUS[s] ?? [s, 'b-gray'];
+const MODE_LABEL: Array<[string, string]> = [
+  ['bank_transfer', 'Bank transfer'], ['upi', 'UPI'], ['cheque', 'Cheque'], ['cash', 'Cash'], ['card', 'Card'], ['adjustment', 'Adjustment'], ['other', 'Other'],
+];
+
+/** A franchise picker chip reused by the ops screens. */
+function FranchisePick({ list, value, onChange, allowAll }: { list: any[]; value: string; onChange: (v: string) => void; allowAll?: boolean }) {
+  return (
+    <label className="fchip"><Ic k="fran" />
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+        style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }}>
+        {allowAll && <option value="">All franchises</option>}
+        {list.length === 0 && !allowAll ? <option value="">No franchises</option>
+          : list.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
+/* -------------------------------------------------------- Record payment -- */
+function RoyaltyPaymentModal({ invoice, onClose, onSaved }: { invoice: any; onClose: () => void; onSaved?: () => void }) {
+  const [amount, setAmount] = useState<string>(minorToInput(invoice.outstanding_minor));
+  const [paidOn, setPaidOn] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [mode, setMode] = useState<string>('bank_transfer');
+  const [reference, setReference] = useState<string>('');
+  const [note, setNote] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    setErr(''); setBusy(true);
+    const cents = Math.round((Number(amount) || 0) * 100);
+    try {
+      await api.post(`/royalty-invoices/${invoice.id}/payments`, { amount_minor: cents, paid_on: paidOn, mode, reference, note });
+      toast('Payment recorded'); onSaved?.(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 520 }}>
+        <div className="ah"><h3><Ic k="rupee" />Record royalty payment — {invoice.invoice_no}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="sub" style={{ marginTop: 0 }}>Outstanding <b>{fmtINR(invoice.outstanding_minor)}</b> of {fmtINR(invoice.amount_minor)}.</div>
+          <div className="form-grid">
+            <div className="fld"><label htmlFor="rpay-amt">Amount (₹) <span className="star">*</span></label><input id="rpay-amt" className="ainp" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="rpay-date">Paid on</label><input id="rpay-date" className="ainp" type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="rpay-mode">Mode</label>
+              <select id="rpay-mode" className="ainp" value={mode} onChange={(e) => setMode(e.target.value)}>
+                {MODE_LABEL.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+            <div className="fld"><label htmlFor="rpay-ref">Reference</label><input id="rpay-ref" className="ainp" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / cheque no" /></div>
+            <div className="fld span2"><label htmlFor="rpay-note">Note</label><input id="rpay-note" className="ainp" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+          </div>
+          {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
+        </div>
+        <div className="af"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Record payment'}</button></div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------- Invoice view --- */
+function RoyaltyInvoiceView({ id, onClose, onChanged }: { id: number; onClose: () => void; onChanged?: () => void }) {
+  const { data, reload } = useFetch<any>(`/royalty-invoices/${id}`, [id]);
+  const [pay, setPay] = useState(false);
+  const inv = data;
+  const delPayment = async (pid: number) => {
+    if (!confirm('Delete this payment?')) return;
+    try { await api.del(`/royalty-invoices/${id}/payments/${pid}`); toast('Payment deleted'); reload(); onChanged?.(); }
+    catch (e) { toast((e as Error).message); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 640 }}>
+        <div className="ah"><h3><Ic k="rupee" />Royalty invoice {inv?.invoice_no ?? ''}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="abody" id="roy-invoice-print">
+          {!inv ? <div className="notice"><Ic k="bolt" /><div>Loading…</div></div> : (
+            <>
+              <div className="sub" style={{ marginTop: 0 }}>
+                <b>{inv.franchise_name}</b> ({inv.franchise_code}) · {invBadge(inv.status)[0]}<br />
+                Period {ymd(inv.period_from)} → {ymd(inv.period_to)} ({inv.months} mo) · Issued {ymd(inv.issue_date)}
+              </div>
+              <table className="tbl" style={{ width: '100%', marginTop: 8 }}>
+                <tbody>
+                  <tr><td>Gross collected</td><td style={{ textAlign: 'right' }}>{fmtINR(inv.gross_collected_minor)}</td></tr>
+                  <tr><td>Refunds</td><td style={{ textAlign: 'right' }}>- {fmtINR(inv.refunds_minor)}</td></tr>
+                  <tr><td>Net collected</td><td style={{ textAlign: 'right' }}>{fmtINR(inv.net_collected_minor)}</td></tr>
+                  <tr><td>Royalty plan</td><td style={{ textAlign: 'right' }}>{inv.plan_name || 'No plan'}{inv.rate_pct != null ? ` @ ${inv.rate_pct}%` : ''}</td></tr>
+                  <tr><td>Royalty amount</td><td style={{ textAlign: 'right' }}>{fmtINR(inv.royalty_minor)}</td></tr>
+                  <tr><td>Adjustments</td><td style={{ textAlign: 'right' }}>{fmtINR(inv.adjustments_minor)}</td></tr>
+                  <tr><td><b>Amount payable</b></td><td style={{ textAlign: 'right' }}><b>{fmtINR(inv.amount_minor)}</b></td></tr>
+                  <tr><td>Collected</td><td style={{ textAlign: 'right' }}>{fmtINR(inv.paid_minor)}</td></tr>
+                  <tr><td><b>Outstanding</b></td><td style={{ textAlign: 'right' }}><b>{fmtINR(inv.outstanding_minor)}</b></td></tr>
+                </tbody>
+              </table>
+              {inv.payments?.length ? (
+                <>
+                  <div className="sub" style={{ marginTop: 12, marginBottom: 4 }}><b>Payments</b></div>
+                  <table className="tbl" style={{ width: '100%' }}>
+                    <thead><tr><th>Date</th><th>Amount</th><th>Mode</th><th>Reference</th><th>By</th><th></th></tr></thead>
+                    <tbody>
+                      {inv.payments.map((p: any) => (
+                        <tr key={p.id}>
+                          <td>{ymd(p.paid_on)}</td><td>{fmtINR(p.amount_minor)}</td><td>{p.mode}</td><td>{p.reference || '—'}</td><td>{p.by_name || '—'}</td>
+                          <td><button className="icon-btn sm" title="Delete payment" onClick={() => void delPayment(p.id)}><Ic k="trash" /></button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={() => window.print()}><Ic k="doc" />Print / PDF</button>
+          {inv && inv.status === 'issued' && inv.outstanding_minor > 0 && <button className="btn primary" onClick={() => setPay(true)}><Ic k="rupee" />Record payment</button>}
+        </div>
+      </div>
+      {pay && inv && <RoyaltyPaymentModal invoice={inv} onClose={() => setPay(false)} onSaved={() => { reload(); onChanged?.(); }} />}
+    </div>
+  );
+}
+
+/* ---------------------------------------------- Generate invoice modal --- */
+function GenerateInvoiceModal({ franchises, onClose, onSaved }: { franchises: any[]; onClose: () => void; onSaved?: () => void }) {
+  const [fid, setFid] = useState<string>(franchises[0] ? String(franchises[0].id) : '');
+  const [range, setRange] = useState<DateRangeValue>({});
+  const [adj, setAdj] = useState<string>('0');
+  const [note, setNote] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [preview, setPreview] = useState<any>(null);
+
+  const loadPreview = async () => {
+    if (!fid) return;
+    const qs = new URLSearchParams();
+    if (range.from) qs.set('from', range.from);
+    if (range.to) qs.set('to', range.to);
+    const cents = Math.round((Number(adj) || 0) * 100);
+    if (cents) qs.set('adjustments_minor', String(cents));
+    try { setPreview(await api.get<any>(`/franchises/${fid}/royalty/statement?${qs.toString()}`)); }
+    catch (e) { toast((e as Error).message); }
+  };
+  useEffect(() => { setPreview(null); }, [fid, range.from, range.to, adj]);
+
+  const save = async () => {
+    setErr(''); setBusy(true);
+    const cents = Math.round((Number(adj) || 0) * 100);
+    try {
+      const r = await api.post<{ invoice_no: string }>('/royalty-invoices/from-statement', {
+        franchise_id: Number(fid), from: range.from || null, to: range.to || null, adjustments_minor: cents, note, issue: true,
+      });
+      toast(`Invoice ${r.invoice_no} generated`); onSaved?.(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 620 }}>
+        <div className="ah"><h3><Ic k="rupee" />Generate royalty invoice</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld"><label htmlFor="gi-fr">Franchise <span className="star">*</span></label>
+              <select id="gi-fr" className="ainp" value={fid} onChange={(e) => setFid(e.target.value)}>
+                {franchises.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+            <div className="fld"><label htmlFor="gi-adj">Adjustments (₹)</label><input id="gi-adj" className="ainp" value={adj} onChange={(e) => setAdj(e.target.value)} placeholder="0.00" /></div>
+          </div>
+          <div className="filters" style={{ marginTop: 6 }}>
+            <DateRange value={range} onChange={setRange} idPrefix="gi-dr" />
+            <button className="btn" onClick={loadPreview}><Ic k="doc" />Preview statement</button>
+          </div>
+          {preview && (
+            <div className="sub" style={{ marginTop: 8 }}>
+              Net collected <b>{fmtINR(preview.revenue.net_collected_minor)}</b> · Royalty <b>{fmtINR(preview.royalty_minor)}</b>
+              {' '}· Adjustments {fmtINR(preview.adjustments_minor)} · <b>Payable {fmtINR(preview.payable_minor)}</b>
+              {!preview.plan ? <div style={{ color: 'var(--muted)' }}>No active royalty plan for this franchise in the period — the invoice will bill only the adjustments.</div> : null}
+            </div>
+          )}
+          <div className="fld" style={{ marginTop: 8 }}><label htmlFor="gi-note">Note</label><input id="gi-note" className="ainp" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+          {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
+        </div>
+        <div className="af"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !fid} onClick={save}><Ic k="check" />{busy ? 'Generating…' : 'Generate & issue'}</button></div>
+      </div>
+    </div>
+  );
+}
+
+export function RoyaltyInvoicesScreen() {
+  const { can } = useAuth();
+  const franchises = useFetch<any[]>('/franchises', []);
+  const list = franchises.data ?? [];
+  const [fid, setFid] = useState<string>('');
+  const [status, setStatus] = useState<string>('');
+  const qs = new URLSearchParams();
+  if (fid) qs.set('franchise_id', fid);
+  if (status) qs.set('status', status);
+  const { data, reload } = useFetch<any[]>(`/royalty-invoices?${qs.toString()}`, [fid, status]);
+  const rows = data ?? [];
+  const [gen, setGen] = useState(false);
+  const [view, setView] = useState<any>(null);
+  const [pay, setPay] = useState<any>(null);
+
+  const issue = async (r: any) => { try { await api.post(`/royalty-invoices/${r.id}/status`, { status: 'issued' }); toast('Invoice issued'); reload(); } catch (e) { toast((e as Error).message); } };
+  const cancel = async (r: any) => { if (!confirm(`Cancel invoice ${r.invoice_no}?`)) return; try { await api.post(`/royalty-invoices/${r.id}/status`, { status: 'cancelled' }); toast('Invoice cancelled'); reload(); } catch (e) { toast((e as Error).message); } };
+  const del = async (r: any) => { if (!confirm(`Delete invoice ${r.invoice_no}?`)) return; try { await api.del(`/royalty-invoices/${r.id}`); toast('Invoice deleted'); reload(); } catch (e) { toast((e as Error).message); } };
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <FranchisePick list={list} value={fid} onChange={setFid} allowAll />
+        <label className="fchip"><Ic k="list" />
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }}>
+            <option value="">All statuses</option><option value="draft">Draft</option><option value="issued">Issued</option><option value="paid">Paid</option><option value="cancelled">Cancelled</option>
+          </select>
+        </label>
+        <div style={{ marginLeft: 'auto' }}>
+          {can('royalty.manage') && <button className="btn primary" onClick={() => setGen(true)}><Ic k="plus" />Generate invoice</button>}
+        </div>
+      </div>
+      <TableCard
+        title="Royalty invoices" icon="rupee"
+        cols={['Invoice #', 'Franchise', 'Period', 'Amount', 'Collected', 'Outstanding', 'Status', '']}
+        empty="No royalty invoices yet — generate one from a franchise's royalty statement."
+        rows={rows.map((r): Cell[] => [
+          { node: <a href="#" onClick={(e) => { e.preventDefault(); setView(r); }}><b>{r.invoice_no}</b></a> },
+          r.franchise_name,
+          `${ymd(r.period_from)} → ${ymd(r.period_to)}`,
+          { mono: fmtINR(r.amount_minor) },
+          { mono: fmtINR(r.paid_minor) },
+          { mono: fmtINR(r.outstanding_minor) },
+          { b: invBadge(r.status) },
+          {
+            node: (
+              <div className="rowacts">
+                <button className="icon-btn sm" title="View / print" onClick={(e) => { e.stopPropagation(); setView(r); }}><Ic k="eye" /></button>
+                {can('royalty.manage') && r.status === 'draft' && <button className="icon-btn sm" title="Issue" onClick={(e) => { e.stopPropagation(); void issue(r); }}><Ic k="check" /></button>}
+                {can('royalty.manage') && r.status === 'issued' && r.outstanding_minor > 0 && <button className="icon-btn sm" title="Record payment" onClick={(e) => { e.stopPropagation(); setPay(r); }}><Ic k="rupee" /></button>}
+                {can('royalty.manage') && (r.status === 'issued' || r.status === 'draft') && <button className="icon-btn sm" title="Cancel" onClick={(e) => { e.stopPropagation(); void cancel(r); }}><Ic k="x" /></button>}
+                {can('royalty.manage') && r.paid_minor === 0 && <button className="icon-btn sm" title="Delete" onClick={(e) => { e.stopPropagation(); void del(r); }}><Ic k="trash" /></button>}
+              </div>
+            ),
+          },
+        ])}
+      />
+      {gen && <GenerateInvoiceModal franchises={list} onClose={() => setGen(false)} onSaved={reload} />}
+      {view && <RoyaltyInvoiceView id={view.id} onClose={() => setView(null)} onChanged={reload} />}
+      {pay && <RoyaltyPaymentModal invoice={pay} onClose={() => setPay(null)} onSaved={reload} />}
+    </>
+  );
+}
+
+/* --------------------------------------------------- Outstanding royalties */
+export function OutstandingRoyaltiesScreen() {
+  const { can } = useAuth();
+  const franchises = useFetch<any[]>('/franchises', []);
+  const list = franchises.data ?? [];
+  const [fid, setFid] = useState<string>('');
+  const qs = new URLSearchParams();
+  if (fid) qs.set('franchise_id', fid);
+  const { data, reload } = useFetch<any>(`/royalty-invoices/outstanding?${qs.toString()}`, [fid]);
+  const [pay, setPay] = useState<any>(null);
+  const b = data?.buckets;
+  const items = data?.items ?? [];
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <FranchisePick list={list} value={fid} onChange={setFid} allowAll />
+      </div>
+      <Kpis items={[
+        { lab: 'Current (0–30)', val: b ? fmtINR(b.current_minor) : '—', ic: 'check' },
+        { lab: '31–60 days', val: b ? fmtINR(b.d30_minor) : '—', ic: 'clock' },
+        { lab: '61–90 days', val: b ? fmtINR(b.d60_minor) : '—', ic: 'clock' },
+        { lab: '90+ days', val: b ? fmtINR(b.d90_minor) : '—', ic: 'bolt' },
+      ]} />
+      <div style={{ marginTop: 12 }}>
+        <TableCard
+          title={`Outstanding royalties${b ? ` — ${fmtINR(b.total_minor)}` : ''}`} icon="rupee"
+          cols={['Invoice #', 'Franchise', 'Issued', 'Age', 'Bucket', 'Amount', 'Outstanding', '']}
+          empty="No outstanding royalty invoices — everything issued is fully collected."
+          rows={items.map((r: any): Cell[] => [
+            r.invoice_no, r.franchise_name, ymd(r.issue_date), `${r.age_days}d`,
+            { b: r.bucket === 'current' ? ['Current', 'b-green'] : r.bucket === '90+' ? ['90+', 'b-rose'] : [r.bucket, 'b-amber'] },
+            { mono: fmtINR(r.amount_minor) },
+            { mono: fmtINR(r.outstanding_minor) },
+            { node: can('royalty.manage') ? <button className="icon-btn sm" title="Record payment" onClick={() => setPay(r)}><Ic k="rupee" /></button> : <span>—</span> },
+          ])}
+        />
+      </div>
+      {pay && <RoyaltyPaymentModal invoice={pay} onClose={() => setPay(null)} onSaved={reload} />}
+    </>
+  );
+}
+
+/* -------------------------------------------------- Agreements & Renewals */
+const AGR_STATUS: Record<string, [string, string]> = {
+  active: ['Active', 'b-green'], expiring: ['Expiring', 'b-amber'], expired: ['Expired', 'b-rose'], renewed: ['Renewed', 'b-indigo'],
+};
+function AgreementModal({ initial, franchises, onClose, onSaved }: { initial?: any; franchises: any[]; onClose: () => void; onSaved?: () => void }) {
+  const [fid, setFid] = useState<string>(String(initial?.franchise_id ?? (franchises[0]?.id ?? '')));
+  const [no, setNo] = useState<string>(initial?.agreement_no ?? '');
+  const [sign, setSign] = useState<string>(initial?.sign_date ? String(initial.sign_date).slice(0, 10) : '');
+  const [start, setStart] = useState<string>(initial?.start_date ? String(initial.start_date).slice(0, 10) : '');
+  const [end, setEnd] = useState<string>(initial?.end_date ? String(initial.end_date).slice(0, 10) : '');
+  const [renew, setRenew] = useState<string>(initial?.renewal_date ? String(initial.renewal_date).slice(0, 10) : '');
+  const [status, setStatus] = useState<string>(initial?.status ?? 'active');
+  const [note, setNote] = useState<string>(initial?.note ?? '');
+  const [fileKey, setFileKey] = useState<string>('');
+  const [fileName, setFileName] = useState<string>(initial?.has_document ? 'Attached document' : '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const onFile = async (file?: File) => {
+    if (!file) return;
+    try {
+      const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/franchise-agreements/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
+      const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+      if (!res.ok) throw new Error('Upload failed');
+      setFileKey(r2_key); setFileName(file.name); toast('Document uploaded');
+    } catch (e) { toast((e as Error).message, true); }
+  };
+  const save = async () => {
+    setErr(''); setBusy(true);
+    try {
+      await api.post('/franchise-agreements', {
+        id: initial?.id, franchise_id: Number(fid), agreement_no: no, sign_date: sign || null,
+        start_date: start || null, end_date: end || null, renewal_date: renew || null, status, note,
+        document_r2_key: fileKey || null,
+      });
+      toast('Agreement saved'); onSaved?.(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 640 }}>
+        <div className="ah"><h3><Ic k="doc" />{initial ? 'Edit agreement' : 'New agreement'}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld"><label htmlFor="ag-fr">Franchise <span className="star">*</span></label>
+              <select id="ag-fr" className="ainp" value={fid} onChange={(e) => setFid(e.target.value)}>
+                {franchises.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+            <div className="fld"><label htmlFor="ag-no">Agreement no</label><input id="ag-no" className="ainp" value={no} onChange={(e) => setNo(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="ag-sign">Sign date</label><input id="ag-sign" className="ainp" type="date" value={sign} onChange={(e) => setSign(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="ag-start">Start</label><input id="ag-start" className="ainp" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="ag-end">End</label><input id="ag-end" className="ainp" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="ag-renew">Renewal date</label><input id="ag-renew" className="ainp" type="date" value={renew} onChange={(e) => setRenew(e.target.value)} /></div>
+            <div className="fld"><label htmlFor="ag-status">Status</label>
+              <select id="ag-status" className="ainp" value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="active">Active</option><option value="renewed">Renewed</option><option value="expiring">Expiring</option><option value="expired">Expired</option>
+              </select>
+            </div>
+            <div className="fld"><label htmlFor="ag-doc">Signed document</label>
+              <input id="ag-doc" type="file" onChange={(e) => onFile(e.target.files?.[0])} />
+              {fileName ? <span className="sub" style={{ marginTop: 4 }}>{fileName}</span> : null}
+            </div>
+            <div className="fld span2"><label htmlFor="ag-note">Note</label><input id="ag-note" className="ainp" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+          </div>
+          {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
+        </div>
+        <div className="af"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !fid} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save agreement'}</button></div>
+      </div>
+    </div>
+  );
+}
+
+export function AgreementsScreen() {
+  const { can } = useAuth();
+  const franchises = useFetch<any[]>('/franchises', []);
+  const list = franchises.data ?? [];
+  const [fid, setFid] = useState<string>('');
+  const qs = new URLSearchParams();
+  if (fid) qs.set('franchise_id', fid);
+  const { data, reload } = useFetch<any[]>(`/franchise-agreements?${qs.toString()}`, [fid]);
+  const expiring = useFetch<any[]>('/franchise-agreements/expiring?days=60', []);
+  const rows = data ?? [];
+  const [modal, setModal] = useState(false);
+  const [edit, setEdit] = useState<any>(null);
+
+  const del = async (a: any) => { if (!confirm('Delete this agreement?')) return; try { await api.del(`/franchise-agreements/${a.id}`); toast('Agreement deleted'); reload(); } catch (e) { toast((e as Error).message); } };
+  const openDoc = async (a: any) => { try { const d = await api.get<any>(`/franchise-agreements/${a.id}`); if (d.document_url) window.open(d.document_url, '_blank', 'noopener'); else toast('No document attached', true); } catch (e) { toast((e as Error).message, true); } };
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <FranchisePick list={list} value={fid} onChange={setFid} allowAll />
+        <div style={{ marginLeft: 'auto' }}>
+          {can('franchise.update') && <button className="btn primary" onClick={() => setModal(true)}><Ic k="plus" />New agreement</button>}
+        </div>
+      </div>
+      {(expiring.data ?? []).length > 0 && (
+        <div className="notice" style={{ marginBottom: 12 }}><Ic k="clock" />
+          <div><b>Renewal reminder</b> — {(expiring.data ?? []).length} agreement(s) expire within 60 days: {(expiring.data ?? []).map((a: any) => `${a.franchise_name} (${ymd(a.end_date)})`).join(', ')}.</div>
+        </div>
+      )}
+      <TableCard
+        title="Franchise agreements" icon="doc"
+        cols={['Franchise', 'Agreement #', 'Start', 'End', 'Renewal', 'Status', 'Document', '']}
+        empty="No agreements yet — add one and attach the signed document."
+        rows={rows.map((a): Cell[] => [
+          { node: <b>{a.franchise_name}</b> },
+          a.agreement_no || '—',
+          ymd(a.start_date), ymd(a.end_date), ymd(a.renewal_date),
+          { b: AGR_STATUS[a.derived_status] ?? ['—', 'b-gray'] },
+          { node: a.has_document ? <a href="#" onClick={(e) => { e.preventDefault(); void openDoc(a); }}>Open</a> : <span>—</span> },
+          {
+            node: (
+              <div className="rowacts">
+                {can('franchise.update') && <button className="icon-btn sm" title="Edit" onClick={(e) => { e.stopPropagation(); setEdit(a); }}><Ic k="pencil" /></button>}
+                {can('franchise.update') && <button className="icon-btn sm" title="Delete" onClick={(e) => { e.stopPropagation(); void del(a); }}><Ic k="trash" /></button>}
+              </div>
+            ),
+          },
+        ])}
+      />
+      {(modal || edit) && <AgreementModal initial={edit} franchises={list} onClose={() => { setModal(false); setEdit(null); }} onSaved={() => { reload(); expiring.reload(); }} />}
+    </>
+  );
+}
+
+/* -------------------------------------------------------------- Onboarding */
+export function FranchiseOnboardingScreen() {
+  const { can } = useAuth();
+  const franchises = useFetch<any[]>('/franchises', []);
+  const list = franchises.data ?? [];
+  const [fid, setFid] = useState<string>('');
+  const chosen = fid || (list[0] ? String(list[0].id) : '');
+  const { data, reload } = useFetch<any>(chosen ? `/franchises/${chosen}/onboarding` : null, [chosen]);
+  const [newStep, setNewStep] = useState('');
+  const steps = data?.steps ?? [];
+
+  const toggle = async (s: any) => { try { await api.post(`/franchises/${chosen}/onboarding/${s.id}/toggle`, { done: !s.done }); reload(); } catch (e) { toast((e as Error).message); } };
+  const addStep = async () => { const t = newStep.trim(); if (!t) return; try { await api.post(`/franchises/${chosen}/onboarding/steps`, { title: t }); setNewStep(''); reload(); } catch (e) { toast((e as Error).message); } };
+  const rmStep = async (s: any) => { if (!confirm('Remove this step?')) return; try { await api.del(`/franchises/${chosen}/onboarding/steps/${s.id}`); reload(); } catch (e) { toast((e as Error).message); } };
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <FranchisePick list={list} value={chosen} onChange={setFid} />
+      </div>
+      {!chosen ? <div className="notice"><Ic k="bolt" /><div>Add a franchise first, then its onboarding checklist appears here.</div></div> : (
+        <>
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card-pad">
+              <div className="sub" style={{ marginTop: 0 }}><b>Onboarding progress — {data ? `${data.done}/${data.total} (${data.progress_pct}%)` : '—'}</b></div>
+              <div style={{ background: 'var(--line)', borderRadius: 6, height: 10, marginTop: 6, overflow: 'hidden' }}>
+                <div style={{ width: `${data?.progress_pct ?? 0}%`, height: '100%', background: 'var(--green, #16a34a)' }} />
+              </div>
+            </div>
+          </div>
+          <TableCard
+            title="Onboarding steps" icon="check"
+            cols={['#', 'Step', 'Done', 'Completed by', 'When', '']}
+            empty="No steps — the default template will seed on first load."
+            rows={steps.map((s: any, i: number): Cell[] => [
+              String(i + 1),
+              { node: s.done ? <span style={{ textDecoration: 'line-through', color: 'var(--muted)' }}>{s.title}</span> : <b>{s.title}</b> },
+              { node: <input type="checkbox" checked={!!s.done} disabled={!can('franchise.update')} onChange={() => void toggle(s)} /> },
+              s.completed_by_name || '—',
+              s.completed_at ? ymd(s.completed_at) : '—',
+              { node: can('franchise.update') ? <button className="icon-btn sm" title="Remove step" onClick={() => void rmStep(s)}><Ic k="trash" /></button> : <span>—</span> },
+            ])}
+          />
+          {can('franchise.update') && (
+            <div className="filters" style={{ marginTop: 10 }}>
+              <input className="ainp" style={{ maxWidth: 320 }} value={newStep} onChange={(e) => setNewStep(e.target.value)} placeholder="Add a custom onboarding step…" />
+              <button className="btn" onClick={addStep}><Ic k="plus" />Add step</button>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/* --------------------------------------------------------------- Territory */
+export function TerritoryScreen() {
+  const { can } = useAuth();
+  const franchises = useFetch<any[]>('/franchises', []);
+  const list = franchises.data ?? [];
+  const [fid, setFid] = useState<string>('');
+  const chosen = fid || (list[0] ? String(list[0].id) : '');
+  const { data, reload } = useFetch<any[]>(chosen ? `/franchises/${chosen}/territory` : null, [chosen]);
+  const rows = data ?? [];
+  const [kind, setKind] = useState('city');
+  const [value, setValue] = useState('');
+  const [note, setNote] = useState('');
+
+  const add = async () => { const v = value.trim(); if (!v) return; try { await api.post(`/franchises/${chosen}/territory`, { kind, value: v, note }); setValue(''); setNote(''); reload(); } catch (e) { toast((e as Error).message); } };
+  const del = async (t: any) => { if (!confirm('Remove this territory?')) return; try { await api.del(`/franchises/${chosen}/territory/${t.id}`); reload(); } catch (e) { toast((e as Error).message); } };
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <FranchisePick list={list} value={chosen} onChange={setFid} />
+      </div>
+      {!chosen ? <div className="notice"><Ic k="bolt" /><div>Add a franchise first, then map its operating territory here.</div></div> : (
+        <>
+          <TableCard
+            title="Territory — allowed operating area(s)" icon="branch"
+            cols={['Type', 'Value', 'Note', 'Overlap', '']}
+            empty="No territory mapped — add the cities / regions / pincodes this franchise operates in."
+            rows={rows.map((t): Cell[] => [
+              t.kind,
+              { node: <b>{t.value}</b> },
+              t.note || '—',
+              { node: t.overlaps_with ? <span className="b b-amber" title={`Also mapped to ${t.overlaps_with}`}>Shared: {t.overlaps_with}</span> : <span>—</span> },
+              { node: can('franchise.update') ? <button className="icon-btn sm" title="Remove" onClick={() => void del(t)}><Ic k="trash" /></button> : <span>—</span> },
+            ])}
+          />
+          {can('franchise.update') && (
+            <div className="filters" style={{ marginTop: 10 }}>
+              <select className="ainp" style={{ maxWidth: 140 }} value={kind} onChange={(e) => setKind(e.target.value)}>
+                <option value="city">City</option><option value="region">Region</option><option value="pincode">Pincode</option><option value="area">Area</option>
+              </select>
+              <input className="ainp" style={{ maxWidth: 240 }} value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. Pune / 411001 / West Zone" />
+              <input className="ainp" style={{ maxWidth: 240 }} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" />
+              <button className="btn" onClick={add}><Ic k="plus" />Add territory</button>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/* -------------------------------------------------------- Franchise Reports */
+export function FranchiseReportsScreen() {
+  const [range, setRange] = useState<DateRangeValue>({});
+  const qs = new URLSearchParams();
+  if (range.from) qs.set('from', range.from);
+  if (range.to) qs.set('to', range.to);
+  const { data, reload } = useFetch<any>(`/franchise-reports?${qs.toString()}`, [range.from, range.to]);
+  const rows = data?.rows ?? [];
+  const t = data?.totals;
+
+  const exportCsv = () => {
+    const headers = ['Franchise', 'Code', 'Status', 'Branches', 'Active branches', 'Students', 'Enrolments',
+      'Revenue collected', 'Net revenue', 'Outstanding dues', 'Royalty billed', 'Royalty paid', 'Royalty outstanding'];
+    const body = rows.map((r: any) => [
+      r.franchise_name, r.code, r.status, r.branches, r.active_branches, r.students, r.enrolments,
+      (r.revenue_collected_minor / 100).toFixed(2), (r.net_revenue_minor / 100).toFixed(2), (r.outstanding_dues_minor / 100).toFixed(2),
+      (r.royalty_billed_minor / 100).toFixed(2), (r.royalty_paid_minor / 100).toFixed(2), (r.royalty_outstanding_minor / 100).toFixed(2),
+    ]);
+    downloadMatrixCsv('franchise-report.csv', headers, body);
+  };
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <DateRange value={range} onChange={setRange} idPrefix="frep-dr" />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={reload}><Ic k="refresh" />Refresh</button>
+          <button className="btn" onClick={exportCsv}><Ic k="export" />Export CSV</button>
+        </div>
+      </div>
+      <TableCard
+        title="Franchise reports — per-franchise rollup" icon="rupee"
+        cols={['Franchise', 'Branches', 'Students', 'Enrolments', 'Revenue collected', 'Net revenue', 'Outstanding dues', 'Royalty billed', 'Royalty paid', 'Royalty outstanding']}
+        empty="No franchises to report on yet."
+        rows={[
+          ...rows.map((r: any): Cell[] => [
+            { node: <b>{r.franchise_name}</b> },
+            `${r.active_branches}/${r.branches}`,
+            String(r.students), String(r.enrolments),
+            { mono: fmtINR(r.revenue_collected_minor) },
+            { mono: fmtINR(r.net_revenue_minor) },
+            { mono: fmtINR(r.outstanding_dues_minor) },
+            { mono: fmtINR(r.royalty_billed_minor) },
+            { mono: fmtINR(r.royalty_paid_minor) },
+            { mono: fmtINR(r.royalty_outstanding_minor) },
+          ]),
+          ...(t ? [[
+            { node: <b>Total</b> } as Cell,
+            '—', { node: <b>{t.students}</b> } as Cell, { node: <b>{t.enrolments}</b> } as Cell,
+            { node: <b>{fmtINR(t.revenue_collected_minor)}</b> } as Cell,
+            { node: <b>{fmtINR(t.net_revenue_minor)}</b> } as Cell,
+            { node: <b>{fmtINR(t.outstanding_dues_minor)}</b> } as Cell,
+            { node: <b>{fmtINR(t.royalty_billed_minor)}</b> } as Cell,
+            { node: <b>{fmtINR(t.royalty_paid_minor)}</b> } as Cell,
+            { node: <b>{fmtINR(t.royalty_outstanding_minor)}</b> } as Cell,
+          ] as Cell[]] : []),
+        ]}
+      />
     </>
   );
 }

@@ -83,7 +83,8 @@ import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './
 import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, AssessmentTemplatesScreen, AssessmentEvaluationScreen, AssessmentResultsScreen, GradeSchemesScreen, AssessmentCertificatesScreen } from './assessments';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
-import { FranchisesScreen, RoyaltyPlansScreen, FranchiseDashboardScreen, RoyaltyStatementScreen } from './franchise';
+import { FranchisesScreen, RoyaltyPlansScreen, FranchiseDashboardScreen, RoyaltyStatementScreen,
+  RoyaltyInvoicesScreen, OutstandingRoyaltiesScreen, AgreementsScreen, FranchiseOnboardingScreen, TerritoryScreen, FranchiseReportsScreen } from './franchise';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -7629,6 +7630,12 @@ export const DYN: Record<string, () => JSX.Element> = {
   royaltyPlans: RoyaltyPlansScreen,
   franchiseDashboard: FranchiseDashboardScreen,
   royaltyStatement: RoyaltyStatementScreen,
+  royaltyInvoices: RoyaltyInvoicesScreen,
+  outstandingRoyalties: OutstandingRoyaltiesScreen,
+  franchiseAgreements: AgreementsScreen,
+  franchiseOnboarding: FranchiseOnboardingScreen,
+  franchiseTerritory: TerritoryScreen,
+  franchiseReports: FranchiseReportsScreen,
   feeCollection: FeeCollection,
   branches: Branches,
   verticals: Verticals,
