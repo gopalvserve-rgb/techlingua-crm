@@ -72,6 +72,25 @@ export class AuthService {
         WHERE ua.user_id = $1 AND ua.is_active`,
       [userId],
     );
-    return { user, permissionKeys, assignments };
+    // FRANCHISE-OWNER context (Phase 4 Batch 3) — if this user owns / is mapped to any
+    // franchise, surface it so the SPA renders the Partner Portal auto-scoped to THEIR
+    // franchise (no franchise selector for an owner). Non-owners get franchise: null.
+    const franchiseScope = await this.rbacData.loadFranchiseScope(userId);
+    let franchise: { is_owner: boolean; franchise_ids: number[]; branch_ids: number[]; primary: any } | null = null;
+    if (franchiseScope.isOwner) {
+      const primary = await this.db.one(
+        `SELECT id, name, code, status FROM franchise
+          WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL
+          ORDER BY (status = 'active') DESC, id LIMIT 1`,
+        [franchiseScope.franchiseIds],
+      );
+      franchise = {
+        is_owner: true,
+        franchise_ids: franchiseScope.franchiseIds,
+        branch_ids: franchiseScope.branchIds,
+        primary: primary ?? null,
+      };
+    }
+    return { user, permissionKeys, assignments, franchise };
   }
 }

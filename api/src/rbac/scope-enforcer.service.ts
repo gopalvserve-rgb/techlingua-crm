@@ -131,7 +131,7 @@ export class ScopeEnforcerService {
     const uniq = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
     if (!uniq.length) return [];
     if (!scope || !scope.allowed) return [];
-    if (scope.all) return uniq;
+    if (scope.all && !Array.isArray(scope.franchiseBranchIds)) return uniq;
     if (kind === 'master' || kind === 'error_log') return [];
 
     if (kind === 'user') {
@@ -171,7 +171,9 @@ export class ScopeEnforcerService {
     scope: ResolvedScope, kind: ScopedEntityKind, id: number, requesterId?: number,
   ): Promise<'ok' | 'miss' | 'unmapped'> {
     if (!scope || !scope.allowed) return 'miss'; // defensive; PermissionsGuard already 403s
-    if (scope.all) return 'ok';
+    // A franchise owner is never unconditionally in-scope: their franchiseBranchIds must
+    // still narrow by-ID / bulk access (fall through to buildScopeWhere below).
+    if (scope.all && !Array.isArray(scope.franchiseBranchIds)) return 'ok';
 
     // Masters & error logs are org-level (no branch/vertical columns). Consistent with the
     // resolver's rule — entities lacking a scoped column can't be narrowed —

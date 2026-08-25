@@ -85,6 +85,7 @@ export class FranchiseService {
       owner_name: f.owner_name, owner_email: f.owner_email, owner_phone: f.owner_phone,
       address: f.address, city: f.city, gst_no: f.gst_no, status: f.status,
       agreement_start: f.agreement_start, agreement_end: f.agreement_end, note: f.note,
+      owner_user_id: f.owner_user_id == null ? null : Number(f.owner_user_id),
       branches: branches.map((b) => ({ id: Number(b.id), name: b.name, code: b.code })),
       branch_ids: branches.map((b) => Number(b.id)),
     };
@@ -121,15 +122,17 @@ export class FranchiseService {
 
     return this.db.tx(async (c) => {
       let fid: number;
+      const ownerUserId = dto?.owner_user_id ? Number(dto.owner_user_id) : null;
       const fields = [name, code, dto?.owner_name ?? null, dto?.owner_email ?? null, dto?.owner_phone ?? null,
         dto?.address ?? null, dto?.city ?? null, dto?.gst_no ?? null, status,
-        dto?.agreement_start || null, dto?.agreement_end || null, dto?.note ?? null];
+        dto?.agreement_start || null, dto?.agreement_end || null, dto?.note ?? null,
+        Number.isInteger(ownerUserId) && ownerUserId! > 0 ? ownerUserId : null];
       try {
         if (id) {
           const upd = await c.query(
             `UPDATE franchise SET name=$2, code=$3, owner_name=$4, owner_email=$5, owner_phone=$6,
                     address=$7, city=$8, gst_no=$9, status=$10, agreement_start=$11, agreement_end=$12,
-                    note=$13, updated_at=now()
+                    note=$13, owner_user_id=$14::bigint, updated_at=now()
               WHERE id=$1::bigint AND deleted_at IS NULL RETURNING id`,
             [id, ...fields],
           );
@@ -138,8 +141,8 @@ export class FranchiseService {
         } else {
           const ins = await c.query(
             `INSERT INTO franchise (org_id, name, code, owner_name, owner_email, owner_phone,
-                    address, city, gst_no, status, agreement_start, agreement_end, note, created_by)
-             VALUES ($1::bigint,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint) RETURNING id`,
+                    address, city, gst_no, status, agreement_start, agreement_end, note, owner_user_id, created_by)
+             VALUES ($1::bigint,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint,$15::bigint) RETURNING id`,
             [orgId, ...fields, me.id],
           );
           fid = Number(ins.rows[0].id);

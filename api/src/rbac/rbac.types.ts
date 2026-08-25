@@ -53,6 +53,13 @@ export interface ResolvedScope {
   allowedFields: string[] | null;
   /** fields denied by every contributing grant (deny only sticks if unanimous). */
   deniedFields: string[];
+  /**
+   * FRANCHISE-OWNER LAYER (Phase 4 Batch 3). When the caller is a franchise owner this
+   * holds their franchise's mapped branch_ids and every branch-bearing query is AND-narrowed
+   * to it (see buildScopeWhere). `null`/undefined = not an owner -> no effect (zero regression).
+   * `[]` = an owner whose franchise maps no branches -> branch entities resolve to no rows.
+   */
+  franchiseBranchIds?: number[] | null;
 }
 
 /** Column names used to translate ScopeFilters into SQL for a given entity/alias. */

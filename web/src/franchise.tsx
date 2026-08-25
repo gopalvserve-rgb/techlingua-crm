@@ -13,7 +13,7 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { DateRange, DateRangeValue } from './daterange';
 import { fmtINR, minorToInput } from './money';
 import { downloadMatrixCsv } from './listtools';
@@ -137,6 +137,7 @@ function FranchiseModal({ initial, onClose, onSaved }: { initial?: any; onClose:
   const [aStart, setAStart] = useState<string>(initial?.agreement_start ? String(initial.agreement_start).slice(0, 10) : '');
   const [aEnd, setAEnd] = useState<string>(initial?.agreement_end ? String(initial.agreement_end).slice(0, 10) : '');
   const [note, setNote] = useState<string>(initial?.note ?? '');
+  const [ownerUserId, setOwnerUserId] = useState<string>(initial?.owner_user_id ? String(initial.owner_user_id) : '');
   const [branchIds, setBranchIds] = useState<number[]>(initial?.branch_ids ?? []);
   const [seeded, setSeeded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -152,6 +153,7 @@ function FranchiseModal({ initial, onClose, onSaved }: { initial?: any; onClose:
     setAStart(full.data.agreement_start ? String(full.data.agreement_start).slice(0, 10) : '');
     setAEnd(full.data.agreement_end ? String(full.data.agreement_end).slice(0, 10) : '');
     setNote(full.data.note ?? ''); setBranchIds(full.data.branch_ids ?? []);
+    setOwnerUserId(full.data.owner_user_id ? String(full.data.owner_user_id) : '');
   }
   const toggle = (id: number) => setBranchIds((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
 
@@ -161,7 +163,7 @@ function FranchiseModal({ initial, onClose, onSaved }: { initial?: any; onClose:
       await api.post('/franchises', {
         id: initial?.id, name, code, owner_name: ownerName, owner_email: ownerEmail, owner_phone: ownerPhone,
         address, city, gst_no: gst, status, agreement_start: aStart || null, agreement_end: aEnd || null,
-        note, branch_ids: branchIds,
+        note, owner_user_id: ownerUserId ? Number(ownerUserId) : null, branch_ids: branchIds,
       });
       toast('Franchise saved'); onSaved?.(); onClose();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
@@ -200,6 +202,14 @@ function FranchiseModal({ initial, onClose, onSaved }: { initial?: any; onClose:
                   </label>
                 ))}
               </div>
+            </div>
+            <div className="fld span2">
+              <label htmlFor="fr-owner-user">Portal login user (Franchise Owner)</label>
+              <div className="fhint">Link a user account as this franchise's owner. When they log in they see ONLY this franchise's data (Partner Portal). Assign the "Franchise Owner" role to that user under Users.</div>
+              <select id="fr-owner-user" className="ainp" value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)}>
+                <option value="">— none —</option>
+                {selectableUsers((ref.users ?? []) as any, ownerUserId).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
             </div>
             <div className="fld span2"><label htmlFor="fr-note">Note</label><textarea id="fr-note" className="ainp" rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></div>
           </div>
@@ -1113,6 +1123,301 @@ export function FranchiseReportsScreen() {
           ] as Cell[]] : []),
         ]}
       />
+    </>
+  );
+}
+
+/* ==================================================================== */
+/*  FRANCHISE TARGETS & PERFORMANCE (Phase 4 Batch 3)                    */
+/* ==================================================================== */
+const TPERIODS: Array<[string, string]> = [
+  ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['half_yearly', 'Half-yearly'], ['yearly', 'Yearly'], ['custom', 'Custom'],
+];
+const pctBar = (p: number): [string, string] =>
+  p >= 100 ? ['b-green', 'var(--green, #16a34a)'] : p >= 60 ? ['b-indigo', 'var(--indigo, #6366f1)'] : ['b-amber', 'var(--amber, #f59e0b)'];
+
+function TargetModal({ franchises, onClose, onSaved }: { franchises: any[]; onClose: () => void; onSaved?: () => void }) {
+  const [fid, setFid] = useState<string>(franchises[0] ? String(franchises[0].id) : '');
+  const [name, setName] = useState('');
+  const [period, setPeriod] = useState('monthly');
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [adm, setAdm] = useState('0');
+  const [enr, setEnr] = useState('0');
+  const [rev, setRev] = useState('0');
+  const [coll, setColl] = useState('0');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const save = async () => {
+    setErr(''); setBusy(true);
+    try {
+      await api.post('/franchise-targets', {
+        franchise_id: Number(fid), name, period_type: period, period_start: start || null, period_end: end || null,
+        admissions_target: Number(adm) || 0, enrolments_target: Number(enr) || 0,
+        revenue_target_minor: Math.round((Number(rev) || 0) * 100), collection_target_minor: Math.round((Number(coll) || 0) * 100),
+      });
+      toast('Target saved'); onSaved?.(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim"><div className="add-modal" style={{ maxWidth: 640 }}>
+      <div className="ah"><h3><Ic k="target" />New franchise target</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+      <div className="abody"><div className="form-grid">
+        <div className="fld"><label htmlFor="ft-fr">Franchise <span className="star">*</span></label>
+          <select id="ft-fr" className="ainp" value={fid} onChange={(e) => setFid(e.target.value)}>
+            {franchises.length === 0 ? <option value="">No franchises</option> : franchises.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select></div>
+        <div className="fld"><label htmlFor="ft-name">Target name <span className="star">*</span></label><input id="ft-name" className="ainp" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Q3 FY26" /></div>
+        <div className="fld"><label htmlFor="ft-per">Period</label>
+          <select id="ft-per" className="ainp" value={period} onChange={(e) => setPeriod(e.target.value)}>{TPERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+        <div className="fld"><label htmlFor="ft-s">Period start <span className="star">*</span></label><input id="ft-s" type="date" className="ainp" value={start} onChange={(e) => setStart(e.target.value)} /></div>
+        <div className="fld"><label htmlFor="ft-e">Period end <span className="star">*</span></label><input id="ft-e" type="date" className="ainp" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+        <div className="fld"><label htmlFor="ft-adm">Admissions target</label><input id="ft-adm" className="ainp" type="number" value={adm} onChange={(e) => setAdm(e.target.value)} /></div>
+        <div className="fld"><label htmlFor="ft-enr">Enrolments target</label><input id="ft-enr" className="ainp" type="number" value={enr} onChange={(e) => setEnr(e.target.value)} /></div>
+        <div className="fld"><label htmlFor="ft-rev">Revenue target (₹)</label><input id="ft-rev" className="ainp" type="number" value={rev} onChange={(e) => setRev(e.target.value)} /></div>
+        <div className="fld"><label htmlFor="ft-coll">Collection target (₹)</label><input id="ft-coll" className="ainp" type="number" value={coll} onChange={(e) => setColl(e.target.value)} /></div>
+      </div>{err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}</div>
+      <div className="af"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save target'}</button></div>
+    </div></div>
+  );
+}
+
+function TargetPerfModal({ id, onClose }: { id: number; onClose: () => void }) {
+  const { data } = useFetch<any>(`/franchise-targets/${id}/performance`, [id]);
+  const m = data?.metrics ?? [];
+  return (
+    <div className="add-scrim"><div className="add-modal" style={{ maxWidth: 620 }}>
+      <div className="ah"><h3><Ic k="target" />{data?.target?.name ?? 'Performance'} — target vs actual</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+      <div className="abody">
+        {!data ? <div className="sub">Loading…</div> : (
+          <>
+            <div className="sub" style={{ marginTop: 0 }}>{data.target.franchise_name} · {ymd(data.target.period_start)} → {ymd(data.target.period_end)} · overall <b>{data.overall_pct}%</b></div>
+            {m.map((x: any) => {
+              const bar = pctBar(x.pct);
+              return (
+                <div key={x.key} className="card" style={{ marginTop: 10 }}><div className="card-pad">
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <b>{x.label}</b>
+                    <span>{x.money ? fmtINR(x.actual) : x.actual} / {x.money ? fmtINR(x.target) : x.target} <span className={`badge ${bar[0]}`} style={{ marginLeft: 6 }}>{x.pct}%</span></span>
+                  </div>
+                  <div style={{ height: 8, background: 'var(--line)', borderRadius: 6, marginTop: 8, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${Math.min(100, x.pct)}%`, background: bar[1] }} />
+                  </div>
+                </div></div>
+              );
+            })}
+          </>
+        )}
+      </div>
+      <div className="af"><button className="btn" onClick={onClose}>Close</button></div>
+    </div></div>
+  );
+}
+
+export function FranchiseTargetsScreen() {
+  const franchises = useFetch<any[]>('/franchises', []);
+  const list = franchises.data ?? [];
+  const { data, reload } = useFetch<any[]>('/franchise-targets', []);
+  const board = useFetch<any[]>('/franchise-targets/leaderboard', []);
+  const [add, setAdd] = useState(false);
+  const [perf, setPerf] = useState<number | null>(null);
+  const rows = data ?? [];
+  const del = async (id: number) => { if (!confirm('Delete this target?')) return; try { await api.del(`/franchise-targets/${id}`); toast('Target deleted'); reload(); board.reload(); } catch (e) { toast((e as Error).message, true); } };
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={() => { reload(); board.reload(); }}><Ic k="refresh" />Refresh</button>
+          <button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />New target</button>
+        </div>
+      </div>
+      <TableCard
+        title="Franchise targets" icon="target"
+        cols={['Franchise', 'Target', 'Period', 'Admissions', 'Enrolments', 'Revenue', 'Collection', '']}
+        empty="No franchise targets yet. Add one to track a franchise's admissions, revenue and collection against a goal."
+        rows={rows.map((r: any): Cell[] => [
+          { node: <b>{r.franchise_name}</b> }, r.name,
+          `${ymd(r.period_start)} → ${ymd(r.period_end)}`,
+          String(r.admissions_target), String(r.enrolments_target),
+          { mono: fmtINR(r.revenue_target_minor) }, { mono: fmtINR(r.collection_target_minor) },
+          { node: <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn xs" onClick={() => setPerf(r.id)}><Ic k="analytics" />Performance</button>
+            <button className="btn xs danger" onClick={() => del(r.id)}><Ic k="trash" /></button>
+          </div> },
+        ])}
+      />
+      <div style={{ marginTop: 16 }} />
+      <TableCard
+        title="Leaderboard — active targets, ranked by achievement" icon="target"
+        cols={['Rank', 'Franchise', 'Target', 'Overall %']}
+        empty="No active franchise targets in the current period."
+        rows={(board.data ?? []).map((r: any): Cell[] => [
+          { node: <b>#{r.rank}</b> }, r.franchise_name, r.target_name,
+          { node: <span className={`badge ${pctBar(r.overall_pct)[0]}`}>{r.overall_pct}%</span> },
+        ])}
+      />
+      {add && <TargetModal franchises={list} onClose={() => setAdd(false)} onSaved={() => { reload(); board.reload(); }} />}
+      {perf != null && <TargetPerfModal id={perf} onClose={() => setPerf(null)} />}
+    </>
+  );
+}
+
+/* ==================================================================== */
+/*  FRANCHISE COMPLIANCE & AUDITS (Phase 4 Batch 3)                      */
+/* ==================================================================== */
+const CSTATUS: Array<[string, string, string]> = [
+  ['pending', 'Pending', 'b-gray'], ['compliant', 'Compliant', 'b-green'],
+  ['non_compliant', 'Non-compliant', 'b-rose'], ['na', 'N/A', 'b-gray'],
+];
+const cLabel = (s: string) => CSTATUS.find(([k]) => k === s)?.[1] ?? s;
+const cBadge = (s: string) => CSTATUS.find(([k]) => k === s)?.[2] ?? 'b-gray';
+
+export function FranchiseComplianceScreen() {
+  const franchises = useFetch<any[]>('/franchises', []);
+  const list = franchises.data ?? [];
+  const [fid, setFid] = useState<string>('');
+  const chosen = fid || (list[0] ? String(list[0].id) : '');
+  const { data, reload } = useFetch<any>(chosen ? `/franchises/${chosen}/compliance` : null, [chosen]);
+  const audit = useFetch<any[]>(chosen ? `/franchise-audit?franchise_id=${chosen}` : null, [chosen]);
+  const s = data?.summary;
+  const items = data?.items ?? [];
+
+  const setStatus = async (itemId: number, status: string) => {
+    try { await api.post(`/franchises/${chosen}/compliance/items/${itemId}`, { status }); reload(); audit.reload(); }
+    catch (e) { toast((e as Error).message, true); }
+  };
+  const setDue = async (itemId: number, due_date: string) => {
+    try { await api.post(`/franchises/${chosen}/compliance/items/${itemId}`, { status: items.find((i: any) => i.id === itemId)?.status ?? 'pending', due_date }); reload(); }
+    catch (e) { toast((e as Error).message, true); }
+  };
+  const upload = async (itemId: number, file: File) => {
+    try {
+      const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/franchise-compliance/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
+      await fetch(url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+      await api.post(`/franchises/${chosen}/compliance/items/${itemId}`, { status: items.find((i: any) => i.id === itemId)?.status ?? 'pending', evidence_key: r2_key, evidence_name: file.name });
+      toast('Evidence uploaded'); reload();
+    } catch (e) { toast((e as Error).message, true); }
+  };
+  const addItem = async () => {
+    const title = prompt('New compliance item title:'); if (!title) return;
+    try { await api.post(`/franchises/${chosen}/compliance/items`, { title }); reload(); } catch (e) { toast((e as Error).message, true); }
+  };
+  const del = async (itemId: number) => { if (!confirm('Remove this item?')) return; try { await api.del(`/franchises/${chosen}/compliance/items/${itemId}`); reload(); } catch (e) { toast((e as Error).message, true); } };
+
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <label className="fchip"><Ic k="fran" />
+          <select value={chosen} onChange={(e) => setFid(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }}>
+            {list.length === 0 ? <option value="">No franchises</option> : list.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        </label>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={reload}><Ic k="refresh" />Refresh</button>
+          <button className="btn primary" onClick={addItem} disabled={!chosen}><Ic k="plus" />Add item</button>
+        </div>
+      </div>
+      {!chosen ? <div className="notice"><Ic k="bolt" /><div>Add a franchise first, then its compliance checklist appears here.</div></div> : (
+        <>
+          {s && <Kpis items={[
+            { lab: 'Compliance %', val: `${s.progress_pct}%`, ic: 'check' },
+            { lab: 'Compliant', val: `${s.compliant}/${s.applicable}`, ic: 'check' },
+            { lab: 'Non-compliant', val: String(s.non_compliant), ic: 'bolt' },
+            { lab: 'Pending', val: String(s.pending), ic: 'list' },
+            { lab: 'Overdue', val: String(s.overdue), ic: 'bolt' },
+          ]} />}
+          <TableCard
+            title="Compliance checklist" icon="check"
+            cols={['Item', 'Category', 'Status', 'Due date', 'Evidence', '']}
+            empty="No compliance items."
+            rows={items.map((i: any): Cell[] => [
+              { node: <b>{i.title}</b> }, i.category,
+              { node: <select className="ainp" style={{ padding: '2px 6px', minWidth: 130 }} value={i.status} onChange={(e) => setStatus(i.id, e.target.value)}>
+                {CSTATUS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select> },
+              { node: <input type="date" className="ainp" style={{ padding: '2px 6px' }} value={i.due_date ? String(i.due_date).slice(0, 10) : ''} onChange={(e) => setDue(i.id, e.target.value)} /> },
+              { node: i.has_evidence
+                ? <a className="btn xs" href={i.evidence_url || '#'} target="_blank" rel="noreferrer"><Ic k="doc" />{i.evidence_name || 'View'}</a>
+                : <label className="btn xs" style={{ cursor: 'pointer' }}><Ic k="doc" />Upload<input type="file" hidden onChange={(e) => e.target.files?.[0] && upload(i.id, e.target.files[0])} /></label> },
+              { node: <button className="btn xs danger" onClick={() => del(i.id)}><Ic k="trash" /></button> },
+            ])}
+          />
+          <div style={{ marginTop: 16 }} />
+          <TableCard
+            title="Audit trail — franchise-critical changes" icon="list"
+            cols={['When', 'Entity', 'Action', 'By']}
+            empty="No audit entries yet."
+            rows={(audit.data ?? []).map((a: any): Cell[] => [
+              { mono: a.occurred_at ? String(a.occurred_at).replace('T', ' ').slice(0, 16) : '—' },
+              `${a.entity_type}${a.entity_id != null ? ' #' + a.entity_id : ''}`,
+              { node: <span className={`badge ${a.action === 'delete' ? 'b-rose' : 'b-gray'}`}>{a.action}</span> },
+              a.actor_name ?? '—',
+            ])}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+/* ==================================================================== */
+/*  PARTNER PORTAL (franchise-owner self-service view, Phase 4 Batch 3) */
+/* ==================================================================== */
+export function FranchisePartnerPortalScreen() {
+  const [range, setRange] = useState<DateRangeValue>({});
+  const qs = new URLSearchParams();
+  if (range.from) qs.set('from', range.from);
+  if (range.to) qs.set('to', range.to);
+  const { data } = useFetch<any>(`/franchise-portal/me?${qs.toString()}`, [range.from, range.to]);
+  const invoices = useFetch<any[]>('/franchise-portal/royalty-invoices', []);
+  const k = data?.dashboard?.kpis;
+  const c = data?.compliance;
+
+  if (data === null) {
+    return <div className="notice"><Ic k="bolt" /><div>No franchise is linked to your account. Ask head office to map your user as a Franchise Owner.</div></div>;
+  }
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <div className="fchip"><Ic k="fran" /><b style={{ marginLeft: 6 }}>{data?.franchise?.name ?? 'My franchise'}</b>{data?.franchise?.status ? <span className={`badge ${statusBadge(data.franchise.status)[1]}`} style={{ marginLeft: 8 }}>{statusLabel(data.franchise.status)}</span> : null}</div>
+        <DateRange value={range} onChange={setRange} idPrefix="fpp-dr" />
+      </div>
+      <Kpis items={[
+        { lab: 'Active branches', val: k ? `${k.active_branches}/${k.total_branches}` : '—', ic: 'branch' },
+        { lab: 'Students', val: k ? String(k.students) : '—', ic: 'users' },
+        { lab: 'Enrolments', val: k ? String(k.enrolments) : '—', ic: 'list' },
+        { lab: 'Revenue collected', val: k ? fmtINR(k.revenue_collected_minor) : '—', ic: 'rupee' },
+        { lab: 'Net revenue', val: k ? fmtINR(k.net_revenue_minor) : '—', ic: 'check' },
+        { lab: 'Outstanding dues', val: k ? fmtINR(k.outstanding_minor) : '—', ic: 'bolt' },
+        { lab: 'Royalty payable', val: k ? fmtINR(k.royalty_payable_minor) : '—', ic: 'rupee' },
+        { lab: 'Compliance', val: c ? `${c.progress_pct}%` : '—', ic: 'check' },
+      ]} />
+      <div style={{ marginTop: 16 }} />
+      <TableCard
+        title="My royalty invoices" icon="rupee"
+        cols={['Invoice', 'Period', 'Amount', 'Status']}
+        empty="No royalty invoices raised yet."
+        rows={(invoices.data ?? []).map((r: any): Cell[] => [
+          { node: <b>{r.invoice_no}</b> },
+          `${ymd(r.period_from)} → ${ymd(r.period_to)}`,
+          { mono: fmtINR(r.amount_minor) },
+          { node: <span className={`badge ${invBadge(r.status)[1]}`}>{invBadge(r.status)[0]}</span> },
+        ])}
+      />
+      {Array.isArray(data?.targets) && data.targets.length > 0 && (
+        <>
+          <div style={{ marginTop: 16 }} />
+          <TableCard
+            title="My targets — achievement" icon="target"
+            cols={['Target', 'Period', 'Overall %']}
+            empty="No active targets."
+            rows={data.targets.map((r: any): Cell[] => [
+              r.target_name, `${ymd(r.period_start)} → ${ymd(r.period_end)}`,
+              { node: <span className={`badge ${pctBar(r.overall_pct)[0]}`}>{r.overall_pct}%</span> },
+            ])}
+          />
+        </>
+      )}
     </>
   );
 }

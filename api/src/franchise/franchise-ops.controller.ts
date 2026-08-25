@@ -3,6 +3,7 @@ import { CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { RoyaltyInvoiceService } from './royalty-invoice.service';
 import { AgreementService } from './agreement.service';
 import { OnboardingService, TerritoryService } from './franchise-lifecycle.service';
+import { FranchiseAccessService } from './franchise-access.service';
 
 type Me = { id: number };
 const str = (v?: string | string[]) => (Array.isArray(v) ? v[0] : v);
@@ -20,24 +21,40 @@ export class FranchiseOpsController {
     private readonly agreements: AgreementService,
     private readonly onboarding: OnboardingService,
     private readonly territory: TerritoryService,
+    private readonly access: FranchiseAccessService,
   ) {}
+
+  /** Filter a list of {franchise_id} rows to an owner's own franchises (admins: unchanged). */
+  private async ownerFilter<T extends { franchise_id?: number }>(userId: number, rows: T[]): Promise<T[]> {
+    const c = await this.access.listConstraint(userId);
+    return c ? rows.filter((r) => r.franchise_id != null && c.includes(Number(r.franchise_id))) : rows;
+  }
 
   // ------------------------------------------------------- royalty invoices
   @Get('royalty-invoices')
   @RequirePermission('royalty.read')
-  invList(@Query() q: Record<string, string | string[]>) {
-    return this.invoices.list(q.franchise_id ? int(q.franchise_id) : undefined, str(q.status));
+  async invList(@Query() q: Record<string, string | string[]>, @CurrentUser() me: Me) {
+    if (q.franchise_id) await this.access.assertCanAccess(me.id, int(q.franchise_id));
+    return this.ownerFilter(me.id, await this.invoices.list(q.franchise_id ? int(q.franchise_id) : undefined, str(q.status)));
   }
 
   @Get('royalty-invoices/outstanding')
   @RequirePermission('royalty.read')
-  invOutstanding(@Query() q: Record<string, string | string[]>) {
-    return this.invoices.outstanding(q.franchise_id ? int(q.franchise_id) : undefined);
+  async invOutstanding(@Query() q: Record<string, string | string[]>, @CurrentUser() me: Me) {
+    if (q.franchise_id) await this.access.assertCanAccess(me.id, int(q.franchise_id));
+    const res: any = await this.invoices.outstanding(q.franchise_id ? int(q.franchise_id) : undefined);
+    if (Array.isArray(res)) return this.ownerFilter(me.id, res);
+    if (res && Array.isArray(res.rows)) return { ...res, rows: await this.ownerFilter(me.id, res.rows) };
+    return res;
   }
 
   @Get('royalty-invoices/:id')
   @RequirePermission('royalty.read')
-  invGet(@Param('id', ParseIntPipe) id: number) { return this.invoices.get(id); }
+  async invGet(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me) {
+    const inv: any = await this.invoices.get(id);
+    if (inv?.franchise_id != null) await this.access.assertCanAccess(me.id, Number(inv.franchise_id));
+    return inv;
+  }
 
   @Post('royalty-invoices/from-statement')
   @RequirePermission('royalty.manage')
@@ -68,21 +85,25 @@ export class FranchiseOpsController {
   // ------------------------------------------------------- franchise reports
   @Get('franchise-reports')
   @RequirePermission('franchise.read')
-  reports(@Query() q: Record<string, string | string[]>) {
-    return this.invoices.reports({ from: str(q.from), to: str(q.to) });
+  async reports(@Query() q: Record<string, string | string[]>, @CurrentUser() me: Me) {
+    const res: any = await this.invoices.reports({ from: str(q.from), to: str(q.to) });
+    if (Array.isArray(res)) return this.ownerFilter(me.id, res);
+    if (res && Array.isArray(res.rows)) return { ...res, rows: await this.ownerFilter(me.id, res.rows) };
+    return res;
   }
 
   // ------------------------------------------------------- agreements
   @Get('franchise-agreements')
   @RequirePermission('franchise.read')
-  agrList(@Query() q: Record<string, string | string[]>) {
-    return this.agreements.list(q.franchise_id ? int(q.franchise_id) : undefined, str(q.status));
+  async agrList(@Query() q: Record<string, string | string[]>, @CurrentUser() me: Me) {
+    if (q.franchise_id) await this.access.assertCanAccess(me.id, int(q.franchise_id));
+    return this.ownerFilter(me.id, await this.agreements.list(q.franchise_id ? int(q.franchise_id) : undefined, str(q.status)));
   }
 
   @Get('franchise-agreements/expiring')
   @RequirePermission('franchise.read')
-  agrExpiring(@Query() q: Record<string, string | string[]>) {
-    return this.agreements.expiring(q.days ? int(q.days) : 60);
+  async agrExpiring(@Query() q: Record<string, string | string[]>, @CurrentUser() me: Me) {
+    return this.ownerFilter(me.id, await this.agreements.expiring(q.days ? int(q.days) : 60));
   }
 
   @Post('franchise-agreements/upload-url')
@@ -91,7 +112,11 @@ export class FranchiseOpsController {
 
   @Get('franchise-agreements/:id')
   @RequirePermission('franchise.read')
-  agrGet(@Param('id', ParseIntPipe) id: number) { return this.agreements.get(id); }
+  async agrGet(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me) {
+    const a: any = await this.agreements.get(id);
+    if (a?.franchise_id != null) await this.access.assertCanAccess(me.id, Number(a.franchise_id));
+    return a;
+  }
 
   @Post('franchise-agreements')
   @RequirePermission('franchise.update')
@@ -104,7 +129,10 @@ export class FranchiseOpsController {
   // ------------------------------------------------------- onboarding
   @Get('franchises/:id/onboarding')
   @RequirePermission('franchise.read')
-  obList(@Param('id', ParseIntPipe) id: number) { return this.onboarding.list(id); }
+  async obList(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me) {
+    await this.access.assertCanAccess(me.id, id);
+    return this.onboarding.list(id);
+  }
 
   @Post('franchises/:id/onboarding/steps')
   @RequirePermission('franchise.update')
@@ -125,7 +153,10 @@ export class FranchiseOpsController {
   // ------------------------------------------------------- territory
   @Get('franchises/:id/territory')
   @RequirePermission('franchise.read')
-  terList(@Param('id', ParseIntPipe) id: number) { return this.territory.list(id); }
+  async terList(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me) {
+    await this.access.assertCanAccess(me.id, id);
+    return this.territory.list(id);
+  }
 
   @Post('franchises/:id/territory')
   @RequirePermission('franchise.update')

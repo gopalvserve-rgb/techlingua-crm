@@ -7,6 +7,11 @@ import { RoyaltyService } from './royalty.service';
 import { RoyaltyInvoiceService } from './royalty-invoice.service';
 import { AgreementService } from './agreement.service';
 import { OnboardingService, TerritoryService } from './franchise-lifecycle.service';
+import { FranchiseAccessService } from './franchise-access.service';
+import { FranchiseTargetService } from './franchise-target.service';
+import { FranchiseComplianceService } from './franchise-compliance.service';
+import { FranchisePortalService } from './franchise-portal.service';
+import { FranchisePortalController } from './franchise-portal.controller';
 
 /**
  * FRANCHISE & ROYALTY.
@@ -20,11 +25,12 @@ import { OnboardingService, TerritoryService } from './franchise-lifecycle.servi
  */
 @Module({
   imports: [DatabaseModule],
-  controllers: [FranchiseController, FranchiseOpsController],
+  controllers: [FranchiseController, FranchiseOpsController, FranchisePortalController],
   providers: [
     FranchiseService, RoyaltyService, RoyaltyInvoiceService,
     AgreementService, OnboardingService, TerritoryService,
+    FranchiseAccessService, FranchiseTargetService, FranchiseComplianceService, FranchisePortalService,
   ],
-  exports: [FranchiseService, RoyaltyService, RoyaltyInvoiceService],
+  exports: [FranchiseService, RoyaltyService, RoyaltyInvoiceService, FranchiseAccessService],
 })
 export class FranchiseModule {}

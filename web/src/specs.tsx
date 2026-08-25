@@ -577,6 +577,8 @@ const APP_FULL: ModuleItem[] = [
 
   /* ---------------- Franchise & Royalty (Phase 4 Batch 1) ---------------- */
   { id: 'fran', label: 'Franchise', icon: 'fran', subs: [
+    { id: 'portal', label: 'Partner Portal', spec: { dyn: 'franchisePartnerPortal',
+      sub: 'The franchise-owner self-service view, FIXED to the logged-in owner\'s franchise (no selector). Their dashboard (branches, students / enrolments, revenue collected, net, outstanding dues, royalty payable), their royalty invoices, compliance status and target achievement — all scoped to their own franchise. Head office keeps the full Franchise module across all franchises.' } },
     { id: 'franchises', label: 'Franchises', spec: { dyn: 'franchises',
       sub: 'Franchise records — name, code, owner (name/contact/email/phone), address/city, GST no, status (Prospect / Onboarding / Active / Suspended / Terminated), agreement dates, and the BRANCHES the franchise operates. A franchise\'s data = everything under its mapped branches. Add / Edit / View + branch mapping.' } },
     { id: 'dashboard', label: 'Franchise Dashboard', spec: { dyn: 'franchiseDashboard',
@@ -595,12 +597,10 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Generate a royalty invoice for a franchise + period from its royalty statement (ROY-<FY>/#### series, separate from student invoices). Draft / Issued / Paid / Cancelled, preview + print, record payments against it. List + generate-from-statement + view.' } },
     { id: 'outstanding', label: 'Outstanding Royalties', spec: { dyn: 'outstandingRoyalties',
       sub: 'An ageing view of unpaid / partly-paid royalty invoices per franchise — current / 31-60 / 61-90 / 90+ buckets computed in IST — with a record-payment action that updates the invoice status and outstanding.' } },
-    { id: 'perf', label: 'Targets & Performance', spec: p2('Franchise Targets & Performance',
-      'Targets (admissions, revenue, collections), metrics & comparison vs target.',
-      [cap('Targets', 'Per franchise', true), cap('Metrics', 'Revenue, conv, collection%', true), cap('Vs target', 'Tracked', true)]) },
-    { id: 'compliance', label: 'Compliance & Audits', spec: p2('Franchise Compliance & Audits',
-      'Compliance score, audit schedules, checklists, findings & corrective actions with sign-off.',
-      [cap('Compliance score', 'Brand, fee, docs', true), cap('Audit schedules', 'Financial / operational / brand', true), cap('Audit reports', 'Findings + corrective', true)]) },
+    { id: 'perf', label: 'Targets & Performance', spec: { dyn: 'franchiseTargets',
+      sub: 'Per-franchise target setting (admissions, enrolments, revenue, collection) for a period, with a live target-vs-actual view (progress bars, per-metric achievement %) computed from the franchise\'s branches, plus a head-office leaderboard ranking franchises by achievement across their active targets.' } },
+    { id: 'compliance', label: 'Compliance & Audits', spec: { dyn: 'franchiseCompliance',
+      sub: 'A per-franchise compliance checklist materialised from a default template (agreement valid, KYC, GST filed, statutory docs, royalty up to date, brand & fee standards, …). Each item carries a status, due date and evidence document (R2), with a live compliance % and overdue count, plus an audit trail of franchise-critical changes.' } },
     { id: 'franReports', label: 'Franchise Reports', spec: { dyn: 'franchiseReports',
       sub: 'A per-franchise rollup — branches, students / enrolments, revenue collected, net revenue, outstanding dues, and royalty billed vs paid vs outstanding — as an on-screen table + CSV export, with a DateRange. Reuses the Batch-1 dashboard rollup + the new royalty numbers.' } },
   ] },

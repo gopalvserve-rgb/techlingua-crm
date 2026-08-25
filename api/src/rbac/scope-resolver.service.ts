@@ -129,32 +129,50 @@ export class ScopeResolverService {
    */
   buildScopeWhere(scope: ResolvedScope, cols: ScopeColumnMap, params: unknown[]): string {
     if (!scope.allowed) return '1=0';
-    if (scope.all) return '1=1';
 
-    const parts: string[] = [];
-    for (const f of scope.filters) {
-      switch (f.kind) {
-        case 'own':
-          if (cols.owner) { params.push(f.userId); parts.push(`${cols.owner} = $${params.length}`); }
-          break;
-        case 'team':
-          if (cols.team) { params.push(f.teamIds); parts.push(`${cols.team} = ANY($${params.length}::bigint[])`); }
-          break;
-        case 'branch':
-          if (cols.branch) { params.push(f.branchId); parts.push(`${cols.branch} = $${params.length}`); }
-          break;
-        case 'vertical':
-          if (cols.vertical) { params.push(f.verticalId); parts.push(`${cols.vertical} = $${params.length}`); }
-          break;
-        case 'pipeline':
-          if (cols.pipeline) { params.push(f.pipelineId); parts.push(`${cols.pipeline} = $${params.length}`); }
-          break;
-        case 'campaign':
-          if (cols.campaign) { params.push(f.campaignId); parts.push(`${cols.campaign} = $${params.length}`); }
-          break;
+    // Base fragment from the caller's role grants (the pre-existing behaviour).
+    let base: string;
+    if (scope.all) {
+      base = '1=1';
+    } else {
+      const parts: string[] = [];
+      for (const f of scope.filters) {
+        switch (f.kind) {
+          case 'own':
+            if (cols.owner) { params.push(f.userId); parts.push(`${cols.owner} = $${params.length}`); }
+            break;
+          case 'team':
+            if (cols.team) { params.push(f.teamIds); parts.push(`${cols.team} = ANY($${params.length}::bigint[])`); }
+            break;
+          case 'branch':
+            if (cols.branch) { params.push(f.branchId); parts.push(`${cols.branch} = $${params.length}`); }
+            break;
+          case 'vertical':
+            if (cols.vertical) { params.push(f.verticalId); parts.push(`${cols.vertical} = $${params.length}`); }
+            break;
+          case 'pipeline':
+            if (cols.pipeline) { params.push(f.pipelineId); parts.push(`${cols.pipeline} = $${params.length}`); }
+            break;
+          case 'campaign':
+            if (cols.campaign) { params.push(f.campaignId); parts.push(`${cols.campaign} = $${params.length}`); }
+            break;
+        }
       }
+      base = parts.length ? `(${parts.join(' OR ')})` : '1=0';
     }
-    if (!parts.length) return '1=0';
-    return `(${parts.join(' OR ')})`;
+
+    // FRANCHISE-OWNER LAYER (Phase 4 Batch 3). When the caller is a franchise owner,
+    // every branch-bearing query is additionally AND-narrowed to their franchise's
+    // branch_ids — so an owner sees ONLY their franchise's data across leads / students
+    // / finance / everything that carries a branch. Non-owners (franchiseBranchIds is
+    // null/undefined) are entirely unaffected: base is returned verbatim (zero regression).
+    const fb = scope.franchiseBranchIds;
+    if (!Array.isArray(fb)) return base;
+    if (!cols.branch) return base;         // org-level entity (masters, etc.) — cannot narrow by branch; leave as-is
+    if (base === '1=0') return '1=0';
+    if (fb.length === 0) return '1=0';     // owner whose franchise maps no branches -> no rows
+    params.push(fb);
+    const clause = `${cols.branch} = ANY($${params.length}::bigint[])`;
+    return base === '1=1' ? `(${clause})` : `(${base} AND ${clause})`;
   }
 }

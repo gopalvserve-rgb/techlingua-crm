@@ -37,6 +37,16 @@ export class PermissionsGuard implements CanActivate {
     if (!scope.allowed) {
       throw new ForbiddenException(`Missing permission: ${permissionKey}`);
     }
+
+    // FRANCHISE-OWNER LAYER (Phase 4 Batch 3). Resolve the caller's franchise scope ONCE
+    // per request and stamp it on every resolved scope: a franchise owner's branch_ids
+    // narrow all branch-bearing queries to their franchise (buildScopeWhere / ScopeEnforcer).
+    // Non-owners get null -> no effect. Cached on the request so guards agree.
+    if (req.franchiseScope === undefined) {
+      req.franchiseScope = await this.rbacData.loadFranchiseScope(req.user.id);
+    }
+    scope.franchiseBranchIds = req.franchiseScope.isOwner ? req.franchiseScope.branchIds : null;
+
     req.scope = scope;
     return true;
   }

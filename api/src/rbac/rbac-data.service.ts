@@ -56,4 +56,25 @@ export class RbacDataService {
       teamIds: teams.map((t) => Number(t.id)),
     };
   }
+
+  /**
+   * FRANCHISE-OWNER scope (Phase 4 Batch 3). A user is a "franchise owner" when they are
+   * linked to a franchise either as its owner_user_id or via the franchise_user mapping.
+   * Returns whether they are an owner + the franchise_ids they own + the union of those
+   * franchises' mapped branch_ids (the data scope every list/report is narrowed to).
+   * A non-owner => { isOwner: false, franchiseIds: [], branchIds: [] } (no effect).
+   */
+  async loadFranchiseScope(userId: number): Promise<{ isOwner: boolean; franchiseIds: number[]; branchIds: number[] }> {
+    const rows = await this.db.query<{ fid: string; bid: string | null }>(
+      `SELECT f.id AS fid, fb.branch_id AS bid
+         FROM franchise f
+         LEFT JOIN franchise_user fu ON fu.franchise_id = f.id AND fu.user_id = $1
+         LEFT JOIN franchise_branch fb ON fb.franchise_id = f.id
+        WHERE f.deleted_at IS NULL AND (f.owner_user_id = $1 OR fu.user_id = $1)`,
+      [userId],
+    );
+    const franchiseIds = [...new Set(rows.map((r) => Number(r.fid)))];
+    const branchIds = [...new Set(rows.filter((r) => r.bid != null).map((r) => Number(r.bid)))];
+    return { isOwner: rows.length > 0, franchiseIds, branchIds };
+  }
 }

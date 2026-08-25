@@ -186,4 +186,12 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // edits plans. Admin-only in this batch; franchise-owner (own-only) roles are a later batch.
   { module: 'franchise', label: 'Franchise', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'royalty', label: 'Royalty (plans & statements)', actions: ['read', 'manage'] },
+  // Phase 4 Batch 3 (migration 107) — Franchise owner RBAC, partner portal, targets, compliance.
+  // franchise_portal.read = the franchise-owner self-service landing (auto-scoped to THEIR
+  // franchise). franchise_target.* = per-franchise target setting + target-vs-actual view.
+  // franchise_compliance.* = per-franchise compliance checklist + evidence + audit view.
+  // The new "Franchise Owner" system role holds the read side; the two admin roles hold all.
+  { module: 'franchise_portal', label: 'Partner Portal (franchise owner)', actions: ['read'] },
+  { module: 'franchise_target', label: 'Franchise Targets & Performance', actions: ['read', 'manage'] },
+  { module: 'franchise_compliance', label: 'Franchise Compliance & Audits', actions: ['read', 'manage'] },
 ];

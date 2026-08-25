@@ -84,7 +84,8 @@ import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, As
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
 import { FranchisesScreen, RoyaltyPlansScreen, FranchiseDashboardScreen, RoyaltyStatementScreen,
-  RoyaltyInvoicesScreen, OutstandingRoyaltiesScreen, AgreementsScreen, FranchiseOnboardingScreen, TerritoryScreen, FranchiseReportsScreen } from './franchise';
+  RoyaltyInvoicesScreen, OutstandingRoyaltiesScreen, AgreementsScreen, FranchiseOnboardingScreen, TerritoryScreen, FranchiseReportsScreen,
+  FranchiseTargetsScreen, FranchiseComplianceScreen, FranchisePartnerPortalScreen } from './franchise';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -7636,6 +7637,10 @@ export const DYN: Record<string, () => JSX.Element> = {
   franchiseOnboarding: FranchiseOnboardingScreen,
   franchiseTerritory: TerritoryScreen,
   franchiseReports: FranchiseReportsScreen,
+  // Phase 4 Batch 3 — franchise-owner portal, targets & performance, compliance & audits
+  franchisePartnerPortal: FranchisePartnerPortalScreen,
+  franchiseTargets: FranchiseTargetsScreen,
+  franchiseCompliance: FranchiseComplianceScreen,
   feeCollection: FeeCollection,
   branches: Branches,
   verticals: Verticals,
