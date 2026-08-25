@@ -14,10 +14,10 @@ import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, HBars, TableCard } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { DateRange } from './daterange';
 import { useScope } from './scope';
-import { FilterMulti } from './dyn';
+import { FilterMulti, EnumMulti } from './dyn';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 
@@ -367,17 +367,36 @@ export function InvoiceDetailModal({ id, onClose, onChanged }: { id: number; onC
 
 export function FinanceDashboard() {
   const { scope: gScope } = useScope();
+  const ref = useRef_();
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  // Multi-select finance filters (client crm25aug). Branch/Vertical seed from the global scope so
+  // the dashboard opens honouring the top-bar scope; all selections rebuild the querystring below.
+  const [fBranches, setFBranches] = useState<number[]>(gScope.branches ?? []);
+  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals ?? []);
+  const [fCounsellors, setFCounsellors] = useState<number[]>([]);
+  const [fCourses, setFCourses] = useState<number[]>([]);
+  const [fTrainers, setFTrainers] = useState<number[]>([]);
+  const [fStatuses, setFStatuses] = useState<string[]>([]);
+  const [fModes, setFModes] = useState<string[]>([]);
+  // Trainer options = Trainer-role users only (server-scoped), same source the Batches filter uses.
+  const trainerFetch = useFetch<any[]>(`/users?role=Trainer`, []);
+
   const qs = new URLSearchParams();
   if (range.from) qs.set('from', range.from);
   if (range.to) qs.set('to', range.to);
-  if ((gScope.branches ?? []).length) qs.set('branch_ids', gScope.branches.join(','));
-  if ((gScope.verticals ?? []).length) qs.set('vertical_ids', gScope.verticals.join(','));
+  if (fBranches.length) qs.set('branch_ids', fBranches.join(','));
+  if (fVerticals.length) qs.set('vertical_ids', fVerticals.join(','));
+  if (fCounsellors.length) qs.set('counsellor_ids', fCounsellors.join(','));
+  if (fCourses.length) qs.set('course_ids', fCourses.join(','));
+  if (fTrainers.length) qs.set('trainer_ids', fTrainers.join(','));
+  if (fStatuses.length) qs.set('statuses', fStatuses.join(','));
+  if (fModes.length) qs.set('payment_modes', fModes.join(','));
   const rangeKey = `${qs.toString()}`;
   const { data } = useFetch<any>(`/finance/dashboard?${qs.toString()}`, [rangeKey]);
   const k = data?.kpis;
+  const pct = (v: unknown) => `${(Number(v) || 0).toFixed(1)}%`;
   // Phase 3 Batch 2 — the dues/ageing feeds this dashboard from the Fee Dues service (IST buckets).
-  const dues = useFetch<any>(`/fee-dues/summary?${(function(){const p=new URLSearchParams();if((gScope.branches??[]).length)p.set('branch_ids',gScope.branches.join(','));if((gScope.verticals??[]).length)p.set('vertical_ids',gScope.verticals.join(','));return p.toString();})()}`, [rangeKey]);
+  const dues = useFetch<any>(`/fee-dues/summary?${(function(){const p=new URLSearchParams();if(fBranches.length)p.set('branch_ids',fBranches.join(','));if(fVerticals.length)p.set('vertical_ids',fVerticals.join(','));return p.toString();})()}`, [rangeKey]);
   const du = dues.data;
 
   const MODE_LABELS: Record<string, string> = { cash: 'Cash', upi: 'UPI', card: 'Card', cheque: 'Cheque', online: 'Online' };
@@ -390,19 +409,27 @@ export function FinanceDashboard() {
   return (
     <>
       <div className="filters" style={{ marginBottom: 12 }}>
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={(ref.branches ?? []) as any} onChange={setFBranches} />
+        <FilterMulti label="Vertical" icon="ops" value={fVerticals} options={(ref.verticals ?? []) as any} onChange={setFVerticals} />
+        <FilterMulti label="Counsellor" icon="users" value={fCounsellors} options={selectableUsers(ref.users ?? []) as any} onChange={setFCounsellors} />
+        <FilterMulti label="Course" icon="grid" value={fCourses} options={(ref.courses ?? []) as any} onChange={setFCourses} />
+        <FilterMulti label="Trainer" icon="users" value={fTrainers} options={selectableUsers(trainerFetch.data ?? []) as any} onChange={setFTrainers} />
+        <EnumMulti label="Status" icon="shield" value={fStatuses} options={asOpts([['active', 'Active'], ['pending_approval', 'Pending approval'], ['cancelled', 'Cancelled']]) as any} onChange={setFStatuses} />
+        <EnumMulti label="Payment Mode" icon="rupee" value={fModes} options={asOpts([['cash', 'Cash'], ['upi', 'UPI'], ['card', 'Card'], ['netbanking', 'Net banking'], ['cheque', 'Cheque'], ['online', 'Online']]) as any} onChange={setFModes} />
         <DateRange value={range} onChange={setRange} idPrefix="fin-dr" />
       </div>
-      <Kpis cols={5} items={[
-        { lab: 'Total Invoiced', val: k ? fmtINR(k.total_invoiced_minor) : '—', ic: 'rupee' },
-        { lab: 'Total Collected', val: k ? fmtINR(k.total_collected_minor) : '—', ic: 'rupee' },
-        { lab: 'Collected (range)', val: k ? fmtINR(k.collected_in_range_minor) : '—', ic: 'rupee' },
-        { lab: 'Outstanding dues', val: k ? fmtINR(k.outstanding_minor) : '—', ic: 'clock' },
-        { lab: 'GST collected', val: k ? fmtINR(k.gst_collected_minor) : '—', ic: 'rupee' },
-      ]} />
       <Kpis cols={4} items={[
-        { lab: 'CGST', val: k ? fmtINR(k.cgst_minor) : '—', ic: 'rupee' },
-        { lab: 'SGST', val: k ? fmtINR(k.sgst_minor) : '—', ic: 'rupee' },
-        { lab: 'IGST', val: k ? fmtINR(k.igst_minor) : '—', ic: 'rupee' },
+        { lab: "Today's Collection", val: k ? fmtINR(k.collected_today_minor) : '—', ic: 'rupee' },
+        { lab: 'Overdue Fee Collected', val: k ? fmtINR(k.overdue_fee_collected_minor) : '—', ic: 'rupee' },
+        { lab: 'Total Collected Fee', val: k ? fmtINR(k.total_collected_minor) : '—', ic: 'rupee' },
+        { lab: 'Collection Rate', val: k ? pct(k.collection_rate_pct) : '—', ic: 'check' },
+        { lab: 'Total Invoiced', val: k ? fmtINR(k.total_invoiced_minor) : '—', ic: 'rupee' },
+        { lab: 'Net Revenue', val: k ? fmtINR(k.net_revenue_minor) : '—', ic: 'rupee' },
+        { lab: 'Total Unpaid Fee', val: k ? fmtINR(k.total_unpaid_minor) : '—', ic: 'clock' },
+        { lab: 'Current Month Instalment Fee', val: k ? fmtINR(k.current_month_installment_minor) : '—', ic: 'rupee' },
+        { lab: 'Overdue Fee', val: k ? fmtINR(k.overdue_fee_minor) : '—', ic: 'clock' },
+        { lab: 'GST Collected', val: k ? fmtINR(k.gst_collected_minor) : '—', ic: 'rupee' },
+        { lab: 'Refunds', val: k ? fmtINR(k.refunds_minor) : '—', ic: 'rupee' },
         { lab: 'Receipts', val: String(k?.receipts ?? 0), ic: 'doc' },
       ]} />
       <div className="split2">

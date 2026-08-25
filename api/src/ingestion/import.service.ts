@@ -111,10 +111,11 @@ export class ImportService {
       const payload = applyMapping(raw, mapping);
       const rowNum = i + 1;
       try {
-        // Import course fix: resolve masters softly (matches inbound). An unknown Course/City/etc.
-        // does NOT fail the row — it imports and the raw value is kept on the note; we surface it
-        // as a clear per-row warning here so the user sees it BEFORE committing.
-        const lead = this.ingestion.normalise(payload, target, { softMasters: true });
+        // crm25aug (#7): the CSV preview validates Course STRICTLY (an unknown code/name is a
+        // per-row ERROR, so the user sees it BEFORE committing and the row will not import with a
+        // null course). Other masters (City/State/etc.) stay soft — a typo there imports with the
+        // raw value kept on the note, surfaced as a per-row warning.
+        const lead = this.ingestion.normalise(payload, target, { softMasters: true, strictMasters: ['course'] });
         const key = this.ingestion.dedupeKey(payload, {
           channel: 'csv', campaign_id: campaignId, source_id: sourceId, actor_id: userId,
         });

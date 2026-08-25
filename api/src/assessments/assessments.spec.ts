@@ -189,6 +189,27 @@ describe('Assessment Tests — Batch B', () => {
     await expect(s.create({ title: 'X', test_type: 'nope' }, me, scopeAll)).rejects.toThrow(/Unknown test type/);
   });
 
+  // crm25aug (#8): an exam may carry an optional Zoom link (URL) for an online/proctored exam.
+  it('crm25aug #8 — create persists a zoom_link into the INSERT', async () => {
+    const cap: any[] = [];
+    const db: any = {
+      one: async (sql: string) => (/FROM organisation/.test(sql) ? { id: '1' } : null),
+      query: async (sql: string, params?: any[]) => { cap.push({ sql, params }); return { rows: [] }; },
+      tx: async (fn: (c: any) => any) => fn({ query: async (sql: string, params?: any[]) => { cap.push({ sql, params }); return { rows: [{ id: '5' }] }; } }),
+    };
+    const s = assessSvc(db);
+    await s.create({ title: 'Proctored', test_type: 'final_exam', total_marks_manual: true, total_marks: 10, zoom_link: 'https://zoom.us/j/123' }, me, scopeAll);
+    const ins = cap.find((c) => /INSERT INTO assessment/.test(c.sql));
+    expect(ins).toBeTruthy();
+    expect(ins.sql).toMatch(/zoom_link/);
+    expect(ins.params).toContain('https://zoom.us/j/123');
+  });
+
+  it('crm25aug #8 — rejects a zoom_link that is not an http(s) URL', async () => {
+    const s = assessSvc();
+    await expect(s.create({ title: 'X', zoom_link: 'not a url' }, me, scopeAll)).rejects.toThrow(/Zoom link must be a valid URL/);
+  });
+
   it('rejects an availability window that ends before it starts', async () => {
     const s = assessSvc();
     await expect(s.create({ title: 'X', start_at: '2026-08-10T10:00:00Z', end_at: '2026-08-09T10:00:00Z' }, me, scopeAll))

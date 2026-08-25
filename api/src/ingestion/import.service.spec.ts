@@ -144,17 +144,16 @@ describe('ImportService', () => {
     expect(again.jobs.map((j) => j.dedupe_key)).toEqual(jobs.map((j) => j.dedupe_key));
   });
 
-  it('preview() SOFT-imports an unknown course as a WARNING row, not an error (import course fix)', async () => {
+  it('preview() REJECTS an unknown course as an ERROR row (crm25aug #7 — not a null-course import)', async () => {
     const { db } = makeDb();
     const csv = 'Name,Mobile,Course\nAsha,9811100055,Klingon\n';
     const p = await makeSvc(db).preview(csv, { Name: 'full_name', Mobile: 'phone', Course: 'course' }, 5, 7, ALL_SCOPE, 1);
-    expect(p.errors).toBe(0);            // an unknown course no longer hard-errors the row
-    expect(p.valid).toBe(1);             // the lead WILL import
-    expect((p as any).warnings).toBe(1); // but it is flagged so the user sees it
+    expect(p.errors).toBe(1);            // an unknown course now HARD-errors the row
+    expect(p.valid).toBe(0);             // the lead will NOT import with a null course
     const row = p.rows[0] as any;
-    expect(row.status).toBe('valid');
-    expect(row.warning).toMatch(/Course/);
-    expect(row.warning).toMatch(/not in the master/);
+    expect(row.status).toBe('error');
+    expect(row.reason).toMatch(/Course/);
+    expect(row.reason).toMatch(/not in the Course master/);
   });
 
   it('preview() applies a KNOWN course case-insensitively, with no warning', async () => {

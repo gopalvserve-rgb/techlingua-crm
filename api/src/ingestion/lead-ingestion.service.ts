@@ -246,20 +246,32 @@ export class LeadIngestionService {
    */
   private master(
     target: IngestTarget, kind: string, label: string, raw: unknown,
-    soft = false, unresolved?: Array<[string, string]>,
+    soft = false, unresolved?: Array<[string, string]>, forceStrict = false,
   ): number | null {
     if (raw == null || String(raw).trim() === '') return null;
     const v = String(raw).trim();
+    // crm25aug (#7): even on a soft (machine) feed, a master listed in `strictMasters`
+    // (Course, for the CSV bulk import) must HARD-fail an unknown value — the row is
+    // rejected with a clear per-row error rather than imported with a null course.
+    const strict = forceStrict || !soft;
+    const notFound = (): never => {
+      if (kind === 'course') {
+        throw new IngestValidationError(
+          `Unknown Course code/name: "${v}" — it is not in the Course master for this Branch › Vertical (map by the master Course CODE, or add/correct the course).`,
+        );
+      }
+      throw new IngestValidationError(`Unknown ${label}: "${v}"`);
+    };
     if (/^\d+$/.test(v)) {
       const id = Number(v);
       if ([...target.masters[kind].values()].includes(id)) return id;
-      if (soft) { unresolved?.push([label, v]); return null; }
-      throw new IngestValidationError(`Unknown ${label}: "${v}"`);
+      if (!strict) { unresolved?.push([label, v]); return null; }
+      return notFound();
     }
     const hit = target.masters[kind].get(v.toLowerCase());
     if (hit == null) {
-      if (soft) { unresolved?.push([label, v]); return null; }
-      throw new IngestValidationError(`Unknown ${label}: "${v}"`);
+      if (!strict) { unresolved?.push([label, v]); return null; }
+      return notFound();
     }
     return hit;
   }
@@ -281,8 +293,9 @@ export class LeadIngestionService {
     throw new IngestValidationError(`Invalid date: "${v}" (use YYYY-MM-DD or DD/MM/YYYY)`);
   }
 
-  normalise(p: IngestPayload, target: IngestTarget, opts: { softMasters?: boolean } = {}): NormalisedLead {
+  normalise(p: IngestPayload, target: IngestTarget, opts: { softMasters?: boolean; strictMasters?: string[] } = {}): NormalisedLead {
     const soft = !!opts.softMasters;
+    const strictSet = new Set(opts.strictMasters ?? []);
     // OBS-02: raw master values we could not resolve on an inbound lead — preserved on the note.
     const unresolved: Array<[string, string]> = [];
     const name = String(p.full_name ?? '').trim();
@@ -330,7 +343,7 @@ export class LeadIngestionService {
     // Resolve the validated masters (soft on inbound channels — OBS-02).
     const state_id = this.master(target, 'state', 'State', p.state, soft, unresolved);
     const city_id = this.master(target, 'city', 'City', p.city, soft, unresolved);
-    const course_id = this.master(target, 'course', 'Course', p.course, soft, unresolved);
+    const course_id = this.master(target, 'course', 'Course', p.course, soft, unresolved, strictSet.has('course'));
     const qualification_id = this.master(target, 'qualification', 'Qualification', p.qualification, soft, unresolved);
     const budget_id = this.master(target, 'budget', 'Budget', p.budget, soft, unresolved);
     const status_id = this.master(target, 'status', 'Status', p.status, soft, unresolved) ?? target.default_status_id;
@@ -580,7 +593,11 @@ export class LeadIngestionService {
     // exactly like Meta/Google/form/sheet. Interactive UI entry (manual/walk-in/referral) stays
     // strict so a human typing a value gets immediate validation.
     const softMasters = ['webhook', 'form', 'sheet', 'csv'].includes(ctx.channel);
-    const lead = this.normalise(payload, target, { softMasters });
+    // crm25aug (#7): the CSV bulk import validates Course strictly (unknown code/name is
+    // rejected as a dead-letter row, surfaced in the import result). Inbound machine feeds
+    // (webhook/form/sheet) stay fully soft so no marketplace lead is dropped.
+    const strictMasters = ctx.channel === 'csv' ? ['course'] : [];
+    const lead = this.normalise(payload, target, { softMasters, strictMasters });
 
     // 3) duplicate check (phone + WhatsApp cross-match, campaign-configured scope — #22)
     const dup = await this.findDuplicate([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[], target);

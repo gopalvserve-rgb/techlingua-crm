@@ -61,6 +61,39 @@ describe('target actuals — the six live metrics, attributed by Target-For', ()
     expect(q).toMatch(/sum\(fr\.amount_minor\)/); // collection from receipts
   });
 
+  // crm25aug (#3): a VERTICAL target rolls up ALL enrolments under that vertical (every course
+  // beneath it) via the denormalised, NOT-NULL enrolment.vertical_id — not a single exact row.
+  it('a Vertical target attributes admissions/revenue/collection by e.vertical_id (rolls up its courses)', async () => {
+    const { svc, sql } = tdefSvc();
+    await svc.actuals(row('vertical', { vertical_id: '5' }));
+    const q = sql.join('\n');
+    expect(q).toMatch(/e\.vertical_id = \$1::bigint/);   // admissions + revenue + collection all key off e.vertical_id
+    expect(q).toMatch(/l\.vertical_id = \$1::bigint/);
+    expect(q).toMatch(/ce\.vertical_id = \$1::bigint/);
+  });
+
+  // crm25aug (#3): a COURSE target rolls up every enrolment of that course (across branches /
+  // verticals, incl. multi-level enrolments which carry the parent course_id).
+  it('a Course target attributes admissions/revenue/collection by e.course_id (rolls up all enrolments of the course)', async () => {
+    const { svc, sql } = tdefSvc();
+    await svc.actuals(row('course', { course_id: '4' }));
+    const q = sql.join('\n');
+    expect(q).toMatch(/e\.course_id = \$1::bigint/);
+  });
+
+  // crm25aug (#4): a TEAM target's actuals = the SUM across its MEMBER USERS. Every metric is
+  // attributed to the member who owns the row (counsellor / owner) via a team_member sub-select.
+  it('a Team target sums across member users (team_member sub-select on every metric)', async () => {
+    const { svc, sql } = tdefSvc();
+    await svc.actuals(row('team', { team_id: '8' }));
+    const q = sql.join('\n');
+    expect(q).toMatch(/l\.owner_id IN \(SELECT user_id FROM team_member WHERE team_id = \$1::bigint\)/);
+    expect(q).toMatch(/e\.counsellor_id IN \(SELECT user_id FROM team_member WHERE team_id = \$1::bigint\)/);
+    expect(q).toMatch(/w\.counsellor_id IN \(SELECT user_id FROM team_member WHERE team_id = \$1::bigint\)/);
+    expect(q).toMatch(/ce\.owner_id IN \(SELECT user_id FROM team_member WHERE team_id = \$1::bigint\)/);
+    expect(q).not.toMatch(/e\.team_id = \$1::bigint/); // no longer keyed off the (usually unset) enrolment.team_id
+  });
+
   it('maps the canned counts/sums into numbers', async () => {
     const { svc } = tdefSvc({ leads: '12', walkins: '3', admissions: '5', revenue_minor: '5000000', collection_minor: '2500000', meetings: '4' });
     const a = await svc.actuals({ target_for: 'user', user_id: '1', period_start: '2026-08-01', period_end: '2026-09-01' });

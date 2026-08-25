@@ -3,10 +3,11 @@ import { LeadsService } from './leads.service';
 /**
  * dev/95 item 2 — AUTO LEAD STATUS FROM THE STAGE TYPE.
  *
- * Moving a lead to a WON-type stage (e.g. "Enrolled") forces Lead Status = Won; moving to a
- * LOST/closed-type stage forces Status = Lost. Keyed on the stage TYPE (won|lost), NOT a
- * configurable stage name, and idempotent. An unrelated (open) stage move never touches a
- * manually-set status. These unit tests pin that contract at LeadsService.update().
+ * crm25aug (#1) UPDATE: a manual move to a WON-type stage (e.g. "Enrolled") NO LONGER forces
+ * Lead Status = Won — WON / enrolment happens ONLY through Convert-to-Student. Moving to a
+ * LOST/closed-type stage STILL forces Status = Lost (client kept that). An unrelated (open)
+ * stage move never touches a manually-set status. These unit tests pin that contract at
+ * LeadsService.update().
  */
 describe('LeadsService.update — auto lead status from the stage type', () => {
   const scope = {} as any;
@@ -53,12 +54,11 @@ describe('LeadsService.update — auto lead status from the stage type', () => {
 
   const leadOnOpen = { id: 1, org_id: 1, branch_id: 2, pipeline_id: 4, stage_id: 100, status_id: 10 };
 
-  it('stage → WON (Enrolled) auto-sets status to Won', async () => {
+  it('crm25aug #1 — stage → WON (Enrolled) does NOT auto-set status to Won', async () => {
     const { svc, activities } = make(leadOnOpen);
     await svc.update(1, { stage_id: 200 }, 1, scope);
-    const st = activities.find((a) => a.type === 'status_change');
-    expect(st).toBeTruthy();
-    expect(st!.to.name).toBe('Won');
+    // The WON auto-mapping is removed for a manual stage change; only Convert-to-Student wins a lead.
+    expect(activities.find((a) => a.type === 'status_change')).toBeFalsy();
   });
 
   it('stage → LOST (Closed) auto-sets status to Lost', async () => {
@@ -76,11 +76,11 @@ describe('LeadsService.update — auto lead status from the stage type', () => {
     expect(activities.find((a) => a.type === 'status_change')).toBeFalsy();
   });
 
-  it('the WON auto-status wins over an explicit conflicting status in the same PATCH', async () => {
+  it('crm25aug #1 — an explicit status in the same PATCH as a WON stage move is HONOURED (no forced Won)', async () => {
     const { svc, activities } = make(leadOnOpen);
     await svc.update(1, { stage_id: 200, status_id: 11 } as any, 1, scope);
     const st = activities.find((a) => a.type === 'status_change');
-    expect(st!.to.name).toBe('Won');
+    expect(st!.to.name).toBe('In Progress');
   });
 
   it('is idempotent — a WON lead already on status Won gets no redundant status_change', async () => {

@@ -4889,7 +4889,7 @@ function SiblingsSection({ studentId, branchId, verticalId, canEdit }: { student
 // Course · Level · Total Fee · Net Fee · Fee Plan · Due Fee · Status), matching the Fee Management
 // dues list; a few list-specific extras (Batch, Enrolled, LMS, Amount, Mode, Received, Actions) follow.
 const ENROL_COL_LABELS = ['Roll Number', 'Enrolment Number', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Batch', 'Enrolled', 'LMS', 'Actions'];
-const RECEIPT_COL_LABELS = ['Receipt', 'Roll Number', 'Enrolment No', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Amount', 'Mode', 'Received', 'Actions'];
+const RECEIPT_COL_LABELS = ['Receipt', 'Roll Number', 'Enrolment No', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Amount', 'Mode', 'Received', 'Date', 'Actions'];
 
 export function StudentDetailModal({ student, onClose, onChanged, onEdit, initialTab }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void; initialTab?: string }) {
   const { can } = useAuth();
@@ -5689,6 +5689,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                       <b>{money(r.amount_minor)}</b>,
                       r.mode,
                       dt(r.received_at),
+                      dmy(r.received_at), // dev — item #2 receipt/payment Date (date-only)
                       <div className="rowacts">
                         <button className="icon-btn sm" title="View receipt" onClick={() => setFeeReceiptView({ ...r, lead_name: r.lead_name ?? full.full_name })}><Ic k="eye" /></button>
                         <button className="icon-btn sm" title="Download receipt PDF" onClick={() => openPdfAuthed(`/fees/receipts/${r.id}/pdf`)}><Ic k="doc" /></button>

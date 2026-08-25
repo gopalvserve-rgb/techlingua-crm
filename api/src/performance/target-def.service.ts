@@ -181,10 +181,15 @@ export class TargetDefService {
         return { lead: 'l.course_id = $1::bigint', walk: 'w.course_id = $1::bigint',
           enr: 'e.course_id = $1::bigint', meet: 'ml.course_id = $1::bigint', meetJoinCourse: true };
       case 'team':
+        // crm25aug (#4): a TEAM target's actuals = the SUM across its MEMBER USERS. Every metric
+        // is attributed to the individual member who owns the row (counsellor / owner), NOT to a
+        // (usually unset) denormalised enrolment.team_id. This makes a team target = Σ of its
+        // members' individual numbers, exactly as the client asked.
         return {
-          lead: 'l.team_id = $1::bigint', enr: 'e.team_id = $1::bigint',
+          lead: 'l.owner_id IN (SELECT user_id FROM team_member WHERE team_id = $1::bigint)',
+          enr: 'e.counsellor_id IN (SELECT user_id FROM team_member WHERE team_id = $1::bigint)',
           walk: 'w.counsellor_id IN (SELECT user_id FROM team_member WHERE team_id = $1::bigint)',
-          meet: 'ce.team_id = $1::bigint', meetJoinCourse: false,
+          meet: 'ce.owner_id IN (SELECT user_id FROM team_member WHERE team_id = $1::bigint)', meetJoinCourse: false,
         };
       default:
         throw new BadRequestException('Unknown Target-For.');

@@ -87,6 +87,14 @@ export class AssessmentService {
       max_attempts: Math.max(1, Math.trunc(num(dto?.max_attempts, 1))),
       start_at, end_at,
       instructions: dto?.instructions ? String(dto.instructions) : null,
+      // crm25aug (#8): optional Zoom (or any meeting) link for an online / proctored exam,
+      // shown to the student on the attempt screen. Light validation: must look like an http(s) URL.
+      zoom_link: (() => {
+        const z = String(dto?.zoom_link ?? '').trim();
+        if (!z) return null;
+        if (!/^https?:\/\//i.test(z)) throw new BadRequestException('The Zoom link must be a valid URL starting with http:// or https://');
+        return z.slice(0, 500);
+      })(),
       show_result_mode,
       total_marks_manual: !!dto?.total_marks_manual,
       total_marks_override: nullNum(dto?.total_marks),
@@ -232,13 +240,13 @@ export class AssessmentService {
       const r = await c.query<{ id: string }>(
         `INSERT INTO assessment (org_id, branch_id, vertical_id, title, description, test_type, course_id, batch_id, language,
             duration_min, passing_marks, passing_pct, negative_marking, default_negative, randomize_questions, randomize_options,
-            shuffle_per_attempt, questions_to_show, max_attempts, start_at, end_at, instructions, show_result_mode,
+            shuffle_per_attempt, questions_to_show, max_attempts, start_at, end_at, instructions, zoom_link, show_result_mode,
             total_marks_manual, template_id, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING id`,
         [org, n.branch_id, n.vertical_id, n.title, n.description, n.test_type, n.course_id, n.batch_id, n.language,
           n.duration_min, n.passing_marks, n.passing_pct, n.negative_marking, n.default_negative, n.randomize_questions,
           n.randomize_options, n.shuffle_per_attempt, n.questions_to_show, n.max_attempts, n.start_at, n.end_at,
-          n.instructions, n.show_result_mode, n.total_marks_manual, n.template_id, me.id]);
+          n.instructions, n.zoom_link, n.show_result_mode, n.total_marks_manual, n.template_id, me.id]);
       const aid = Number(r.rows[0].id);
       await this.replaceSections(c, aid, sections, links);
       return aid;
@@ -262,12 +270,12 @@ export class AssessmentService {
         `UPDATE assessment SET branch_id=$2, vertical_id=$3, title=$4, description=$5, test_type=$6, course_id=$7, batch_id=$8,
             language=$9, duration_min=$10, passing_marks=$11, passing_pct=$12, negative_marking=$13, default_negative=$14,
             randomize_questions=$15, randomize_options=$16, shuffle_per_attempt=$17, questions_to_show=$18, max_attempts=$19,
-            start_at=$20, end_at=$21, instructions=$22, show_result_mode=$23, total_marks_manual=$24, template_id=$25, updated_at=now()
+            start_at=$20, end_at=$21, instructions=$22, zoom_link=$23, show_result_mode=$24, total_marks_manual=$25, template_id=$26, updated_at=now()
           WHERE id=$1::bigint`,
         [id, n.branch_id, n.vertical_id, n.title, n.description, n.test_type, n.course_id, n.batch_id, n.language,
           n.duration_min, n.passing_marks, n.passing_pct, n.negative_marking, n.default_negative, n.randomize_questions,
           n.randomize_options, n.shuffle_per_attempt, n.questions_to_show, n.max_attempts, n.start_at, n.end_at,
-          n.instructions, n.show_result_mode, n.total_marks_manual, n.template_id]);
+          n.instructions, n.zoom_link, n.show_result_mode, n.total_marks_manual, n.template_id]);
       await this.replaceSections(c, id, sections, links);
     });
     if (n.total_marks_manual && n.total_marks_override != null) {
@@ -616,6 +624,7 @@ export class AssessmentService {
         passing_marks: a.passing_marks, passing_pct: a.passing_pct, negative_marking: a.negative_marking,
         default_negative: a.default_negative, max_attempts: a.max_attempts, show_result_mode: a.show_result_mode,
         status: a.status, start_at: a.start_at, end_at: a.end_at,
+        zoom_link: a.zoom_link ?? null,
       },
       main_questions: mainOut,
       sections: sectionOut,

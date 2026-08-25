@@ -551,14 +551,25 @@ describe('LeadIngestionService', () => {
       expect(st.leads).toHaveLength(0);
     });
 
-    it('a CSV import SOFT-imports an unknown course (lead created, value kept on the note)', async () => {
+    // crm25aug (#7): the CSV bulk import now validates Course STRICTLY — an unknown course
+    // code/name is REJECTED (dead-letter row, per-row error in the import result), NOT imported
+    // with a null course. Other masters stay soft; inbound machine feeds stay fully soft.
+    it('a CSV bulk import REJECTS an unknown course (crm25aug #7 — not silently null)', async () => {
       const { db, st } = makeFakeDb();
       const { svc } = makeIngestion(db);
-      const out = await svc.ingest({ full_name: 'A', phone: '9811100001', course: 'Klingon' }, ctx());
+      await expect(
+        svc.ingest({ full_name: 'A', phone: '9811100001', course: 'Klingon' }, ctx()),
+      ).rejects.toThrow(/Unknown Course/);
+      expect(st.leads).toHaveLength(0);
+    });
+
+    it('an inbound channel (webhook) STILL soft-imports an unknown course (OBS-02 preserved)', async () => {
+      const { db, st } = makeFakeDb();
+      const { svc } = makeIngestion(db);
+      const out = await svc.ingest({ full_name: 'A', phone: '9811100001', course: 'Klingon' }, ctx({ channel: 'webhook' }));
       expect(out.status).toBe('created');
       expect(st.leads).toHaveLength(1);
       expect(st.leads[0].course_id).toBeNull();          // left blank — not hard-failed
-      // the raw value is preserved on the lead's create activity note so nothing is lost (OBS-02)
       const created = st.activities.find((a) => a.type === 'create');
       expect(String(created?.note)).toMatch(/Course: Klingon/);
     });

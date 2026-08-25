@@ -100,9 +100,26 @@ describe('dev/117 — lead name/source editable + hardened auto-status', () => {
     expect(st?.to?.name).toBe('Lost');
   });
 
-  it('#2 an open stage NAMED "Enrolled" still auto-sets status to Won (name fallback)', async () => {
+  // crm25aug (#1): a MANUAL pipeline stage change to "Enrolled" (a WON stage) must NOT
+  // auto-set Status = WON. WON / enrolment happens ONLY through Convert-to-Student. The
+  // Closed -> Lost auto-mapping is retained (tests above). These two assert the WON drop.
+  it('#1 manual stage change to a WON-TYPED "Enrolled" stage does NOT set status to Won', async () => {
     const { svc, activities } = make(lead);
-    await svc.update(1, { stage_id: 400 }, 1, scope);
+    await svc.update(1, { stage_id: 200 }, 1, scope); // 200 = Enrolled, stage_type 'won'
+    const st = activities.find((a) => a.type === 'status_change');
+    expect(st).toBeUndefined();
+  });
+
+  it('#1 an open stage NAMED "Enrolled" also does NOT auto-set status to Won', async () => {
+    const { svc, activities } = make(lead);
+    await svc.update(1, { stage_id: 400 }, 1, scope); // 400 = open stage named Enrolled
+    const st = activities.find((a) => a.type === 'status_change');
+    expect(st).toBeUndefined();
+  });
+
+  it('#1 a WON stage move still HONOURS an explicit status in the same PATCH (no forced WON, no block)', async () => {
+    const { svc, activities } = make(lead);
+    await svc.update(1, { stage_id: 200, status_id: 14 }, 1, scope); // explicit Won id 14
     const st = activities.find((a) => a.type === 'status_change');
     expect(st?.to?.name).toBe('Won');
   });

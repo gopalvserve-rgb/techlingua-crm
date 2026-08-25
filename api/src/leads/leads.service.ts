@@ -1067,7 +1067,13 @@ export class LeadsService {
     // dev/130: the forced status now comes from the SHARED autoStatusFromStage mapping (stage
     // TYPE authoritative, NAME fallback for a terminal stage mis-typed 'open') — the SAME rule
     // that re-opening a closed lead uses, so status and stage can never contradict.
-    const forcedStatusCode: 'WON' | 'LOST' | null = autoStatusFromStage(newStageType, newStageName);
+    // crm25aug (#1): a MANUAL pipeline stage change must NEVER auto-set Status = WON. WON /
+    // enrolment happens ONLY through the Convert-to-Student flow (winLead, direct SQL). We keep
+    // the Closed -> Lost auto-mapping (client still wants it) but DROP the Enrolled -> Won force
+    // here, so moving a lead's stage to "Enrolled" leaves Status untouched (or honours an
+    // explicit status in the same PATCH).
+    const rawForcedStatusCode: 'WON' | 'LOST' | null = autoStatusFromStage(newStageType, newStageName);
+    const forcedStatusCode: 'LOST' | null = rawForcedStatusCode === 'LOST' ? 'LOST' : null;
     let targetStatusId: number | null = null;
     if (forcedStatusCode) {
       const row = await this.db.one<{ id: string }>(

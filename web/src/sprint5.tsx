@@ -1325,7 +1325,10 @@ export function CounsellorPerformance() {
 export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClose, onSaved }: {
   enrolmentId?: number; installmentId?: number; defaultAmount?: string; onClose: () => void; onSaved?: () => void;
 }) {
-  const enrolments = useFetch<any[]>('/enrolments?status=active');
+  // item #6 — search the existing enrolments/students to collect against (server-side q filter).
+  const [search, setSearch] = useState('');
+  const enrolQuery = `/enrolments?status=active${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`;
+  const enrolments = useFetch<any[]>(enrolQuery, [enrolQuery]);
   const meta = useFetch<any>('/fees/meta');
   const [enrolment, setEnrolment] = useState<string>(String(enrolmentId ?? ''));
   const [amount, setAmount] = useState(defaultAmount ?? '');
@@ -1338,6 +1341,8 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
 
   const list = enrolments.data ?? [];
   const chosen = list.find((e) => String(e.id) === enrolment);
+  // item #6 — Branch \u203a Vertical \u203a Course breadcrumb for the chosen enrolment (same path pattern as the receipt modal).
+  const chosenPath = chosen ? [chosen.branch_name, chosen.vertical_name, chosen.course_name].filter(Boolean).join(' \u203a ') : '';
   const needsRef = ['cheque', 'upi', 'online'].includes(mode);
 
   const save = async () => {
@@ -1367,6 +1372,13 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
         </div>
         <div className="abody">
           <div className="form-grid">
+            {!enrolmentId && !installmentId && (
+              <div className="fld span2">
+                <label htmlFor="c-search">Find student / enrolment</label>
+                <input id="c-search" className="ainp" value={search} onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by enrolment no or student name" />
+              </div>
+            )}
             <div className="fld span2">
               <label htmlFor="c-enrolment">Enrolment <span className="star">*</span></label>
               <select id="c-enrolment" className="ainp" value={enrolment} onChange={(e) => setEnrolment(e.target.value)} disabled={!!installmentId}>
@@ -1378,10 +1390,13 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
                 ))}
               </select>
               {chosen ? (
-                <div className="fhint">
-                  Net fee {fmtINR(chosen.net_fee_minor)} · paid {fmtINR(chosen.paid_minor)} ·
-                  <b> outstanding {fmtINR(chosen.balance_minor)}</b>. More than the outstanding balance is refused.
-                </div>
+                <>
+                  <div className="fhint"><span className="kl">Branch \u203a Vertical \u203a Course</span> <b>{chosenPath || '\u2014'}</b></div>
+                  <div className="fhint">
+                    Net fee {fmtINR(chosen.net_fee_minor)} · paid {fmtINR(chosen.paid_minor)} ·
+                    <b> outstanding {fmtINR(chosen.balance_minor)}</b>. More than the outstanding balance is refused.
+                  </div>
+                </>
               ) : <div className="fhint">Only APPROVED, active enrolments can take money.</div>}
             </div>
             <div className="fld">
@@ -1530,7 +1545,7 @@ export function FeeCollection() {
         empty="No payments recorded yet" />
       <TableCard
         title="Fee Receipt Records" icon="rupee"
-        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Branch \u203a Vertical \u203a Course', 'Actions']}
+        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Date', 'Branch \u203a Vertical \u203a Course', 'Actions']}
         empty="No payments recorded yet"
         rows={rows.map((r): Cell[] => [
           { node: <b className="mono">{r.receipt_no}</b> },
@@ -1540,6 +1555,7 @@ export function FeeCollection() {
           { b: [r.mode.toUpperCase(), 'b-indigo'] },
           r.reference ? { mono: r.reference } : '—',
           dt(r.received_at),
+          dt(r.received_at), // item #2 — receipt/payment Date column
           { node: <span>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '—'}</span> },
           {
             node: (

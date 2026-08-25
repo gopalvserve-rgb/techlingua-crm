@@ -30,6 +30,14 @@ const REFUND_COLS: ScopeColumnMap = {
 
 export interface FinScopeFilter {
   branch_ids?: number[]; vertical_ids?: number[];
+  counsellor_ids?: number[]; course_ids?: number[]; trainer_ids?: number[];
+  statuses?: string[]; payment_modes?: string[];
+}
+
+/** Column names for one query context, used to translate the filter bar into SQL. */
+interface FinCols {
+  branch: string; vertical: string; counsellor?: string; course?: string;
+  status?: string; batch?: string; mode?: string;
 }
 
 @Injectable()
@@ -39,15 +47,37 @@ export class FinanceDashboardService {
     private readonly resolver: ScopeResolverService,
   ) {}
 
-  /** Narrow within scope by an optional branch/vertical selection. Never widens. */
-  private narrow(cols: { branch: string; vertical: string }, f: FinScopeFilter, params: unknown[]): string {
+  /**
+   * Narrow within scope by the finance filter bar (Branch, Vertical, Counsellor, Course,
+   * Trainer, Status, Payment Mode). NEVER widens — every clause is ANDed on top of the RBAC
+   * scope. Which clauses apply depends on the columns available in the query context (`cols`).
+   * crm25aug (#5).
+   */
+  private narrow(cols: FinCols, f: FinScopeFilter, params: unknown[]): string {
     const parts: string[] = [];
-    const add = (col: string, arr?: number[]) => {
+    const addId = (col: string | undefined, arr?: number[]) => {
+      if (!col) return;
       const vals = [...new Set((arr ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
       if (!vals.length) return;
       params.push(vals); parts.push(`${col} = ANY($${params.length}::bigint[])`);
     };
-    add(cols.branch, f.branch_ids); add(cols.vertical, f.vertical_ids);
+    const addStr = (col: string | undefined, arr?: string[]) => {
+      if (!col) return;
+      const vals = [...new Set((arr ?? []).map((x) => String(x).trim()).filter(Boolean))];
+      if (!vals.length) return;
+      params.push(vals); parts.push(`${col} = ANY($${params.length}::varchar[])`);
+    };
+    addId(cols.branch, f.branch_ids); addId(cols.vertical, f.vertical_ids);
+    addId(cols.counsellor, f.counsellor_ids); addId(cols.course, f.course_ids);
+    addStr(cols.status, f.statuses); addStr(cols.mode, f.payment_modes);
+    // Trainer lives on the BATCH, not the enrolment — translate to a batch-membership test.
+    if (cols.batch) {
+      const tvals = [...new Set((f.trainer_ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+      if (tvals.length) {
+        params.push(tvals);
+        parts.push(`${cols.batch} IN (SELECT id FROM batch WHERE trainer_id = ANY($${params.length}::bigint[]))`);
+      }
+    }
     return parts.length ? ' AND ' + parts.join(' AND ') : '';
   }
 
@@ -58,7 +88,8 @@ export class FinanceDashboardService {
     // ---- collections (fee_receipt) ----
     const rp: unknown[] = [];
     const rw = this.resolver.buildScopeWhere(scope, RECEIPT_COLS, rp)
-      + this.narrow({ branch: 'fr.branch_id', vertical: 'fr.vertical_id' }, opts, rp);
+      + this.narrow({ branch: 'fr.branch_id', vertical: 'fr.vertical_id', counsellor: 'e.counsellor_id',
+                     course: 'e.course_id', status: 'e.status', batch: 'e.batch_id', mode: 'fr.mode' }, opts, rp);
     // optional date range on the receipt date
     let rDate = '';
     if (dr.from) { rp.push(dr.from); rDate += ` AND fr.received_at >= $${rp.length}::date`; }
@@ -129,7 +160,7 @@ export class FinanceDashboardService {
     // ---- refunds (approved, net down the collection) ----
     const fp: unknown[] = [];
     const fw = this.resolver.buildScopeWhere(scope, REFUND_COLS, fp)
-      + this.narrow({ branch: 'rf.branch_id', vertical: 'rf.vertical_id' }, opts, fp);
+      + this.narrow({ branch: 'rf.branch_id', vertical: 'rf.vertical_id', counsellor: 'e.counsellor_id', course: 'e.course_id' }, opts, fp);
     let fDate = '';
     if (dr.from) { fp.push(dr.from); fDate += ` AND rf.refunded_at >= $${fp.length}::date`; }
     if (dr.to) { fp.push(dr.to); fDate += ` AND rf.refunded_at < ($${fp.length}::date + 1)`; }
@@ -144,7 +175,7 @@ export class FinanceDashboardService {
     // ---- invoices (gst_invoice) ----
     const ip: unknown[] = [];
     const iw = this.resolver.buildScopeWhere(scope, INVOICE_COLS, ip)
-      + this.narrow({ branch: 'gi.branch_id', vertical: 'gi.vertical_id' }, opts, ip);
+      + this.narrow({ branch: 'gi.branch_id', vertical: 'gi.vertical_id', counsellor: 'gi.counsellor_id' }, opts, ip);
     let iDate = '';
     if (dr.from) { ip.push(dr.from); iDate += ` AND gi.invoice_date >= $${ip.length}::date`; }
     if (dr.to) { ip.push(dr.to); iDate += ` AND gi.invoice_date <= $${ip.length}::date`; }
@@ -162,6 +193,56 @@ export class FinanceDashboardService {
 
     const gstTotal = num(inv?.cgst_minor) + num(inv?.sgst_minor) + num(inv?.igst_minor);
 
+    // ---- crm25aug (#5): collectible + net revenue (enrolment) ----
+    const cp: unknown[] = [];
+    const cw = this.resolver.buildScopeWhere(scope, ENROL_COLS, cp)
+      + this.narrow({ branch: 'e.branch_id', vertical: 'e.vertical_id', counsellor: 'e.counsellor_id',
+                     course: 'e.course_id', batch: 'e.batch_id' }, opts, cp);
+    let cDate = '';
+    if (dr.from) { cp.push(dr.from); cDate += ` AND e.created_at >= $${cp.length}::date`; }
+    if (dr.to) { cp.push(dr.to); cDate += ` AND e.created_at < ($${cp.length}::date + 1)`; }
+    const coll2 = await this.db.one<any>(
+      `SELECT COALESCE(sum(e.net_fee_minor), 0) AS collectible_minor,
+              COALESCE(sum(CASE WHEN TRUE${cDate ? ' AND ' + cDate.replace(/^ AND /, '') : ''} THEN e.net_fee_minor ELSE 0 END), 0) AS net_revenue_range_minor
+         FROM enrolment e
+        WHERE e.deleted_at IS NULL AND e.status = 'active' AND ${cw}`, cp);
+
+    // ---- crm25aug (#5): instalment KPIs (installment schedule) ----
+    const sp: unknown[] = [];
+    const sw = this.resolver.buildScopeWhere(scope, ENROL_COLS, sp)
+      + this.narrow({ branch: 'e.branch_id', vertical: 'e.vertical_id', counsellor: 'e.counsellor_id',
+                     course: 'e.course_id', batch: 'e.batch_id' }, opts, sp);
+    const inst = await this.db.one<any>(
+      `SELECT
+         COALESCE(sum(i.amount_minor) FILTER (
+            WHERE i.due_date >= date_trunc('month', now())::date
+              AND i.due_date <  (date_trunc('month', now()) + interval '1 month')::date), 0) AS current_month_minor,
+         COALESCE(sum((i.amount_minor - i.paid_minor)) FILTER (
+            WHERE i.due_date < CURRENT_DATE AND i.status IN ('pending','partial')), 0) AS overdue_minor
+       FROM installment i JOIN enrolment e ON e.id = i.enrolment_id
+      WHERE e.deleted_at IS NULL AND ${sw}`, sp);
+
+    // Overdue fee COLLECTED — receipt money that settled an instalment paid AFTER its due date
+    // (a previously-overdue instalment recovered), within the selected DateRange + scope.
+    const op: unknown[] = [];
+    const ow = this.resolver.buildScopeWhere(scope, ENROL_COLS, op)
+      + this.narrow({ branch: 'e.branch_id', vertical: 'e.vertical_id', counsellor: 'e.counsellor_id',
+                     course: 'e.course_id', batch: 'e.batch_id' }, opts, op);
+    let oDate = '';
+    if (dr.from) { op.push(dr.from); oDate += ` AND fr.received_at >= $${op.length}::date`; }
+    if (dr.to) { op.push(dr.to); oDate += ` AND fr.received_at < ($${op.length}::date + 1)`; }
+    const overdueColl = await this.db.one<any>(
+      `SELECT COALESCE(sum(ip.amount_minor), 0) AS overdue_collected_minor
+         FROM installment_payment ip
+         JOIN installment i ON i.id = ip.installment_id
+         JOIN fee_receipt fr ON fr.id = ip.fee_receipt_id AND fr.deleted_at IS NULL
+         JOIN enrolment e ON e.id = i.enrolment_id
+        WHERE e.deleted_at IS NULL AND i.due_date < fr.received_at::date AND ${ow}${oDate}`, op);
+
+    const totalCollected = num(coll?.all_time_minor);
+    const totalCollectible = num(coll2?.collectible_minor);
+    const collectionRatePct = totalCollectible > 0 ? Math.round((totalCollected * 1000) / totalCollectible) / 10 : 0;
+
     return {
       range: { from: dr.from ?? null, to: dr.to ?? null },
       kpis: {
@@ -175,6 +256,13 @@ export class FinanceDashboardService {
         collected_mtd_minor: num(coll?.mtd_minor),
         collected_today_minor: num(coll?.today_minor),
         outstanding_minor: num(dues?.outstanding_minor),
+        total_unpaid_minor: num(dues?.outstanding_minor),
+        total_collectible_minor: totalCollectible,
+        collection_rate_pct: collectionRatePct,
+        net_revenue_minor: num(coll2?.net_revenue_range_minor),
+        current_month_installment_minor: num(inst?.current_month_minor),
+        overdue_fee_minor: num(inst?.overdue_minor),
+        overdue_fee_collected_minor: num(overdueColl?.overdue_collected_minor),
         gst_collected_minor: gstTotal,
         cgst_minor: num(inv?.cgst_minor), sgst_minor: num(inv?.sgst_minor), igst_minor: num(inv?.igst_minor),
         taxable_minor: num(inv?.taxable_minor),

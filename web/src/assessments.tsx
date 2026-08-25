@@ -660,7 +660,7 @@ function TestBuilder({ test, rd, onClose, onSaved }: { test: any; rd: any; onClo
     branch_id: '', vertical_id: '', duration_min: 30, max_attempts: 1,
     negative_marking: false, default_negative: 0, randomize_questions: false, randomize_options: false,
     shuffle_per_attempt: false, questions_to_show: '', pass_mode: 'marks', passing_marks: '', passing_pct: '',
-    start_at: '', end_at: '', show_result_mode: 'instant', instructions: '',
+    start_at: '', end_at: '', show_result_mode: 'instant', instructions: '', zoom_link: '',
     total_marks_manual: false, total_marks: '',
   });
   const [picked, setPicked] = useState<any[]>([]);
@@ -687,7 +687,7 @@ function TestBuilder({ test, rd, onClose, onSaved }: { test: any; rd: any; onClo
         shuffle_per_attempt: !!a.shuffle_per_attempt, questions_to_show: a.questions_to_show ?? '',
         pass_mode: a.passing_pct != null ? 'pct' : 'marks', passing_marks: a.passing_marks ?? '', passing_pct: a.passing_pct ?? '',
         start_at: toLocalInput(a.start_at), end_at: toLocalInput(a.end_at),
-        show_result_mode: a.show_result_mode ?? 'instant', instructions: a.instructions ?? '',
+        show_result_mode: a.show_result_mode ?? 'instant', instructions: a.instructions ?? '', zoom_link: a.zoom_link ?? '',
         total_marks_manual: !!a.total_marks_manual, total_marks: a.total_marks ?? '',
         status: a.status,
       });
@@ -719,7 +719,7 @@ function TestBuilder({ test, rd, onClose, onSaved }: { test: any; rd: any; onClo
     passing_marks: f.pass_mode === 'marks' && f.passing_marks !== '' ? Number(f.passing_marks) : null,
     passing_pct: f.pass_mode === 'pct' && f.passing_pct !== '' ? Number(f.passing_pct) : null,
     start_at: f.start_at || null, end_at: f.end_at || null,
-    show_result_mode: f.show_result_mode, instructions: f.instructions || null,
+    show_result_mode: f.show_result_mode, instructions: f.instructions || null, zoom_link: f.zoom_link || null,
     total_marks_manual: f.total_marks_manual, total_marks: f.total_marks_manual && f.total_marks !== '' ? Number(f.total_marks) : null,
     questions: picked.map((p, i) => ({ question_id: p.question_id, marks_override: p.marks_override === '' ? null : Number(p.marks_override), ordering: i + 1 })),
     sections: sections.filter((s) => s.pool_from_category_id).map((s, i) => ({
@@ -805,6 +805,7 @@ function TestBuilder({ test, rd, onClose, onSaved }: { test: any; rd: any; onClo
           <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}><input type="checkbox" checked={f.shuffle_per_attempt} onChange={(e) => set('shuffle_per_attempt', e.target.checked)} />Shuffle each attempt</label>
         </div>
         <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Instructions (shown before the test)</label><textarea className="ainp" rows={2} value={f.instructions} onChange={(e) => set('instructions', e.target.value)} /></div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Zoom Link (optional)</label><input className="ainp" type="url" value={f.zoom_link} onChange={(e) => set('zoom_link', e.target.value)} placeholder="https://zoom.us/j/… (for proctored / online sessions)" /><span className="sub">Shown to students on the attempt screen to join the proctored session.</span></div>
       </div></Section>
 
       <QuestionPicker rd={rd} catOpts={catOpts} picked={picked} onAdd={addPicked} />
@@ -1167,6 +1168,7 @@ function LaunchTest({ test, onClose, onDone }: { test: any; onClose: () => void;
             ? 'This is an assignment / practical test — the student submits a file below.'
             : `A timed attempt will start now${test.duration_min ? ` (${test.duration_min} min)` : ''}. Up to ${test.max_attempts} attempt(s) per student.`}
         </div>
+        {test.zoom_link ? <div className="empty-note" style={{ gridColumn: '1 / -1' }}><Ic k="bolt" /> Proctored session: <a href={test.zoom_link} target="_blank" rel="noopener noreferrer">Join proctored session</a></div> : null}
       </div>
       {isFile && studentId ? <AssignmentSubmitInline testId={test.id} studentId={Number(studentId)} onDone={() => { onClose(); onDone(); }} /> : null}
     </DetailModal>
@@ -1302,6 +1304,7 @@ function TakeTestPlayer({ attemptId, onClose }: { attemptId: number; onClose: ()
         </div>
       </div>}>
       {left != null && left < 60_000 ? <div className="empty-note" style={{ color: 'var(--danger)', marginBottom: 8 }}>Less than a minute remaining — the attempt auto-submits at 0.</div> : null}
+      {data.zoom_link ? <div className="empty-note" style={{ marginBottom: 10 }}><Ic k="bolt" /> Proctored session: <a href={data.zoom_link} target="_blank" rel="noopener noreferrer">Join proctored session</a></div> : null}
       {data.questions.map((q: any, i: number) => (
         <div key={q.question_id} style={{ marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid var(--line)' }}>
           <div style={{ fontSize: 14 }}><b>{i + 1}.</b> {q.body} <span className="sub">({q.marks}m)</span></div>
