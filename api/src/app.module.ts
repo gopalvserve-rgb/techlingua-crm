@@ -57,6 +57,7 @@ import { SupportExtrasModule } from './supportextras/supportextras.module';
 import { AssessmentsModule } from './assessments/assessments.module';
 import { NotificationEventsModule } from './notificationevents/notification-events.module';
 import { GovernanceModule } from './governance/governance.module';
+import { FranchiseModule } from './franchise/franchise.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -139,6 +140,9 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     // Assessment / Test Module — Batch A: the Question Bank foundation (categories, questions,
     // options, media to R2, CSV import/export). Batches B/C/D build tests, attempts, results.
     AssessmentsModule,
+    // Phase 4 Batch 1 — Franchise & Royalty: franchise records + branch mapping, franchise
+    // scope resolver, per-franchise dashboard rollup, royalty plans + royalty statement.
+    FranchiseModule,
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

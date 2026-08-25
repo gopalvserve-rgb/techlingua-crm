@@ -83,6 +83,7 @@ import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './
 import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, AssessmentTemplatesScreen, AssessmentEvaluationScreen, AssessmentResultsScreen, GradeSchemesScreen, AssessmentCertificatesScreen } from './assessments';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
+import { FranchisesScreen, RoyaltyPlansScreen, FranchiseDashboardScreen, RoyaltyStatementScreen } from './franchise';
 
 export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
@@ -7623,6 +7624,11 @@ export const DYN: Record<string, () => JSX.Element> = {
   monthlyTargets: MonthlyTargets,
   targetIncentive: TargetIncentive,
   counsellorPerformance: CounsellorPerformance,
+  // Phase 4 Batch 1 — Franchise & Royalty
+  franchises: FranchisesScreen,
+  royaltyPlans: RoyaltyPlansScreen,
+  franchiseDashboard: FranchiseDashboardScreen,
+  royaltyStatement: RoyaltyStatementScreen,
   feeCollection: FeeCollection,
   branches: Branches,
   verticals: Verticals,

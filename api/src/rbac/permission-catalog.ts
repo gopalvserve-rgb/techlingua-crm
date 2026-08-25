@@ -181,4 +181,9 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // eligible students access via the student-facing /students/:id/placements path.
   { module: 'placement', label: 'Placement Support', actions: ['read', 'create', 'update', 'delete'] },
   { module: 'placement_application', label: 'Placement Applications', actions: ['read', 'create', 'update', 'delete'] },
+  // Phase 4 Batch 1 (migration 105) — Franchise & Royalty. franchise.* manages franchise
+  // records + their branch mapping; royalty.read reads plans/statements, royalty.manage
+  // edits plans. Admin-only in this batch; franchise-owner (own-only) roles are a later batch.
+  { module: 'franchise', label: 'Franchise', actions: ['read', 'create', 'update', 'delete'] },
+  { module: 'royalty', label: 'Royalty (plans & statements)', actions: ['read', 'manage'] },
 ];
