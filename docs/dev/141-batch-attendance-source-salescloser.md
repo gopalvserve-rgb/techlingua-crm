@@ -100,3 +100,9 @@ the same `/teams`.
 - `teams/teams-members.spec.ts` — create inserts each member; update replaces membership.
 - `quotations/quotation-payment-plan.spec.ts` — create persists payment_plan.
 - `hierarchy/source-reparent.spec.ts` — mock updated for the rename→canonical-sync behaviour.
+
+## Deploy
+- Commit `a4d3c20` pushed to `gopalvserve-rgb/techlingua-crm main` (supersedes `03d8108`).
+- Deployed from a pristine `--depth 1` clone via `railway up . --path-as-root --service api` (no npm install in the deploy dir). Railway deployment `f0128306-814f-4cee-a3cb-fdde3a5289fe`.
+- Served bundle CHANGED `index-cjOPWU-L.js` → **`index-C3F6CvH3.js`**. grep-verified markers in the served JS: `enrol-assignbatch-save`, `att-f-trainer`, `quote-plan`, `team-members-list`, `Only batches for this enrolment`, `org-wide source`, `On Hold`.
+- App Online: `/`→200; `/api/enrolments`, `/api/teams`, `/api/batches/status-catalog`→401 (auth-gated) — so migrations 110–114 ran on boot.
