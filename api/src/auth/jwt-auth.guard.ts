@@ -46,6 +46,19 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('User is inactive');
     }
 
+    // Live team-status (dev/139) — a lightweight, throttled last-seen heartbeat on each
+    // authenticated request (fire-and-forget; never blocks or fails the request). The DB-side
+    // predicate limits writes to at most one per user per ~55s. Guarded for the unit doubles
+    // whose db mock has no `query`.
+    try {
+      const p = (this.db as any).query?.(
+        `UPDATE "user" SET last_seen_at = now()
+          WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - INTERVAL '55 seconds')`,
+        [userId],
+      );
+      if (p && typeof p.catch === 'function') p.catch(() => undefined);
+    } catch { /* best-effort only */ }
+
     req.user = { id: userId, email: payload.email, name: payload.name };
     return true;
   }

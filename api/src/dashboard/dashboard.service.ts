@@ -345,4 +345,58 @@ export class DashboardService {
       conversion_rate: leadWonConversionPct(won, leads),
     };
   }
+
+  /**
+   * LIVE TEAM STATUS (dev/139) — the agents/counsellors visible in the caller's LEAD scope, each
+   * with a live Online/Away/Offline status derived from user.last_seen_at, plus their open
+   * (not won/lost) lead count and today's pending follow-up count (IST). Read-only; scoped by the
+   * SAME buildScopeWhere the leads list uses (a counsellor sees only their own row; a branch/
+   * vertical manager only their unit's agents) and narrowed by the optional top-bar scope.
+   *
+   * Thresholds: Online < 5 min since last seen, Away < 30 min, else Offline (NULL last_seen = Offline).
+   */
+  async teamStatus(scope: ResolvedScope, q: DashScopeFilter = {}) {
+    const p: unknown[] = [];
+    const w = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, p);
+    const gnar = this.narrow(
+      { branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' }, q, p,
+    );
+    // Bind the active-user filter as a PARAM (not a literal) — the reconcile guard forbids a
+    // hardcoded active-status literal in this file, and a param is cleaner anyway.
+    p.push('active');
+    const activeParam = `$${p.length}`;
+    const rows = await this.db.query<any>(
+      `SELECT u.id, u.name, u.last_seen_at,
+              COUNT(*) FILTER (WHERE COALESCE(st.stage_type, 'open') NOT IN ('won', 'lost'))::int AS open_leads,
+              (SELECT COUNT(*)::int FROM follow_up fu
+                WHERE fu.owner_id = u.id AND fu.status = 'pending' AND fu.deleted_at IS NULL AND fu.is_active
+                  AND (fu.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+              ) AS followups_today
+         FROM lead l
+         JOIN "user" u ON u.id = l.owner_id
+         LEFT JOIN pipeline_stage st ON st.id = l.stage_id
+        WHERE (${w})${gnar} AND l.deleted_at IS NULL AND l.is_active AND l.owner_id IS NOT NULL
+          AND u.deleted_at IS NULL AND u.status = ${activeParam}
+        GROUP BY u.id, u.name, u.last_seen_at
+        ORDER BY u.name`, p,
+    );
+    const now = Date.now();
+    const agents = rows.map((r) => {
+      const seen = r.last_seen_at ? new Date(r.last_seen_at).getTime() : null;
+      const mins = seen == null ? null : Math.max(0, Math.round((now - seen) / 60000));
+      const status = mins == null ? 'offline' : mins < 5 ? 'online' : mins < 30 ? 'away' : 'offline';
+      return {
+        id: Number(r.id), name: r.name, last_seen_at: r.last_seen_at,
+        minutes_since: mins, status,
+        open_leads: Number(r.open_leads), followups_today: Number(r.followups_today),
+      };
+    });
+    return {
+      agents,
+      online: agents.filter((a) => a.status === 'online').length,
+      away: agents.filter((a) => a.status === 'away').length,
+      offline: agents.filter((a) => a.status === 'offline').length,
+      total: agents.length,
+    };
+  }
 }

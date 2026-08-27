@@ -67,6 +67,8 @@ export const GUARD_OFF: HandoutGuard = { enabled: false, min_actioned_pct: 100 }
 export interface DispositionDto {
   lead_id: number;
   disposition_id?: number | null;
+  /** Calling CRM (dev/139) — the CALL disposition (m_call_disposition); sets lead.last_call_disposition_id. */
+  call_disposition_id?: number | null;
   stage_id?: number | null;
   status_id?: number | null;
   temperature?: 'hot' | 'warm' | 'cold' | null;
@@ -178,6 +180,7 @@ export class HandoutService {
     if (unmapped) { params.length = 0; where = '1=1'; }
     const rows = await this.db.query<any>(
       `SELECT c.id, c.name, c.distribution_config,
+              c.branch_id, c.vertical_id, c.pipeline_id,
               b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
               (SELECT COUNT(*)::int FROM lead l
                  LEFT JOIN pipeline_stage st ON st.id = l.stage_id
@@ -199,6 +202,7 @@ export class HandoutService {
       })
       .map((r) => ({
         id: Number(r.id), name: r.name,
+        branch_id: Number(r.branch_id), vertical_id: Number(r.vertical_id), pipeline_id: Number(r.pipeline_id),
         branch_name: r.branch_name, vertical_name: r.vertical_name, pipeline_name: r.pipeline_name,
         batch_size: Number(r.distribution_config?.batch_size) > 0 ? Number(r.distribution_config.batch_size) : HANDOUT_DEFAULT_SIZE,
         waiting: Number(r.waiting),
@@ -364,14 +368,19 @@ export class HandoutService {
       `SELECT i.position, i.actioned_at, i.disposition_id, d.name AS disposition_name,
               l.id, l.full_name, l.phone, l.email, l.priority, l.temperature, l.score,
               l.stage_id, l.status_id, l.owner_id, l.next_follow_up_at, l.created_at,
+              l.branch_id, l.vertical_id, l.pipeline_id, l.campaign_id, l.source_id,
+              l.last_call_disposition_id, lcd.name AS last_call_disposition_name,
               co.name AS course_name, ci.name AS city_name, st.name AS stage_name,
-              src.name AS source_name
+              ms.name AS status_name, u.name AS owner_name, src.name AS source_name
          FROM lead_handout_item i
          JOIN lead l ON l.id = i.lead_id
          LEFT JOIN m_disposition d ON d.id = i.disposition_id
+         LEFT JOIN m_call_disposition lcd ON lcd.id = l.last_call_disposition_id
          LEFT JOIN m_course co ON co.id = l.course_id
          LEFT JOIN city ci ON ci.id = l.city_id
          LEFT JOIN pipeline_stage st ON st.id = l.stage_id
+         LEFT JOIN m_status ms ON ms.id = l.status_id
+         LEFT JOIN \"user\" u ON u.id = l.owner_id
          LEFT JOIN source src ON src.id = l.source_id
         WHERE i.handout_id = $1
         ORDER BY i.position`, [handoutId],
@@ -448,6 +457,12 @@ export class HandoutService {
       );
       if (!d) throw new BadRequestException('unknown disposition');
     }
+    if (dto.call_disposition_id != null) {
+      const cd = await this.db.one(
+        `SELECT id FROM m_call_disposition WHERE id = $1 AND is_active AND deleted_at IS NULL`, [Number(dto.call_disposition_id)],
+      );
+      if (!cd) throw new BadRequestException('unknown call disposition');
+    }
 
     const leadId = Number(item.lead_id);
     const org = Number(item.org_id);
@@ -461,6 +476,11 @@ export class HandoutService {
       if (dto.status_id != null && Number(dto.status_id) !== Number(item.status_id)) set('status_id', Number(dto.status_id));
       if (dto.priority != null) set('priority', dto.priority);
       if (dto.temperature !== undefined) set('temperature', dto.temperature);
+      // Calling CRM (dev/139) — a logged call disposition becomes the lead's LAST call disposition.
+      if (dto.call_disposition_id != null) {
+        set('last_call_disposition_id', Number(dto.call_disposition_id));
+        sets.push('last_call_disposition_at = now()');
+      }
 
       if (sets.length) {
         params.push(leadId);
@@ -486,6 +506,7 @@ export class HandoutService {
           JSON.stringify({
             handout_id: handoutId, position: Number(item.position),
             disposition_id: dto.disposition_id ?? null,
+            call_disposition_id: dto.call_disposition_id ?? null,
           }),
           dto.note?.trim() ? dto.note.trim() : null],
       );

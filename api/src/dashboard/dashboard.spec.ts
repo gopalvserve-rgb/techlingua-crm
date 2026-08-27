@@ -280,3 +280,40 @@ describe('the overview KPI cohort honours the shared date range (created_at), ad
     for (const c of applied) expect(c.params).toContain('2026-07-01');
   });
 });
+
+/* -------- dev/139: live team status derives from user.last_seen_at -------- */
+describe('teamStatus (dev/139) — live agent status', () => {
+  const rowsDb = (rows: any[]) => ({
+    query: async () => rows,
+    one: async () => ({}),
+  } as unknown as DatabaseService);
+
+  it('buckets Online (<5m), Away (<30m), Offline (>=30m or never seen)', async () => {
+    const now = Date.now();
+    const at = (m: number | null) => (m == null ? null : new Date(now - m * 60000).toISOString());
+    const rows = [
+      { id: 1, name: 'A', last_seen_at: at(1), open_leads: 3, followups_today: 2 },
+      { id: 2, name: 'B', last_seen_at: at(10), open_leads: 1, followups_today: 0 },
+      { id: 3, name: 'C', last_seen_at: at(120), open_leads: 0, followups_today: 0 },
+      { id: 4, name: 'D', last_seen_at: null, open_leads: 5, followups_today: 1 },
+    ];
+    const out: any = await svc(rowsDb(rows)).teamStatus(ADMIN);
+    expect(out.total).toBe(4);
+    expect(out.online).toBe(1);
+    expect(out.away).toBe(1);
+    expect(out.offline).toBe(2);
+    expect(out.agents.find((a: any) => a.id === 1).status).toBe('online');
+    expect(out.agents.find((a: any) => a.id === 2).status).toBe('away');
+    expect(out.agents.find((a: any) => a.id === 4).status).toBe('offline');
+    expect(out.agents.find((a: any) => a.id === 1).open_leads).toBe(3);
+    expect(out.agents.find((a: any) => a.id === 1).followups_today).toBe(2);
+  });
+
+  it('scopes agents through the lead table (a counsellor only ever sees their own row)', async () => {
+    const { db, calls } = spyDb();
+    await svc(db).teamStatus(OWN);
+    const q = calls.find((c) => /JOIN "user" u ON u\.id = l\.owner_id/.test(c.sql));
+    expect(q).toBeTruthy();
+    expect(q!.sql).toMatch(/owner_id/);
+  });
+});

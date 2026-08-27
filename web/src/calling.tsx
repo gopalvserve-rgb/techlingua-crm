@@ -23,6 +23,7 @@ import { toast, useFetch, useRef_ } from './refdata';
 
 export interface PullCampaign {
   id: number; name: string;
+  branch_id?: number; vertical_id?: number; pipeline_id?: number;
   branch_name?: string; vertical_name?: string; pipeline_name?: string;
   batch_size: number; waiting: number;
 }
@@ -32,6 +33,11 @@ export interface QueueLead {
   full_name: string; phone: string; email: string | null;
   priority: string; temperature: string | null; score: number | null;
   stage_id: number | null; stage_name: string | null; status_id: number | null;
+  status_name?: string | null;
+  branch_id?: number | null; vertical_id?: number | null; pipeline_id?: number | null;
+  campaign_id?: number | null; source_id?: number | null;
+  owner_id?: number | null; owner_name?: string | null;
+  last_call_disposition_id?: number | null; last_call_disposition_name?: string | null;
   course_name: string | null; city_name: string | null; source_name: string | null;
   next_follow_up_at: string | null; created_at: string;
 }
@@ -102,6 +108,11 @@ export default function StartCalling() {
   const [idx, setIdx] = useState(0);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
+  // Start Calling filters (dev/139) — narrow the campaign PICKER (Branch/Vertical/Pipeline) and
+  // the batch QUEUE (Source/Status/Stage/Last Call Disposition/worked-state/search).
+  const [pf, setPf] = useState<{ branch: string; vertical: string; pipeline: string }>({ branch: '', vertical: '', pipeline: '' });
+  const [qf, setQf] = useState<{ source: string; status: string; stage: string; calldisp: string; state: string; q: string }>(
+    { source: '', status: '', stage: '', calldisp: '', state: '', q: '' });
 
   // the agent's live queue (if they left one open)
   useEffect(() => {
@@ -118,7 +129,12 @@ export default function StartCalling() {
       .catch(() => undefined);
   }, [canPull]);
 
-  const list = campaigns ?? [];
+  const allCampaigns = campaigns ?? [];
+  // Campaign-picker filters narrow the on-demand campaigns an agent chooses from.
+  const list = allCampaigns.filter((c) =>
+    (!pf.branch || Number(c.branch_id) === Number(pf.branch))
+    && (!pf.vertical || Number(c.vertical_id) === Number(pf.vertical))
+    && (!pf.pipeline || Number(c.pipeline_id) === Number(pf.pipeline)));
   const selected = useMemo<PullCampaign | null>(
     () => list.find((c) => Number(c.id) === Number(campaignId)) ?? list[0] ?? null,
     [list, campaignId],
@@ -127,6 +143,14 @@ export default function StartCalling() {
     ? batch.waiting : selected?.waiting ?? 0;
 
   const leads = batch?.leads ?? [];
+  // Queue filters applied to the batch list (client-side; keeps the original index for navigation).
+  const shownLeads = leads.map((l, i) => ({ l, i })).filter(({ l }) =>
+    (!qf.source || Number(l.source_id) === Number(qf.source))
+    && (!qf.status || Number(l.status_id) === Number(qf.status))
+    && (!qf.stage || Number(l.stage_id) === Number(qf.stage))
+    && (!qf.calldisp || Number(l.last_call_disposition_id) === Number(qf.calldisp))
+    && (qf.state === '' || (qf.state === 'pending' ? !l.actioned_at : !!l.actioned_at))
+    && (!qf.q.trim() || `${l.full_name} ${l.phone}`.toLowerCase().includes(qf.q.trim().toLowerCase())));
   const done = batch?.handout?.actioned_count ?? 0;
   const total = batch?.handout?.size ?? 0;
   const lead: QueueLead | undefined = leads[idx];
@@ -162,6 +186,7 @@ export default function StartCalling() {
     try {
       const body: Record<string, unknown> = { lead_id: lead.id };
       if (form.disposition_id) body.disposition_id = Number(form.disposition_id);
+      if (form.call_disposition_id) body.call_disposition_id = Number(form.call_disposition_id);
       if (form.stage_id) body.stage_id = Number(form.stage_id);
       if (form.temperature) body.temperature = form.temperature;
       if (form.priority) body.priority = form.priority;
@@ -191,6 +216,7 @@ export default function StartCalling() {
   }
 
   const dispositions = ref.dispositions ?? [];
+  const callDispositions = ref.callDispositions ?? [];
 
   return (
     <>
@@ -215,6 +241,36 @@ export default function StartCalling() {
           <div className="lab">Done in this batch</div>
           <div className="val">{done}</div>
         </div>
+      </div>
+
+      {/* Start Calling filters (dev/139) — narrow the campaign PICKER by Branch › Vertical › Pipeline. */}
+      <div className="filters" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <div className="fchip"><Ic k="branch" />Branch
+          <select aria-label="Filter campaigns by Branch" value={pf.branch}
+            onChange={(e) => setPf({ branch: e.target.value, vertical: '', pipeline: '' })}>
+            <option value="">All</option>
+            {(ref.branches ?? []).map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+        <div className="fchip"><Ic k="grid" />Vertical
+          <select aria-label="Filter campaigns by Vertical" value={pf.vertical}
+            onChange={(e) => setPf((x) => ({ ...x, vertical: e.target.value, pipeline: '' }))}>
+            <option value="">All</option>
+            {(ref.verticals ?? []).filter((v: any) => !pf.branch || Number(v.branch_id) === Number(pf.branch))
+              .map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </div>
+        <div className="fchip"><Ic k="list" />Pipeline
+          <select aria-label="Filter campaigns by Pipeline" value={pf.pipeline}
+            onChange={(e) => setPf((x) => ({ ...x, pipeline: e.target.value }))}>
+            <option value="">All</option>
+            {(ref.pipelines ?? []).filter((p: any) => !pf.vertical || Number(p.vertical_id) === Number(pf.vertical))
+              .map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+        {(pf.branch || pf.vertical || pf.pipeline) && (
+          <button className="btn ghost" onClick={() => setPf({ branch: '', vertical: '', pipeline: '' })}>Clear</button>
+        )}
       </div>
 
       <div className="card">
@@ -267,7 +323,48 @@ export default function StartCalling() {
               <span className="more">{batch.handout.campaign_name}</span>
             </div>
             <div className="card-pad"><Progress done={done} total={total} /></div>
-            {leads.map((l, i) => (
+            {/* Start Calling QUEUE filters (dev/139) — narrow the leads shown in this batch. */}
+            <div className="filters" style={{ flexWrap: 'wrap', gap: 6, padding: '0 12px 8px' }}>
+              <div className="fchip"><Ic k="leads" />Source
+                <select aria-label="Filter queue by Source" value={qf.source} onChange={(e) => setQf((x) => ({ ...x, source: e.target.value }))}>
+                  <option value="">All</option>
+                  {(ref.sources ?? []).map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div className="fchip"><Ic k="check" />Status
+                <select aria-label="Filter queue by Status" value={qf.status} onChange={(e) => setQf((x) => ({ ...x, status: e.target.value }))}>
+                  <option value="">All</option>
+                  {(ref.statuses ?? []).map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div className="fchip"><Ic k="list" />Stage
+                <select aria-label="Filter queue by Stage" value={qf.stage} onChange={(e) => setQf((x) => ({ ...x, stage: e.target.value }))}>
+                  <option value="">All</option>
+                  {(batch.stages ?? []).map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div className="fchip"><Ic k="calls" />Last Call Disposition
+                <select aria-label="Filter queue by Last Call Disposition" value={qf.calldisp} onChange={(e) => setQf((x) => ({ ...x, calldisp: e.target.value }))}>
+                  <option value="">All</option>
+                  {(ref.callDispositions ?? []).map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div className="fchip"><Ic k="bolt" />Show
+                <select aria-label="Filter queue by worked state" value={qf.state} onChange={(e) => setQf((x) => ({ ...x, state: e.target.value }))}>
+                  <option value="">All</option>
+                  <option value="pending">Not worked</option>
+                  <option value="done">Worked only</option>
+                </select>
+              </div>
+              <div className="fchip"><Ic k="search" />
+                <input aria-label="Search queue" style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}
+                  placeholder="Name / phone…" value={qf.q} onChange={(e) => setQf((x) => ({ ...x, q: e.target.value }))} />
+              </div>
+            </div>
+            {shownLeads.length === 0 && (
+              <div className="card-pad"><div className="empty-note" data-testid="queue-empty">No leads in this batch match the filters.</div></div>
+            )}
+            {shownLeads.map(({ l, i }) => (
               <div className="lrow" key={l.id} style={{ cursor: 'pointer', background: i === idx ? 'var(--surface-3)' : undefined }}
                 onClick={() => { setIdx(i); setForm({}); }}>
                 <div className={`ic-t ${l.actioned_at ? 'b-green' : i === idx ? 'b-indigo' : 'b-gray'}`}>
@@ -327,6 +424,7 @@ export default function StartCalling() {
                     <div className="f"><label>Course</label><div className="iv"><span>{lead.course_name || '—'}</span></div></div>
                     <div className="f"><label>City</label><div className="iv"><span>{lead.city_name || '—'}</span></div></div>
                     <div className="f"><label>Source</label><div className="iv"><span>{lead.source_name || '—'}</span></div></div>
+                    <div className="f"><label>Last call disposition</label><div className="iv"><span>{lead.last_call_disposition_name || '—'}</span></div></div>
                     <div className="f"><label>In the pool since</label><div className="iv"><span>{fmt(lead.created_at)}</span></div></div>
                   </div>
                 </div>
@@ -339,6 +437,14 @@ export default function StartCalling() {
                         onChange={(e) => setForm((f) => ({ ...f, disposition_id: e.target.value }))}>
                         <option value="">Select…</option>
                         {dispositions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="fld">
+                      <label>Call Disposition <span className="fhint">outcome of this call — becomes the lead&apos;s last call disposition</span></label>
+                      <select className="ainp" aria-label="Call Disposition" value={form.call_disposition_id ?? ''}
+                        onChange={(e) => setForm((f) => ({ ...f, call_disposition_id: e.target.value }))}>
+                        <option value="">Select…</option>
+                        {callDispositions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                       </select>
                     </div>
                     <div className="fld">

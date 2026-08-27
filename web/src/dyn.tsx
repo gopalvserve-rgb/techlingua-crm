@@ -153,7 +153,7 @@ const fmtDate = (v?: string | null) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Lead Counsellor', 'Stage', 'Status', 'Next follow-up', 'Created on'];
+const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Lead Counsellor', 'Stage', 'Status', 'Last Call Disposition', 'Next follow-up', 'Created on'];
 
 /* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
 const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
@@ -237,6 +237,8 @@ function leadRow(l: any): Cell[] {
     { b: [l.stage_name || '—', l.stage_type === 'won' ? 'b-green' : l.stage_type === 'lost' ? 'b-rose' : 'b-cyan'] },
     // dev/84 item 9 — Lead Status (status master value) column, sortable + exported (names).
     { b: [l.status_name || '—', 'b-gray'] },
+    // Calling CRM (dev/139) — Last Call Disposition (m_call_disposition), toggled via the column chooser.
+    (l.last_call_disposition_name ? ({ b: [l.last_call_disposition_name, 'b-cyan'] } as Cell) : ('—' as Cell)),
     { node: <span className="mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span> },
     // dev/84 item 9 — Lead creation date (DD-MM-YYYY IST), sortable (Newest/Oldest) + exported.
     { node: <span className="mono sub">{fmtDateTimeIST(l.created_at)}</span> },
@@ -320,6 +322,51 @@ interface Dash {
 const VIEW_LABEL: Record<Dash['view'], string> = {
   counsellor: 'My work', team: 'My team', branch: 'My branch', vertical: 'My vertical', admin: 'Organisation',
 };
+
+/**
+ * LIVE TEAM STATUS (dev/139) — a read-only widget on the Dashboard Overview listing the agents/
+ * counsellors in the caller's scope with a live Online / Away / Offline status (from the server's
+ * user.last_seen_at heartbeat), their open lead count and today's follow-up count. Polls every 30s.
+ */
+function TeamStatusCard({ sp, scopeKey }: { sp: Record<string, string>; scopeKey: string }) {
+  const [data, setData] = useState<{ agents: any[]; online: number; away: number; offline: number; total: number } | null>(null);
+  useEffect(() => {
+    let dead = false;
+    const load = () => api.get<any>(withScope('/dashboard/team-status', sp))
+      .then((d) => { if (!dead) setData(d); }).catch(() => undefined);
+    load();
+    const iv = setInterval(load, 30000);
+    return () => { dead = true; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey]);
+  const dotColor = (st: string) => (st === 'online' ? 'var(--success)' : st === 'away' ? 'var(--amber)' : 'var(--text-dim)');
+  const stLabel = (st: string) => (st === 'online' ? 'Online' : st === 'away' ? 'Away' : 'Offline');
+  const seenLabel = (m: number | null) => {
+    if (m == null) return 'never';
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    if (m < 1440) return `${Math.round(m / 60)}h ago`;
+    return `${Math.round(m / 1440)}d ago`;
+  };
+  const rows: Cell[][] = (data?.agents ?? []).map((a) => [
+    { node: (<span className="cell-u"><Avatar name={a.name} /><div><div className="nm">{a.name}</div></div></span>) } as Cell,
+    { node: (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor(a.status), display: 'inline-block' }} />
+        {stLabel(a.status)}
+      </span>) } as Cell,
+    { node: <span className="sub mono">{seenLabel(a.minutes_since)}</span> } as Cell,
+    String(a.open_leads ?? 0),
+    String(a.followups_today ?? 0),
+  ]);
+  return (
+    <TableCard title="Team status — live" icon="users"
+      cols={['Agent', 'Status', 'Last seen', 'Open leads', "Today's follow-ups"]}
+      rows={rows}
+      more={data ? `${data.online} online \u00b7 ${data.away} away \u00b7 ${data.offline} offline` : 'Loading\u2026'}
+      empty="No agents with leads in this scope yet" />
+  );
+}
 
 function DashOverview() {
   const { openLead, refreshTick, go, bump } = useScreen();
@@ -458,6 +505,10 @@ function DashOverview() {
           ])}
           empty="No leads assigned in this unit yet" />
       )}
+
+      {/* Live team/agent status (dev/139) — Online/Away/Offline + open leads + today's follow-ups,
+          scoped to the caller's RBAC + top-bar scope; manager views only, polled every 30s. */}
+      {has('team_leaderboard') && <TeamStatusCard sp={sp} scopeKey={scopeKey} />}
 
       {has('sla') && data?.sla && (
         <div className="row2" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
@@ -798,6 +849,24 @@ function TodayFollowups() {
   // Client Aug 2026 — the KPI cards drive a bucket-scoped list (one of FOLLOWUP_BUCKETS). When a
   // card is active it overrides the preset filter; picking from the preset control clears it.
   const [bucket, setBucket] = useState<string | undefined>(undefined);
+  // Today's Follow-ups filters (dev/139) — the same Branch › Vertical › Campaign / Lead Counsellor /
+  // Type / Disposition multi-selects as the Follow-ups list, seeded from the global top-bar scope.
+  const ref = useRef_();
+  const { scope: gScope, params: fsp, key: fScopeKey } = useScope();
+  const [ff, setFf] = useState(() => ({
+    branches: gScope.branches, verticals: gScope.verticals, campaigns: gScope.campaigns,
+    owners: [] as number[], types: [] as number[], dispositions: [] as number[],
+  }));
+  const setFHier = (patch: Partial<typeof ff>) => setFf((x) => {
+    const nf = { ...x, ...patch };
+    const vOk = new Set(ref.verticals.filter((v: any) => !nf.branches.length || nf.branches.includes(Number(v.branch_id))).map((v: any) => Number(v.id)));
+    nf.verticals = nf.verticals.filter((id) => vOk.has(id));
+    const cOk = new Set(ref.campaigns.filter((c: any) => !nf.verticals.length || nf.verticals.includes(Number(c.vertical_id))).map((c: any) => Number(c.id)));
+    nf.campaigns = nf.campaigns.filter((id) => cOk.has(id));
+    return nf;
+  });
+  const fVOpts = ref.verticals.filter((v: any) => !ff.branches.length || ff.branches.includes(Number(v.branch_id)));
+  const fCOpts = ref.campaigns.filter((c: any) => !ff.verticals.length || ff.verticals.includes(Number(c.vertical_id)));
   const rq = new URLSearchParams({ limit: '100' });
   if (bucket) {
     rq.set('bucket', bucket);
@@ -806,13 +875,16 @@ function TodayFollowups() {
     if (fu.fu_from) rq.set('fu_from', fu.fu_from);
     if (fu.fu_to) rq.set('fu_to', fu.fu_to);
   }
-  const fuKey = `${bucket ?? ''}~${fu.followup ?? ''}~${fu.fu_from ?? ''}~${fu.fu_to ?? ''}`;
+  const fcsv = (k: string, v: number[]) => { if (v.length) rq.set(k, v.join(',')); };
+  fcsv('branch_ids', ff.branches); fcsv('vertical_ids', ff.verticals); fcsv('campaign_ids', ff.campaigns);
+  fcsv('owner_ids', ff.owners); fcsv('type_ids', ff.types); fcsv('disposition_ids', ff.dispositions);
+  const fuKey = `${bucket ?? ''}~${fu.followup ?? ''}~${fu.fu_from ?? ''}~${fu.fu_to ?? ''}~${ff.branches.join(',')}~${ff.verticals.join(',')}~${ff.campaigns.join(',')}~${ff.owners.join(',')}~${ff.types.join(',')}~${ff.dispositions.join(',')}`;
   const fuLabel = bucket
     ? (FU_BUCKETS.find((b) => b.key === bucket)?.lab ?? 'Follow-ups')
     : (FU_PRESETS.find((p) => p.key === fu.followup)?.label
       ?? (fu.followup === 'custom' ? 'Custom range' : 'All follow-ups'));
   const stats = useFetch<any>('/follow-ups/stats', [refreshTick]);
-  const list = useFetch<any[]>(`/follow-ups?${rq.toString()}`, [fuKey, refreshTick]);
+  const list = useFetch<any[]>(withScope(`/follow-ups?${rq.toString()}`, fsp), [fuKey, refreshTick, fScopeKey]);
   const st = stats.data ?? {};
   return (
     <>
@@ -824,17 +896,35 @@ function TodayFollowups() {
         onClick: () => { setBucket(b.key); setFu({}); },
         navLabel: `${b.lab}: ${st[b.key] ?? 0}. Open the ${b.lab} follow-up list`,
       }))} />
+      <div className="filters" style={{ marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+        <FilterMulti label="Branch" icon="branch" value={ff.branches} options={ref.branches ?? []}
+          onChange={(v) => setFHier({ branches: v })} />
+        <FilterMulti label="Vertical" icon="grid" value={ff.verticals} options={fVOpts ?? []}
+          onChange={(v) => setFHier({ verticals: v })} />
+        <FilterMulti label="Campaign" icon="bolt" value={ff.campaigns} options={fCOpts ?? []}
+          onChange={(v) => setFHier({ campaigns: v })} />
+        <FilterMulti label="Lead Counsellor" testid="fm-owner" icon="users" value={ff.owners} options={selectableUsers(ref.users ?? [])}
+          onChange={(v) => setFf((x) => ({ ...x, owners: v }))} />
+        <FilterMulti label="Type" icon="cal" value={ff.types} options={ref.followupTypes ?? []}
+          onChange={(v) => setFf((x) => ({ ...x, types: v }))} />
+        <FilterMulti label="Disposition" icon="check" value={ff.dispositions} options={ref.dispositions ?? []}
+          onChange={(v) => setFf((x) => ({ ...x, dispositions: v }))} />
+      </div>
       <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <FollowupFilter value={fu} onChange={(v) => { setFu(v); setBucket(undefined); }} allowNoFollowup={false} idPrefix="today-fu" variant="buttons" />
         {bucket && <button className="btn ghost" onClick={() => setBucket(undefined)}>Clear card filter</button>}
       </div>
       {/* #14 — actionable: open the lead, mark done (confirm), overdue highlighted red. */}
-      <div className="card">
+      <div className="card tbl-fill">
         <div className="card-head">
           <h3><Ic k="clock" />{fuLabel}</h3>
           <span className="more">{st.due_today ?? 0} due today · {st.overdue ?? 0} overdue</span>
         </div>
-        <FollowupRows rows={list.data ?? []} onChanged={bump} empty={`No follow-ups for \u201c${fuLabel}\u201d`} />
+        {/* Table-only scroll (dev/139) — the list scrolls within the card (sticky head above),
+            not the page, like the Leads / Student Management lists (LIST_SCROLL + .tbl-scroll). */}
+        <div className="tbl-scroll">
+          <FollowupRows rows={list.data ?? []} onChanged={bump} empty={`No follow-ups for \u201c${fuLabel}\u201d`} />
+        </div>
       </div>
     </>
   );
@@ -1229,6 +1319,60 @@ export function EnumMulti({ label, icon, value, options, onChange, testid }: {
   );
 }
 
+/**
+ * Calling CRM (dev/139) — the lightweight "Log disposition" control on a lead row (leads list).
+ * Posts a call disposition (m_call_disposition) + optional note to /leads/:id/call-disposition,
+ * which stamps lead.last_call_disposition_id + last_call_disposition_at and a timeline row.
+ */
+function LogDispositionModal({ leadId, leadName, onClose, onDone }:
+  { leadId: number; leadName?: string; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const [dispId, setDispId] = useState<string>('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!dispId) return toast('Pick a call disposition', true);
+    setBusy(true);
+    try {
+      await api.post(`/leads/${leadId}/call-disposition`, {
+        call_disposition_id: Number(dispId), note: note.trim() || null,
+      });
+      toast('Call disposition logged');
+      onDone();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim" style={{ zIndex: 300 }}>
+      <div className="add-modal" style={{ width: 440 }}>
+        <div className="ah"><h3><Ic k="calls" />Log call disposition</h3>
+          <button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="fld">
+            <label>Lead</label>
+            <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>{leadName || `#${leadId}`}</div>
+          </div>
+          <div className="fld">
+            <label>Call Disposition <span className="star">*</span></label>
+            <select className="ainp" aria-label="Call Disposition" value={dispId} onChange={(e) => setDispId(e.target.value)}>
+              <option value="">Select…</option>
+              {(ref.callDispositions ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div className="fld">
+            <label>Note <span className="fhint">what did they say?</span></label>
+            <textarea className="ainp" rows={2} aria-label="Call note" value={note}
+              onChange={(e) => setNote(e.target.value)} placeholder="Optional note…" />
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={submit} disabled={busy || !dispId}><Ic k="check" />Log disposition</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function readLeadNavFilters(search?: string) {
   const sp = new URLSearchParams(typeof search === 'string' ? search : (typeof window !== 'undefined' ? window.location.search : ''));
   const b = (key: string) => sp.get(key) === '1' || sp.get(key) === 'true';
@@ -1252,6 +1396,7 @@ function readLeadNavFilters(search?: string) {
     sources: nums('source_ids', 'source_id'), statuses: nums('status_ids', 'status_id'),
     stages: nums('stage_ids', 'stage_id'),
     owners: nums('owner_ids', 'owner_id'), bands: bands(),
+    callDispositions: nums('call_disposition_ids', 'call_disposition_id'),
     from: sp.get('created_from') || undefined, to: sp.get('created_to') || undefined,
     followup: sp.get('followup') || undefined, fu_from: sp.get('fu_from') || undefined, fu_to: sp.get('fu_to') || undefined,
     sla: b('sla_breached'), dup: b('duplicate'), redflag: b('red_flagged'), won: b('won'), lost: b('lost'), unassigned: b('unassigned'),
@@ -1289,6 +1434,8 @@ function LeadsAll() {
     // Branch › Vertical › Pipeline › Campaign › Source, but each level can hold many values.
     branches: number[]; verticals: number[]; pipelines: number[]; campaigns: number[];
     sources: number[]; statuses: number[]; stages: number[]; owners: number[]; bands: string[];
+    // Calling CRM (dev/139) — Last Call Disposition multi-select (m_call_disposition ids).
+    callDispositions: number[];
     from?: string; to?: string;
     // Sprint 3 — SLA breaches are their own filter.
     sla?: boolean;
@@ -1322,6 +1469,7 @@ function LeadsAll() {
   setCsv('status_ids', f.statuses);
   setCsv('stage_ids', f.stages);
   setCsv('owner_ids', f.owners);
+  setCsv('call_disposition_ids', f.callDispositions);
   if (f.bands.length) params.set('bands', f.bands.join(','));
   if (f.from) params.set('created_from', f.from);
   if (f.to) params.set('created_to', f.to);
@@ -1366,6 +1514,8 @@ function LeadsAll() {
   const canAssign = can('lead.assign');
   const canFlag = can('lead.flag');
   const [flagLead, setFlagLead] = useState<{ id: number; name?: string; flagged?: boolean } | null>(null);
+  // Calling CRM (dev/139) — lightweight "Log disposition" control on a lead row.
+  const [logLead, setLogLead] = useState<{ id: number; name?: string } | null>(null);
   const canConvert = can('student.create');
   const [convertLead, setConvertLead] = useState<{ id: number; name?: string } | null>(null);
   const [journeyStud, setJourneyStud] = useState<{ id: number; full_name?: string } | null>(null);
@@ -1470,6 +1620,9 @@ function LeadsAll() {
           onChange={(v) => setF((x) => ({ ...x, stages: v }))} />
         <FilterMulti label="Lead Counsellor" testid="fm-owner" icon="users" value={f.owners} options={selectableUsers(ref.users)}
           onChange={(v) => setF((x) => ({ ...x, owners: v }))} />
+        {/* Calling CRM (dev/139) — Last Call Disposition filter (m_call_disposition, multi-select). */}
+        <FilterMulti label="Last Call Disposition" testid="fm-calldisp" icon="calls" value={f.callDispositions} options={ref.callDispositions ?? []}
+          onChange={(v) => setF((x) => ({ ...x, callDispositions: v }))} />
         {/* SHARED date-range control — filters the list by lead CREATED date (created_from/
             created_to). Default = All time so the list never hides existing leads. */}
         <DateRange value={{ from: f.from, to: f.to }} idPrefix="leads-dr"
@@ -1554,6 +1707,7 @@ function LeadsAll() {
               ...(canTransfer ? [{ k: 'swap', title: 'Transfer', onClick: () => setTransferLead({ id: Number(l.id), name: l.full_name }) }] : []),
               ...(canFlag ? [{ k: 'flag', title: l.is_red_flagged ? 'Red flagged \u2014 add remark' : 'Red flag', onClick: () => setFlagLead({ id: Number(l.id), name: l.full_name, flagged: !!l.is_red_flagged }) }] : []),
               ...(canConvert ? [{ k: 'students', title: 'Convert to Student', onClick: () => setConvertLead({ id: Number(l.id), name: l.full_name }) }] : []),
+              ...(canEditLead ? [{ k: 'calls', title: 'Log call disposition', onClick: () => setLogLead({ id: Number(l.id), name: l.full_name }) }] : []),
             ],
           })])}
           empty="No leads in scope yet — add a lead or connect a source"
@@ -1577,6 +1731,8 @@ function LeadsAll() {
         onDone={bump} onClose={() => setTransferLead(null)} />}
       {flagLead && <RedFlagModal leadId={flagLead.id} leadName={flagLead.name} flagged={flagLead.flagged}
         onDone={() => { setFlagLead(null); bump(); }} onClose={() => setFlagLead(null)} />}
+      {logLead && <LogDispositionModal leadId={logLead.id} leadName={logLead.name}
+        onDone={() => { setLogLead(null); bump(); }} onClose={() => setLogLead(null)} />}
       {convertLead && <ConvertStudentModal leadId={convertLead.id} leadName={convertLead.name}
         onDone={bump} onClose={() => setConvertLead(null)}
         onOpenJourney={(id, _no, name) => setJourneyStud({ id, full_name: name })} />}
@@ -2836,6 +2992,9 @@ function Campaigns() {
           filtered Leads list; Revenue comes from collected fee receipts (the Finance dashboard source). */}
       <Kpis cols={4} items={[
         { lab: 'Active campaigns', val: String(rows.filter((c) => c.is_active !== false).length), ic: 'bolt' },
+        // Total Lead (dev/139) — all leads across the current scope (+ Lead Counsellor narrow); opens the Leads list.
+        { lab: 'Total Lead', val: String(k?.total ?? 0), ic: 'leads',
+          onClick: () => go('leads', 'all', { ...ownerNav }), navLabel: `Total leads in scope: ${k?.total ?? 0}. Open the Leads list` },
         { lab: 'Leads (MTD)', val: String(k?.mtd ?? '0'), ic: 'leads',
           onClick: () => go('leads', 'all', { created_from: `${new Date().toISOString().slice(0, 7)}-01`, ...ownerNav }),
           navLabel: `Leads this month: ${k?.mtd ?? 0}. Open leads created month-to-date` },

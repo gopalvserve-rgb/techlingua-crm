@@ -124,7 +124,8 @@ describe('Sprint-3 RBAC coverage', () => {
     // lead.read and let a counsellor see branch numbers — exactly the leak the client asked
     // us to prevent.
     const dash = ALL_ROUTES.filter((r) => r.controller === 'DashboardController');
-    expect(dash).toHaveLength(2);
+    // overview + quick-stats + team-status (dev/139) — all governed by lead.read.
+    expect(dash).toHaveLength(3);
     for (const r of dash) expect(r.permission).toBe('lead.read');
   });
 

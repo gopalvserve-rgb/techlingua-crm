@@ -35,6 +35,10 @@ export const MASTER_TYPES: Record<string, { table: string; label: string; singul
   // Create/Edit Campaign form; now a self-manageable master. campaign.campaign_type stores the
   // picked LABEL text and the master NAME == that label, so existing campaigns keep rendering.
   campaign_type: { table: 'm_campaign_type', label: 'Campaign Types', singular: 'Campaign Type' },
+  // Call Disposition master (dev/139, migration 108) — the outcome of a call. A NEW dedicated,
+  // self-manageable master (distinct from the older generic `disposition`), read by the Start
+  // Calling disposition form + the lead "Log disposition" control; sets lead.last_call_disposition_id.
+  call_disposition: { table: 'm_call_disposition', label: 'Call Dispositions', singular: 'Call Disposition' },
 };
 
 export interface MasterDto {

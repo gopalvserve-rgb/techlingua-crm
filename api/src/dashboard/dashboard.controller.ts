@@ -29,6 +29,13 @@ export class DashboardController {
   quickStats(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
     return this.dashboard.quickStats(s, { from: q.from, to: q.to, ...scopeFilter(q) });
   }
+
+  /** LIVE TEAM STATUS (dev/139) — in-scope agents with Online/Away/Offline + open leads +
+   *  today's follow-ups. Same `lead.read` gate + RBAC scope as the dashboard; poll-friendly. */
+  @Get('team-status') @RequirePermission('lead.read')
+  teamStatus(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
+    return this.dashboard.teamStatus(s, scopeFilter(q));
+  }
 }
 
 /**

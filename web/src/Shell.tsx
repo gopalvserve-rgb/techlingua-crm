@@ -104,7 +104,7 @@ export function Shell() {
   // `main` scrolls normally and each `.tbl-fill` card falls back to `.tbl-scroll{max-height:62vh;
   // overflow:auto}` with its sticky header. Mirrors the known-good Students/Roles container; every
   // Leads master now scrolls consistently and reaches the last row.
-  const LIST_SCROLL = new Set(['users', 'audit', 'errorLogs', 'walkIns', 'courses', 'followups']);
+  const LIST_SCROLL = new Set(['users', 'audit', 'errorLogs', 'walkIns', 'courses', 'followups', 'todayFollowups']);
   const curDyn = (findScreen(mod, sub)?.sub.spec as any)?.dyn as string | undefined;
   const listScroll = !!curDyn && LIST_SCROLL.has(curDyn);
 

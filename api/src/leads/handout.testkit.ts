@@ -235,7 +235,7 @@ export function makeHandoutDb(init: Partial<FakeHandoutState> = {}) {
       return open.length ? [{ id: open[0].id }] : [];
     }
     // ---- campaigns I can pull from ------------------------------------------
-    if (s.startsWith('SELECT c.id, c.name, c.distribution_config, b.name AS branch_name')
+    if (s.startsWith('SELECT c.id, c.name, c.distribution_config,')
       && s.includes('AS waiting') && !s.includes('oldest_waiting_at')) {
       const c = st.campaign;
       if (!c.is_active || c.deleted_at || (c.distribution_config?.mode ?? 'on_demand') !== 'on_demand') return [];

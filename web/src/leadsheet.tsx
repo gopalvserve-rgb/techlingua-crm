@@ -385,6 +385,11 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
               <div className="f"><label>Next follow-up</label><div className="iv">
                 <span>{fmtDT(lead.next_follow_up_at)}</span><Ic k="cal" />
               </div></div>
+              {/* Calling CRM (dev/139) — the lead's last call disposition (read-only; set via the
+                  Start Calling queue or the leads-list "Log disposition" control). */}
+              <div className="f"><label>Last call disposition</label><div className="iv">
+                <span>{lead.last_call_disposition_name || '—'}{lead.last_call_disposition_at ? ` · ${fmtDT(lead.last_call_disposition_at)}` : ''}</span>
+              </div></div>
               {/* dev/95 item 5 — Branch & Vertical are EDITABLE here (re-parent). Editing them
                   walks the strict Branch › Vertical › Pipeline › Campaign cascade and moves the
                   lead on Save (keeps owner). Without edit + lead.transfer, the path is read-only. */}

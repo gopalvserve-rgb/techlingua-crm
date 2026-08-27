@@ -75,6 +75,8 @@ export interface LeadFilters {
    *  singular params above keep working (card links / back-compat) and fold into the IN. */
   branch_ids?: number[]; vertical_ids?: number[]; pipeline_ids?: number[]; campaign_ids?: number[];
   status_ids?: number[]; owner_ids?: number[]; source_ids?: number[]; stage_ids?: number[];
+  /** Calling CRM (dev/139) — Last Call Disposition filter (m_call_disposition ids), multi-select. */
+  call_disposition_id?: number; call_disposition_ids?: number[];
   /** Multi-select score band (Hot/Warm/Cold) — whitelisted, `l.temperature IN (...)`. */
   bands?: string[];
   /** Sprint 3 — only leads with an open SLA breach / an escalation flag. */
@@ -156,6 +158,8 @@ const LEAD_SELECT = `
          EXISTS (SELECT 1 FROM lead_sla s
                   WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now()) AS sla_breached,
          l.state_id, l.city_id, l.course_id, l.qualification_id, l.budget_id,
+         l.last_call_disposition_id, l.last_call_disposition_at,
+         lcd.name AS last_call_disposition_name,
          l.created_at, l.updated_at,
          b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
          c.name AS campaign_name, s.name AS source_name,
@@ -175,7 +179,8 @@ const LEAD_SELECT = `
     LEFT JOIN "user" u  ON u.id = l.owner_id
     LEFT JOIN m_course co ON co.id = l.course_id
     LEFT JOIN city ci   ON ci.id = l.city_id
-    LEFT JOIN student es ON es.id = l.existing_student_id`;
+    LEFT JOIN student es ON es.id = l.existing_student_id
+    LEFT JOIN m_call_disposition lcd ON lcd.id = l.last_call_disposition_id`;
 
 @Injectable()
 export class LeadsService {
@@ -239,6 +244,7 @@ export class LeadsService {
     inCol('l.status_id', f.status_id, f.status_ids);
     inCol('l.owner_id', f.owner_id, f.owner_ids);
     inCol('l.source_id', f.source_id, f.source_ids);
+    inCol('l.last_call_disposition_id', f.call_disposition_id, f.call_disposition_ids);
     // Band (Hot/Warm/Cold) is multi-select too: whitelist the 3 valid values (this reaches a
     // WHERE, so never trusted) -> `l.temperature IN (...)`; the legacy singular ?temperature=
     // still emits `= $` for back-compat with card links + existing tests.
@@ -1277,6 +1283,37 @@ export class LeadsService {
   }
 
   // ---- dashboard summary (all scope-filtered) ------------------------------
+
+  /**
+   * Calling CRM (dev/139) — log a CALL disposition on a lead outside the Start Calling queue
+   * (the lightweight "Log disposition" control on the leads list / detail). Sets the lead's
+   * last_call_disposition_id + last_call_disposition_at and writes a 'disposition' activity so
+   * the outcome shows on the timeline. `lead.update` gated + record-scoped by the controller.
+   */
+  async logCallDisposition(id: number, dto: { call_disposition_id?: number | null; note?: string | null }, userId: number) {
+    const lead = await this.db.one<{ org_id: string; branch_id: string }>(
+      `SELECT org_id, branch_id FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (!lead) throw new NotFoundException('lead not found');
+    const cdId = dto?.call_disposition_id != null ? Number(dto.call_disposition_id) : null;
+    if (cdId != null) {
+      if (!Number.isInteger(cdId) || cdId <= 0) throw new BadRequestException('invalid call disposition');
+      const d = await this.db.one(
+        `SELECT id FROM m_call_disposition WHERE id = $1 AND is_active AND deleted_at IS NULL`, [cdId]);
+      if (!d) throw new BadRequestException('unknown call disposition');
+    }
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE lead SET last_call_disposition_id = $2, last_call_disposition_at = now(),
+                         last_activity_at = now(), updated_at = now()
+          WHERE id = $1`, [id, cdId]);
+      await c.query(
+        `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, to_value, note)
+         VALUES ($1,$2,$3,$4,'disposition',$5,$6)`,
+        [id, Number(lead.org_id), Number(lead.branch_id), userId,
+          JSON.stringify({ call_disposition_id: cdId }), dto?.note?.trim() ? dto.note.trim() : null]);
+    });
+    return this.get(id);
+  }
 
   async summary(scope: ResolvedScope, userId: number, ownerIds?: number[]) {
     const p1: unknown[] = [];

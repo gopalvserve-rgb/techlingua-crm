@@ -211,3 +211,26 @@ describe('Start Calling — the manager pool view', () => {
     expect(screen.queryByText('Pool status — On Demand campaigns')).toBeNull();
   });
 });
+
+describe('Start Calling — queue filters (dev/139)', () => {
+  it('narrows the batch queue by a search over name/phone', async () => {
+    mockApi({ current: BATCH });
+    render(<StartCalling />);
+    await waitFor(() => expect(screen.getByText('3. Lead 3')).toBeTruthy());
+    // all ten leads are shown before filtering
+    expect(screen.getByText('1. Lead 1')).toBeTruthy();
+    const search = screen.getByLabelText('Search queue') as HTMLInputElement;
+    fireEvent.change(search, { target: { value: 'Lead 3' } });
+    await waitFor(() => expect(screen.queryByText('1. Lead 1')).toBeNull());
+    expect(screen.getByText('3. Lead 3')).toBeTruthy();
+  });
+
+  it('offers Branch/Vertical/Pipeline picker filters and a Last Call Disposition queue filter', async () => {
+    mockApi({ current: BATCH });
+    render(<StartCalling />);
+    await waitFor(() => expect(screen.getByText('1. Lead 1')).toBeTruthy());
+    expect(screen.getByLabelText('Filter campaigns by Branch')).toBeTruthy();
+    expect(screen.getByLabelText('Filter queue by Last Call Disposition')).toBeTruthy();
+    expect(screen.getByLabelText('Call Disposition')).toBeTruthy();
+  });
+});

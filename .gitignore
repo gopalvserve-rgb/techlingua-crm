@@ -10,3 +10,4 @@ secrets*
 .DS_Store
 *.syncfix
 api/public/
+web/tsconfig.tsbuildinfo

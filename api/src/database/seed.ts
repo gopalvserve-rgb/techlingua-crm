@@ -88,6 +88,13 @@ async function seed(c: PoolClient) {
     ['Digital', 'DIGITAL'], ['Print', 'PRINT'], ['Event', 'EVENT'],
     ['Referral Drive', 'REFERRAL'], ['Tele-calling', 'TELECALLING'],
   ]);
+  // Call Disposition master (dev/139) — self-manageable outcome of a call (Start Calling +
+  // the lead "Log disposition" control write lead.last_call_disposition_id from this list).
+  await master('m_call_disposition', [
+    ['Connected', 'CONNECTED'], ['Not Connected / RNR', 'RNR'], ['Busy', 'BUSY'],
+    ['Switched Off', 'SWITCHOFF'], ['Wrong Number', 'WRONGNO'], ['Call Back', 'CALLBACK'],
+    ['Interested', 'INTERESTED'], ['Not Interested', 'NOTINT'], ['Follow-up Scheduled', 'FUPSCHED'],
+  ]);
   const metaSourceId = (await c.query(`SELECT id FROM m_source WHERE org_id=$1 AND code='META'`, [org])).rows[0].id as Id;
 
   // ---- hierarchy: branches > verticals > pipelines/stages > campaign > source

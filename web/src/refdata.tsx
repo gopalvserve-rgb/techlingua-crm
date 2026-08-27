@@ -26,6 +26,8 @@ export interface RefData {
   courses: Named[];
   followupTypes: Named[];
   dispositions: Named[];
+  /** Call Disposition master (m_call_disposition, dev/139) — the outcome-of-a-call list. */
+  callDispositions: Named[];
   budgets: Named[];
   /** UAT-R2 Batch A — masters that used to be hard-coded inline selects. */
   trainings: Named[];      // #5  Training mode
@@ -48,7 +50,7 @@ export interface RefData {
 
 const EMPTY: RefData = {
   branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], masterSources: [], stages: [],
-  users: [], statuses: [], courses: [], followupTypes: [], dispositions: [], budgets: [],
+  users: [], statuses: [], courses: [], followupTypes: [], dispositions: [], callDispositions: [], budgets: [],
   trainings: [], visitPurposes: [], walkinStatuses: [], ticketCategories: [],
   courseTypes: [], courseLevels: [], deliveryModes: [], campaignTypes: [],
   states: [], cities: [],
@@ -83,7 +85,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
       const [branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
         trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
-        courseTypes, courseLevels, deliveryModes, campaignTypes] = await Promise.all([
+        courseTypes, courseLevels, deliveryModes, campaignTypes, callDispositions] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
@@ -109,11 +111,13 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), async () => (await api.get<any[]>('/courses/delivery-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
         // Campaign Type master (dev/131, task #213 item 4) — the campaign form's Campaign Type select.
         safe(can('master.read'), () => api.get<Named[]>('/masters/campaign_type'), []),
+        // Call Disposition master (dev/139) — Start Calling + the lead "Log disposition" control.
+        safe(can('master.read'), () => api.get<Named[]>('/masters/call_disposition'), []),
       ]);
       if (dead) return;
       setData({
         branches, verticals, pipelines, campaigns, sources, masterSources, users,
-        statuses, courses, followupTypes, dispositions, budgets,
+        statuses, courses, followupTypes, dispositions, callDispositions, budgets,
         trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
         courseTypes, courseLevels, deliveryModes, campaignTypes,
         loaded: true, reload: () => setTick((t) => t + 1),
