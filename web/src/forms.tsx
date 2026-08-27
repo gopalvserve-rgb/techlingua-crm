@@ -210,9 +210,12 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // Only campaign_id is sent; the source's Branch/Vertical/Pipeline path is derived from the
   // Campaign server-side (HierarchyService.createSource), so the hierarchy fields are cascade
   // filters only (EXEMPT in qa10matrix), exactly as on the Add Lead form.
+  // 27aug Batch C item 1 — Campaign is now OPTIONAL: a Lead Source can exist org-wide with no
+  // campaign. Branch/Vertical/Pipeline/Campaign are an optional cascade that (when chosen) scopes
+  // the source under that campaign; left blank, the source is created org-level.
   'leads.sources': { title: 'Add Lead Source', fields: [
-    F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
-    F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
+    F('Branch', 'select', 0, 0, 'optional — scope the source', 'branches'), F('Vertical', 'select', 0, 0, 'filtered by Branch', 'verticals'),
+    F('Pipeline', 'select', 0, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 0, 0, 'optional — leave blank for an org-wide source', 'campaigns'),
     F('Source Name', 'text', 1, 0, 'editable'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'leads.pipelinemaster': { title: 'Add Pipeline', fields: [
     F('Pipeline Name', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
@@ -611,7 +614,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
     // UAT-R2 #4 — channel + cost_per_lead no longer collected; backend keeps its defaults.
     // UAT-R2 #17 — return the created row so a ＋ quick-add auto-selects it live.
     const row = await api.post<Named>('/sources', {
-      campaign_id: need(ids['Campaign'], 'Pick a campaign'),
+      campaign_id: ids['Campaign'] || undefined,   // OPTIONAL (item 1) — org-level source when blank
       name: need(vals['Source Name'], 'Source name is required'),
       is_active: vals['Status'] !== 'Inactive',
     });

@@ -160,6 +160,14 @@ export class StudentController {
     return this.svc.addEnrolmentLevel(eid, dto, me, scope, id);
   }
 
+  /** 27aug Batch C items 4 & 5 — ASSIGN a batch to ONE of the student's enrolments (per-course).
+   *  batch_id null unassigns. No hard block on an incomplete admission step (returns a warning). */
+  @Post(':id/enrolments/:eid/assign-batch')
+  @RequirePermission('student.update')
+  assignEnrolmentBatch(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.assignEnrolmentBatch(eid, dto, me, scope, id);
+  }
+
   /** CHANGE a single enrolment's status. Guarded by student.update; SENSITIVE statuses are
    *  additionally gated by student.status_manage INSIDE the service (403), with the required
    *  fields + Approved-By enforced (400). */

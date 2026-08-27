@@ -61,6 +61,12 @@ export function AttendanceScreen() {
   const [date, setDate] = useState<string>(isoToday());
   const [mode, setMode] = useState<'staff' | 'self'>('staff');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  // 27aug Batch C item 6 — Attendance list filters (Course / Trainer / Status) + free-text search.
+  const [fCourse, setFCourse] = useState<string>('');
+  const [fTrainer, setFTrainer] = useState<string>('');
+  const [fStatus, setFStatus] = useState<string>('');
+  const [q, setQ] = useState<string>('');
+  const trainerFetch = useFetch<any[]>(`/users?role=Trainer`, []);
   const [tick, setTick] = useState(0);
   const batches = useBatches(fB, fV);
   const canMark = can('attendance.mark');
@@ -86,6 +92,10 @@ export function AttendanceScreen() {
   if (batchId) listQs.set('batch_id', batchId);
   if (fB.length) listQs.set('branch_id', fB.join(','));
   if (fV.length) listQs.set('vertical_id', fV.join(','));
+  if (fCourse) listQs.set('course_id', fCourse);
+  if (fTrainer) listQs.set('trainer_id', fTrainer);
+  if (fStatus) listQs.set('status', fStatus);
+  if (q.trim()) listQs.set('q', q.trim());
   if (range.from) listQs.set('from', range.from);
   if (range.to) listQs.set('to', range.to);
   const list = useFetch<any[]>(`/academics/attendance?${listQs.toString()}`, [listQs.toString(), tick]);
@@ -130,6 +140,34 @@ export function AttendanceScreen() {
               <option value="self">Self marking</option>
             </select>
           </label>
+          <label className="fchip"><Ic k="book" />
+            <select value={fCourse} onChange={(e) => setFCourse(e.target.value)}
+              style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} data-testid="att-f-course">
+              <option value="">All courses</option>
+              {ref.courses.filter((c: any) => (!fB.length || fB.includes(Number(c.meta?.branch_id))) && (!fV.length || fV.includes(Number(c.meta?.vertical_id)))).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="fchip"><Ic k="users" />
+            <select value={fTrainer} onChange={(e) => setFTrainer(e.target.value)}
+              style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} data-testid="att-f-trainer">
+              <option value="">All trainers</option>
+              {(trainerFetch.data ?? []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </label>
+          <label className="fchip"><Ic k="flag" />
+            <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}
+              style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} data-testid="att-f-status">
+              <option value="">All statuses</option>
+              <option value="present">Present</option>
+              <option value="absent">Absent</option>
+              <option value="late">Late</option>
+              <option value="half_day">Half-day</option>
+              <option value="excused">Excused</option>
+            </select>
+          </label>
+          <label className="fchip"><Ic k="search" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Student / roll no / enrolment"
+              style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12, width: 190 }} data-testid="att-search" /></label>
           <DateRange value={range} onChange={setRange} idPrefix="att-dr" style={{ marginLeft: 'auto' }} />
         </>} />
 

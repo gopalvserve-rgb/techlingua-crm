@@ -2689,6 +2689,69 @@ export class StudentService {
   }
 
   /**
+   * 27aug Batch C items 4 & 5 — ASSIGN A BATCH TO ONE ENROLMENT (from the student side).
+   * Sets enrolment.batch_id so a student with MULTIPLE enrolments can get a batch per course; the
+   * caller picks WHICH enrolment (each labelled Branch>Vertical>Course>Level in the UI). Pass
+   * batch_id null to unassign. The batch must be in the caller's scope AND for the SAME course as
+   * the enrolment. There is NO hard block on an incomplete admission step — assignment is allowed
+   * and the response reports admission_stage so the UI can WARN rather than refuse. The student's
+   * own batch_id is filled as a convenience only when it is still empty (so attendance can find a
+   * batch); a multi-batch student keeps each batch on its enrolment.
+   */
+  async assignEnrolmentBatch(enrolmentId: number, dto: any, me: { id: number }, scope: ResolvedScope, expectStudentId?: number) {
+    const enr = await this.enrolmentInScope(enrolmentId, scope);
+    if (expectStudentId != null && Number(enr.linked_student_id) !== Number(expectStudentId)) {
+      throw new NotFoundException('Enrolment not found for this student.');
+    }
+    if (String(enr.status) === 'cancelled' || String(enr.status) === 'rejected') {
+      throw new BadRequestException(`${enr.enrolment_no} is ${enr.status}; a batch cannot be assigned to it.`);
+    }
+    const raw = dto?.batch_id;
+    const clearing = raw === null || raw === undefined || String(raw).trim() === '';
+    let batch: any = null;
+    if (!clearing) {
+      const batchId = Number(raw);
+      if (!Number.isFinite(batchId) || batchId <= 0) throw new BadRequestException('Choose a valid batch.');
+      const params: unknown[] = [batchId];
+      const w = this.resolver.buildScopeWhere(scope, { branch: 'bt.branch_id', vertical: 'bt.vertical_id' }, params);
+      batch = await this.db.one<any>(
+        `SELECT bt.id, bt.name, bt.batch_code, bt.course_id, bt.status, bt.branch_id, bt.vertical_id
+           FROM batch bt WHERE bt.id = $1::bigint AND bt.deleted_at IS NULL AND ${w} LIMIT 1`, params);
+      if (!batch) throw new NotFoundException('Batch not found (or outside your access).');
+      if (enr.course_id != null && Number(batch.course_id) !== Number(enr.course_id)) {
+        throw new BadRequestException('That batch is for a different course than this enrolment.');
+      }
+    }
+    const linkedStudentId = enr.linked_student_id ? Number(enr.linked_student_id) : null;
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE enrolment SET batch_id = $2, batch_assigned_at = ${clearing ? 'NULL' : 'now()'},
+                batch_assigned_by = $3::bigint, updated_at = now() WHERE id = $1::bigint`,
+        [enrolmentId, clearing ? null : Number(batch.id), clearing ? null : me.id]);
+      // Convenience: fill the student's batch_id only when still empty (so attendance has a batch).
+      if (!clearing && linkedStudentId) {
+        await c.query(
+          `UPDATE student SET batch_id = $2::bigint, updated_at = now()
+            WHERE id = $1::bigint AND batch_id IS NULL AND deleted_at IS NULL`, [linkedStudentId, Number(batch.id)]);
+      }
+    });
+    // A soft WARNING when the admission journey has not reached a confirmed/admitted stage —
+    // surfaced to the UI, never a block (item 5).
+    const stage = String(enr.admission_stage ?? '').toLowerCase();
+    const admissionComplete = ['admitted', 'confirmed', 'enrolled', 'completed'].includes(stage);
+    return {
+      id: enrolmentId, enrolment_no: enr.enrolment_no,
+      batch_id: clearing ? null : Number(batch.id),
+      batch_name: clearing ? null : (batch.name ?? null),
+      batch_code: clearing ? null : (batch.batch_code ?? null),
+      admission_stage: enr.admission_stage ?? null,
+      warning: (!clearing && !admissionComplete && stage)
+        ? `Admission step "${enr.admission_stage}" is not yet complete — the batch is assigned anyway.`
+        : null,
+    };
+  }
+
+  /**
    * Reconcile an active installment plan when an enrolment's Net rises by `deltaMinor` (a level
    * upgrade). Bumps the plan total and pushes the extra onto the LAST still-open installment (or
    * appends a fresh installment if every existing one is already paid) — future collection covers

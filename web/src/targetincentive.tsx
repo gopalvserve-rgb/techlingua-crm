@@ -40,7 +40,7 @@ const METRICS: Array<[string, string]> = [
 /*  PAGE                                                                 */
 /* ==================================================================== */
 export function TargetIncentive() {
-  const [tab, setTab] = useState<'targets' | 'plans'>('targets');
+  const [tab, setTab] = useState<'targets' | 'plans' | 'teams'>('targets');
   return (
     <>
       <div className="seg" style={{ marginBottom: 12 }}>
@@ -50,8 +50,11 @@ export function TargetIncentive() {
         <button className={`seg-btn${tab === 'plans' ? ' on' : ''}`} onClick={() => setTab('plans')}>
           <Ic k="rupee" />Incentive Plans
         </button>
+        <button className={`seg-btn${tab === 'teams' ? ' on' : ''}`} onClick={() => setTab('teams')}>
+          <Ic k="users" />Teams
+        </button>
       </div>
-      {tab === 'targets' ? <Targets /> : <IncentivePlans />}
+      {tab === 'targets' ? <Targets /> : tab === 'plans' ? <IncentivePlans /> : <Teams />}
     </>
   );
 }
@@ -454,6 +457,111 @@ function PlanModal({ initial, onClose, onSaved }: { initial?: any; onClose: () =
           {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
         </div>
         <div className="af"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save plan'}</button></div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ==================================================================== */
+/*  TEAMS (27aug Batch C item 7)                                         */
+/*  Proper team creation: name a team + add multiple counsellors/members */
+/*  (multi-select), edit membership. Target "Target For = Team" uses it.  */
+/* ==================================================================== */
+function Teams() {
+  const { can } = useAuth();
+  const teams = useFetch<any[]>('/teams', []);
+  const [edit, setEdit] = useState<any | null>(null);
+  const [adding, setAdding] = useState(false);
+  const canManage = can('team.create') || can('team.update');
+  return (
+    <>
+      <TableCard title="Teams" icon="users"
+        more={can('team.create') ? <button className="btn primary" onClick={() => setAdding(true)} data-testid="team-add"><Ic k="plus" />New team</button> : null}
+        cols={['Team', 'Branch', 'Vertical', 'Leader', 'Members', canManage ? 'Actions' : '']}
+        empty="No teams yet — create one and add counsellors as members."
+        rows={(teams.data ?? []).map((t: any): Cell[] => [
+          <b>{t.name}</b>,
+          t.branch_name ?? '—',
+          t.vertical_name ?? '—',
+          t.leader_name ?? '—',
+          <span className="b-indigo" style={{ padding: '1px 8px', borderRadius: 999 }} data-testid={`team-members-${t.id}`}>{t.member_count ?? 0}</span>,
+          canManage ? { node: <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEdit(t)} data-testid={`team-edit-${t.id}`}><Ic k="pencil" />Edit</button> } as Cell : '\u2014',
+        ])} />
+      {(adding || edit) && (
+        <TeamModal team={edit} onClose={() => { setAdding(false); setEdit(null); }}
+          onSaved={() => { setAdding(false); setEdit(null); teams.reload(); }} />
+      )}
+    </>
+  );
+}
+
+function TeamModal({ team, onClose, onSaved }: { team?: any | null; onClose: () => void; onSaved: () => void }) {
+  const ref = useRef_();
+  const detail = useFetch<any>(team?.id ? `/teams/${team.id}` : null, [team?.id]);
+  const [name, setName] = useState<string>(team?.name ?? '');
+  const [branchId, setBranchId] = useState<string>(String(team?.branch_id ?? ''));
+  const [verticalId, setVerticalId] = useState<string>(String(team?.vertical_id ?? ''));
+  const [leaderId, setLeaderId] = useState<string>(String(team?.leader_id ?? ''));
+  const [members, setMembers] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [seeded, setSeeded] = useState(false);
+  if (!seeded && detail.data?.members) { setMembers((detail.data.members as any[]).map((m: any) => Number(m.id))); setSeeded(true); }
+  const vOpts = ref.verticals.filter((vt: any) => !branchId || Number(vt.branch_id) === Number(branchId));
+  const userOpts = selectableUsers(ref.users as any[], '');
+  const toggle = (id: number) => setMembers((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  const save = async () => {
+    if (!name.trim()) { toast('Give the team a name.', true); return; }
+    setBusy(true);
+    try {
+      const body: any = {
+        name: name.trim(),
+        branch_id: branchId ? Number(branchId) : null,
+        vertical_id: verticalId ? Number(verticalId) : null,
+        leader_id: leaderId ? Number(leaderId) : null,
+        member_ids: members,
+      };
+      if (team?.id) await api.patch(`/teams/${team.id}`, body);
+      else await api.post('/teams', body);
+      toast(team?.id ? 'Team updated' : 'Team created'); onSaved();
+    } catch (e) { toast((e as Error).message, true); setBusy(false); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 620 }}>
+        <div className="ah"><h3><Ic k="users" />{team?.id ? `Edit team — ${team.name}` : 'New team'}</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld span2"><label htmlFor="tm-name">Team name <span className="star">*</span></label>
+              <input id="tm-name" className="ainp" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. North Counsellors" data-testid="team-name" /></div>
+            <div className="fld"><label htmlFor="tm-branch">Branch</label>
+              <select id="tm-branch" className="ainp" value={branchId} onChange={(e) => { setBranchId(e.target.value); setVerticalId(''); }}>
+                <option value="">— Any —</option>{ref.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div className="fld"><label htmlFor="tm-vertical">Vertical</label>
+              <select id="tm-vertical" className="ainp" value={verticalId} onChange={(e) => setVerticalId(e.target.value)} disabled={!branchId}>
+                <option value="">— Any —</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></div>
+            <div className="fld span2"><label htmlFor="tm-leader">Team leader</label>
+              <select id="tm-leader" className="ainp" value={leaderId} onChange={(e) => setLeaderId(e.target.value)}>
+                <option value="">— None —</option>{userOpts.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+            <div className="fld span2">
+              <label>Members <span className="sub" style={{ fontWeight: 400 }}>(add multiple counsellors)</span></label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 240, overflow: 'auto', padding: '6px 8px', background: 'var(--surface-2,#f8fafc)', borderRadius: 8 }} data-testid="team-members-list">
+                {userOpts.map((u: any) => (
+                  <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 4px', fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={members.includes(Number(u.id))} onChange={() => toggle(Number(u.id))} data-testid={`team-member-${u.id}`} />
+                    {u.name}
+                  </label>
+                ))}
+              </div>
+              <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>{members.length} member(s) selected.</div>
+            </div>
+          </div>
+        </div>
+        <div className="afoot">
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={save} disabled={busy} data-testid="team-save"><Ic k="check" />{team?.id ? 'Save team' : 'Create team'}</button>
+        </div>
       </div>
     </div>
   );

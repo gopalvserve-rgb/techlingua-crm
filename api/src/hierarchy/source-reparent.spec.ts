@@ -23,7 +23,10 @@ function mkDb() {
     calls,
     one: async (sql: string, params: unknown[] = []) => {
       rec(sql, params);
-      if (/FROM source/i.test(sql)) return { id: '4', campaign_id: '5' };
+      // 27aug Batch C item 1 — a rename now syncs the canonical m_source (find-or-create).
+      if (/INSERT INTO m_source/i.test(sql)) return { id: '77' };
+      if (/FROM m_source/i.test(sql)) return null;
+      if (/FROM source/i.test(sql)) return { id: '4', org_id: '1', campaign_id: '5' };
       if (/FROM campaign/i.test(sql)) return { org_id: '1', branch_id: '9', vertical_id: '3', pipeline_id: '7' };
       return null;
     },

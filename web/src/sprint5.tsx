@@ -214,6 +214,15 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
   const [validUntil, setValidUntil] = useState<string>(initial?.valid_until ? String(initial.valid_until).slice(0, 10) : '');
   const [notes, setNotes] = useState<string>(initial?.notes ?? '');
   const [terms, setTerms] = useState<string>(initial?.terms ?? '');
+  // 27aug Batch C item 8 — Quotation follows Branch>Vertical (from lead) > Course > Course Level
+  // (if available) > Payment plan, matching the Sales Closer / enrolment flow.
+  const qMeta = useFetch<any>('/enrolments/meta');
+  const [plan, setPlan] = useState<string>(initial?.payment_plan ?? '');
+  const [levelCache, setLevelCache] = useState<Record<string, any[]>>({});
+  const loadLevels = (cid: string) => {
+    if (!cid || levelCache[cid]) return;
+    api.get<any[]>(`/courses/${cid}/levels`).then((rows) => setLevelCache((m) => ({ ...m, [cid]: rows ?? [] }))).catch(() => setLevelCache((m) => ({ ...m, [cid]: [] })));
+  };
   const [lines, setLines] = useState<LineDraft[]>(
     initial?.items?.length
       ? initial.items.map((i: any) => ({
@@ -227,6 +236,8 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
   );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // Item 8 — preload course levels for any pre-filled lines so the Level picker shows on edit/revise.
+  useEffect(() => { for (const l of lines) if (l.course_id) loadLevels(String(l.course_id)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totals = useMemo(() => computeTotals(lines), [lines]);
   const setLine = (i: number, patch: Partial<LineDraft>) =>
@@ -238,11 +249,20 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
   const pickCourse = (i: number, courseId: string) => {
     const c = ref.courses.find((x) => String(x.id) === courseId);
     const fee = (c?.meta as any)?.fee;
+    if (courseId) loadLevels(courseId);
     setLine(i, {
       course_id: courseId ? Number(courseId) : null,
       description: c?.name ?? lines[i].description,
       unit_price: fee !== undefined && fee !== null && fee !== '' ? String(fee) : lines[i].unit_price,
     });
+  };
+  // Item 8 — picking a Course Level sets the line rate to the level fee and tags the description.
+  const pickLevel = (i: number, levelId: string) => {
+    const cid = String(lines[i].course_id ?? '');
+    const lv = (levelCache[cid] ?? []).find((x: any) => String(x.id) === levelId);
+    const baseName = (ref.courses.find((x) => String(x.id) === cid)?.name) ?? lines[i].description;
+    if (lv) setLine(i, { unit_price: minorToInput(Number(lv.fee_minor ?? 0)), description: `${baseName} \u2014 ${lv.label || lv.code}` });
+    else setLine(i, { description: baseName });
   };
 
   const save = async () => {
@@ -251,6 +271,7 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
       const body = {
         lead_id: lead,
         valid_until: validUntil || null,
+        payment_plan: plan || null,
         notes: notes || null,
         terms: terms || null,
         items: lines.map((l) => ({
@@ -315,6 +336,16 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
               <div className="fhint">After this date a sent quotation expires by itself.</div>
             </div>
             <div className="fld">
+              <label htmlFor="q-plan">Payment plan</label>
+              <select id="q-plan" className="ainp" value={plan} onChange={(e) => setPlan(e.target.value)} data-testid="quote-plan">
+                <option value="">\u2014</option>
+                {(qMeta.data?.payment_plans ?? [{ key: 'full', label: 'Full payment' }]).map((p: any) => (
+                  <option key={p.key} value={p.key}>{p.label}</option>
+                ))}
+              </select>
+              <div className="fhint">The payment terms proposed to the customer (matches the Sales Closer).</div>
+            </div>
+            <div className="fld">
               <label htmlFor="q-number">Number</label>
               <input id="q-number" className="ainp"
                 value={revising ? `${String(initial.quote_no).replace(/-R\d+$/, '')}-R\u2026` : initial?.quote_no ?? 'Allocated on save'}
@@ -348,6 +379,16 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
                       </select>
                       <div className="fhint">Fills the description and the rate from the Course master. Both stay editable.</div>
                     </div>
+                    {l.course_id && (levelCache[String(l.course_id)]?.length ?? 0) > 0 && (
+                      <div className="fld">
+                        <label htmlFor={`q-level-${i}`}>Course Level</label>
+                        <select id={`q-level-${i}`} className="ainp" defaultValue="" onChange={(e) => pickLevel(i, e.target.value)} data-testid={`quote-level-${i}`}>
+                          <option value="">\u2014 Whole course \u2014</option>
+                          {(levelCache[String(l.course_id)] ?? []).map((lv: any) => <option key={lv.id} value={lv.id}>{lv.label || lv.code}{lv.fee_minor != null ? ` \u00b7 ${fmtINR(Number(lv.fee_minor))}` : ''}</option>)}
+                        </select>
+                        <div className="fhint">Optional \u2014 sets the rate to that level.</div>
+                      </div>
+                    )}
                     <div className="fld">
                       <label htmlFor={`q-desc-${i}`}>Description <span className="star">*</span></label>
                       <input id={`q-desc-${i}`} className="ainp" value={l.description}
@@ -805,6 +846,10 @@ export function EnrolmentModal({ initial, prefill, onClose, onSaved }: {
   const [lead, setLead] = useState<number | undefined>(initial?.lead_id ?? prefill?.lead_id);
   const [leadLabel, setLeadLabel] = useState<string>(initial?.lead_name ?? prefill?.lead_name ?? '');
   const [courseId, setCourseId] = useState<string>(String(initial?.course_id ?? prefill?.course_id ?? ''));
+  // 27aug Batch C item 8 — Sales Closer: Branch>Vertical (from lead) > Course > Course Level (if
+  // the course has levels) > Payment plan. Picking a level sets the fee from that level's fee.
+  const [courseLevels, setCourseLevels] = useState<any[]>([]);
+  const [levelId, setLevelId] = useState<string>('');
   const [fee, setFee] = useState<string>(minorToInput(initial?.fee_minor ?? prefill?.fee_minor));
   const [discount, setDiscount] = useState<string>(minorToInput(initial?.discount_minor ?? prefill?.discount_minor));
   const [plan, setPlan] = useState<string>(initial?.payment_plan ?? 'full');
@@ -816,6 +861,7 @@ export function EnrolmentModal({ initial, prefill, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
+  useEffect(() => { if (courseId) api.get<any[]>(`/courses/${courseId}/levels`).then((rows) => setCourseLevels(rows ?? [])).catch(() => undefined); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const feeMinor = parseRupees(fee);
   const discMinor = parseRupees(discount);
   const netMinor = feeMinor !== null && discMinor !== null ? Math.max(0, feeMinor - discMinor) : 0;
@@ -824,10 +870,17 @@ export function EnrolmentModal({ initial, prefill, onClose, onSaved }: {
   /** Picking a course fills the fee from the Course master — the same meta.fee the lead
    *  sheet reads. Editable, because a closure is where a discount actually happens. */
   const pickCourse = (id: string) => {
-    setCourseId(id);
+    setCourseId(id); setLevelId(''); setCourseLevels([]);
     const c = ref.courses.find((x) => String(x.id) === id);
     const f = (c?.meta as any)?.fee;
     if (f !== undefined && f !== null && f !== '' && !fee) setFee(String(f));
+    if (id) api.get<any[]>(`/courses/${id}/levels`).then((rows) => setCourseLevels(rows ?? [])).catch(() => setCourseLevels([]));
+  };
+  // Choosing a level snaps the Total fee to that level's fee (still editable).
+  const pickLevel = (lid: string) => {
+    setLevelId(lid);
+    const lv = courseLevels.find((x) => String(x.id) === lid);
+    if (lv && lv.fee_minor != null) setFee(minorToInput(Number(lv.fee_minor)));
   };
 
   const save = async () => {
@@ -896,6 +949,16 @@ export function EnrolmentModal({ initial, prefill, onClose, onSaved }: {
               </select>
               <div className="fhint">Fee auto-fills from the Course master.</div>
             </div>
+            {courseLevels.length > 0 && (
+              <div className="fld">
+                <label htmlFor="e-level">Course Level</label>
+                <select id="e-level" className="ainp" value={levelId} onChange={(e) => pickLevel(e.target.value)} data-testid="closure-level">
+                  <option value="">— Whole course —</option>
+                  {courseLevels.map((lv: any) => <option key={lv.id} value={lv.id}>{lv.label || lv.code}{lv.fee_minor != null ? ` · ${fmtINR(Number(lv.fee_minor))}` : ''}</option>)}
+                </select>
+                <div className="fhint">Optional — picking a level sets the fee to that level.</div>
+              </div>
+            )}
             <div className="fld">
               <label htmlFor="e-counsellor">Counsellor</label>
               <select id="e-counsellor" className="ainp" value={counsellor} onChange={(e) => setCounsellor(e.target.value)}>

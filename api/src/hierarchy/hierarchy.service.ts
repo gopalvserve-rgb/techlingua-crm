@@ -846,7 +846,7 @@ export class HierarchyService {
     }, params);
     let sql = `SELECT s.*, c.name AS campaign_name, ms.name AS master_source_name,
                       b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name
-                 FROM source s JOIN campaign c ON c.id = s.campaign_id
+                 FROM source s LEFT JOIN campaign c ON c.id = s.campaign_id
                  LEFT JOIN m_source ms ON ms.id = s.master_source_id
                  LEFT JOIN branch b ON b.id = s.branch_id
                  LEFT JOIN vertical v ON v.id = s.vertical_id
@@ -859,15 +859,36 @@ export class HierarchyService {
     return this.db.query(sql + ` ORDER BY s.name`, params);
   }
 
+  /**
+   * 27aug Batch C item 1 — CAMPAIGN OPTIONAL + canonical source catalogue.
+   * A Lead Source no longer requires a campaign: when `campaign_id` is omitted the source is
+   * created ORG-LEVEL (no Branch/Vertical/Pipeline/Campaign path). When a campaign IS given the
+   * full path is derived from it, exactly as before. Every source is backed by the ONE canonical
+   * `m_source` catalogue (reconciliation, item 1b): if no `master_source_id` is supplied we
+   * find-or-create the canonical row by name and link it, so the Masters "Sources" list and the
+   * Lead Source Master can never diverge.
+   */
   async createSource(dto: {
-    campaign_id: number; name: string; channel?: string; master_source_id?: number; config?: object;
+    campaign_id?: number | null; name: string; channel?: string; master_source_id?: number; config?: object;
     cost_per_lead?: number | string | null; is_active?: boolean;
   }, actorId: number) {
-    if (!dto?.campaign_id || !dto?.name) throw new BadRequestException('campaign_id and name are required');
-    const c = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string; pipeline_id: string }>(
-      `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [dto.campaign_id],
-    );
-    if (!c) throw new NotFoundException('campaign not found');
+    if (!dto?.name || !String(dto.name).trim()) throw new BadRequestException('name is required');
+    const hasCampaign = dto.campaign_id !== undefined && dto.campaign_id !== null && String(dto.campaign_id).trim() !== '';
+    let orgId: number; let branchId: number | null = null; let verticalId: number | null = null;
+    let pipelineId: number | null = null; let campaignId: number | null = null;
+    if (hasCampaign) {
+      const c = await this.db.one<{ org_id: string; branch_id: string; vertical_id: string; pipeline_id: string }>(
+        `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [Number(dto.campaign_id)],
+      );
+      if (!c) throw new NotFoundException('campaign not found');
+      orgId = Number(c.org_id); branchId = Number(c.branch_id); verticalId = Number(c.vertical_id);
+      pipelineId = Number(c.pipeline_id); campaignId = Number(dto.campaign_id);
+    } else {
+      const o = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
+      if (!o) throw new NotFoundException('no organisation');
+      orgId = Number(o.id);
+    }
+    const masterSourceId = await this.ensureMasterSource(orgId, dto.name.trim(), dto.master_source_id, actorId);
     const channel = dto.channel ?? 'manual';
     const webhookToken = ['meta', 'google', 'justdial', 'indiamart', 'form', 'webhook'].includes(channel)
       ? 'whk_' + Math.random().toString(36).slice(2, 18) : null;
@@ -875,11 +896,28 @@ export class HierarchyService {
       `INSERT INTO source (org_id, branch_id, vertical_id, pipeline_id, campaign_id, master_source_id,
                            name, channel, webhook_token, config, cost_per_lead, is_active, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, TRUE),$13) RETURNING *`,
-      [Number(c.org_id), Number(c.branch_id), Number(c.vertical_id), Number(c.pipeline_id), dto.campaign_id,
-        dto.master_source_id ?? null, dto.name.trim(), channel, webhookToken,
+      [orgId, branchId, verticalId, pipelineId, campaignId,
+        masterSourceId, dto.name.trim(), channel, webhookToken,
         JSON.stringify(dto.config ?? {}), dto.cost_per_lead ?? 0, dto.is_active ?? null, actorId],
     );
     return rows[0];
+  }
+
+  /**
+   * Canonical Source catalogue helper (reconciliation, item 1b). Returns a valid `m_source` id:
+   * the supplied one when given, else a find-or-create by (case-insensitive) name so the two
+   * "source" screens share ONE underlying catalogue table.
+   */
+  private async ensureMasterSource(orgId: number, name: string, providedId?: number | null, actorId?: number): Promise<number> {
+    if (providedId !== undefined && providedId !== null && Number(providedId) > 0) return Number(providedId);
+    const existing = await this.db.one<{ id: string }>(
+      `SELECT id FROM m_source WHERE org_id = $1 AND lower(name) = lower($2) AND deleted_at IS NULL ORDER BY id LIMIT 1`,
+      [orgId, name]);
+    if (existing) return Number(existing.id);
+    const created = await this.db.one<{ id: string }>(
+      `INSERT INTO m_source (org_id, name, is_active, meta, created_by) VALUES ($1,$2,TRUE,'{}'::jsonb,$3) RETURNING id`,
+      [orgId, name, actorId ?? null]);
+    return Number(created!.id);
   }
 
   /**
@@ -903,6 +941,12 @@ export class HierarchyService {
   async updateSource(id: number, dto: Record<string, unknown>, scope?: ResolvedScope, actorId?: number) {
     const reparent = dto.campaign_id !== undefined && dto.campaign_id !== null && String(dto.campaign_id) !== '';
     if (!reparent) {
+      // Keep the canonical m_source link in sync when the name changes (item 1b): a rename of a
+      // Lead Source find-or-creates its canonical catalogue row so the two source screens agree.
+      if (dto.name !== undefined && String(dto.name).trim() && (dto.master_source_id === undefined || dto.master_source_id === null)) {
+        const row = await this.db.one<{ org_id: string }>(`SELECT org_id FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
+        if (row) dto.master_source_id = await this.ensureMasterSource(Number(row.org_id), String(dto.name).trim(), null, actorId);
+      }
       return this.genericUpdate('source', id, dto,
         ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active']);
     }

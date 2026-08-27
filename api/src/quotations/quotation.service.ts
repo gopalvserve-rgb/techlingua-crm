@@ -167,7 +167,7 @@ export class QuotationService {
     return this.db.query<any>(
       `SELECT q.id, q.quote_no, q.version, q.parent_id, q.is_current, q.status, q.valid_until,
               q.subtotal_minor, q.discount_minor, q.tax_minor, q.total_minor, q.currency,
-              q.created_at, q.sent_at, q.decided_at, q.lead_id,
+              q.created_at, q.sent_at, q.decided_at, q.lead_id, q.payment_plan,
               l.full_name AS lead_name, l.phone AS lead_phone,
               b.name AS branch_name, v.name AS vertical_name, u.name AS owner_name,
               (SELECT string_agg(DISTINCT c.name, ', ')
@@ -616,18 +616,18 @@ export class QuotationService {
       `INSERT INTO quotation (org_id, quote_no, version, parent_id, is_current, lead_id,
                               branch_id, vertical_id, pipeline_id, campaign_id, owner_id, team_id,
                               status, valid_until, currency, subtotal_minor, discount_minor,
-                              tax_minor, total_minor, notes, terms, created_by)
+                              tax_minor, total_minor, notes, terms, payment_plan, created_by)
        VALUES ($1::bigint, $2::varchar, $3::int, $4::bigint, TRUE, $5::bigint,
                $6::bigint, $7::bigint, $8::bigint, $9::bigint, $10::bigint, $11::bigint,
                'draft', $12::date, 'INR', $13::bigint, $14::bigint, $15::bigint, $16::bigint,
-               $17, $18, $19::bigint)
+               $17, $18, $19, $20::bigint)
        RETURNING id`,
       [a.orgId, a.quoteNo, a.version, a.parentId, a.lead.id,
         a.lead.branch_id, a.lead.vertical_id, a.lead.pipeline_id ?? null, a.lead.campaign_id ?? null,
         a.lead.owner_id ?? a.actorId, a.lead.team_id ?? null,
         a.validUntil, a.totals.subtotal_minor, a.totals.discount_minor,
         a.totals.tax_minor, a.totals.total_minor,
-        a.dto?.notes ?? null, a.dto?.terms ?? null, a.actorId],
+        a.dto?.notes ?? null, a.dto?.terms ?? null, a.dto?.payment_plan ?? null, a.actorId],
     );
     return { id: Number(r.rows[0].id) };
   }

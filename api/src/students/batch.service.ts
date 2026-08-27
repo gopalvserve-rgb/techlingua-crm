@@ -26,12 +26,12 @@ export const BATCH_SCOPE_COLS: ScopeColumnMap = {
 
 /** All 7 lifecycle codes. */
 export const BATCH_STATUS_CODES = [
-  'upcoming', 'active', 'completed', 'cancelled', 'expired', 'archived', 'suspended',
+  'upcoming', 'active', 'completed', 'cancelled', 'expired', 'archived', 'suspended', 'on_hold',
 ] as const;
 export type BatchStatus = (typeof BATCH_STATUS_CODES)[number];
 
 /** The four MANUAL statuses — set by a user and never overridden by the date logic. */
-export const BATCH_MANUAL_STATUSES = new Set<string>(['completed', 'cancelled', 'suspended', 'archived']);
+export const BATCH_MANUAL_STATUSES = new Set<string>(['completed', 'cancelled', 'suspended', 'archived', 'on_hold']);
 
 /**
  * BATCH TYPE + CLASS DAYS + FREQUENCY (migration 081, client feedback).
@@ -194,7 +194,8 @@ export class BatchService {
               bt.created_by, bt.created_at,
               b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, u.name AS trainer_name,
               cu.name AS owner_name,
-              (SELECT count(*) FROM student st WHERE st.batch_id = bt.id AND st.deleted_at IS NULL)::int AS enrolled
+              (SELECT count(*) FROM student st WHERE st.batch_id = bt.id AND st.deleted_at IS NULL)::int AS enrolled,
+              (SELECT COALESCE(json_agg(json_build_object('id', bl.id, 'course_level_id', bl.course_level_id, 'code', bl.code, 'label', bl.label) ORDER BY bl.ordering, bl.id), '[]'::json) FROM batch_level bl WHERE bl.batch_id = bt.id) AS levels
          FROM batch bt
          LEFT JOIN branch  b  ON b.id = bt.branch_id
          LEFT JOIN vertical v ON v.id = bt.vertical_id
@@ -217,7 +218,8 @@ export class BatchService {
     const row = await this.db.one<any>(
       `SELECT bt.*, b.name AS branch_name, v.name AS vertical_name, c.name AS course_name, u.name AS trainer_name,
               cu.name AS owner_name,
-              sd.label AS status_label, sd.meaning AS status_meaning, td.label AS batch_type_label
+              sd.label AS status_label, sd.meaning AS status_meaning, td.label AS batch_type_label,
+              (SELECT COALESCE(json_agg(json_build_object('id', bl.id, 'course_level_id', bl.course_level_id, 'code', bl.code, 'label', bl.label) ORDER BY bl.ordering, bl.id), '[]'::json) FROM batch_level bl WHERE bl.batch_id = bt.id) AS levels
          FROM batch bt
          LEFT JOIN branch b ON b.id = bt.branch_id
          LEFT JOIN vertical v ON v.id = bt.vertical_id
@@ -309,6 +311,8 @@ export class BatchService {
         `INSERT INTO batch_status_history (org_id, branch_id, vertical_id, batch_id, from_status, to_status, is_manual, reason, changed_by)
          VALUES ($1::bigint,$2::bigint,$3::bigint,$4::bigint,NULL,$5,$6,$7,$8::bigint)`,
         [orgId, branchId, verticalId, id, status, isManual, isManual ? 'Set on creation' : 'Derived from dates on creation', me.id]);
+      // Item 3 — optional course-level targeting (only when the course has levels).
+      await this.syncBatchLevels(c, orgId, id, courseId, dto?.level_ids);
       return { id, batch_code: code, status, status_is_manual: isManual };
     });
   }
@@ -350,9 +354,36 @@ export class BatchService {
     // (manual sticky vs auto re-derive + history) goes through POST /batches/:id/status.
     params.push(id);
     await this.db.query(`UPDATE batch SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length}::bigint`, params);
+    // Item 3 — replace the batch's course-level targeting when the caller sends level_ids.
+    if (dto?.level_ids !== undefined) {
+      const orgId = await this.orgId();
+      await this.db.tx(async (c) => { await this.syncBatchLevels(c, orgId, id, courseId, dto.level_ids); });
+    }
     // If the dates moved and the batch is NOT manually pinned, re-derive its status now.
     await this.refreshBatchStatuses();
     return { id };
+  }
+
+  /**
+   * 27aug Batch C item 3 — BATCH ↔ COURSE LEVELS. Replaces a batch's level rows with the given
+   * course_level ids (snapshotting code/label). Only ids that belong to the batch's course are
+   * kept; an empty/absent list clears the batch's levels. Optional throughout.
+   */
+  private async syncBatchLevels(c: any, orgId: number, batchId: number, courseId: number, levelIds: unknown): Promise<void> {
+    const ids = (Array.isArray(levelIds) ? levelIds : []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+    await c.query(`DELETE FROM batch_level WHERE batch_id = $1::bigint`, [batchId]);
+    if (!ids.length) return;
+    const levels = await c.query(
+      `SELECT id, code, label, ordering FROM course_level
+        WHERE course_id = $1::bigint AND id = ANY($2::bigint[]) AND is_active
+        ORDER BY ordering, id`, [courseId, ids]);
+    for (const lv of levels.rows) {
+      await c.query(
+        `INSERT INTO batch_level (org_id, batch_id, course_level_id, code, label, ordering)
+         VALUES ($1::bigint,$2::bigint,$3::bigint,$4,$5,$6)
+         ON CONFLICT (batch_id, lower(code)) DO NOTHING`,
+        [orgId, batchId, lv.id, lv.code, lv.label ?? null, lv.ordering ?? 0]);
+    }
   }
 
   async remove(id: number, me: { id: number }, scope: ResolvedScope) {

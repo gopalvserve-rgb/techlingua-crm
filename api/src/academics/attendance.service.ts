@@ -169,7 +169,17 @@ export class AttendanceService {
     multi('a.batch_id', f.batch_id);
     multi('a.branch_id', f.branch_id);
     multi('a.vertical_id', f.vertical_id);
-    if (VALID.includes(String(f.status))) { params.push(f.status); where.push(`a.status = $${params.length}::varchar`); }
+    // 27aug Batch C item 6 — Course + Trainer filters (batch carries both), multi-select STATUS,
+    // and a free-text search across student name / roll (student no) / enrolment number.
+    multi('bt.course_id', f.course_id);
+    multi('bt.trainer_id', f.trainer_id);
+    const statuses = String(f.status ?? '').split(',').map((x) => x.trim()).filter((x) => VALID.includes(x));
+    if (statuses.length) { params.push(statuses); where.push(`a.status = ANY($${params.length}::varchar[])`); }
+    if (f.q && String(f.q).trim()) {
+      params.push(`%${String(f.q).trim()}%`);
+      where.push(`(s.full_name ILIKE $${params.length} OR s.student_no ILIKE $${params.length}
+        OR EXISTS (SELECT 1 FROM enrolment e2 WHERE e2.student_profile_id = s.id AND e2.deleted_at IS NULL AND e2.enrolment_no ILIKE $${params.length}))`);
+    }
     const dr = assertDateRange(f.from, f.to);
     if (dr.from) { params.push(dr.from); where.push(`a.session_date >= $${params.length}::date`); }
     if (dr.to) { params.push(dr.to); where.push(`a.session_date <= $${params.length}::date`); }

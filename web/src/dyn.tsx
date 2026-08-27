@@ -4416,12 +4416,13 @@ const BATCH_STATUS_META: Record<string, { label: string; cls: string; meaning: s
   upcoming:  { label: 'Upcoming',  cls: 'b-cyan',   meaning: 'Batch is confirmed but classes have not started',         manual: false },
   active:    { label: 'Active',    cls: 'b-green',  meaning: 'Classes are currently running',                          manual: false },
   suspended: { label: 'Suspended', cls: 'b-amber',  meaning: 'Batch temporarily paused',                              manual: true  },
+  on_hold:   { label: 'On Hold',   cls: 'b-amber',  meaning: 'Batch put on hold (e.g. awaiting minimum enrolment or a decision)', manual: true  },
   completed: { label: 'Completed', cls: 'b-indigo', meaning: 'All scheduled classes/course activities completed',      manual: true  },
   cancelled: { label: 'Cancelled', cls: 'b-red',    meaning: 'Batch cancelled before or after starting',              manual: true  },
   expired:   { label: 'Expired',   cls: 'b-rose',   meaning: 'Batch end date passed without formal completion/closure', manual: false },
   archived:  { label: 'Archived',  cls: 'b-gray',   meaning: 'Historical batch retained for records/reporting',        manual: true  },
 };
-const BATCH_STATUS_ORDER = ['upcoming', 'active', 'suspended', 'completed', 'cancelled', 'expired', 'archived'];
+const BATCH_STATUS_ORDER = ['upcoming', 'active', 'suspended', 'on_hold', 'completed', 'cancelled', 'expired', 'archived'];
 /** The 9 batch-type codes + labels (matches batch_type_def / migration 081) — powers the Batch
  *  Type list filter (EnumMulti). id == the stored code; name == the human label. */
 const BATCH_TYPE_OPTS: Array<{ id: string; name: string }> = [
@@ -5075,6 +5076,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
   const [enrolEditFor, setEnrolEditFor] = useState<any | null>(null); // client feedback item 6 — Edit enrolment
   const [enrolViewFor, setEnrolViewFor] = useState<any | null>(null); // client Aug 2026 (#4a) — read-only View enrolment
   const [enrolLevelFor, setEnrolLevelFor] = useState<any | null>(null); // batch 2 — Add level (upgrade) to an enrolment
+  const [enrolBatchFor, setEnrolBatchFor] = useState<any | null>(null); // 27aug Batch C items 4/5 — assign a batch to this enrolment
   // client refinement (dev/80) — Fee Management actions on the profile Fees tab (reuse standalone components)
   const [feePlanFor, setFeePlanFor] = useState<number | null>(null);        // fee setup -> PlanCreateModal
   const [feePlanEditFor, setFeePlanEditFor] = useState<number | null>(null); // edit -> PlanDetailModal
@@ -5615,6 +5617,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                       <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolViewFor(e)} data-testid={`enrol-view-${e.id}`}><Ic k="eye" />View</button>
                       {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolEditFor(e)} data-testid={`enrol-edit-${e.id}`}><Ic k="pencil" />Edit</button></>}
                       {canEdit && e.status !== 'cancelled' && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolLevelFor(e)} data-testid={`enrol-addlevel-${e.id}`}><Ic k="plus" />Add level</button></>}
+                      {canEdit && e.status !== 'cancelled' && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolBatchFor(e)} data-testid={`enrol-assignbatch-${e.id}`}><Ic k="grid" />Assign batch</button></>}
                       {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button></>}
                       {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolXferFor(e)} data-testid={`enrol-xfer-${e.id}`}><Ic k="swap" />Transfer course</button></>}
                       {' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolHistFor(e)}><Ic k="list" />History</button>
@@ -5912,6 +5915,11 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
         <AddEnrolmentLevelModal student={full} enrolment={enrolLevelFor}
           onClose={() => setEnrolLevelFor(null)}
           onDone={() => { setEnrolLevelFor(null); reloadEnrol(); loadProfile(); }} />
+      )}
+      {enrolBatchFor && (
+        <AssignEnrolmentBatchModal student={full} enrolment={enrolBatchFor}
+          onClose={() => setEnrolBatchFor(null)}
+          onDone={() => { setEnrolBatchFor(null); reloadEnrol(); loadProfile(); }} />
       )}
       {enrolHistFor && (
         <EnrolmentHistoryModal student={full} enrolment={enrolHistFor} onClose={() => setEnrolHistFor(null)} />
@@ -6673,6 +6681,69 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
 }
 
 /**
+ * 27aug Batch C items 4 & 5 — ASSIGN A BATCH to ONE enrolment, reached from the student side.
+ * Surfaces the enrolment's Branch › Vertical › Course › Level(s) so the user knows exactly which
+ * enrolment they are assigning (crucial for a multi-enrolment student). Batches are filtered by the
+ * enrolment's branch/vertical/course. It NEVER hard-blocks on an incomplete admission step — it
+ * shows a warning banner and still lets the user assign. batch_id can be cleared to unassign.
+ */
+export function AssignEnrolmentBatchModal({ student, enrolment, onClose, onDone }:
+  { student: any; enrolment: any; onClose: () => void; onDone: () => void }) {
+  const [batches, setBatches] = useState<any[]>([]);
+  const [batchId, setBatchId] = useState<string>(String(enrolment.batch_id ?? ''));
+  const [busy, setBusy] = useState(false);
+  const [warn, setWarn] = useState<string>('');
+  const levelText = enrolment.level_summary || (Array.isArray(enrolment.levels) ? enrolment.levels.map((l: any) => l.code).join(', ') : '') || '';
+  const stage = String(enrolment.admission_stage ?? '').trim();
+  const admissionComplete = ['admitted', 'confirmed', 'enrolled', 'completed'].includes(stage.toLowerCase());
+  useEffect(() => {
+    const b = enrolment.branch_id, v = enrolment.vertical_id, c = enrolment.course_id;
+    if (!b || !v) { setBatches([]); return; }
+    api.get<any[]>(`/batches?branch_id=${b}&vertical_id=${v}`)
+      .then((rows) => setBatches((rows ?? []).filter((bt: any) => !c || Number(bt.course_id) === Number(c))))
+      .catch(() => setBatches([]));
+  }, [enrolment.branch_id, enrolment.vertical_id, enrolment.course_id]);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post<any>(`/students/${student.id}/enrolments/${enrolment.id}/assign-batch`, {
+        batch_id: batchId ? Number(batchId) : null,
+      });
+      toast(batchId ? 'Batch assigned to this enrolment.' : 'Batch cleared for this enrolment.');
+      if (res?.warning) { setWarn(String(res.warning)); }
+      onDone();
+    } catch (e) { toast((e as Error).message, true); setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Assign batch — ${enrolment.course_name ?? enrolment.enrolment_no}`} icon="grid" onClose={onClose} width={540}
+      footer={<button className="btn primary" onClick={save} disabled={busy} data-testid="enrol-assignbatch-save"><Ic k="grid" />{batchId ? 'Assign batch' : 'Clear batch'}</button>}>
+      <div className="form-grid">
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <div className="sub" style={{ marginBottom: 6 }}>
+            Enrolment: <b>{enrolment.enrolment_no}</b> · {enrolment.path || [enrolment.branch_name, enrolment.vertical_name, enrolment.course_name].filter(Boolean).join(' › ')}
+            {levelText ? <> › <b>{levelText}</b></> : null}
+          </div>
+          {!admissionComplete && stage ? (
+            <div className="sub" data-testid="enrol-assignbatch-warn" style={{ marginBottom: 8, padding: '6px 8px', borderRadius: 6, background: 'var(--amber-soft, #fef3c7)', color: '#92400e' }}>
+              Admission step <b>{stage}</b> is not yet complete. You can still assign a batch — this is only a reminder, not a block.
+            </div>
+          ) : null}
+          <label htmlFor="ab-batch">Batch</label>
+          <select id="ab-batch" className="ainp" value={batchId} disabled={busy} onChange={(e) => setBatchId(e.target.value)} data-testid="enrol-assignbatch-select">
+            <option value="">— Unassigned —</option>
+            {batches.map((bt: any) => (
+              <option key={bt.id} value={bt.id}>{bt.name}{bt.batch_code ? ` (${bt.batch_code})` : ''}{bt.status ? ` · ${bt.status}` : ''}</option>
+            ))}
+          </select>
+          <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>Only batches for this enrolment&rsquo;s branch, vertical and course are listed.</div>
+          {warn ? <div className="sub" style={{ marginTop: 6, color: '#92400e' }}>{warn}</div> : null}
+        </div>
+      </div>
+    </DetailModal>
+  );
+}
+
+/**
  * FEE SETUP (client feedback item 7) — the Fee Management → Fee setup action. Opens the SAME
  * fee configuration as Enroll-in-another-course (discount amount/% + net + payment plan
  * Full/Installments/Custom + down payment + schedule preview) bound to an EXISTING enrolment.
@@ -7284,6 +7355,12 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
   // (Offline / Online / Hybrid); both persist on create AND edit.
   const [deliveryMode, setDeliveryMode] = useState<string>(initial?.delivery_mode ? String(initial.delivery_mode) : 'Offline');
   const [description, setDescription] = useState<string>(initial?.description ?? '');
+  // 27aug Batch C item 3 — OPTIONAL Course Level(s) this batch is for. Only shown when the
+  // selected course has levels; hidden (and never sent) otherwise. Persisted as course_level ids.
+  const [levelIds, setLevelIds] = useState<number[]>(
+    Array.isArray(initial?.levels) ? initial.levels.map((l: any) => Number(l.course_level_id)).filter((n: number) => Number.isFinite(n) && n > 0) : []);
+  const courseLevels = useFetch<any[]>(courseId ? `/courses/${courseId}/levels` : null, [courseId]);
+  const toggleLevel = (id: number) => setLevelIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -7347,6 +7424,9 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
       // Delivery Mode + Description (083) — sent on BOTH create and edit.
       delivery_mode: deliveryMode || 'Offline',
       description: description.trim() || null,
+      // Item 3 — course-level targeting (optional). Always sent so edit can CLEAR levels; the
+      // server keeps only ids that belong to the course.
+      level_ids: levelIds,
     };
     // Status is only set on CREATE (an explicit manual status pins it; otherwise the server
     // DERIVES upcoming/active/expired from the dates). On EDIT the status is changed via the
@@ -7388,7 +7468,7 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
             <div className="fld">
               <label htmlFor="b-course">Course <span className="star">*</span></label><MasterQuickAdd type="course" onAdded={(row) => setCourseId(String(row.id))} />
               <select id="b-course" className="ainp" value={courseId} disabled={!verticalId}
-                onChange={(e) => setCourseId(e.target.value)}>
+                onChange={(e) => { setCourseId(e.target.value); setLevelIds([]); }}>
                 <option value="">{verticalId ? '— Select course —' : 'Choose a vertical first'}</option>
                 {cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -7468,6 +7548,26 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
                   : 'Student attendance can be marked only on these days (leave all unticked for no restriction).'}
               </div>
             </div>
+            {(courseLevels.data?.length ?? 0) > 0 && (
+              <div className="fld" style={{ gridColumn: '1 / -1' }}>
+                <label>Course Level <span className="sub" style={{ fontWeight: 400 }}>(optional — which level(s) this batch is for)</span></label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} role="group" aria-label="Course levels">
+                  {(courseLevels.data ?? []).map((lv: any) => {
+                    const on = levelIds.includes(Number(lv.id));
+                    return (
+                      <label key={lv.id} className={`chip${on ? ' on' : ''}`} data-testid={`b-level-${lv.id}`}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 999,
+                          border: '1px solid var(--line)', cursor: 'pointer',
+                          background: on ? 'var(--accent-soft, rgba(99,102,241,.15))' : 'transparent' }}>
+                        <input type="checkbox" checked={on} onChange={() => toggleLevel(Number(lv.id))} style={{ margin: 0 }} />
+                        {lv.label || lv.code}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>Leave all unticked for a batch that covers the whole course.</div>
+              </div>
+            )}
             <div className="fld">
               <label htmlFor="b-start">Start date</label>
               <input id="b-start" className="ainp" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -7494,6 +7594,7 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
                     <option value="upcoming">Upcoming</option>
                     <option value="active">Active</option>
                     <option value="suspended">Suspended</option>
+                    <option value="on_hold">On Hold</option>
                     <option value="completed">Completed</option>
                     <option value="cancelled">Cancelled</option>
                     <option value="archived">Archived</option>
