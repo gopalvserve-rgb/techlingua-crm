@@ -50,3 +50,10 @@ Dropped into:
 - **Today's Follow-ups** (dashboard card + standalone screen): each row shows the icons.
 
 marker: contact-quick-actions
+
+## Deploy record
+- Code commit: `2b0a299` (this deploy's live commit).
+- Railway deployment: `f1d54d80-478a-4526-879f-5e769d12bf4b` (project 0a613d36…, service api, production).
+- Served bundle CHANGED `index-C3F6CvH3.js` → `index-CaXOXie8.js`; markers grep-verified in the
+  live-served JS: `contact-quick-actions`, `calling-note-input`. App Online (`/`→200).
+- No migration (web-only).
