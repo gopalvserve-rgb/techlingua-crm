@@ -13,7 +13,7 @@ import { RbacDataService } from '../rbac/rbac-data.service';
 import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVENUE_CANCELLING_STATUSES, lmsBlockedMessage, combineAccess, ENROLMENT_STATUSES } from './lms-access';
 import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from '../enrolments/discount.util';
-import { DiscountScope, MasterLevel, ResolvedLevel, resolveLevels, sumLevelDiscounts, sumLevelFees } from '../enrolments/level.util';
+import { DiscountScope, MasterLevel, ResolvedLevel, resolveLevels, sumLevelDiscounts, sumLevelFees, sumLevelExamFees } from '../enrolments/level.util';
 import { Frequency, PlanType, generateSchedule } from '../paymentplans/schedule.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { DiscountMasterService } from '../finance/discount-master.service';
@@ -200,9 +200,10 @@ export class StudentService {
   /** Load a course's master levels (code + fee snapshot source) for resolving a selection. */
   private async fetchMasterLevels(courseId: number): Promise<MasterLevel[]> {
     const rows = await this.db.query<any>(
-      `SELECT id, code, label, fee_minor FROM course_level
+      `SELECT id, code, label, fee_minor, exam_fee_minor FROM course_level
         WHERE course_id = $1::bigint AND is_active ORDER BY ordering, id`, [courseId]);
-    return rows.map((r) => ({ id: Number(r.id), code: String(r.code), label: r.label ?? null, fee_minor: Number(r.fee_minor ?? 0) }));
+    return rows.map((r) => ({ id: Number(r.id), code: String(r.code), label: r.label ?? null,
+      fee_minor: Number(r.fee_minor ?? 0), exam_fee_minor: Number(r.exam_fee_minor ?? 0) }));
   }
 
   /** Course Standard Fee (m_course.meta.fee, rupees -> paise). Item 10 (dev/131): the fallback a
@@ -210,6 +211,14 @@ export class StudentService {
   private async fetchStandardFeeMinor(courseId: number): Promise<number> {
     const row = await this.db.one<any>(`SELECT meta->>'fee' AS fee FROM m_course WHERE id = $1::bigint`, [courseId]);
     const rupees = Number(row?.fee ?? 0);
+    return Number.isFinite(rupees) && rupees > 0 ? Math.round(rupees * 100) : 0;
+  }
+
+  /** Course single EXAM fee (m_course.meta.exam_fee, rupees -> paise) — dev/140 item 3. Used for a
+   *  course WITHOUT levels. A levelled course sums the per-level exam fees instead. Returns 0 when unset. */
+  private async fetchCourseExamFeeMinor(courseId: number): Promise<number> {
+    const row = await this.db.one<any>(`SELECT meta->>'exam_fee' AS exam_fee FROM m_course WHERE id = $1::bigint`, [courseId]);
+    const rupees = Number(row?.exam_fee ?? 0);
     return Number.isFinite(rupees) && rupees > 0 ? Math.round(rupees * 100) : 0;
   }
 
@@ -226,6 +235,7 @@ export class StudentService {
     branchId: number | null = null,
   ): Promise<null | {
     levels: ResolvedLevel[]; scope: DiscountScope; total_fee_minor: number; discount_minor: number; net_fee_minor: number;
+    exam_fee_minor: number;
     discount_type: EnrolmentDiscountType; discount_value: number;
     // When scope = 'level' the per-(course,level) over-cap decision is ALREADY made here (dev/110),
     // so the caller must NOT run decideMasterDiscount again — it uses this decision verbatim.
@@ -241,6 +251,8 @@ export class StudentService {
     catch (e) { throw new BadRequestException((e as Error).message); }
     if (!levels.length) return null;
     const total = sumLevelFees(levels);
+    // EXAM FEE (dev/140 item 3) — Σ per-level exam fees; EXCLUDED from discount + instalments, added to Total.
+    const examTotal = sumLevelExamFees(levels);
 
     if (scope === 'level') {
       const requested = sumLevelDiscounts(levels);
@@ -250,12 +262,14 @@ export class StudentService {
       const decision = await this.decideLevelDiscounts(levels,
         { branch_id: branchId, vertical_id: verticalId, course_id: courseId }, actorId);
       return { levels, scope, total_fee_minor: total, discount_minor: decision.applied, net_fee_minor: total - decision.applied,
+        exam_fee_minor: examTotal,
         discount_type: requested > 0 ? 'amount' : 'none', discount_value: requested, decision };
     }
     // OVERALL — one discount on the summed total (the item-4 amount/percent path). The over-cap
     // decision stays with the caller (it resolves the course/level cap on the total).
     const d = await this.resolveDiscount(total, dto, verticalId, actorId, skipCap);
     return { levels, scope, total_fee_minor: total, discount_minor: d.discount_amount_minor, net_fee_minor: d.net_fee_minor,
+      exam_fee_minor: examTotal,
       discount_type: d.discount_type, discount_value: d.discount_value, decision: null };
   }
 
@@ -263,9 +277,9 @@ export class StudentService {
   private async insertEnrolmentLevels(c: any, orgId: number, enrolmentId: number, levels: ResolvedLevel[]) {
     for (const l of levels) {
       await c.query(
-        `INSERT INTO enrolment_level (org_id, enrolment_id, course_level_id, code, label, fee_minor, discount_minor, ordering)
-         VALUES ($1::bigint,$2::bigint,$3::bigint,$4::varchar,$5,$6::bigint,$7::bigint,$8::int)`,
-        [orgId, enrolmentId, l.course_level_id, l.code, l.label, l.fee_minor, l.discount_minor, l.ordering]);
+        `INSERT INTO enrolment_level (org_id, enrolment_id, course_level_id, code, label, fee_minor, discount_minor, exam_fee_minor, ordering)
+         VALUES ($1::bigint,$2::bigint,$3::bigint,$4::varchar,$5,$6::bigint,$7::bigint,$8::bigint,$9::int)`,
+        [orgId, enrolmentId, l.course_level_id, l.code, l.label, l.fee_minor, l.discount_minor, l.exam_fee_minor ?? 0, l.ordering]);
     }
   }
 
@@ -566,6 +580,8 @@ export class StudentService {
     const enrolmentsRaw = await this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.status, e.net_fee_minor, e.fee_minor, e.discount_minor,
               e.gross_fee_minor, e.discount_type, e.discount_value, e.discount_amount_minor,
+              e.exam_fee_minor,
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0))::bigint AS total_payable_minor,
               e.payment_plan, e.start_date, e.created_at, e.course_id, e.batch_id,
               e.branch_id, e.vertical_id,
               e.course_status, e.course_status_reason, e.course_status_effective_date,
@@ -577,8 +593,9 @@ export class StudentService {
               (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
                  FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
               -- Client Aug 2026 (#4b) — Due Fee for the Fee Management columns (aligns the fee
-              -- view with the Course Enrollment list): net fee minus receipts collected.
-              GREATEST(0, e.net_fee_minor - COALESCE((SELECT sum(fr2.amount_minor) FROM fee_receipt fr2
+              -- view with the Course Enrollment list): TOTAL payable (net + exam fee, dev/140 item 3)
+              -- minus receipts collected. Exam fee is collectible so it counts in the Balance.
+              GREATEST(0, (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE((SELECT sum(fr2.amount_minor) FROM fee_receipt fr2
                      WHERE fr2.enrolment_id = e.id AND fr2.deleted_at IS NULL), 0))::bigint AS outstanding_minor
          FROM enrolment e
          LEFT JOIN m_course co ON co.id = e.course_id
@@ -638,10 +655,11 @@ export class StudentService {
                 fr.note, u.name AS received_by_name, e.enrolment_no,
                 br.name AS branch_name, vt.name AS vertical_name, co.name AS course_name,
                 svi.student_vertical_no, e.payment_plan, e.net_fee_minor, e.course_status,
+                e.exam_fee_minor, (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0))::bigint AS total_payable_minor,
                 COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
                 (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
                    FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
-                GREATEST(0, e.net_fee_minor - COALESCE((SELECT sum(fr2.amount_minor) FROM fee_receipt fr2
+                GREATEST(0, (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE((SELECT sum(fr2.amount_minor) FROM fee_receipt fr2
                        WHERE fr2.enrolment_id = e.id AND fr2.deleted_at IS NULL), 0))::bigint AS outstanding_minor
            FROM fee_receipt fr
            LEFT JOIN "user" u ON u.id = fr.received_by
@@ -1707,7 +1725,7 @@ export class StudentService {
   async createConvertEnrolments(studentId: number, leadId: number, lead: any, rows: any[], me: { id: number }) {
     const orgId = await this.orgId();
     type R = { courseId: number; courseName: string; courseCode: string; branchId: number; verticalId: number;
-      batchId: number | null; feeMinor: number; disc: number; net: number; plan: string; startDate: string | null;
+      batchId: number | null; feeMinor: number; disc: number; net: number; examMinor: number; plan: string; startDate: string | null;
       discount_type: string; discount_value: number; discountScope: DiscountScope; levels: ResolvedLevel[];
       discRequested: number; appStatus: DiscountApprovalStatus; capMinor: number | null;
       requestedBy: number | null; approvedBy: number | null };
@@ -1730,12 +1748,13 @@ export class StudentService {
       // fees, discount overall/level, Net = Total − discount, and the levels become line-items on
       // the ONE enrolment. Otherwise (no levels) the classic single-course fee path is unchanged.
       const lm = await this.resolveLevelMoney(courseId, row?.levels, row, verticalId, me.id, true, branchId);
-      let feeMinor: number; let disc: number; let net: number;
+      let feeMinor: number; let disc: number; let net: number; let examMinor = 0;
       let discount_type: EnrolmentDiscountType; let discount_value: number;
       let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
       let levelDecision: null | { applied: number; requested: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null } = null;
       if (lm) {
         feeMinor = lm.total_fee_minor; disc = lm.discount_minor; net = lm.net_fee_minor;
+        examMinor = lm.exam_fee_minor;
         discount_type = lm.discount_type; discount_value = lm.discount_value; discountScope = lm.scope; levels = lm.levels;
         levelDecision = lm.decision;
       } else {
@@ -1749,6 +1768,13 @@ export class StudentService {
         const dsc = await this.resolveDiscount(feeMinor, row, verticalId, me.id, true);
         disc = dsc.discount_amount_minor; net = dsc.net_fee_minor;
         discount_type = dsc.discount_type; discount_value = dsc.discount_value;
+        // EXAM FEE (dev/140 item 3) — a level-less course carries a single exam fee (form override
+        // else the course master meta.exam_fee). It is NOT discounted and NOT part of the plan.
+        examMinor = row?.exam_fee_minor != null && String(row.exam_fee_minor).trim() !== ''
+          ? Math.max(0, Math.trunc(Number(row.exam_fee_minor)))
+          : (row?.exam_fee != null && String(row.exam_fee).trim() !== ''
+            ? Math.max(0, Math.round(Number(row.exam_fee) * 100))
+            : await this.fetchCourseExamFeeMinor(courseId));
       }
       const plan = String(row?.payment_plan ?? 'full');
       if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
@@ -1775,7 +1801,7 @@ export class StudentService {
           feeMinor, discRequested, me.id);
       }
       disc = dd.applied; net = feeMinor - disc;
-      resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, plan, startDate,
+      resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, examMinor, plan, startDate,
         discount_type, discount_value, discountScope, levels,
         discRequested, appStatus: dd.status, capMinor: dd.capMinor, requestedBy: dd.requestedBy, approvedBy: dd.approvedBy });
     }
@@ -1789,19 +1815,19 @@ export class StudentService {
                                   net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by,
                                   gross_fee_minor, discount_type, discount_value, discount_amount_minor, discount_scope,
                                   discount_approval_status, discount_requested_minor, discount_cap_minor,
-                                  discount_requested_by, discount_approved_by, discount_approved_at)
+                                  discount_requested_by, discount_approved_by, exam_fee_minor, discount_approved_at)
            VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
                    $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
                    $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
                    $17::bigint,$18::varchar,$19::numeric,$20::bigint,$21::varchar,
-                   $22::varchar,$23::bigint,$24::bigint,$25::bigint,$26::bigint,
+                   $22::varchar,$23::bigint,$24::bigint,$25::bigint,$26::bigint,$27::bigint,
                    CASE WHEN $22::varchar = 'approved' THEN now() ELSE NULL END)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, r.branchId, r.verticalId, lead.owner_id ?? me.id,
             r.courseId, r.batchId, studentId, r.feeMinor, r.disc, r.net, r.plan, r.startDate,
             `Enrolled in ${r.courseName} on conversion`, me.id,
             r.feeMinor, r.discount_type, r.discount_value, r.disc, r.discountScope,
-            r.appStatus, r.discRequested, r.capMinor, r.requestedBy, r.approvedBy]);
+            r.appStatus, r.discRequested, r.capMinor, r.requestedBy, r.approvedBy, r.examMinor ?? 0]);
         const eid = Number(ins.rows[0].id);
         if (r.levels.length) await this.insertEnrolmentLevels(c, orgId, eid, r.levels);
         await c.query(
@@ -1814,7 +1840,7 @@ export class StudentService {
         const svid = await this.ensureVerticalId(c, studentId, r.branchId, r.verticalId, me.id);
         out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName,
           vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected',
-          student_vertical_no: svid.student_vertical_no,
+          student_vertical_no: svid.student_vertical_no, exam_fee_minor: r.examMinor ?? 0,
           total_fee_minor: r.feeMinor, gross_fee_minor: r.feeMinor, discount_type: r.discount_type, discount_value: r.discount_value,
           discount_amount_minor: r.disc, discount_scope: r.discountScope,
           discount_approval_status: r.appStatus, discount_over_cap: r.appStatus === 'pending',
@@ -2305,12 +2331,13 @@ export class StudentService {
     // ENROLLMENT LEVEL RE-MODEL (batch 2): if levels are selected, Total = Σ level fees and the
     // levels become line-items on this ONE enrolment; else the classic single-fee path (unchanged).
     const lm = await this.resolveLevelMoney(courseId, dto?.levels, dto, enrolVerticalId, me.id, true, enrolBranchId);
-    let fee: number; let disc: number; let net: number;
+    let fee: number; let disc: number; let net: number; let examMinor = 0;
     let discountType: EnrolmentDiscountType; let discountValue: number;
     let discountScope: DiscountScope = 'overall'; let levels: ResolvedLevel[] = [];
     let levelDecision: null | { applied: number; requested: number; status: DiscountApprovalStatus; capMinor: number | null; requestedBy: number | null; approvedBy: number | null } = null;
     if (lm) {
       fee = lm.total_fee_minor; disc = lm.discount_minor; net = lm.net_fee_minor;
+      examMinor = lm.exam_fee_minor;
       discountType = lm.discount_type; discountValue = lm.discount_value; discountScope = lm.scope; levels = lm.levels;
       levelDecision = lm.decision;
     } else {
@@ -2319,6 +2346,12 @@ export class StudentService {
       const dsc = await this.resolveDiscount(fee, dto, enrolVerticalId, me.id, true);
       disc = dsc.discount_amount_minor; net = dsc.net_fee_minor;
       discountType = dsc.discount_type; discountValue = dsc.discount_value;
+      // EXAM FEE (dev/140 item 3) — single exam fee for a level-less course (form override else master).
+      examMinor = dto?.exam_fee_minor != null && String(dto.exam_fee_minor).trim() !== ''
+        ? Math.max(0, Math.trunc(Number(dto.exam_fee_minor)))
+        : (dto?.exam_fee != null && String(dto.exam_fee).trim() !== ''
+          ? Math.max(0, Math.round(Number(dto.exam_fee) * 100))
+          : await this.fetchCourseExamFeeMinor(courseId));
     }
     const plan = String(dto?.payment_plan ?? 'full');
     if (!['full', 'emi_3', 'emi_6', 'custom'].includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
@@ -2353,19 +2386,19 @@ export class StudentService {
                                 net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by,
                                 gross_fee_minor, discount_type, discount_value, discount_amount_minor, discount_scope,
                                 discount_approval_status, discount_requested_minor, discount_cap_minor,
-                                discount_requested_by, discount_approved_by, discount_approved_at)
+                                discount_requested_by, discount_approved_by, exam_fee_minor, discount_approved_at)
          VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
                  $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
                  $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
                  $17::bigint,$18::varchar,$19::numeric,$20::bigint,$21::varchar,
-                 $22::varchar,$23::bigint,$24::bigint,$25::bigint,$26::bigint,
+                 $22::varchar,$23::bigint,$24::bigint,$25::bigint,$26::bigint,$27::bigint,
                  CASE WHEN $22::varchar = 'approved' THEN now() ELSE NULL END)
          RETURNING id`,
         [orgId, enrolmentNo, student.lead_id ?? null, enrolBranchId, enrolVerticalId,
           student.owner_id ?? me.id, courseId, batchId, id, fee, disc, net, plan, startDate,
           dto?.remarks ?? null, me.id,
           fee, discountType, discountValue, disc, discountScope,
-          dd.status, discRequested, dd.capMinor, dd.requestedBy, dd.approvedBy]);
+          dd.status, discRequested, dd.capMinor, dd.requestedBy, dd.approvedBy, examMinor]);
       const eid = Number(r.rows[0].id);
       if (levels.length) await this.insertEnrolmentLevels(c, orgId, eid, levels);
       await c.query(
@@ -2379,7 +2412,7 @@ export class StudentService {
       return { id: eid, enrolment_no: enrolmentNo, student_vertical_no: svid.student_vertical_no };
     });
     return { ...out, course_id: courseId, course_name: course.name, status: 'active', course_status: 'active',
-      vertical_id: enrolVerticalId, branch_id: enrolBranchId,
+      vertical_id: enrolVerticalId, branch_id: enrolBranchId, exam_fee_minor: examMinor,
       total_fee_minor: fee, gross_fee_minor: fee, discount_type: discountType, discount_value: discountValue,
       discount_amount_minor: disc, net_fee_minor: net, discount_scope: discountScope,
       discount_approval_status: dd.status, discount_over_cap: dd.status === 'pending',
@@ -2481,6 +2514,18 @@ export class StudentService {
       applied = dd.applied; ddStatus = dd.status; ddCap = dd.capMinor; ddReqBy = dd.requestedBy; ddAppBy = dd.approvedBy;
     }
     const net = feeFinal - applied;
+    // EXAM FEE (dev/140 item 3) — re-derive on edit: levelled → Σ level exam fees; single-fee →
+    // form override (exam_fee_minor paise / exam_fee rupees) else KEEP the enrolment's current exam fee.
+    let examFinal: number;
+    if (resolvedLevels) {
+      examFinal = sumLevelExamFees(resolvedLevels);
+    } else if (dto?.exam_fee_minor != null && String(dto.exam_fee_minor).trim() !== '') {
+      examFinal = Math.max(0, Math.trunc(Number(dto.exam_fee_minor)));
+    } else if (dto?.exam_fee != null && String(dto.exam_fee).trim() !== '') {
+      examFinal = Math.max(0, Math.round(Number(dto.exam_fee) * 100));
+    } else {
+      examFinal = Math.max(0, Number(enr.exam_fee_minor ?? 0));
+    }
 
     const paid = await this.db.one<{ paid: string }>(
       `SELECT COALESCE(sum(amount_minor), 0)::bigint AS paid FROM fee_receipt
@@ -2512,10 +2557,11 @@ export class StudentService {
                 discount_cap_minor = $12::bigint, discount_requested_by = $13::bigint,
                 discount_approved_by = $14::bigint,
                 discount_approved_at = CASE WHEN $10::varchar = 'approved' THEN COALESCE(discount_approved_at, now()) ELSE NULL END,
+                exam_fee_minor = $16::bigint,
                 updated_at = now()
           WHERE id = $1::bigint`,
         [enrolmentId, courseId, feeFinal, applied, net, dType, dValue, plan, startDate,
-          ddStatus, requested, ddCap, ddReqBy, ddAppBy, discScope]);
+          ddStatus, requested, ddCap, ddReqBy, ddAppBy, discScope, examFinal]);
       // Re-sync the level line-items to the edited set (add/remove + per-level discount) — the
       // enrolment_level.discount_minor keeps the REQUESTED per-level breakdown.
       if (resolvedLevels) {
@@ -2621,14 +2667,17 @@ export class StudentService {
     }
     const orgId = Number(enr.org_id);
     const deltaNet = newNet - oldNet;
+    // EXAM FEE (dev/140 item 3) — an added level brings its own exam fee on top (never discounted,
+    // not added to the plan). The enrolment's exam fee grows by the added levels' exam fees.
+    const newExamFee = Math.max(0, Number(enr.exam_fee_minor ?? 0)) + sumLevelExamFees(newLevels);
     await this.db.tx(async (c) => {
       await this.insertEnrolmentLevels(c, orgId, enrolmentId, newLevels);
       await c.query(
         `UPDATE enrolment SET fee_minor = $2::bigint, gross_fee_minor = $2::bigint,
                 discount_minor = $3::bigint, discount_amount_minor = $3::bigint, net_fee_minor = $4::bigint,
-                discount_type = $5::varchar, discount_value = $6::numeric, updated_at = now()
+                discount_type = $5::varchar, discount_value = $6::numeric, exam_fee_minor = $7::bigint, updated_at = now()
           WHERE id = $1::bigint`,
-        [enrolmentId, newTotal, newDiscount, newNet, discType, discValue]);
+        [enrolmentId, newTotal, newDiscount, newNet, discType, discValue, newExamFee]);
       await this.reconcilePlanIncrease(c, enrolmentId, deltaNet);
     });
     return {

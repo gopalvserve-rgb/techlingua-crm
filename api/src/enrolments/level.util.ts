@@ -19,6 +19,8 @@ export interface MasterLevel {
   code: string;
   label?: string | null;
   fee_minor: number;
+  /** Per-level EXAM fee (paise, dev/140 item 3). Added on top of the fee; NEVER discounted. */
+  exam_fee_minor?: number;
 }
 
 /** One selected level as the client sends it. */
@@ -26,6 +28,9 @@ export interface LevelInput {
   course_level_id?: number | string | null;
   code?: string | null;
   fee_minor?: number | string | null;   // optional override; else the master fee is snapshotted
+  // Per-level EXAM fee (paise, dev/140 item 3): an optional override; else the master level's
+  // exam fee is snapshotted. The exam fee is NEVER discounted and NEVER split into instalments.
+  exam_fee_minor?: number | string | null;
   // Per-level discount (only used when scope = 'level'). The client sends EITHER a natural
   // discount_type + discount_value (`amount` → rupees, `percent` → a % number), which the
   // server converts to a paise amount, OR a raw discount_minor (paise) for back-compat.
@@ -41,6 +46,8 @@ export interface ResolvedLevel {
   label: string | null;
   fee_minor: number;
   discount_minor: number;
+  /** Per-level EXAM fee snapshot (paise). Excluded from discount+instalment; added to Total. */
+  exam_fee_minor: number;
   ordering: number;
 }
 
@@ -102,12 +109,18 @@ export function resolveLevels(master: MasterLevel[], input: unknown, scope: Disc
     }
     if (!Number.isFinite(discMinor) || discMinor < 0) discMinor = 0;
     if (discMinor > feeMinor) throw new Error(`Level "${m.code}": the discount cannot exceed that level's fee`);
+    // EXAM FEE (dev/140 item 3): snapshot the level's exam fee (client override else master).
+    // It is NEVER discounted and NEVER validated against the fee — it is an add-on on top.
+    const overrideExam = intMinor(r.exam_fee_minor);
+    let examMinor = overrideExam != null ? overrideExam : Math.trunc(Number(m.exam_fee_minor) || 0);
+    if (!Number.isFinite(examMinor) || examMinor < 0) examMinor = 0;
     out.push({
       course_level_id: Number(m.id),
       code: String(m.code),
       label: m.label != null && String(m.label).trim() !== '' ? String(m.label) : String(m.code),
       fee_minor: feeMinor,
       discount_minor: discMinor,
+      exam_fee_minor: examMinor,
       ordering: i,
     });
   });
@@ -120,4 +133,9 @@ export function sumLevelFees(levels: ResolvedLevel[]): number {
 
 export function sumLevelDiscounts(levels: ResolvedLevel[]): number {
   return levels.reduce((s, l) => s + Number(l.discount_minor || 0), 0);
+}
+
+/** Σ per-level EXAM fees (paise). The enrolment's total exam fee for a levelled course. */
+export function sumLevelExamFees(levels: ResolvedLevel[]): number {
+  return levels.reduce((s, l) => s + Number(l.exam_fee_minor || 0), 0);
 }

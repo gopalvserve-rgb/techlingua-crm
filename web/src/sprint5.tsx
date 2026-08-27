@@ -1376,7 +1376,7 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
               <div className="fld span2">
                 <label htmlFor="c-search">Find student / enrolment</label>
                 <input id="c-search" className="ainp" value={search} onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by enrolment no or student name" />
+                  placeholder="Search by enrolment no / student name / phone" />
               </div>
             )}
             <div className="fld span2">
@@ -1393,7 +1393,8 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
                 <>
                   <div className="fhint"><span className="kl">Branch \u203a Vertical \u203a Course</span> <b>{chosenPath || '\u2014'}</b></div>
                   <div className="fhint">
-                    Net fee {fmtINR(chosen.net_fee_minor)} · paid {fmtINR(chosen.paid_minor)} ·
+                    Net fee {fmtINR(chosen.net_fee_minor)}{Number(chosen.exam_fee_minor ?? 0) > 0 ? ` + exam ${fmtINR(chosen.exam_fee_minor)}` : ''} ·
+                    total payable {fmtINR(Number(chosen.total_payable_minor ?? (Number(chosen.net_fee_minor) + Number(chosen.exam_fee_minor ?? 0))))} · paid {fmtINR(chosen.paid_minor)} ·
                     <b> outstanding {fmtINR(chosen.balance_minor)}</b>. More than the outstanding balance is refused.
                   </div>
                 </>

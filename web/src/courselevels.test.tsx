@@ -48,7 +48,9 @@ beforeEach(() => { cleanup(); post.mockClear(); patch.mockClear(); put.mockClear
 
 describe('pure helpers', () => {
   it('parseLevelRows round-trips code+fee, mapping fee_minor→rupees', () => {
-    expect(parseLevelRows(JSON.stringify([{ code: 'A1', fee_minor: 1000000 }]))).toEqual([{ code: 'A1', label: undefined, fee: '10000', duration: undefined }]);
+    expect(parseLevelRows(JSON.stringify([{ code: 'A1', fee_minor: 1000000 }]))).toEqual([{ code: 'A1', label: undefined, fee: '10000', exam: '', duration: undefined }]);
+    // dev/140 item 3 — an exam_fee_minor round-trips into the rupee `exam` string
+    expect(parseLevelRows(JSON.stringify([{ code: 'A1', fee_minor: 1000000, exam_fee_minor: 100000 }]))).toEqual([{ code: 'A1', label: undefined, fee: '10000', exam: '1000', duration: undefined }]);
     expect(parseLevelRows('')).toEqual([]);
   });
   it('levelsPayload drops blank-code rows and numbers the ordering', () => {

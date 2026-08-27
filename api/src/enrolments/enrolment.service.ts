@@ -128,7 +128,8 @@ export class EnrolmentService {
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`e.created_at >= $${params.length}::timestamptz`); }
     if (_dr.to) { params.push(_dr.to); where.push(`e.created_at < ($${params.length}::date + 1)`); }
-    if (f.q) { params.push(`%${f.q}%`); where.push(`(e.enrolment_no ILIKE $${params.length} OR l.full_name ILIKE $${params.length})`); }
+    // Search by enrolment number / student name / phone (dev/140 items 2 & 6 — Fee Invoice + Record Fee).
+    if (f.q) { params.push(`%${f.q}%`); where.push(`(e.enrolment_no ILIKE $${params.length} OR l.full_name ILIKE $${params.length} OR l.phone ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 200), 500));
 
     return this.db.query<any>(
@@ -139,7 +140,9 @@ export class EnrolmentService {
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               u.name AS counsellor_name, q.quote_no,
               COALESCE(p.paid_minor, 0) AS paid_minor,
-              e.net_fee_minor - COALESCE(p.paid_minor, 0) AS balance_minor
+              COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor,
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) AS total_payable_minor,
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(p.paid_minor, 0) AS balance_minor
          FROM enrolment e
          LEFT JOIN lead l ON l.id = e.lead_id
          JOIN branch b ON b.id = e.branch_id
@@ -191,7 +194,9 @@ export class EnrolmentService {
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               u.name AS counsellor_name, q.quote_no,
               COALESCE(p.paid_minor, 0) AS paid_minor,
-              e.net_fee_minor - COALESCE(p.paid_minor, 0) AS balance_minor
+              COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor,
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) AS total_payable_minor,
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(p.paid_minor, 0) AS balance_minor
          FROM enrolment e
          LEFT JOIN lead l ON l.id = e.lead_id
          JOIN branch b ON b.id = e.branch_id
@@ -252,8 +257,9 @@ export class EnrolmentService {
     const netAfterApplied = money.fee_minor - appliedDiscount;
     const plan = String(dto?.payment_plan ?? 'full');
     if (!(PAYMENT_PLANS as readonly string[]).includes(plan)) throw new BadRequestException('Choose a valid payment plan.');
-    if (money.first_payment_minor > netAfterApplied) {
-      throw new BadRequestException('The first payment cannot be more than the net fee.');
+    // First payment may cover the exam fee too (exam fee is collectible on top of Net) — dev/140 item 3.
+    if (money.first_payment_minor > netAfterApplied + money.exam_fee_minor) {
+      throw new BadRequestException('The first payment cannot be more than the total payable.');
     }
     const startDate = this.date(dto?.start_date);
     const courseId = dto?.course_id ? Number(dto.course_id) : null;
@@ -283,13 +289,13 @@ export class EnrolmentService {
                                   first_payment_minor, plan_note, start_date, status, remarks, created_by,
                                   gross_fee_minor, discount_type, discount_value, discount_amount_minor,
                                   discount_approval_status, discount_requested_minor, discount_cap_minor,
-                                  discount_requested_by, discount_approved_by, discount_approved_at)
+                                  discount_requested_by, discount_approved_by, exam_fee_minor, discount_approved_at)
            VALUES ($1::bigint, $2::varchar, $3::bigint, $4::bigint, $5::bigint, $6::bigint,
                    $7::bigint, $8::bigint, $9::bigint, $10::bigint, $11::bigint,
                    $12::bigint, $13::bigint, $14::bigint, $15::varchar,
                    $16::bigint, $17, $18::date, $19::varchar, $20, $21::bigint,
                    $22::bigint, $23::varchar, $24::numeric, $25::bigint,
-                   $26::varchar, $27::bigint, $28::bigint, $29::bigint, $30::bigint,
+                   $26::varchar, $27::bigint, $28::bigint, $29::bigint, $30::bigint, $31::bigint,
                    CASE WHEN $26::varchar = 'approved' THEN now() ELSE NULL END)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, quotationId, lead.branch_id, lead.vertical_id,
@@ -299,7 +305,7 @@ export class EnrolmentService {
             money.gross_fee_minor, money.discount_type, money.discount_value, appliedDiscount,
             dd.status, requestedDiscountMinor, dd.capMinor,
             dd.status === 'pending' ? me.id : null,
-            dd.status === 'approved' ? me.id : null],
+            dd.status === 'approved' ? me.id : null, money.exam_fee_minor],
         );
         id = Number(r.rows[0].id);
       } catch (e) {
@@ -405,6 +411,10 @@ export class EnrolmentService {
       discount_value: dto?.discount_value ?? (dto?.discount_type === undefined && dto?.discount === undefined && dto?.discount_minor === undefined ? cur.discount_value : undefined),
       first_payment: dto?.first_payment,
       first_payment_minor: dto?.first_payment_minor ?? (dto?.first_payment === undefined ? cur.first_payment_minor : undefined),
+      // EXAM FEE (dev/140 item 3) — carry the enrolment's current exam fee through an edit that
+      // does not touch it, so a fee/discount edit never silently wipes the exam fee.
+      exam_fee_minor: dto?.exam_fee_minor ?? (dto?.exam_fee === undefined ? cur.exam_fee_minor : undefined),
+      exam_fee: dto?.exam_fee,
     });
     // OVER-CAP APPROVAL (dev/103). The full requested discount is money.discount_amount_minor.
     const requestedFull = money.discount_amount_minor;
@@ -443,10 +453,10 @@ export class EnrolmentService {
     // MONEY ALREADY COLLECTED IS A FACT. Lowering the net fee below what the customer
     // has already paid would silently create a refund liability we have no Phase-1
     // machinery for (refunds are Phase 3) — so it is refused, loudly.
-    if (netAfterApplied < Number(cur.paid_minor)) {
+    if (netAfterApplied + money.exam_fee_minor < Number(cur.paid_minor)) {
       throw new BadRequestException(
         `${cur.lead_name} has already paid ${(Number(cur.paid_minor) / 100).toFixed(2)}. `
-        + 'The net fee cannot be set below what has been collected — refunds arrive in Phase 3.',
+        + 'The total payable cannot be set below what has been collected — refunds arrive in Phase 3.',
       );
     }
     const plan = dto?.payment_plan ?? cur.payment_plan;
@@ -463,7 +473,7 @@ export class EnrolmentService {
                 discount_value = $14::numeric, discount_amount_minor = $15::bigint,
                 discount_approval_status = $16::varchar, discount_requested_minor = $17::bigint,
                 discount_cap_minor = $18::bigint, discount_requested_by = $19::bigint,
-                discount_approved_by = $20::bigint,
+                discount_approved_by = $20::bigint, exam_fee_minor = $21::bigint,
                 discount_approved_at = CASE WHEN $16::varchar = 'approved' THEN COALESCE(discount_approved_at, now()) ELSE NULL END,
                 updated_at = now()
           WHERE id = $1::bigint`,
@@ -474,7 +484,7 @@ export class EnrolmentService {
           dto?.counsellor_id === undefined ? cur.counsellor_id : (dto.counsellor_id || null),
           dto?.remarks === undefined ? cur.remarks : dto.remarks,
           money.gross_fee_minor, money.discount_type, money.discount_value, appliedDiscount,
-          appStatus, requestedFull, capMinorVal, requestedBy, approvedBy],
+          appStatus, requestedFull, capMinorVal, requestedBy, approvedBy, money.exam_fee_minor],
       );
       // Net moved → reconcile any unpaid payment-plan schedule to the new net (Due is
       // computed live everywhere as net − paid, so it reconciles regardless).
@@ -609,7 +619,8 @@ export class EnrolmentService {
    * kind of thing that is only discovered by an accountant, in April.
    */
   normaliseMoney(dto: any): { fee_minor: number; discount_minor: number; net_fee_minor: number; first_payment_minor: number;
-      discount_type: EnrolmentDiscountType; discount_value: number; gross_fee_minor: number; discount_amount_minor: number } {
+      discount_type: EnrolmentDiscountType; discount_value: number; gross_fee_minor: number; discount_amount_minor: number;
+      exam_fee_minor: number } {
     const m = (rup: unknown, minor: unknown, label: string): number => {
       try {
         const v = minor !== undefined && minor !== null ? Math.trunc(Number(minor)) : rupeesToMinor(rup);
@@ -642,11 +653,17 @@ export class EnrolmentService {
       discount = computeEnrolmentDiscount(fee_minor, amt > 0 ? 'amount' : 'none', amt);
     }
     const first_payment_minor = m(dto?.first_payment, dto?.first_payment_minor, 'First payment');
+    // EXAM FEE (dev/140 item 3) — an add-on collected ON TOP of Net. It is NEVER discounted and
+    // NEVER part of the instalment plan; it only raises Total payable and the collectible Balance.
+    const exam_fee_minor = dto?.exam_fee_minor != null && String(dto.exam_fee_minor).trim() !== ''
+      ? Math.max(0, Math.trunc(Number(dto.exam_fee_minor)))
+      : (dto?.exam_fee != null && String(dto.exam_fee).trim() !== '' ? Math.max(0, m(dto.exam_fee, undefined, 'Exam fee')) : 0);
     return {
       fee_minor, discount_minor: discount.discount_amount_minor, net_fee_minor: discount.net_fee_minor,
       first_payment_minor,
       discount_type: discount.discount_type, discount_value: discount.discount_value,
       gross_fee_minor: discount.gross_fee_minor, discount_amount_minor: discount.discount_amount_minor,
+      exam_fee_minor,
     };
   }
 

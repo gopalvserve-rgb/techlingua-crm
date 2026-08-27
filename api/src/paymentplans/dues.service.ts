@@ -71,14 +71,15 @@ export class DuesService {
              (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
                 FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
              COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
-             e.net_fee_minor AS net_fee_minor, e.payment_plan AS fee_plan,
+             e.net_fee_minor AS net_fee_minor, COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor, e.payment_plan AS fee_plan,
              i.due_date, i.amount_minor, i.paid_minor,
              (i.amount_minor - i.paid_minor) AS outstanding_minor,
-             -- enrolment-level Balance (Net − everything receipted on the enrolment), so the
-             -- Fee Management "Balance" column is the true outstanding, not just this installment's.
+             -- enrolment-level Balance (Total payable − everything receipted on the enrolment), so the
+             -- Fee Management "Balance" column is the true outstanding. Total payable = Net + Exam fee
+             -- (dev/140 item 3): the exam fee is collectible, so it counts in the Balance.
              COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
                         WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0) AS enrolment_paid_minor,
-             (e.net_fee_minor - COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
+             ((e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
                         WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0)) AS balance_minor,
              ((SELECT d FROM today) - i.due_date) AS days_overdue
         FROM installment i
@@ -112,13 +113,13 @@ export class DuesService {
              (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
                 FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
              COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
-             e.net_fee_minor AS net_fee_minor, e.payment_plan AS fee_plan,
+             e.net_fee_minor AS net_fee_minor, COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor, e.payment_plan AS fee_plan,
              COALESCE(e.start_date, e.created_at::date) AS due_date,
-             e.net_fee_minor AS amount_minor,
+             (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) AS amount_minor,
              COALESCE(pr.paid_minor, 0) AS paid_minor,
-             (e.net_fee_minor - COALESCE(pr.paid_minor, 0)) AS outstanding_minor,
+             ((e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(pr.paid_minor, 0)) AS outstanding_minor,
              COALESCE(pr.paid_minor, 0) AS enrolment_paid_minor,
-             (e.net_fee_minor - COALESCE(pr.paid_minor, 0)) AS balance_minor,
+             ((e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(pr.paid_minor, 0)) AS balance_minor,
              ((SELECT d FROM today) - COALESCE(e.start_date, e.created_at::date)) AS days_overdue
         FROM enrolment e
         LEFT JOIN lead l ON l.id = e.lead_id
@@ -136,7 +137,7 @@ export class DuesService {
        WHERE e.deleted_at IS NULL AND e.status = 'active'
          AND NOT EXISTS (SELECT 1 FROM payment_plan pp
                           WHERE pp.enrolment_id = e.id AND pp.status = 'active' AND pp.deleted_at IS NULL)
-         AND (e.net_fee_minor - COALESCE(pr.paid_minor, 0)) > 0 AND ${w2}
+         AND ((e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(pr.paid_minor, 0)) > 0 AND ${w2}
     )`;
   }
 

@@ -71,8 +71,8 @@ describe('normaliseLevels', () => {
   it('accepts rupee fees and converts to paise, defaults label to code', () => {
     const out = normaliseLevels([{ code: 'A1', fee: 10000 }, { code: 'A2', fee: '12000' }]);
     expect(out).toEqual([
-      { code: 'A1', label: 'A1', fee_minor: 1000000, duration: null, ordering: 0 },
-      { code: 'A2', label: 'A2', fee_minor: 1200000, duration: null, ordering: 1 },
+      { code: 'A1', label: 'A1', fee_minor: 1000000, exam_fee_minor: 0, duration: null, ordering: 0 },
+      { code: 'A2', label: 'A2', fee_minor: 1200000, exam_fee_minor: 0, duration: null, ordering: 1 },
     ]);
   });
   it('accepts fee_minor directly', () => {

@@ -158,7 +158,12 @@ export class InvoiceService {
               count(*) FILTER (WHERE gi.status = 'issued')    AS issued,
               count(*) FILTER (WHERE gi.status = 'paid')      AS paid,
               count(*) FILTER (WHERE gi.status = 'cancelled') AS cancelled,
+              count(*) FILTER (WHERE gi.status IN ('draft','issued','paid','cancelled')) AS total,
               COALESCE(sum(gi.total_minor) FILTER (WHERE gi.status IN ('issued','paid')), 0) AS invoiced_minor,
+              -- Fee Invoice dashboard (dev/140 item 5): Paid = grand total of paid invoices;
+              -- Outstanding = grand total of issued-but-unpaid invoices. Reconciles with the list.
+              COALESCE(sum(gi.total_minor) FILTER (WHERE gi.status = 'paid'), 0) AS paid_minor,
+              COALESCE(sum(gi.total_minor) FILTER (WHERE gi.status = 'issued'), 0) AS outstanding_minor,
               COALESCE(sum(gi.cgst_minor + gi.sgst_minor + gi.igst_minor) FILTER (WHERE gi.status IN ('issued','paid')), 0) AS gst_minor
          FROM gst_invoice gi
         WHERE gi.deleted_at IS NULL AND ${w}`,
@@ -167,7 +172,9 @@ export class InvoiceService {
     const num = (v: unknown) => Number(v ?? 0);
     return {
       draft: num(r?.draft), issued: num(r?.issued), paid: num(r?.paid), cancelled: num(r?.cancelled),
+      total: num(r?.total),
       invoiced_minor: num(r?.invoiced_minor), gst_minor: num(r?.gst_minor),
+      paid_minor: num(r?.paid_minor), outstanding_minor: num(r?.outstanding_minor),
     };
   }
 
@@ -433,7 +440,7 @@ export class InvoiceService {
     const e = await this.db.one<any>(
       `SELECT e.id, e.enrolment_no, e.quotation_id, e.lead_id, e.student_profile_id, e.course_id,
               e.branch_id, e.vertical_id, e.pipeline_id, e.campaign_id, e.counsellor_id, e.team_id,
-              e.fee_minor, e.discount_minor, e.net_fee_minor,
+              e.fee_minor, e.discount_minor, e.net_fee_minor, COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor,
               l.full_name AS lead_name, l.phone AS lead_phone, l.email AS lead_email, l.state_id AS lead_state_id,
               c.name AS course_name,
               -- dev/88: prefer the VERTICAL's billing identity (GST at vertical granularity),
@@ -462,15 +469,28 @@ export class InvoiceService {
       seller_address: e.seller_address, seller_state_id: e.seller_state_id != null ? Number(e.seller_state_id) : null,
       buyer_name: e.lead_name, buyer_email: e.lead_email, buyer_phone: e.lead_phone,
       buyer_address: null, buyer_state_id: e.lead_state_id != null ? Number(e.lead_state_id) : null,
-      defaultItems: [{
-        course_id: e.course_id ?? null,
-        description: e.course_name ? `${e.course_name} — course fee` : 'Course fee',
-        qty: 1,
-        // the enrolment's NET fee (fee - discount) is the taxable value; GST is added ON TOP.
-        unit_price_minor: Number(e.net_fee_minor),
-        discount_type: 'amount', discount_value: 0,
-        gst_pct: 18,
-      }],
+      defaultItems: [
+        {
+          course_id: e.course_id ?? null,
+          description: e.course_name ? `${e.course_name} — course fee` : 'Course fee',
+          qty: 1,
+          // the enrolment's NET fee (fee - discount) is the taxable value; GST is added ON TOP.
+          unit_price_minor: Number(e.net_fee_minor),
+          discount_type: 'amount', discount_value: 0,
+          gst_pct: 18,
+        },
+        // EXAM FEE (dev/140 item 3) — a SEPARATE, non-discounted line added on top of the net fee,
+        // only when the enrolment carries one. GST applies on top like any other line; the invoice
+        // Total therefore reconciles to Net + Exam fee + Tax.
+        ...(Number(e.exam_fee_minor) > 0 ? [{
+          course_id: e.course_id ?? null,
+          description: e.course_name ? `${e.course_name} — exam fee` : 'Exam fee',
+          qty: 1,
+          unit_price_minor: Number(e.exam_fee_minor),
+          discount_type: 'amount', discount_value: 0,
+          gst_pct: 18,
+        }] : []),
+      ],
     };
   }
 

@@ -43,10 +43,12 @@ describe('DuesService — DEF-3 lead-less / full-payment outstanding enrolments 
     const { svc, calls } = capture();
     await svc.list(SCOPE, {});
     const sql = calls[0].sql;
-    // the "unplanned" source exists and is gated on no-active-plan + a positive net-minus-paid balance
+    // the "unplanned" source exists and is gated on no-active-plan + a positive collectible balance.
+    // dev/140 item 3 — the collectible now includes the exam fee (Net + Exam − Paid), so it stays due
+    // until the exam fee is collected too.
     expect(sql).toMatch(/'unplanned'::text AS source/);
     expect(sql).toMatch(/NOT EXISTS \(SELECT 1 FROM payment_plan pp/);
-    expect(sql).toMatch(/\(e\.net_fee_minor - COALESCE\(pr\.paid_minor, 0\)\) > 0/);
+    expect(sql).toMatch(/\(\(e\.net_fee_minor \+ COALESCE\(e\.exam_fee_minor, 0\)\) - COALESCE\(pr\.paid_minor, 0\)\) > 0/);
     // and it carries the level breakdown (multi-level enrolments show their Level column)
     expect(sql).toMatch(/string_agg\(el\.code/);
   });

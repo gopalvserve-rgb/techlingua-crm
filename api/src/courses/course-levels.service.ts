@@ -21,6 +21,8 @@ export interface CourseLevelInput {
   label?: string;
   fee_minor?: number | string;
   fee?: number | string; // rupees (alternative to fee_minor)
+  exam_fee_minor?: number | string;
+  exam_fee?: number | string; // rupees (alternative to exam_fee_minor) — dev/140 item 3
   duration?: string;
   ordering?: number;
 }
@@ -29,6 +31,7 @@ export interface CourseLevel {
   code: string;
   label: string | null;
   fee_minor: number;
+  exam_fee_minor: number;
   duration: string | null;
   ordering: number;
 }
@@ -55,10 +58,20 @@ export function normaliseLevels(input: unknown): CourseLevel[] {
       throw new BadRequestException(`Level "${code}": fee is not a valid amount`);
     }
     if (!Number.isFinite(feeMinor) || feeMinor < 0) throw new BadRequestException(`Level "${code}": fee must be zero or more`);
+    // EXAM FEE (dev/140 item 3) — optional per-level add-on; never discounted. Accepts paise or rupees.
+    let examMinor: number;
+    try {
+      examMinor = r.exam_fee_minor != null && String(r.exam_fee_minor).trim() !== ''
+        ? Math.round(Number(r.exam_fee_minor))
+        : rupeesToMinor(r.exam_fee ?? 0);
+    } catch {
+      throw new BadRequestException(`Level "${code}": exam fee is not a valid amount`);
+    }
+    if (!Number.isFinite(examMinor) || examMinor < 0) throw new BadRequestException(`Level "${code}": exam fee must be zero or more`);
     const label = r.label != null && String(r.label).trim() !== '' ? String(r.label).trim() : code;
     const duration = r.duration != null && String(r.duration).trim() !== '' ? String(r.duration).trim() : null;
     const ordering = Number.isFinite(Number(r.ordering)) ? Number(r.ordering) : i;
-    out.push({ code, label, fee_minor: feeMinor, duration, ordering });
+    out.push({ code, label, fee_minor: feeMinor, exam_fee_minor: examMinor, duration, ordering });
   });
   return out;
 }
@@ -70,7 +83,7 @@ export class CourseLevelsService {
   /** All active levels of a course, in display order. */
   list(courseId: number) {
     return this.db.query(
-      `SELECT id, course_id, code, label, fee_minor, duration, ordering, is_active
+      `SELECT id, course_id, code, label, fee_minor, exam_fee_minor, duration, ordering, is_active
          FROM course_level
         WHERE course_id = $1::bigint AND is_active
         ORDER BY ordering, id`,
@@ -115,17 +128,17 @@ export class CourseLevelsService {
           const res = await client.query(
             `UPDATE course_level
                 SET code = $2, label = $3, fee_minor = $4, duration = $5, ordering = $6,
-                    is_active = TRUE, updated_at = now()
+                    exam_fee_minor = $7, is_active = TRUE, updated_at = now()
               WHERE id = $1::bigint
-             RETURNING id, course_id, code, label, fee_minor, duration, ordering, is_active`,
-            [existingId, l.code, l.label, l.fee_minor, l.duration, l.ordering ?? i]);
+             RETURNING id, course_id, code, label, fee_minor, exam_fee_minor, duration, ordering, is_active`,
+            [existingId, l.code, l.label, l.fee_minor, l.duration, l.ordering ?? i, l.exam_fee_minor]);
           rows.push(res.rows[0]);
           keep.add(existingId);
         } else {
           const res = await client.query(
-            `INSERT INTO course_level (org_id, course_id, code, label, fee_minor, duration, ordering)
-             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, course_id, code, label, fee_minor, duration, ordering, is_active`,
-            [Number(org!.id), courseId, l.code, l.label, l.fee_minor, l.duration, l.ordering ?? i]);
+            `INSERT INTO course_level (org_id, course_id, code, label, fee_minor, duration, ordering, exam_fee_minor)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, course_id, code, label, fee_minor, exam_fee_minor, duration, ordering, is_active`,
+            [Number(org!.id), courseId, l.code, l.label, l.fee_minor, l.duration, l.ordering ?? i, l.exam_fee_minor]);
           rows.push(res.rows[0]);
           keep.add(Number(res.rows[0].id));
         }

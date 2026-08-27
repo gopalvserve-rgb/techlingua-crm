@@ -106,13 +106,19 @@ export function InvoicesScreen() {
   return (
     <>
       {can('invoice.create') && (
-        <div className="page-actions"><button className="btn primary" onClick={() => setCreate(true)}><Ic k="plus" />New invoice</button></div>
+        <div className="page-actions"><button className="btn primary" onClick={() => setCreate(true)}><Ic k="plus" />New Fee Invoice</button></div>
       )}
-      <Kpis items={[
-        { lab: 'Invoiced (issued+paid)', val: s ? fmtINR(s.invoiced_minor) : '—', ic: 'rupee' },
+      {/* Fee Invoice dashboard (dev/140 item 5) — KPI cards reconcile with the Finance dashboard
+          (same gst_invoice source): Total Invoiced = Paid + Outstanding; status counts below. */}
+      <Kpis cols={4} items={[
+        { lab: 'Total Invoiced', val: s ? fmtINR(s.invoiced_minor) : '—', ic: 'rupee' },
+        { lab: 'Paid', val: s ? fmtINR(s.paid_minor) : '—', ic: 'check' },
+        { lab: 'Outstanding', val: s ? fmtINR(s.outstanding_minor) : '—', ic: 'clock' },
         { lab: 'GST charged', val: s ? fmtINR(s.gst_minor) : '—', ic: 'rupee' },
         { lab: 'Issued', val: String(s?.issued ?? 0), ic: 'doc' },
+        { lab: 'Paid (count)', val: String(s?.paid ?? 0), ic: 'check' },
         { lab: 'Drafts', val: String(s?.draft ?? 0), ic: 'note' },
+        { lab: 'Cancelled', val: String(s?.cancelled ?? 0), ic: 'x' },
       ]} />
       <div className="filters" style={{ marginBottom: 12 }}>
         <label className="fchip"><Ic k="search" /><input placeholder="Search invoice # / buyer" value={q} onChange={(e) => setQ(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }} /></label>
@@ -123,7 +129,7 @@ export function InvoicesScreen() {
         <DateRange value={range} onChange={setRange} idPrefix="inv-dr" />
       </div>
       <BulkBar count={count} entityLabel="Invoice" onDelete={() => openBulk(selected)} onClear={clear} note="Only draft / cancelled invoices are deleted; issued & paid are skipped." />
-      <TableCard fill title="Tax Invoices" icon="rupee"
+      <TableCard fill title="Fee Invoices (GST)" icon="rupee"
         select={can('invoice.delete') ? tableSelect : undefined}
         more={<ListActions onExport={() => downloadObjectsCsv('invoices.csv', rows.map((r) => ({
           invoice_no: r.invoice_no || '(draft)', date: dt(r.invoice_date), status: r.status,
@@ -169,7 +175,10 @@ export function InvoicesScreen() {
 
 export function InvoiceCreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const ref = useRef_();
-  const enrolments = useFetch<any[]>('/enrolments?status=active');
+  // Fee Invoice = the enrolment→payment flow (dev/140 item 2). Search the enrolment by
+  // enrolment number / student name / phone (server-side q), then auto-pull its fields.
+  const [esearch, setEsearch] = useState('');
+  const enrolments = useFetch<any[]>(`/enrolments?status=active${esearch ? `&q=${encodeURIComponent(esearch)}` : ''}`, [esearch]);
   const [mode, setMode] = useState<'enrolment' | 'adhoc'>('enrolment');
   const [enrolment, setEnrolment] = useState('');
   const [branch, setBranch] = useState('');
@@ -212,8 +221,9 @@ export function InvoiceCreateModal({ onClose, onSaved }: { onClose: () => void; 
       if (mode === 'enrolment') {
         if (!enrolment) throw new Error('Choose the enrolment to invoice.');
         body.enrolment_id = Number(enrolment);
-        // when the default line is used, still let the counsellor set GST/HSN
-        if (!items) body.items = [{ description: chosen?.course_name ? `${chosen.course_name} — course fee` : 'Course fee', hsn_sac: hsn || null, qty: 1, unit_price_minor: Number(chosen?.net_fee_minor ?? 0), gst_pct: gst }];
+        // When the counsellor leaves the line blank, DON'T override items — the server auto-pulls the
+        // enrolment's course-fee line AND (when set) the exam-fee line, so the invoice Total reconciles
+        // to Net + Exam + Tax (dev/140 items 2 & 3). Only a custom description/amount sends a single line.
       } else {
         body.branch_id = Number(branch); body.vertical_id = Number(vertical);
         if (!branch || !vertical) throw new Error('Pick a branch and vertical.');
@@ -229,7 +239,7 @@ export function InvoiceCreateModal({ onClose, onSaved }: { onClose: () => void; 
   return (
     <div className="add-scrim">
       <div className="add-modal" style={{ maxWidth: 680 }}>
-        <div className="ah"><h3><Ic k="rupee" />New GST tax invoice</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="ah"><h3><Ic k="rupee" />New Fee Invoice</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
         <div className="abody">
           <div className="seg" style={{ marginBottom: 12 }}>
             <button className={`seg-btn ${mode === 'enrolment' ? 'on' : ''}`} onClick={() => setMode('enrolment')}>From enrolment</button>
@@ -238,12 +248,33 @@ export function InvoiceCreateModal({ onClose, onSaved }: { onClose: () => void; 
           <div className="form-grid">
             {mode === 'enrolment' ? (
               <div className="fld span2">
-                <label htmlFor="i-enr">Enrolment <span className="star">*</span></label>
+                <label htmlFor="i-enrq">Find enrolment <span className="star">*</span></label>
+                <label className="fchip" style={{ marginBottom: 6 }}><Ic k="search" />
+                  <input id="i-enrq" placeholder="Search by enrolment no / student name / phone" value={esearch}
+                    onChange={(e) => setEsearch(e.target.value)}
+                    style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit', width: '100%' }} />
+                </label>
                 <select id="i-enr" className="ainp" value={enrolment} onChange={(e) => setEnrolment(e.target.value)}>
-                  <option value="">—</option>
-                  {list.map((e) => <option key={e.id} value={e.id}>{e.enrolment_no} · {e.lead_name}{e.course_name ? ` · ${e.course_name}` : ''} — net {fmtINR(e.net_fee_minor)}</option>)}
+                  <option value="">— pick an enrolment —</option>
+                  {list.map((e) => <option key={e.id} value={e.id}>{e.enrolment_no} · {e.lead_name}{e.course_name ? ` · ${e.course_name}` : ''} — total {fmtINR(Number(e.total_payable_minor ?? e.net_fee_minor))}</option>)}
                 </select>
-                {chosen ? <div className="fhint">Buyer, branch/vertical and the course-fee line are taken from this enrolment. Net fee {fmtINR(chosen.net_fee_minor)} becomes the taxable value; GST is added on top.</div> : <div className="fhint">The buyer & seller are derived from the enrolment.</div>}
+                {chosen ? (
+                  <div className="card-lite" style={{ marginTop: 8 }}>
+                    <div className="kv-grid">
+                      <div><span className="kl">Student</span><span className="kvv">{chosen.lead_name}{chosen.lead_phone ? ` · ${chosen.lead_phone}` : ''}</span></div>
+                      <div><span className="kl">Enrolment</span><span className="kvv mono">{chosen.enrolment_no}</span></div>
+                      <div><span className="kl">Course</span><span className="kvv">{chosen.course_name ?? '—'}</span></div>
+                      <div><span className="kl">Branch › Vertical</span><span className="kvv">{[chosen.branch_name, chosen.vertical_name].filter(Boolean).join(' › ') || '—'}</span></div>
+                      <div><span className="kl">Fee plan</span><span className="kvv">{chosen.payment_plan ?? '—'}</span></div>
+                      <div><span className="kl">Net (after discount)</span><span className="kvv mono">{fmtINR(chosen.net_fee_minor)}</span></div>
+                      <div><span className="kl">Exam fee</span><span className="kvv mono">{fmtINR(chosen.exam_fee_minor ?? 0)}</span></div>
+                      <div><span className="kl">Total payable</span><span className="kvv mono"><b>{fmtINR(Number(chosen.total_payable_minor ?? (Number(chosen.net_fee_minor) + Number(chosen.exam_fee_minor ?? 0))))}</b></span></div>
+                      <div><span className="kl">Amount paid</span><span className="kvv mono">{fmtINR(chosen.paid_minor ?? 0)}</span></div>
+                      <div><span className="kl">Balance</span><span className="kvv mono">{fmtINR(chosen.balance_minor ?? 0)}</span></div>
+                    </div>
+                    <div className="fhint" style={{ marginTop: 6 }}>Auto-pulled from the enrolment. The course-fee line{Number(chosen.exam_fee_minor ?? 0) > 0 ? ' and a separate exam-fee line' : ''} are added; GST is applied on top.</div>
+                  </div>
+                ) : <div className="fhint">Search, then pick an enrolment — the buyer, branch/vertical and fee lines are pulled from it.</div>}
               </div>
             ) : (
               <>
@@ -300,7 +331,7 @@ export function InvoiceDetailModal({ id, onClose, onChanged }: { id: number; onC
   return (
     <div className="add-scrim">
       <div className="add-modal" style={{ maxWidth: 760 }}>
-        <div className="ah"><h3><Ic k="rupee" />Invoice {gi?.invoice_no || '(draft)'}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="ah"><h3><Ic k="rupee" />Fee Invoice {gi?.invoice_no || '(draft)'}</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
         <div className="abody">
           {!gi ? <div className="fhint">Loading…</div> : (
             <>

@@ -262,7 +262,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     // with its OWN fee. "+ Add level" adds rows; empty falls back to the single Standard Fee below.
     // Replaces the old single "Course Level" descriptor. Persisted via PUT /courses/:id/levels.
     F('Levels', 'levels', 0, 0, 'optional \u2014 each level carries its own fee; leave empty to use the single Standard Fee'),
-    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number', 0, 0, 'used when the course has no levels'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
+    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number', 0, 0, 'used when the course has no levels'), F('Standard Exam Fee', 'number', 0, 0, 'optional \u2014 added on top, never discounted; used when the course has no levels'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
     // Course descriptors (client feedback #13, Aug 2026) — Level / Type / Description. dev/100 (client):
     // Delivery Mode dropped from the course UI (meta.delivery_mode kept in DB, hidden); ERP forms carry
     // NO Campaign/Pipeline (CRM-only) — the course walks Branch > Vertical only.
@@ -641,6 +641,8 @@ SAVERS['students.courses'] = async (vals, ids) => {
       mode: vals['Training Mode'] || undefined,
       duration: vals['Duration'] || undefined,
       fee: vals['Standard Fee'] || undefined,
+      // EXAM FEE (dev/140 item 3) — single exam fee for a course WITHOUT levels; added on top, never discounted.
+      exam_fee: vals['Standard Exam Fee'] || undefined,
       branch_id: need(ids['Branch'], 'Pick a Branch'),
       vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
       // dev/100 (client): Campaign/Pipeline are CRM-only \u2014 not sent from the ERP course form.
@@ -1067,7 +1069,7 @@ function StageTableField({ value, disabled, onChange }: {
  * the course is created/updated. A course with NO levels keeps its    *
  * single Standard Fee (meta.fee) — backward compatible.               *
  * ------------------------------------------------------------------ */
-export type LevelRow = { code: string; label?: string; fee: string; duration?: string };
+export type LevelRow = { code: string; label?: string; fee: string; exam?: string; duration?: string };
 
 /** Parse the field value (JSON string) into level rows. `fee` is kept as a rupee string. */
 export function parseLevelRows(v: unknown): LevelRow[] {
@@ -1080,17 +1082,22 @@ export function parseLevelRows(v: unknown): LevelRow[] {
       label: x.label != null ? String(x.label) : undefined,
       fee: x.fee != null && x.fee !== '' ? String(x.fee)
         : (x.fee_minor != null ? String(Number(x.fee_minor) / 100) : ''),
+      // EXAM FEE (dev/140 item 3) — per-level, kept as a rupee string; added on top, never discounted.
+      exam: x.exam != null && x.exam !== '' ? String(x.exam)
+        : (x.exam_fee_minor != null ? String(Number(x.exam_fee_minor) / 100) : ''),
       duration: x.duration != null ? String(x.duration) : undefined,
     }));
   } catch { return []; }
 }
 
 /** The API payload (rupee fee → the API converts to paise) for PUT /courses/:id/levels. */
-export function levelsPayload(v?: string): Array<{ code: string; label?: string; fee: string; duration?: string; ordering: number }> {
+export function levelsPayload(v?: string): Array<{ code: string; label?: string; fee: string; exam_fee?: string; duration?: string; ordering: number }> {
   return parseLevelRows(v).filter((r) => r.code.trim()).map((r, i) => ({
     code: r.code.trim(),
     label: r.label && r.label.trim() ? r.label.trim() : undefined,
     fee: r.fee ?? '',
+    // EXAM FEE (dev/140 item 3) — the API accepts exam_fee (rupees) alongside fee.
+    exam_fee: r.exam != null && String(r.exam).trim() !== '' ? String(r.exam).trim() : undefined,
     duration: r.duration && r.duration.trim() ? r.duration.trim() : undefined,
     ordering: i,
   }));
@@ -1114,6 +1121,7 @@ function LevelsField({ value, courseId, onChange }: {
         const mapped = (got ?? []).map((r) => ({
           code: String(r.code), label: r.label ?? undefined,
           fee: r.fee_minor != null ? String(Number(r.fee_minor) / 100) : '',
+          exam: r.exam_fee_minor != null && Number(r.exam_fee_minor) > 0 ? String(Number(r.exam_fee_minor) / 100) : '',
           duration: r.duration ?? undefined,
         }));
         setRows(mapped); onChange(JSON.stringify(mapped));
@@ -1126,6 +1134,7 @@ function LevelsField({ value, courseId, onChange }: {
   const add = () => commit([...rows, { code: '', fee: '' }]);
   const setCode = (i: number, code: string) => commit(rows.map((r, j) => (j === i ? { ...r, code } : r)));
   const setFee = (i: number, fee: string) => commit(rows.map((r, j) => (j === i ? { ...r, fee } : r)));
+  const setExam = (i: number, exam: string) => commit(rows.map((r, j) => (j === i ? { ...r, exam } : r)));
   const remove = (i: number) => commit(rows.filter((_, j) => j !== i));
   return (
     <div className="sc-rows" data-levels-editor>
@@ -1150,7 +1159,9 @@ function LevelsField({ value, courseId, onChange }: {
             {levelOpts.map((o: any) => <option key={String(o.id)} value={String(o.name)}>{o.name}</option>)}
           </select>
           <input className="ainp" type="number" min="0" placeholder="Fee (₹)" data-testid={`level-fee-${i}`}
-            value={r.fee} style={{ flex: '1 1 40%' }} onChange={(e) => setFee(i, e.target.value)} />
+            value={r.fee} style={{ flex: '1 1 30%' }} onChange={(e) => setFee(i, e.target.value)} />
+          <input className="ainp" type="number" min="0" placeholder="Exam fee (₹)" title="Exam fee — added on top, never discounted" data-testid={`level-exam-${i}`}
+            value={r.exam ?? ''} style={{ flex: '1 1 30%' }} onChange={(e) => setExam(i, e.target.value)} />
           <button type="button" className="sc-row-btn danger" title="Remove level"
             data-testid={`level-remove-${i}`} onClick={() => remove(i)}><Ic k="x" w={2.6} /></button>
         </div>

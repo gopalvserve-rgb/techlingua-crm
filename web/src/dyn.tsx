@@ -3068,6 +3068,7 @@ const courseEditSpec = (edit: any): EditSpec => ({
     'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
     'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
     'Standard Fee': (edit.meta as any)?.fee ?? '',
+    'Standard Exam Fee': (edit.meta as any)?.exam_fee ?? '',
     'Eligibility Criteria': (edit.meta as any)?.eligibility ?? '',
     // Course descriptors (client feedback #13) — prefill so an Edit reopens fully. The single
     // "Course Level" descriptor is superseded by the per-level Levels editor (loaded by course id).
@@ -3091,6 +3092,7 @@ const courseEditSpec = (edit: any): EditSpec => ({
         mode: vals['Training Mode'] || undefined,
         duration: vals['Duration'] || undefined,
         fee: vals['Standard Fee'] || undefined,
+        exam_fee: vals['Standard Exam Fee'] || undefined,  // dev/140 item 3 — single-course exam fee
         branch_id: need(ids['Branch'], 'Pick a Branch'),
         vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
         // dev/100 (client): Campaign/Pipeline removed from the ERP course form (CRM-only). The meta

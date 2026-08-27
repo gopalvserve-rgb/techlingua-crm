@@ -276,7 +276,7 @@ const APP_FULL: ModuleItem[] = [
   { id: 'finance', label: 'Finance & Collections', icon: 'finance', subs: [
     { id: 'dashboard', label: 'Finance Dashboard', spec: { dyn: 'financeDashboard',
       sub: 'REAL ₹ KPIs from fees, invoices & enrolments — total invoiced, collected, outstanding dues, GST (CGST/SGST/IGST), collection by branch / vertical / course / mode, recent receipts & top dues. Scope + DateRange honoured. India-formatted (₹).' } },
-    { id: 'invoices', label: 'Invoices', spec: { dyn: 'invoicesList',
+    { id: 'invoices', label: 'Fee Invoices', spec: { dyn: 'invoicesList',
       sub: 'GST tax invoices raised from an enrolment (or ad-hoc): seller GSTIN + state, buyer GSTIN + place of supply, HSN/SAC, CGST+SGST (intra-state) or IGST (inter-state), round-off, amount in words, branded PDF. Per-branch & per-vertical FY numbering. Issue / cancel. Full list treatment.' } },
     // Sprint 5 — LITE fee collection is live: a receipt + a collection entry, partial
     // payments, receipt PDF. Razorpay capture, GST invoices, dues/ageing and refunds are
