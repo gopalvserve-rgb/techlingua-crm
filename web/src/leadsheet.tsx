@@ -7,6 +7,7 @@ import { AddMasterModal } from './mastermodal';
 import { AddModal } from './forms';
 import { fetchLeadCfDefs, coerceCf, displayCf, CfDef } from './customfields';
 import { PhoneInput } from './phonefield';
+import { copyToClipboard } from './contactactions';
 import { Avatar, TempBadge } from './renderer';
 import { DuplicatePanel } from './mergemodal';
 import { LeadTransferModal } from './leadtransfer';
@@ -52,11 +53,11 @@ export function activityTitle(a: Activity, sourceName?: string): { tt: string; t
   }
 }
 
-export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChanged }: { leadId: number; mode?: 'view' | 'edit'; onClose: () => void; onChanged?: () => void }) {
+export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onClose, onChanged }: { leadId: number; mode?: 'view' | 'edit'; initialTab?: 'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp'; onClose: () => void; onChanged?: () => void }) {
   const { can } = useAuth();
   const ref = useRef_();
   const [lead, setLead] = useState<any>(null);
-  const [tab, setTab] = useState<'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp'>('activity');
+  const [tab, setTab] = useState<'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp'>(initialTab ?? 'activity');
   // dev/84 item 1 — the lead sheet opens READ-ONLY (view) or editable (edit). View shows
   // every field display-only with no Save; an Edit button flips to edit mode (lead.update).
   const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
@@ -80,6 +81,8 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
   const loadRedFlags = () => api.get<any[]>(`/leads/${leadId}/red-flags`).then(setRfList).catch(() => setRfList([]));
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [leadId]);
   useEffect(() => { setMode(initialMode); }, [leadId, initialMode]);
+  // dev/142 — a Note quick-action can deep-link the sheet straight to the Notes tab.
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [leadId, initialTab]);
   useEffect(() => { let live = true; fetchLeadCfDefs().then((d) => { if (live) setCfDefs(d); }); return () => { live = false; }; }, []);
   useEffect(() => { if (tab === 'redflag') loadRedFlags(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, leadId]);
 
@@ -245,10 +248,13 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', onClose, onChang
         <div className="sheet-act">
           <a className="qa call" href={`tel:${lead.phone}`}><Ic k="calls" />Call</a>
           <a className="qa wa" href={`https://wa.me/${String(lead.whatsapp_phone || lead.phone).replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer"><Ic k="wa" />WhatsApp</a>
+          {/* dev/142 — Copy the phone number to the clipboard (graceful fallback + "Copied"). */}
+          <button className="qa" onClick={async () => { const raw = String(lead.phone ?? '').trim(); if (!raw) { toast('No phone on this lead', true); return; } const ok = await copyToClipboard(raw); toast(ok ? 'Copied' : 'Copy failed', !ok); }}><Ic k="copy" />Copy</button>
           <a className="qa" href={lead.email ? `mailto:${lead.email}` : undefined} onClick={(e) => { if (!lead.email) { e.preventDefault(); toast('No email on this lead', true); } }}><Ic k="mail" />Email</a>
           {/* dev/84 item 1 — in VIEW mode the only control is Edit (read-only otherwise). */}
           {!editing && canEditLead && <button className="qa" onClick={() => setMode('edit')}><Ic k="pencil" />Edit</button>}
-          {editing && <button className="qa" onClick={() => setTab('notes')}><Ic k="note" />Add note</button>}
+          {/* dev/142 — Note is a header quick-action alongside Call/Copy/WhatsApp; opens the Notes tab (edit mode surfaces the add-note input). */}
+          <button className="qa" onClick={() => { if (canEditLead) setMode('edit'); setTab('notes'); }}><Ic k="note" />Note</button>
           {/* UAT-R3 #23 — reassign the lead's owner to another (active, in-scope) user. */}
           {editing && can('lead.assign') && <button className="qa" onClick={() => setReassign(true)}><Ic k="users" />Reassign</button>}
           {/* Jul 2026 — transfer the lead to another Branch / Vertical / Campaign (re-parents its path). */}

@@ -65,6 +65,7 @@ export const I: Record<string, string> = {
   power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 11-12.8 0"/>',
   swap: '<path d="M7 10l-4 4 4 4"/><path d="M3 14h14a4 4 0 004-4V4"/>',
   download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
 };
 
 /** Inline SVG icon, mirrors the prototype's svg() helper. */

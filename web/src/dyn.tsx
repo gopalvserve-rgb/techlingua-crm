@@ -38,6 +38,7 @@ import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP } from './specs';
 import { useScope } from './scope';
 import { DateRange, presetRange, matchPreset, fmtDMYIST, fmtDateTimeIST } from './daterange';
+import { ContactQuickActions } from './contactactions';
 import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
@@ -91,7 +92,7 @@ export interface ScreenCtxT {
   // Aug 2026 — an optional 3rd arg carries list filter params (owner_id, temperature, won,
   // unassigned, created_from/to, sla_breached, …) so a KPI card opens its list pre-filtered.
   go: (m: string, s: string, params?: Record<string, string | number | undefined>) => void;
-  openLead: (id: number, mode?: 'view' | 'edit') => void;
+  openLead: (id: number, mode?: 'view' | 'edit', tab?: 'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp') => void;
   openAdd: (formKey: string) => void;
   refreshTick: number;
   bump: () => void;
@@ -208,13 +209,20 @@ function PrioSelect({ id, value, onChanged, disabled }: { id: number; value?: st
   );
 }
 
-function leadRow(l: any): Cell[] {
+function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: 'notes') => void): Cell[] {
   const overdue = l.next_follow_up_at && new Date(l.next_follow_up_at) < new Date();
   return [
     { node: (
       <div className="cell-u">
         <Avatar name={l.full_name} />
-        <div><div className="nm">{l.full_name}</div><div className="sub mono">{l.phone}</div></div>
+        <div>
+          <div className="nm">{l.full_name}</div>
+          <div className="sub mono" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>{l.phone}</span>
+            <ContactQuickActions phone={l.phone} whatsapp={l.whatsapp_phone}
+              onNote={openLead ? () => openLead(Number(l.id), 'edit', 'notes') : undefined} />
+          </div>
+        </div>
       </div>) },
     dn(l.branch_name, l.branch_deleted) || '—',
     l.course_name || '—',
@@ -535,7 +543,7 @@ function DashOverview() {
       )}
 
       <TableCard title={personal ? 'My recent leads' : 'Recent leads'} more="View pipeline" cols={LEAD_COLS}
-        rows={(recent.data?.rows ?? []).map(leadRow)}
+        rows={(recent.data?.rows ?? []).map((l) => leadRow(l, openLead))}
         empty="No leads yet — add your first lead or connect a source"
         onRowClick={(i) => openLead(Number(recent.data!.rows[i].id))} />
     </>
@@ -729,6 +737,8 @@ function FollowupRows({ rows, onChanged, empty }: { rows: any[]; onChanged: () =
                 {overdue ? <span style={{ color: 'var(--danger)', fontWeight: 600 }}> · overdue</span> : ''}
               </div>
             </div>
+            <ContactQuickActions phone={f.lead_phone} whatsapp={f.lead_whatsapp_phone}
+              onNote={() => openLead(f.lead_id, 'edit', 'notes')} />
             <TempBadge temperature={f.temperature} score={f.score} />
             <span className="rt" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(f.scheduled_at)}</span>
           </div>
@@ -1231,7 +1241,7 @@ function QuickContact() {
       </div>
       {results !== null && (
         <div style={{ marginTop: 18 }}>
-          <TableCard title="Matching contacts" cols={LEAD_COLS} rows={results.map(leadRow)}
+          <TableCard title="Matching contacts" cols={LEAD_COLS} rows={results.map((l) => leadRow(l, openLead))}
             empty="No matching contacts — Add Lead to create one"
             more={<a onClick={() => openAdd('dash.quickcontact')} style={{ cursor: 'pointer', color: 'var(--primary)' }}>+ Add Lead</a>}
             onRowClick={(i) => openLead(Number(results[i].id))} />
@@ -1699,7 +1709,7 @@ function LeadsAll() {
             allChecked: allLoadedSelected,
             onToggleAll: toggleAllLoaded,
           }}
-          rows={rows.map((l) => [...leadRow(l), rowActions({
+          rows={rows.map((l) => [...leadRow(l, openLead), rowActions({
             onView: () => openLead(Number(l.id), 'view'),
             onEdit: canEditLead ? () => openLead(Number(l.id), 'edit') : undefined,
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,

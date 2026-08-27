@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
+import { ContactQuickActions, copyToClipboard } from './contactactions';
 import { Cell, TableCard, TempBadge } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 
@@ -30,7 +31,7 @@ export interface PullCampaign {
 export interface QueueLead {
   id: number; position: number; actioned_at: string | null;
   disposition_id: number | null; disposition_name: string | null;
-  full_name: string; phone: string; email: string | null;
+  full_name: string; phone: string; email: string | null; whatsapp_phone?: string | null;
   priority: string; temperature: string | null; score: number | null;
   stage_id: number | null; stage_name: string | null; status_id: number | null;
   status_name?: string | null;
@@ -374,6 +375,8 @@ export default function StartCalling() {
                   <div className="t1">{l.position}. {l.full_name}</div>
                   <div className="t2"><span className="mono">{l.phone}</span>{l.course_name ? ` · ${l.course_name}` : ''}</div>
                 </div>
+                <ContactQuickActions phone={l.phone} whatsapp={l.whatsapp_phone}
+                  onNote={() => { setIdx(i); setForm({}); }} />
                 <span className="rt">
                   {l.actioned_at
                     ? <span className="bdg b-green">{l.disposition_name || 'Done'}</span>
@@ -415,10 +418,13 @@ export default function StartCalling() {
                     <a className="qa call" href={`tel:${lead.phone}`}><Ic k="calls" />Call {lead.phone}</a>
                     <a className="qa wa" href={`https://wa.me/${String(lead.phone).replace(/[^\d]/g, '')}`}
                       target="_blank" rel="noreferrer"><Ic k="wa" />WhatsApp</a>
+                    <button className="qa" onClick={async () => { const raw = String(lead.phone ?? '').trim(); if (!raw) { toast('No phone on this lead', true); return; } const ok = await copyToClipboard(raw); toast(ok ? 'Copied' : 'Copy failed', !ok); }}><Ic k="copy" />Copy</button>
                     <a className="qa" href={lead.email ? `mailto:${lead.email}` : undefined}
                       onClick={(e) => { if (!lead.email) { e.preventDefault(); toast('No email on this lead', true); } }}>
                       <Ic k="mail" />Email
                     </a>
+                    <button className="qa" title="Add a call note below"
+                      onClick={() => { const el = document.getElementById('calling-note-input'); if (el) { el.focus(); el.scrollIntoView({ block: 'center' }); } }}><Ic k="note" />Note</button>
                   </div>
                   <div className="kv" style={{ marginTop: 12 }}>
                     <div className="f"><label>Course</label><div className="iv"><span>{lead.course_name || '—'}</span></div></div>
@@ -471,7 +477,7 @@ export default function StartCalling() {
                     </div>
                     <div className="fld span2">
                       <label>Call note</label>
-                      <input className="ainp" aria-label="Call note" placeholder="What did they say?"
+                      <input id="calling-note-input" className="ainp" aria-label="Call note" placeholder="What did they say?"
                         value={form.note ?? ''} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
                     </div>
                   </div>
