@@ -221,9 +221,9 @@ export function StageConfigurator({ pipeline, onBack, afterChange }: {
           <span style={{ display: 'inline-flex', transform: 'rotate(180deg)' }}><Ic k="chev" /></span>Back to Pipelines
         </button>
         <div className="fchip"><Ic k="list" /><b>{rows.length}</b> stages</div>
-        {/* UAT-R2 #8 — always show which Branch \u203a Vertical \u203a Pipeline these stages belong to. */}
-        <div className="fchip" title="Branch \u203a Vertical \u203a Pipeline">
-          <Ic k="grid" />{[cur.branch_name, cur.vertical_name, cur.name].filter(Boolean).join(' \u203a ')}
+        {/* UAT-R2 #8 — always show which Branch › Vertical › Pipeline these stages belong to. */}
+        <div className="fchip" title="Branch › Vertical › Pipeline">
+          <Ic k="grid" />{[cur.branch_name, cur.vertical_name, cur.name].filter(Boolean).join(' › ')}
         </div>
         {!canEdit && <div className="fchip"><Ic k="eye" />Read-only — you don't have stage-edit permission</div>}
       </div>
@@ -236,7 +236,7 @@ export function StageConfigurator({ pipeline, onBack, afterChange }: {
             <select className="ainp" value={pid}
               onChange={(e) => { setPid(Number(e.target.value)); setSel(null); }}>
               {(ref.pipelines.length ? ref.pipelines : [cur]).map((p: any) => (
-                <option key={p.id} value={Number(p.id)}>{[p.branch_name, p.vertical_name, p.name].filter(Boolean).join(' \u203a ')}</option>
+                <option key={p.id} value={Number(p.id)}>{[p.branch_name, p.vertical_name, p.name].filter(Boolean).join(' › ')}</option>
               ))}
             </select>
             {canEdit && (

@@ -847,7 +847,7 @@ const toLocalDT = (iso?: string | null): string => {
 const num = (v: unknown): number | undefined => (v == null || v === '' ? undefined : Number(v));
 
 export const walkInEditSpec = (w: any, after: () => void): EditSpec => ({
-  title: `Edit Walk-in \u2014 ${w.visitor_name}`,
+  title: `Edit Walk-in — ${w.visitor_name}`,
   initialVals: {
     'Name': w.visitor_name ?? '',
     'Mobile Number': w.phone ?? '',
@@ -900,7 +900,7 @@ export const walkInEditSpec = (w: any, after: () => void): EditSpec => ({
 });
 
 export const referralEditSpec = (r: any, after: () => void): EditSpec => ({
-  title: `Edit Referral \u2014 ${r.referrer_name}`,
+  title: `Edit Referral — ${r.referrer_name}`,
   initialVals: {
     'Referrer Type': r.referrer_type ?? '',
     'Referrer Name': r.referrer_name ?? '',
@@ -1082,7 +1082,7 @@ export function WalkIns() {
               ['Email', view.email || '—'],
               ['Purpose', view.purpose || '—'],
               ['Course', view.course_name || '—'],
-              ['Course fee', view.course_fee != null ? `\u20b9${Number(view.course_fee)}` : '—'],
+              ['Course fee', view.course_fee != null ? `₹${Number(view.course_fee)}` : '—'],
               ['Heard about us', view.heard_about_name || '—'],
             ]} />
           </Section>

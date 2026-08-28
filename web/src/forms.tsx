@@ -158,10 +158,10 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'), F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'),
     F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'), F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course', 'select', 0, 0, 'master', 'courses'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' }, F('Course Fee', 'number'), F('City / Location', 'text'),
-    F('Lead Counsellor', 'select', 0, 0, 'Users \u00b7 optional \u2014 leave blank and tick Round-Robin', 'users'),
-    // dev/84 item 3 \u2014 round-robin on a MANUAL lead: tick to auto-assign the owner via the
+    F('Lead Counsellor', 'select', 0, 0, 'Users · optional — leave blank and tick Round-Robin', 'users'),
+    // dev/84 item 3 — round-robin on a MANUAL lead: tick to auto-assign the owner via the
     // campaign distribution engine (reuses the walk-in / campaign round-robin), counsellor optional.
-    { ...F('Assign via Round-Robin', 'checkbox', 0, 0, 'auto-assign the lead via the campaign round-robin \u2014 counsellor can be left blank'), addOnly: true },
+    { ...F('Assign via Round-Robin', 'checkbox', 0, 0, 'auto-assign the lead via the campaign round-robin — counsellor can be left blank'), addOnly: true },
     F('Lead Status', 'select', 0, 0, 'default: New', 'statuses'),
     F('Next Follow-up Date', 'datetime'), F('Created On', 'auto', 0, 0, 'Auto-stamped · edit permission by Admin'), F('Remarks / Notes', 'textarea')] },
   // Sprint 3 — a walk-in creates a REAL lead, and every lead carries the FULL path
@@ -173,15 +173,15 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Branch', 'select', 1, 0, 'auto if desk is Branch-locked', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline', 'select', 1, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 1, 0, 'filtered by Pipeline', 'campaigns'),
     F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
-    { ...F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped \u00b7 today or later'), min: 'today' as const },
+    { ...F('Date & Time of Visit', 'datetime', 1, 0, 'auto-stamped · today or later'), min: 'today' as const },
     { ...F('Purpose of Visit', 'select', 1, 0, 'master'), mopts: 'visitPurposes' }, F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'),
     // DEF-S34-02 — these three RENDERED but were never SENT and had no columns (migration 027).
-    F('Course Fee', 'number', 0, 0, 'auto-filled from the Course master \u00b7 editable'),
+    F('Course Fee', 'number', 0, 0, 'auto-filled from the Course master · editable'),
     F('How did you hear about us?', 'select', 0, 0, 'Source channel master (how they heard)', 'masterSources'),
     // Client UAT (Aug 2026): Assign Counsellor is now OPTIONAL. Leave it blank and tick
     // Round-Robin to auto-assign the lead via the campaign's distribution engine.
-    F('Counsellor Assigned', 'select', 0, 0, 'Users \u00b7 owns the lead immediately (optional)', 'users'),
-    { ...F('Assign via Round-Robin', 'checkbox', 0, 0, 'auto-assign the lead via the campaign round-robin \u2014 counsellor can be left blank'), addOnly: true },
+    F('Counsellor Assigned', 'select', 0, 0, 'Users · owns the lead immediately (optional)', 'users'),
+    { ...F('Assign via Round-Robin', 'checkbox', 0, 0, 'auto-assign the lead via the campaign round-robin — counsellor can be left blank'), addOnly: true },
     // ticked by default: a walk-in becoming an assigned lead IS the point of this screen.
     // Untick it to log a visit (a fee query from an existing student) without a lead;
     // tick it later on Edit and it converts through the same LeadIngestionService.
@@ -201,12 +201,12 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Lead Source', 'select', 1, 0, 'filtered by Campaign', 'sources'),
     F('Course Interested', 'select', 0, 0, 'filtered by Vertical', 'courses'), F('Incentive / Reward Applicable', 'text', 0, 0, 'auto-computed'),
     // UAT-R2 #20 — Assigned Counsellor: like Walk-in, owns the referred lead (else campaign distribution decides).
-    F('Assigned Counsellor', 'select', 0, 0, 'Users \u00b7 owns the referred lead', 'users'),
+    F('Assigned Counsellor', 'select', 0, 0, 'Users · owns the referred lead', 'users'),
     F('Referral Status', 'select', 1, ['Pending', 'Converted', 'Rewarded', 'Rejected'])] },
   // UAT-R2 #4 — Source Category, Cost per Lead removed (backend keeps its defaults). Campaign
   // stays: it is the required parent that supplies the source's Branch › Vertical › Pipeline path.
-  // UAT-R3 #21 — the Add Source form walks the FULL strict cascade Branch \u2192 Vertical \u2192
-  // Pipeline \u2192 Campaign (each empty until its parent is chosen), then the source fields.
+  // UAT-R3 #21 — the Add Source form walks the FULL strict cascade Branch → Vertical →
+  // Pipeline → Campaign (each empty until its parent is chosen), then the source fields.
   // Only campaign_id is sent; the source's Branch/Vertical/Pipeline path is derived from the
   // Campaign server-side (HierarchyService.createSource), so the hierarchy fields are cascade
   // filters only (EXEMPT in qa10matrix), exactly as on the Add Lead form.
@@ -252,27 +252,27 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // Vertical first and offered a lone "Applicable Branch(es)" select that never related to
   // it, so the two dropdowns did nothing — the bug the client reported.
   // UAT (Aug 2026) — the course form now walks the FULL hierarchy the client asked for:
-  // Branch \u2192 Vertical \u2192 Pipeline \u2192 Campaign, each STRICTLY filtered by (and empty until)
+  // Branch → Vertical → Pipeline → Campaign, each STRICTLY filtered by (and empty until)
   // its parent, each resetting its descendants on change — the same cascade engine as the lead
-  // forms (CASCADE / srcOptions). OWNERSHIP is unchanged: a course still BELONGS to Branch \u2192
+  // forms (CASCADE / srcOptions). OWNERSHIP is unchanged: a course still BELONGS to Branch →
   // Vertical (both required, stored in meta.branch_id / meta.vertical_id, update #7/#9). Pipeline
   // and Campaign are OPTIONAL associations (stored in meta.pipeline_id / meta.campaign_id) so the
   // client can narrow a course to a specific pipeline/campaign; leaving them blank keeps the course
-  // at Branch \u2192 Vertical exactly as before.
+  // at Branch → Vertical exactly as before.
   'students.courses': { title: 'Add Course', fields: [
     F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
-    // Course LEVELS (enrollment re-model, batch 1) \u2014 a course can have MANY levels (A1, A2, \u2026), each
+    // Course LEVELS (enrollment re-model, batch 1) — a course can have MANY levels (A1, A2, …), each
     // with its OWN fee. "+ Add level" adds rows; empty falls back to the single Standard Fee below.
     // Replaces the old single "Course Level" descriptor. Persisted via PUT /courses/:id/levels.
-    F('Levels', 'levels', 0, 0, 'optional \u2014 each level carries its own fee; leave empty to use the single Standard Fee'),
-    F('Duration', 'text', 0, 0, 'free text \u2014 e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number', 0, 0, 'used when the course has no levels'), F('Standard Exam Fee', 'number', 0, 0, 'optional \u2014 added on top, never discounted; used when the course has no levels'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
+    F('Levels', 'levels', 0, 0, 'optional — each level carries its own fee; leave empty to use the single Standard Fee'),
+    F('Duration', 'text', 0, 0, 'free text — e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number', 0, 0, 'used when the course has no levels'), F('Standard Exam Fee', 'number', 0, 0, 'optional — added on top, never discounted; used when the course has no levels'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
     // Course descriptors (client feedback #13, Aug 2026) — Level / Type / Description. dev/100 (client):
     // Delivery Mode dropped from the course UI (meta.delivery_mode kept in DB, hidden); ERP forms carry
     // NO Campaign/Pipeline (CRM-only) — the course walks Branch > Vertical only.
     // dev/106 — Course Type reads the self-manageable master (RefData.courseTypes, via /courses/type-catalog
     // which now serves m_course_type); ＋ Master adds a new type inline. Stores the label text in meta.course_type.
-    { ...F('Course Type', 'select', 0, 0, 'master \u2014 add your own with \uFF0B Master'), mopts: 'courseTypes' },
-    F('Description', 'textarea', 0, 0, 'optional \u2014 short course description'),
+    { ...F('Course Type', 'select', 0, 0, 'master — add your own with ＋ Master'), mopts: 'courseTypes' },
+    F('Description', 'textarea', 0, 0, 'optional — short course description'),
     F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'students.batches': { title: 'Add Batch', fields: [
     F('Batch Name / Code', 'text', 1, 0, 'e.g. JAVA-JUL26-EVE'), F('Course', 'select', 1, 0, 'master', 'courses'), F('Branch', 'auto', 1, 0, 'Auto-filled from Course/Vertical'),
@@ -320,7 +320,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     // GST invoices / receipts (seller GSTIN + legal/display name + billing address).
     F('Display Name', 'text', 0, 0, 'brand / legal name shown on invoices & receipts'),
     F('GST Number', 'text', 0, 0, '15-char GSTIN of this vertical (seller)'),
-    F('Billing Address', 'textarea', 0, 0, 'printed on the vertical\u2019s GST invoices & receipts'),
+    F('Billing Address', 'textarea', 0, 0, 'printed on the vertical’s GST invoices & receipts'),
     F('Phone', 'tel', 0, 0, 'vertical contact number'),
     F('Email', 'email', 0, 0, 'vertical contact email'),
     // dev/132 ITEM B — bank accounts are now MULTIPLE (add-more rows with a required/active
@@ -333,7 +333,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'multipick', 0, 0, 'select branch(es)', 'branches'),
     F('Vertical Access', 'multipick', 0, 0, 'optional', 'verticals'),
     // Client (Aug 2026) — a USER's reporting manager (distinct from the task-level Report To).
-    F('Reports To', 'select', 0, 0, 'reporting manager \u00b7 active users', 'users'),
+    F('Reports To', 'select', 0, 0, 'reporting manager · active users', 'users'),
     F('Status', 'select', 0, ['Active', 'Deactivated'])] },
   'fran.partners': { title: 'Add Franchise Partner', fields: [
     F('Franchise ID', 'auto', 1, 0, 'Auto-generated'), F('Legal Name', 'text', 1), F('Brand Name', 'text'), F('Owner', 'text', 1), F('Mobile', 'tel', 1), F('Email', 'email'),
@@ -366,11 +366,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // NOT exempt in the qa10 matrix. Assignee respects the no-deactivated-user rule.
   'help.tickets': { title: 'Raise a Ticket', fields: [
     F('Subject', 'text', 1),
-    { ...F('Category', 'select', 0, 0, 'master \u00b7 admin-managed'), mopts: 'ticketCategories' },
+    { ...F('Category', 'select', 0, 0, 'master · admin-managed'), mopts: 'ticketCategories' },
     F('Priority', 'select', 1, ['Low', 'Medium', 'High', 'Urgent'], 'default: Medium', undefined, 0, 'Medium'),
-    F('Branch', 'select', 0, 0, 'sets the ticket\u2019s RBAC scope', 'branches'),
+    F('Branch', 'select', 0, 0, 'sets the ticket’s RBAC scope', 'branches'),
     F('Vertical', 'select', 0, 0, 'filtered by Branch', 'verticals'),
-    F('Assignee', 'select', 0, 0, 'Users \u00b7 active only', 'users'),
+    F('Assignee', 'select', 0, 0, 'Users · active only', 'users'),
     F('Description', 'textarea')] },
   // Cross-Sell rule (post-Phase-1 client request) — the admin map "current course ->
   // suggested course". Both are id-valued Course selects (m_course); the saver sends both
@@ -514,7 +514,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       source_id: need(ids['Lead Source'], 'Pick a Lead Source'),
       course_id: ids['Course'],
       owner_id: ids['Lead Counsellor'],
-      // dev/84 item 3 \u2014 when ticked, the API ignores owner_id and the campaign round-robin
+      // dev/84 item 3 — when ticked, the API ignores owner_id and the campaign round-robin
       // engine assigns the owner (same flag shape as the walk-in round-robin).
       round_robin: vals['Assign via Round-Robin'] === '1',
       status_id: ids['Lead Status'],
@@ -648,7 +648,7 @@ SAVERS['students.courses'] = async (vals, ids) => {
       exam_fee: vals['Standard Exam Fee'] || undefined,
       branch_id: need(ids['Branch'], 'Pick a Branch'),
       vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
-      // dev/100 (client): Campaign/Pipeline are CRM-only \u2014 not sent from the ERP course form.
+      // dev/100 (client): Campaign/Pipeline are CRM-only — not sent from the ERP course form.
       eligibility: vals['Eligibility Criteria'] || undefined,
       // Course descriptors (client feedback #13) — stored in meta like fee/vertical_id. The single
       // "Course Level" descriptor is superseded by the per-level Levels editor (course_level table).
@@ -867,7 +867,7 @@ export function EntityLookup({ type, value, onPick }: {
   return (
     <div>
       <input className="ainp" data-testid="task-entity-search"
-        placeholder={key ? `Search ${type}\u2026` : 'Pick a "Related To" type first'}
+        placeholder={key ? `Search ${type}…` : 'Pick a "Related To" type first'}
         disabled={!key} value={q}
         onChange={(e) => { setQ(e.target.value); onPick(undefined, e.target.value); }} />
       {opts.length > 0 && (
@@ -1803,7 +1803,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
     { branches: [], verticals: [], pipelines: [] });
 
   // UAT-R3 #20 — STRICT cascade: a child is EMPTY until its parent is chosen, so the user
-  // is walked Branch \u2192 Vertical \u2192 Pipeline in order and only valid children appear.
+  // is walked Branch → Vertical → Pipeline in order and only valid children appear.
   // Just-quick-added rows (`extra`) are merged in so they appear before RefData reload lands.
   const allBranches = [...ref.branches, ...extra.branches.filter((b) => !ref.branches.some((r) => Number(r.id) === Number(b.id)))];
   const allVerticals = [...ref.verticals, ...extra.verticals.filter((v) => !ref.verticals.some((r) => Number(r.id) === Number(v.id)))];
@@ -2030,7 +2030,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           <div className="sechead">Campaign Managers</div>
           <div className="fld">
             <label>Who will be managing this campaign?
-              <span className="fhint">management &amp; visibility only \u2014 managers are NOT auto-assigned leads</span></label>
+              <span className="fhint">management &amp; visibility only — managers are NOT auto-assigned leads</span></label>
             <UserPicker value={managers} onChange={setManagers} branchId={branchId}
               placeholder="Search users to manage this campaign…" />
           </div>

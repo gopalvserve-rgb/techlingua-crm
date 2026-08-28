@@ -285,7 +285,7 @@ export function TargetModal({ initial, onClose, onSaved }: { initial?: any; onCl
               <label htmlFor="ti-entity">{entityLabel} <span className="star">*</span></label>
               <select id="ti-entity" className="ainp" value={entity} onChange={(e) => setEntity(e.target.value)}
                 disabled={cascades && !scopeBranch}>
-                <option value="">{cascades && !scopeBranch ? 'Pick a branch first' : '\u2014'}</option>
+                <option value="">{cascades && !scopeBranch ? 'Pick a branch first' : '—'}</option>
                 {entities.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
             </div>
@@ -524,7 +524,7 @@ function Teams() {
           t.vertical_name ?? '—',
           t.leader_name ?? '—',
           <span className="b-indigo" style={{ padding: '1px 8px', borderRadius: 999 }} data-testid={`team-members-${t.id}`}>{t.member_count ?? 0}</span>,
-          canManage ? { node: <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEdit(t)} data-testid={`team-edit-${t.id}`}><Ic k="pencil" />Edit</button> } as Cell : '\u2014',
+          canManage ? { node: <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEdit(t)} data-testid={`team-edit-${t.id}`}><Ic k="pencil" />Edit</button> } as Cell : '—',
         ])} />
       {(adding || edit) && (
         <TeamModal team={edit} onClose={() => { setAdding(false); setEdit(null); }}

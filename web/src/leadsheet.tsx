@@ -333,13 +333,13 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
               <div className="f"><label>WhatsApp</label>
                 {canUpdate
                   ? <PhoneInput value={String(ed('whatsapp_phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, whatsapp_phone: v }))} />
-                  : <div className="iv"><span className="mono">{lead.whatsapp_phone || '\u2014'}</span></div>}
+                  : <div className="iv"><span className="mono">{lead.whatsapp_phone || '—'}</span></div>}
               </div>
               {/* UAT-R3 #18 — Alternate Mobile Number is a stored contact field (lead.alt_phone), shown + editable here beside the primary mobile / WhatsApp. */}
               <div className="f"><label>Alt. Mobile</label>
                 {canUpdate
                   ? <PhoneInput value={String(ed('alt_phone') ?? '')} onChange={(v) => setEdits((x) => ({ ...x, alt_phone: v }))} />
-                  : <div className="iv"><span className="mono">{lead.alt_phone || '\u2014'}</span></div>}
+                  : <div className="iv"><span className="mono">{lead.alt_phone || '—'}</span></div>}
               </div>
               {/* dev/117 item 1 — Source is the lead's Source-master value, EDITABLE here on the
                   edit form (was read-only). View mode + no options fall back to the read-only name. */}
@@ -523,7 +523,7 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                 {editing && canFlag && (
                   <div className="kv"><div className="f s2"><label>Add a red-flag remark</label>
                     <div className="iv">
-                      <input placeholder="Why is this lead red-flagged\u2026" value={rfText}
+                      <input placeholder="Why is this lead red-flagged…" value={rfText}
                         onChange={(e) => setRfText(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') addRedFlag(); }} />
                       <button className="bdg b-red" onClick={addRedFlag} style={{ cursor: 'pointer' }}>Flag</button>

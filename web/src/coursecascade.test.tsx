@@ -130,7 +130,7 @@ describe('Course configuration — Branch › Vertical cascade', () => {
   });
 
   // dev/100 (client): Campaign & Pipeline are CRM-only concepts and were REMOVED from the ERP
-  // course form. It must walk Branch > Vertical only \u2014 no Pipeline / Campaign selector at all.
+  // course form. It must walk Branch > Vertical only — no Pipeline / Campaign selector at all.
   it('does NOT render a Pipeline or Campaign field (ERP forms are CRM-concept-free)', () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     expect(hasField('Branch')).toBe(true);
@@ -152,7 +152,7 @@ describe('Course configuration — Branch › Vertical cascade', () => {
     expect(body.meta.vertical_id).toBe(2);
     expect(body.meta.pipeline_id).toBeUndefined();
     expect(body.meta.campaign_id).toBeUndefined();
-    // dev/100: Delivery Mode also dropped from the course UI \u2014 not written from the form.
+    // dev/100: Delivery Mode also dropped from the course UI — not written from the form.
     expect(body.meta.delivery_mode).toBeUndefined();
   });
 

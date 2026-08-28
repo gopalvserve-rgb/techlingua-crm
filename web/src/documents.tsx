@@ -235,7 +235,7 @@ export function VerticalLogoUpload({ verticalId, initialUrl, onDone }: { vertica
         <button type="button" className="btn sm" disabled={busy} onClick={() => fileRef.current?.click()} data-testid="vert-logo-upload">
           <Ic k="export" />{busy ? 'Uploading…' : (url ? 'Change logo' : 'Upload logo')}
         </button>
-        <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>JPG, PNG, WEBP or SVG · up to 5 MB · shown on this vertical\u2019s invoices</div>
+        <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>JPG, PNG, WEBP or SVG · up to 5 MB · shown on this vertical’s invoices</div>
       </div>
     </div>
   );

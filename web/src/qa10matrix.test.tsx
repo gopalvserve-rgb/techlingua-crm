@@ -441,7 +441,7 @@ const EXEMPT: Record<string, Allow> = {
   'admin.users': {
     // nothing exempt — every field on Add User reaches the API
   },
-  // UAT-R3 #21 — the Add Source form now walks Branch \u2192 Vertical \u2192 Pipeline \u2192 Campaign.
+  // UAT-R3 #21 — the Add Source form now walks Branch → Vertical → Pipeline → Campaign.
   // Only Campaign reaches the payload (source.campaign_id); the source's whole path is
   // DERIVED from the Campaign server-side, so Branch/Vertical/Pipeline are cascade filters.
   'leads.sources': {
@@ -450,8 +450,8 @@ const EXEMPT: Record<string, Allow> = {
     Pipeline: 'cascade filter only — derived from the Campaign (see Branch)',
   },
 };
-// UAT (Aug 2026) — the course form gained an OPTIONAL Pipeline \u2192 Campaign cascade on top of its
-// required Branch \u2192 Vertical ownership. Both ARE sent (meta.pipeline_id / meta.campaign_id — see
+// UAT (Aug 2026) — the course form gained an OPTIONAL Pipeline → Campaign cascade on top of its
+// required Branch → Vertical ownership. Both ARE sent (meta.pipeline_id / meta.campaign_id — see
 // SAVERS['students.courses'] and courseEditSpec), but the shared REF fixture carries a single
 // pipeline (id 4) under vertical 1 and a single campaign (id 5) under it, so the differential probe
 // cannot SWITCH them to a second value to observe the payload change. Their persistence, strict
@@ -459,11 +459,11 @@ const EXEMPT: Record<string, Allow> = {
 // dev/100 removed Pipeline/Campaign from the ERP course form (CRM-only concepts), so they are no
 // longer rendered and need no exemption. The one exempt field now is the Levels sub-editor:
 EXEMPT['students.courses'] = {
-  // Course LEVELS (enrollment re-model, batch 1) \u2014 a repeatable per-level fee sub-editor (\uff0b Add level;
+  // Course LEVELS (enrollment re-model, batch 1) — a repeatable per-level fee sub-editor (＋ Add level;
   // each row = level code + its own fee). Persisted by a SEPARATE PUT /courses/:id/levels, not the main
   // course POST body, so the single-field differential probe cannot observe it; its full add/persist/
   // reload behaviour is proven directly in courselevels.test.tsx.
-  Levels: 'type "levels" \u2014 a structured multi-row per-level fee editor persisted via PUT /courses/:id/levels; proven in courselevels.test.tsx',
+  Levels: 'type "levels" — a structured multi-row per-level fee editor persisted via PUT /courses/:id/levels; proven in courselevels.test.tsx',
 };
 EXEMPT['admin.courseconfig'] = EXEMPT['students.courses'];
 // MY TASK overhaul (dev/133) — the Related-To RECORD picker is a search-and-pick widget (like the

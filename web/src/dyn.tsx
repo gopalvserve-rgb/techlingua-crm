@@ -149,7 +149,7 @@ const fmtDT = (s?: string | null) => {
 
 /** A plain DATE column (campaign start/end) — no time, no timezone drift. */
 const fmtDate = (v?: string | null) => {
-  if (!v) return '\u2014';
+  if (!v) return '—';
   const d = new Date(String(v).slice(0, 10) + 'T00:00:00');
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
@@ -181,7 +181,7 @@ function SearchChip({ q, setQ, ph }: { q: string; setQ: (v: string) => void; ph?
   return (
     <div className="fchip"><Ic k="search" />
       <input aria-label="Search" style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}
-        placeholder={ph ?? 'Search\u2026'} value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        placeholder={ph ?? 'Search…'} value={q} onChange={(e) => setQ(e.target.value)} /></div>
   );
 }
 
@@ -371,7 +371,7 @@ function TeamStatusCard({ sp, scopeKey }: { sp: Record<string, string>; scopeKey
     <TableCard title="Team status — live" icon="users"
       cols={['Agent', 'Status', 'Last seen', 'Open leads', "Today's follow-ups"]}
       rows={rows}
-      more={data ? `${data.online} online \u00b7 ${data.away} away \u00b7 ${data.offline} offline` : 'Loading\u2026'}
+      more={data ? `${data.online} online · ${data.away} away · ${data.offline} offline` : 'Loading…'}
       empty="No agents with leads in this scope yet" />
   );
 }
@@ -565,7 +565,7 @@ const ENTITY_LABEL_FROM_KEY: Record<string, string> = Object.fromEntries(
   Object.entries(TASK_ENTITY_KEY).map(([label, key]) => [key, label]));
 
 export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
-  title: `Edit Task \u2014 ${f.lead_name}`,
+  title: `Edit Task — ${f.lead_name}`,
   initialVals: {
     'Title': f.notes ?? '',
     'Task Type': f.type_name ?? '',
@@ -608,7 +608,7 @@ export const taskEditSpec = (f: any, after: () => void): EditSpec => ({
       completion_note: vals['Completion Remark'] || null,
       scheduled_at: need(vals['Due Date'], 'Due date is required'),
       priority: (vals['Priority'] || 'Medium').toLowerCase(),
-      notes: [vals['Title'], vals['Description']].filter(Boolean).join(' \u2014 ') || undefined,
+      notes: [vals['Title'], vals['Description']].filter(Boolean).join(' — ') || undefined,
     });
     after();
     return 'Task updated';
@@ -656,7 +656,7 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { row
         {/* #13(c) — the summary card opens the full My Tasks list when wired (dashboard). */}
         {onOpenList
           ? <span className="more" role="button" title="Open My Tasks" style={{ cursor: 'pointer', color: 'var(--primary)' }}
-              onClick={onOpenList}>{`${more || 'View all'} \u203a`}</span>
+              onClick={onOpenList}>{`${more || 'View all'} ›`}</span>
           : <span className="more">{more || ''}</span>}
       </div>
       {rows.length === 0 ? <div className="lrow empty">{empty || 'No open tasks — follow-ups you own appear here'}</div> :
@@ -690,7 +690,7 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { row
       {confirmDone && (
         <ConfirmModal title="Mark task as done?"
           body={<div>
-            <div style={{ marginBottom: 8 }}>{`\u201c${confirmDone.type_name || 'Task'} \u2014 ${confirmDone.lead_name}\u201d will be marked Completed.`}</div>
+            <div style={{ marginBottom: 8 }}>{`“${confirmDone.type_name || 'Task'} — ${confirmDone.lead_name}” will be marked Completed.`}</div>
             <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Completion outcome / remark (optional)</label>
             <textarea className="ainp" data-testid="task-completion-note" value={outcome}
               onChange={(e) => setOutcome(e.target.value)} placeholder="e.g. Spoke to lead, enrolment confirmed" />
@@ -746,7 +746,7 @@ function FollowupRows({ rows, onChanged, empty }: { rows: any[]; onChanged: () =
       })}
       {confirmDone && (
         <ConfirmModal title="Mark follow-up as done?"
-          body={`\u201c${confirmDone.type_name || 'Follow-up'} \u2014 ${confirmDone.lead_name}\u201d will be marked done.`}
+          body={`“${confirmDone.type_name || 'Follow-up'} — ${confirmDone.lead_name}” will be marked done.`}
           confirmLabel="Mark done" busy={busy}
           onConfirm={complete} onClose={() => setConfirmDone(null)} />
       )}
@@ -761,7 +761,7 @@ function TodayFollowupCard({ rows, count, onChanged, onOpenList }: { rows: any[]
         <h3><Ic k="clock" />Today's Follow-ups</h3>
         {onOpenList
           ? <span className="more" role="button" title="Open Today's Follow-ups" style={{ cursor: 'pointer', color: 'var(--primary)' }}
-              onClick={onOpenList}>{`${count} due \u203a`}</span>
+              onClick={onOpenList}>{`${count} due ›`}</span>
           : <span className="more">{count} due</span>}
       </div>
       <FollowupRows rows={rows} onChanged={onChanged} empty="No follow-ups due today" />
@@ -933,7 +933,7 @@ function TodayFollowups() {
         {/* Table-only scroll (dev/139) — the list scrolls within the card (sticky head above),
             not the page, like the Leads / Student Management lists (LIST_SCROLL + .tbl-scroll). */}
         <div className="tbl-scroll">
-          <FollowupRows rows={list.data ?? []} onChanged={bump} empty={`No follow-ups for \u201c${fuLabel}\u201d`} />
+          <FollowupRows rows={list.data ?? []} onChanged={bump} empty={`No follow-ups for “${fuLabel}”`} />
         </div>
       </div>
     </>
@@ -941,7 +941,7 @@ function TodayFollowups() {
 }
 
 /** The 8 Today's Follow-ups KPI cards (client Aug 2026). `key` matches the API bucket + the
- *  /follow-ups?bucket=\u2026 list filter, so each card opens exactly its own list. */
+ *  /follow-ups?bucket=… list filter, so each card opens exactly its own list. */
 const FU_BUCKETS: Array<{ key: string; lab: string; ic: string }> = [
   { key: 'overdue', lab: 'Overdue', ic: 'clock' },
   { key: 'due_today', lab: 'Due Today', ic: 'clock' },
@@ -1463,7 +1463,7 @@ function LeadsAll() {
   // URL, so they are preserved.
   useReseedOnSearch(search, (s) => setF(seedLeadFilters(s)));
   // Pagination (client Aug 2026): the Leads list pages server-side (50/page) with prev/next +
-  // numbered pages and a "Showing X\u2013Y of N" count. Filters/scope/sort/date-range carry across
+  // numbered pages and a "Showing X–Y of N" count. Filters/scope/sort/date-range carry across
   // pages; changing any filter returns to page 1 (see the filterKey effect below).
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(0);
@@ -1566,7 +1566,7 @@ function LeadsAll() {
   // across pipelines are disambiguated with the pipeline name when >1 pipeline is in view.
   const stOpts = (ref.stages ?? [])
     .filter((st: any) => !f.pipelines.length || f.pipelines.includes(Number(st.pipeline_id)))
-    .map((st: any) => ({ id: Number(st.id), name: f.pipelines.length === 1 ? st.name : `${st.name} \u00b7 ${st.pipeline_name}` }));
+    .map((st: any) => ({ id: Number(st.id), name: f.pipelines.length === 1 ? st.name : `${st.name} · ${st.pipeline_name}` }));
   const pruneHierarchy = (nf: typeof f): typeof f => {
     const vOk = new Set(ref.verticals.filter((v) => !nf.branches.length || nf.branches.includes(Number(v.branch_id))).map((v) => Number(v.id)));
     nf.verticals = nf.verticals.filter((id) => vOk.has(id));
@@ -1715,7 +1715,7 @@ function LeadsAll() {
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
             extra: [
               ...(canTransfer ? [{ k: 'swap', title: 'Transfer', onClick: () => setTransferLead({ id: Number(l.id), name: l.full_name }) }] : []),
-              ...(canFlag ? [{ k: 'flag', title: l.is_red_flagged ? 'Red flagged \u2014 add remark' : 'Red flag', onClick: () => setFlagLead({ id: Number(l.id), name: l.full_name, flagged: !!l.is_red_flagged }) }] : []),
+              ...(canFlag ? [{ k: 'flag', title: l.is_red_flagged ? 'Red flagged — add remark' : 'Red flag', onClick: () => setFlagLead({ id: Number(l.id), name: l.full_name, flagged: !!l.is_red_flagged }) }] : []),
               ...(canConvert ? [{ k: 'students', title: 'Convert to Student', onClick: () => setConvertLead({ id: Number(l.id), name: l.full_name }) }] : []),
               ...(canEditLead ? [{ k: 'calls', title: 'Log call disposition', onClick: () => setLogLead({ id: Number(l.id), name: l.full_name }) }] : []),
             ],
@@ -1790,17 +1790,17 @@ function LeadsPager({ page, pageSize, total, shown, onPage, loading }:
     <div className="card" data-testid="leads-pager"
       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', flexWrap: 'wrap' }}>
       <span className="sub" style={{ fontSize: 12 }} data-testid="pg-range">
-        Showing <b>{from}</b>{'\u2013'}<b>{to}</b> of <b>{total}</b> lead{total === 1 ? '' : 's'}
+        Showing <b>{from}</b>{'–'}<b>{to}</b> of <b>{total}</b> lead{total === 1 ? '' : 's'}
       </span>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn" data-testid="pg-prev" disabled={page <= 0 || loading} onClick={() => onPage(page - 1)}>
           <Ic k="chev" />Prev</button>
-        {lo > 0 && (<><button className="fchip" onClick={() => onPage(0)}>1</button><span className="sub">{'\u2026'}</span></>)}
+        {lo > 0 && (<><button className="fchip" onClick={() => onPage(0)}>1</button><span className="sub">{'…'}</span></>)}
         {win.map((p) => (
           <button key={p} className={`fchip${p === page ? ' on' : ''}`} data-testid={`pg-${p + 1}`}
             aria-current={p === page ? 'page' : undefined} onClick={() => onPage(p)}>{p + 1}</button>
         ))}
-        {hi < pages - 1 && (<><span className="sub">{'\u2026'}</span><button className="fchip" onClick={() => onPage(pages - 1)}>{pages}</button></>)}
+        {hi < pages - 1 && (<><span className="sub">{'…'}</span><button className="fchip" onClick={() => onPage(pages - 1)}>{pages}</button></>)}
         <button className="btn" data-testid="pg-next" disabled={page >= pages - 1 || loading} onClick={() => onPage(page + 1)}>
           Next<Ic k="chev" /></button>
       </div>
@@ -2176,8 +2176,8 @@ function Sources() {
   const _bd = useBulkDelete('Source', '/sources/bulk-delete/impact', '/sources/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
   const CAPTURE: Record<string, [string, string]> = {
-    meta: ['Auto \u00b7 webhook', 'b-green'], google: ['Auto \u00b7 webhook', 'b-green'], justdial: ['Auto \u00b7 API', 'b-green'],
-    indiamart: ['Auto \u00b7 API', 'b-green'], form: ['Auto', 'b-green'], webhook: ['Auto', 'b-green'],
+    meta: ['Auto · webhook', 'b-green'], google: ['Auto · webhook', 'b-green'], justdial: ['Auto · API', 'b-green'],
+    indiamart: ['Auto · API', 'b-green'], form: ['Auto', 'b-green'], webhook: ['Auto', 'b-green'],
     sheet: ['Manual / bulk', 'b-amber'], walkin: ['Manual', 'b-gray'], referral: ['Manual', 'b-gray'], manual: ['Manual', 'b-gray'],
   };
   return (
@@ -2202,10 +2202,10 @@ function Sources() {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
           return [
             { node: <span className="nm">{so.name}</span> } as Cell,
-            String(so.campaign_name ?? '\u2014'),
+            String(so.campaign_name ?? '—'),
             { b: cap } as Cell,
-            '\u2014',
-            '\u2014',
+            '—',
+            '—',
             toggleCell({
               active: so.is_active !== false, name: so.name, entity: 'Source', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/sources/${so.id}`, { is_active: next }); after(); },
@@ -2215,15 +2215,15 @@ function Sources() {
               onDelete: can('source.delete') ? () => del.openDelete(Number(so.id), so.name) : undefined,
             }),
           ];
-        })} empty="No sources connected yet \u2014 add one per campaign" />
+        })} empty="No sources connected yet — add one per campaign" />
       {_bd.bulkModal}
       {del.deleteModal}
       {view && (
-        <DetailModal title={`Source \u2014 ${view.name}`} icon="leads" onClose={() => setView(null)}>
+        <DetailModal title={`Source — ${view.name}`} icon="leads" onClose={() => setView(null)}>
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
-              ['Campaign', view.campaign_name ?? '\u2014'],
+              ['Campaign', view.campaign_name ?? '—'],
               ['Channel', <span className="mono">{view.channel ?? 'manual'}</span>],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
               ['Webhook', view.webhook_token
@@ -2234,7 +2234,7 @@ function Sources() {
           <Section title="Record">
             <KV rows={[
               ['Created', fmtFull(view.created_at)],
-              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '—'],
               ['Updated', fmtFull(view.updated_at)],
             ]} />
           </Section>
@@ -2243,7 +2243,7 @@ function Sources() {
       {edit && (
         <AddModal formKey="leads.sources" onClose={() => setEdit(null)} onSaved={after}
           edit={{
-            title: `Edit Source \u2014 ${edit.name}`,
+            title: `Edit Source — ${edit.name}`,
             // Client (Aug 2026): the source's Branch > Vertical > Pipeline > Campaign are now
             // EDITABLE as the same strict cascade as Add Source, PREFILLED with the source's
             // current path. Choosing a new Campaign RE-PARENTS the source: the server re-derives
@@ -2327,7 +2327,7 @@ function Branches() {
     <>
       <Blocks blocks={[{ type: 'tree', title: 'Hierarchy', nodes }]} />
       <div className="filters" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <SearchChip q={q} setQ={setQ} ph="Search branch name / code\u2026" />
+        <SearchChip q={q} setQ={setQ} ph="Search branch name / code…" />
         <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={ref.verticals} onChange={setFVerticals} />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
@@ -2336,8 +2336,8 @@ function Branches() {
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((b) => [
           { node: <span className="nm">{b.name}</span> } as Cell,
-          { mono: String(b.code ?? '\u2014') } as Cell,
-          String(b.city_name ?? '\u2014'),
+          { mono: String(b.code ?? '—') } as Cell,
+          String(b.city_name ?? '—'),
           String(b.vertical_count ?? 0),
           toggleCell({
             active: b.is_active !== false, name: b.name, entity: 'Branch', canToggle: canEdit,
@@ -2351,26 +2351,26 @@ function Branches() {
       {_bd.bulkModal}
       {del.deleteModal}
       {view && (
-        <DetailModal title={`Branch \u2014 ${view.name}`} icon="branch" onClose={() => setView(null)}>
+        <DetailModal title={`Branch — ${view.name}`} icon="branch" onClose={() => setView(null)}>
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
-              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
-              ['Type', BRANCH_TYPE_LABEL[String(view.branch_type ?? '')] ?? '\u2014'],
+              ['Code', <span className="mono">{view.code ?? '—'}</span>],
+              ['Type', BRANCH_TYPE_LABEL[String(view.branch_type ?? '')] ?? '—'],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
-              ['City', view.city_name ?? '\u2014'],
-              ['State', view.state_name ?? '\u2014'],
-              ['Address', view.address || '\u2014'],
-              ['Contact Number', view.contact_number || '\u2014'],
-              ['Branch Email', view.email || '\u2014'],
-              ['Branch Head', view.head_name || '\u2014'],
+              ['City', view.city_name ?? '—'],
+              ['State', view.state_name ?? '—'],
+              ['Address', view.address || '—'],
+              ['Contact Number', view.contact_number || '—'],
+              ['Branch Email', view.email || '—'],
+              ['Branch Head', view.head_name || '—'],
               ['Verticals', String(view.vertical_count ?? 0)],
             ]} />
           </Section>
           <Section title="Record">
             <KV rows={[
               ['Created', fmtFull(view.created_at)],
-              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '—'],
               ['Updated', fmtFull(view.updated_at)],
             ]} />
           </Section>
@@ -2379,7 +2379,7 @@ function Branches() {
       {edit && (
         <AddModal formKey="admin.branches" onClose={() => setEdit(null)} onSaved={after}
           edit={{
-            title: `Edit Branch \u2014 ${edit.name}`,
+            title: `Edit Branch — ${edit.name}`,
             // DEF-2: every field the Add Branch form shows is editable here and prefilled.
             initialVals: {
               'Branch Name': edit.name ?? '', 'Branch Code': edit.code ?? '',
@@ -2453,7 +2453,7 @@ function Verticals() {
     <>
       <div className="filters">
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches} onChange={setFBranches} />
-        <SearchChip q={q} setQ={setQ} ph="Search vertical name / code\u2026" />
+        <SearchChip q={q} setQ={setQ} ph="Search vertical name / code…" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Vertical" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
@@ -2461,9 +2461,9 @@ function Verticals() {
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((v) => [
           { node: <span className="nm">{v.name}</span> } as Cell,
-          String(v.branch_name ?? '\u2014'),
-          '\u2014',
-          { mono: String((v.smtp_config as any)?.domain ?? (v.smtp_config as any)?.host ?? '\u2014') } as Cell,
+          String(v.branch_name ?? '—'),
+          '—',
+          { mono: String((v.smtp_config as any)?.domain ?? (v.smtp_config as any)?.host ?? '—') } as Cell,
           toggleCell({
             active: v.is_active !== false, name: v.name, entity: 'Vertical', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/verticals/${v.id}`, { is_active: next }); after(); },
@@ -2476,26 +2476,26 @@ function Verticals() {
       {_bd.bulkModal}
       {del.deleteModal}
       {view && (
-        <DetailModal title={`Vertical \u2014 ${view.name}`} icon="grid" onClose={() => setView(null)}>
+        <DetailModal title={`Vertical — ${view.name}`} icon="grid" onClose={() => setView(null)}>
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
-              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
-              ['Branch', view.branch_name ?? '\u2014'],
+              ['Code', <span className="mono">{view.code ?? '—'}</span>],
+              ['Branch', view.branch_name ?? '—'],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
               ['Pipelines', String(view.pipeline_count ?? 0)],
-              ['SMTP Domain', <span className="mono">{String((view.smtp_config as any)?.domain ?? (view.smtp_config as any)?.host ?? '\u2014')}</span>],
+              ['SMTP Domain', <span className="mono">{String((view.smtp_config as any)?.domain ?? (view.smtp_config as any)?.host ?? '—')}</span>],
               ['Gateway', Object.keys((view.gateway_config as any) ?? {}).length ? 'Configured' : 'Not configured'],
             ]} />
           </Section>
           <Section title="Billing & Identity">
             <KV rows={[
-              ['Display name', view.display_name ?? '\u2014'],
-              ['GSTIN', <span className="mono">{view.gstin ?? '\u2014'}</span>],
-              ['Billing address', view.billing_address ?? '\u2014'],
-              ['Phone', <span className="mono">{view.phone ?? '\u2014'}</span>],
-              ['Email', view.email ?? '\u2014'],
-              ['Logo', view.logo_url ? renderCell({ node: <img src={view.logo_url} alt="logo" style={{ height: 32, maxWidth: 96, objectFit: 'contain' }} /> } as any) : '\u2014'],
+              ['Display name', view.display_name ?? '—'],
+              ['GSTIN', <span className="mono">{view.gstin ?? '—'}</span>],
+              ['Billing address', view.billing_address ?? '—'],
+              ['Phone', <span className="mono">{view.phone ?? '—'}</span>],
+              ['Email', view.email ?? '—'],
+              ['Logo', view.logo_url ? renderCell({ node: <img src={view.logo_url} alt="logo" style={{ height: 32, maxWidth: 96, objectFit: 'contain' }} /> } as any) : '—'],
             ]} />
           </Section>
           <Section title="Bank Accounts & Payments">
@@ -2503,17 +2503,17 @@ function Verticals() {
               ...(((view.banks ?? []) as any[]).length
                 ? ((view.banks ?? []) as any[]).map((b: any, i: number) => [
                     `Bank ${i + 1}${b.active ? ' (active)' : ''}`,
-                    <span>{b.name || '\u2014'}{b.account_no ? ` \u00b7 A/c ${b.account_no}` : ''}{b.ifsc ? ` \u00b7 ${b.ifsc}` : ''}{b.branch ? ` \u00b7 ${b.branch}` : ''}{b.account_holder ? ` \u00b7 ${b.account_holder}` : ''}</span>,
+                    <span>{b.name || '—'}{b.account_no ? ` · A/c ${b.account_no}` : ''}{b.ifsc ? ` · ${b.ifsc}` : ''}{b.branch ? ` · ${b.branch}` : ''}{b.account_holder ? ` · ${b.account_holder}` : ''}</span>,
                   ] as [string, any])
-                : [['Bank', '\u2014'] as [string, any]]),
-              ['UPI ID', <span className="mono">{view.upi_id ?? '\u2014'}</span>],
-              ['Payment QR', view.qr_url ? renderCell({ node: <img src={view.qr_url} alt="Payment QR" style={{ height: 96, maxWidth: 96, objectFit: 'contain' }} /> } as any) : '\u2014'],
+                : [['Bank', '—'] as [string, any]]),
+              ['UPI ID', <span className="mono">{view.upi_id ?? '—'}</span>],
+              ['Payment QR', view.qr_url ? renderCell({ node: <img src={view.qr_url} alt="Payment QR" style={{ height: 96, maxWidth: 96, objectFit: 'contain' }} /> } as any) : '—'],
             ]} />
           </Section>
           <Section title="Record">
             <KV rows={[
               ['Created', fmtFull(view.created_at)],
-              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '—'],
               ['Updated', fmtFull(view.updated_at)],
             ]} />
           </Section>
@@ -2522,7 +2522,7 @@ function Verticals() {
       {edit && (
         <AddModal formKey="admin.verticals" onClose={() => setEdit(null)} onSaved={after}
           edit={{
-            title: `Edit Vertical \u2014 ${edit.name}`,
+            title: `Edit Vertical — ${edit.name}`,
             initialVals: {
               'Vertical Name': edit.name ?? '', 'Vertical Code': edit.code ?? '',
               'Branch': edit.branch_name ?? '', 'Vertical Head': edit.head_name ?? '',
@@ -2541,14 +2541,14 @@ function Verticals() {
             extra: (
               <>
                 <div className="fld span2" style={{ marginTop: 4 }}>
-                  <label>Logo <span className="fhint">image \u00b7 R2 \u00b7 shown on this vertical\u2019s documents</span></label>
+                  <label>Logo <span className="fhint">image · R2 · shown on this vertical’s documents</span></label>
                   <VerticalLogoUpload verticalId={Number(edit.id)} initialUrl={edit.logo_url ?? null} />
                 </div>
-                {/* dev/132 ITEM B \u2014 multiple bank accounts (one required/active) + UPI id + payment QR */}
+                {/* dev/132 ITEM B — multiple bank accounts (one required/active) + UPI id + payment QR */}
                 <VerticalBanksEditor initial={{ banks: (edit.banks ?? []) as any[], upi_id: String(edit.upi_id ?? '') }}
                   onChange={(v) => { payRef.current = v; }} />
                 <div className="fld span2" style={{ marginTop: 4 }}>
-                  <label>Payment QR <span className="fhint">UPI / payment QR image \u00b7 R2</span></label>
+                  <label>Payment QR <span className="fhint">UPI / payment QR image · R2</span></label>
                   <VerticalQrUpload verticalId={Number(edit.id)} initialUrl={edit.qr_url ?? null} />
                 </div>
               </>
@@ -2598,7 +2598,7 @@ function StageEditModal({ stage, onClose, onSaved }: { stage: any; onClose: () =
   return (
     <div className="add-scrim" style={{ zIndex: 280 }}>
       <div className="add-modal" style={{ width: 420 }}>
-        <div className="ah"><h3><Ic k="pencil" />Edit Stage \u2014 {stage.name}</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="ah"><h3><Ic k="pencil" />Edit Stage — {stage.name}</h3><button className="ax" onClick={onClose}><Ic k="x" /></button></div>
         <div className="abody">
           <div className="form-grid" style={{ gridTemplateColumns: '1fr', padding: 0 }}>
             <div className="fld"><label>Stage Name <span className="star">*</span></label>
@@ -2633,16 +2633,16 @@ function PipelineView({ pipeline, onClose, onChanged, onConfigure }: {
   const canEdit = can('pipeline.update');
   const bumped = () => { setTick((t) => t + 1); onChanged(); };
   return (
-    <DetailModal title={`Pipeline \u2014 ${pipeline.name}`} icon="list" width={640} onClose={onClose}
+    <DetailModal title={`Pipeline — ${pipeline.name}`} icon="list" width={640} onClose={onClose}
       footer={onConfigure
         ? <button className="btn primary" onClick={onConfigure}><Ic k="cfg" />Stage Configurator</button>
         : undefined}>
       <Section title="Details">
         <KV rows={[
           ['Name', pipeline.name],
-          ['Code', <span className="mono">{pipeline.code ?? '\u2014'}</span>],
-          ['Branch', pipeline.branch_name ?? '\u2014'],
-          ['Vertical', pipeline.vertical_name ?? '\u2014'],
+          ['Code', <span className="mono">{pipeline.code ?? '—'}</span>],
+          ['Branch', pipeline.branch_name ?? '—'],
+          ['Vertical', pipeline.vertical_name ?? '—'],
           ['Status', renderCell(statusBadge(pipeline.is_active !== false))],
         ]} />
       </Section>
@@ -2662,7 +2662,7 @@ function PipelineView({ pipeline, onClose, onChanged, onConfigure }: {
       <Section title="Record">
         <KV rows={[
           ['Created', fmtFull(pipeline.created_at)],
-          ['Created by', nameOf(ref.users, pipeline.created_by) ?? '\u2014'],
+          ['Created by', nameOf(ref.users, pipeline.created_by) ?? '—'],
           ['Updated', fmtFull(pipeline.updated_at)],
         ]} />
       </Section>
@@ -2677,7 +2677,7 @@ function Pipelines() {
   const ref = useRef_();
   const { scope: gScope } = useScope();
   const [inc, setInc] = useState(false);
-  // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); seeded by the global scope.
+  // UAT-R3 #19 — Pipeline list filters follow Branch → Vertical (+ search); seeded by the global scope.
   const [q, setQ] = useState('');
   const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
   const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
@@ -2702,8 +2702,8 @@ function Pipelines() {
     let dead = false;
     Promise.all(rows.map((p) =>
       api.get<any[]>(`/pipelines/${p.id}/stages`)
-        .then((st) => [Number(p.id), st.filter((x) => x.is_active !== false).map((x) => x.name).join(' \u2192 ')] as const)
-        .catch(() => [Number(p.id), '\u2014'] as const),
+        .then((st) => [Number(p.id), st.filter((x) => x.is_active !== false).map((x) => x.name).join(' → ')] as const)
+        .catch(() => [Number(p.id), '—'] as const),
     )).then((pairs) => { if (!dead) setStagesBy(Object.fromEntries(pairs)); });
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2718,19 +2718,19 @@ function Pipelines() {
           onChange={(v) => { setFBranches(v); setFVerticals([]); }} />
         <FilterMulti label="Vertical" icon="grid" value={fVerticals}
           options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))} onChange={setFVerticals} />
-        <SearchChip q={q} setQ={setQ} ph="Search pipeline name / code\u2026" />
+        <SearchChip q={q} setQ={setQ} ph="Search pipeline name / code…" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
-      {/* UAT-R2 #7 — the list reads in hierarchy order Branch \u203a Vertical \u203a Pipeline
+      {/* UAT-R2 #7 — the list reads in hierarchy order Branch › Vertical › Pipeline
           (columns and row order); the api sorts by branch, vertical, then pipeline name. */}
       <BulkBar count={_bdSel.count} entityLabel="Pipeline" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard fill title="Pipelines" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('pipelines.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Branch', 'Vertical', 'Pipeline', 'Stages', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((pl) => [
-          String(pl.branch_name ?? '\u2014'),
-          String(pl.vertical_name ?? '\u2014'),
+          String(pl.branch_name ?? '—'),
+          String(pl.vertical_name ?? '—'),
           { node: <span className="nm">{pl.name}</span> } as Cell,
-          stagesBy[Number(pl.id)] ?? '\u2026',
+          stagesBy[Number(pl.id)] ?? '…',
           toggleCell({
             active: pl.is_active !== false, name: pl.name, entity: 'Pipeline', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/pipelines/${pl.id}`, { is_active: next }); after(); },
@@ -2752,7 +2752,7 @@ function Pipelines() {
       {edit && (
         <AddModal formKey="leads.pipelinemaster" onClose={() => setEdit(null)} onSaved={after}
           edit={{
-            title: `Edit Pipeline \u2014 ${edit.name}`,
+            title: `Edit Pipeline — ${edit.name}`,
             initialVals: {
               'Pipeline Name': edit.name ?? '', 'Pipeline Code': edit.code ?? '',
               // UAT-R3 #22 — Branch/Vertical are SELECTS now (prefilled via initialIds), not locked text.
@@ -2852,36 +2852,36 @@ export function CampaignView({ campaign, leadCount, onClose, onChanged }: { camp
   const cost = Number(campaign.cost ?? 0);
   const srcs = ref.sources.filter((x) => Number(x.campaign_id) === Number(campaign.id));
   return (
-    <DetailModal title={`Campaign \u2014 ${campaign.name}`} icon="bolt" width={660} onClose={onClose}>
+    <DetailModal title={`Campaign — ${campaign.name}`} icon="bolt" width={660} onClose={onClose}>
       <Section title="Overview">
         <KV rows={[
           ['Name', campaign.name],
-          ['Path', `${campaign.branch_name ?? '\u2014'} \u203a ${campaign.vertical_name ?? '\u2014'} \u203a ${campaign.pipeline_name ?? '\u2014'}`],
+          ['Path', `${campaign.branch_name ?? '—'} › ${campaign.vertical_name ?? '—'} › ${campaign.pipeline_name ?? '—'}`],
           ['Status', renderCell(statusBadge(campaign.is_active !== false))],
-          ['Campaign Type', campaign.campaign_type || '\u2014'],
-          ['Marketing Channel', campaign.marketing_channel || '\u2014'],
+          ['Campaign Type', campaign.campaign_type || '—'],
+          ['Marketing Channel', campaign.marketing_channel || '—'],
           ['Runs', campaign.start_date
-            ? `${fmtDate(campaign.start_date)}${campaign.end_date ? ` \u2192 ${fmtDate(campaign.end_date)}` : ' \u2192 open-ended'}`
-            : '\u2014'],
-          ['Priority', PRIORITY_LABEL[campaign.priority] ?? campaign.priority ?? '\u2014'],
-          ['Spend', cost ? `\u20b9${cost.toLocaleString('en-IN')}` : '\u2014'],
+            ? `${fmtDate(campaign.start_date)}${campaign.end_date ? ` → ${fmtDate(campaign.end_date)}` : ' → open-ended'}`
+            : '—'],
+          ['Priority', PRIORITY_LABEL[campaign.priority] ?? campaign.priority ?? '—'],
+          ['Spend', cost ? `₹${cost.toLocaleString('en-IN')}` : '—'],
           ['Leads', String(leadCount)],
-          ['Cost / lead', cost && leadCount ? `\u20b9${Math.round(cost / leadCount).toLocaleString('en-IN')}` : '\u2014'],
+          ['Cost / lead', cost && leadCount ? `₹${Math.round(cost / leadCount).toLocaleString('en-IN')}` : '—'],
           ['Sources', srcs.length ? srcs.map((x) => x.name).join(', ') : 'None connected'],
-          ['UTM', utmPairs.length ? <span className="mono" style={{ fontSize: 11.5 }}>{utmPairs.map(([k, v]) => `${k}=${v}`).join(' \u00b7 ')}</span> : '\u2014'],
+          ['UTM', utmPairs.length ? <span className="mono" style={{ fontSize: 11.5 }}>{utmPairs.map(([k, v]) => `${k}=${v}`).join(' · ')}</span> : '—'],
         ]} />
       </Section>
       <Section title="Lead distribution (NeoDove)">
         <KV rows={[
-          ['Mode', <>{renderCell({ b: [DIST_LABEL[dist.mode] ?? dist.mode ?? '\u2014', 'b-indigo'] })}<div className="sub" style={{ marginTop: 4, fontSize: 11.5 }}>{DIST_DESC[dist.mode] ?? ''}</div></>],
-          ['Batch size', String(dist.batch_size ?? '\u2014')],
+          ['Mode', <>{renderCell({ b: [DIST_LABEL[dist.mode] ?? dist.mode ?? '—', 'b-indigo'] })}<div className="sub" style={{ marginTop: 4, fontSize: 11.5 }}>{DIST_DESC[dist.mode] ?? ''}</div></>],
+          ['Batch size', String(dist.batch_size ?? '—')],
           ['Agents', agentsNode],
-          ['Round robin', dist.round_robin_scope ?? '\u2014'],
+          ['Round robin', dist.round_robin_scope ?? '—'],
           ['Conditions', Array.isArray(dist.conditions) && dist.conditions.length
             ? <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>{dist.conditions.map((c: any, i: number) => (
               <div key={i} style={{ fontSize: 12 }}>
                 <span className="mono" style={{ fontSize: 11.5 }}>{c.field} {OP_LABEL[c.op] ?? c.op} {Array.isArray(c.value) ? c.value.join(', ') : String(c.value)}</span>
-                {' \u2192 '}{agentChips(c.assign_to_user_ids) ?? '\u2014'}
+                {' → '}{agentChips(c.assign_to_user_ids) ?? '—'}
               </div>))}</div>
             : 'None'],
         ]} />
@@ -2932,16 +2932,16 @@ export function CampaignView({ campaign, leadCount, onClose, onChanged }: { camp
       </Section>
       <Section title="Duplicacy rules (NeoDove)">
         <KV rows={[
-          ['Check scope', DUP_SCOPE_LABEL[dup.check_scope] ?? dup.check_scope ?? '\u2014'],
+          ['Check scope', DUP_SCOPE_LABEL[dup.check_scope] ?? dup.check_scope ?? '—'],
           ['Match key', <span className="mono">{dup.match_key ?? 'phone'}</span>],
-          ['On duplicate', DUP_ACTION_LABEL[dup.on_duplicate] ?? dup.on_duplicate ?? '\u2014'],
-          ['Open lead \u2192 same user', dup.open_reassign_same_user ? 'Yes' : 'No'],
+          ['On duplicate', DUP_ACTION_LABEL[dup.on_duplicate] ?? dup.on_duplicate ?? '—'],
+          ['Open lead → same user', dup.open_reassign_same_user ? 'Yes' : 'No'],
         ]} />
       </Section>
       <Section title="Record">
         <KV rows={[
           ['Created', fmtFull(campaign.created_at)],
-          ['Created by', nameOf(ref.users, campaign.created_by) ?? '\u2014'],
+          ['Created by', nameOf(ref.users, campaign.created_by) ?? '—'],
           ['Updated', fmtFull(campaign.updated_at)],
         ]} />
       </Section>
@@ -2956,7 +2956,7 @@ function Campaigns() {
   // dev/131 (task #213 item 3) — the summary drives the rolled-up cards (Won/Lost/Revenue/Active/Closed),
   // narrowed by the Lead Counsellor filter when set.
   const [inc, setInc] = useState(false);
-  // UAT-R3 #19 — Campaign list filters follow Branch \u2192 Vertical \u2192 Pipeline (+ search, status);
+  // UAT-R3 #19 — Campaign list filters follow Branch → Vertical → Pipeline (+ search, status);
   // each child resets when its parent changes and the API honours the params.
   const { scope: gScope } = useScope();
   const [q, setQ] = useState('');
@@ -3029,7 +3029,7 @@ function Campaigns() {
         <FilterMulti label="Pipeline" icon="list" value={fPipelines}
           options={ref.pipelines.filter((p) => !fVerticals.length || fVerticals.includes(Number(p.vertical_id)))} onChange={setFPipelines} />
         <FilterMulti label="Lead Counsellor" testid="fm-owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
-        <SearchChip q={q} setQ={setQ} ph="Search campaign name\u2026" />
+        <SearchChip q={q} setQ={setQ} ph="Search campaign name…" />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Campaign" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
@@ -3037,22 +3037,22 @@ function Campaigns() {
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => {
           const src = ref.sources.find((x) => Number(x.campaign_id) === Number(c.id));
-          const utm = (c.utm as any)?.utm_campaign ?? (c.utm as any)?.utm_source ?? '\u2014';
+          const utm = (c.utm as any)?.utm_campaign ?? (c.utm as any)?.utm_source ?? '—';
           const leads = counts[Number(c.id)] ?? 0;
           const cost = Number(c.cost ?? 0);
           return [
             { node: <span className="nm">{c.name}</span> } as Cell,
-            String(c.branch_name ?? '\u2014'),
-            String(c.vertical_name ?? '\u2014'),
-            String(c.pipeline_name ?? '\u2014'),
-            src ? ({ b: [src.name, 'b-indigo'] } as Cell) : '\u2014',
-            { mono: utm === '\u2014' ? '\u2014' : `utm=${utm}`, dim: true } as Cell,
-            cost ? `\u20b9${cost.toLocaleString('en-IN')}` : '\u2014',
+            String(c.branch_name ?? '—'),
+            String(c.vertical_name ?? '—'),
+            String(c.pipeline_name ?? '—'),
+            src ? ({ b: [src.name, 'b-indigo'] } as Cell) : '—',
+            { mono: utm === '—' ? '—' : `utm=${utm}`, dim: true } as Cell,
+            cost ? `₹${cost.toLocaleString('en-IN')}` : '—',
             // dev/131 (task #213 item 1) — the LEADS count links to the Leads list pre-filtered to this
             // campaign (reusing the campaign_ids query param the dashboard KPI links use), + owner narrow.
             { node: <a className="mlink" data-testid={`camp-leads-${c.id}`} style={{ cursor: 'pointer' }} onClick={() => go('leads', 'all', { campaign_ids: c.id, ...ownerNav })}>{leads}</a> } as Cell,
-            cost && leads ? ({ mono: `\u20b9${Math.round(cost / leads)}` } as Cell) : '\u2014',
-            DIST_LABEL[(c.distribution_config as any)?.mode] ?? '\u2014',
+            cost && leads ? ({ mono: `₹${Math.round(cost / leads)}` } as Cell) : '—',
+            DIST_LABEL[(c.distribution_config as any)?.mode] ?? '—',
             toggleCell({
               active: c.is_active !== false, name: c.name, entity: 'Campaign', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/campaigns/${c.id}`, { is_active: next }); after(); },
@@ -3062,7 +3062,7 @@ function Campaigns() {
               onDelete: can('campaign.delete') ? () => del.openDelete(Number(c.id), c.name) : undefined,
             }),
           ];
-        })} empty="No campaigns yet \u2014 create one to start pulling leads" />
+        })} empty="No campaigns yet — create one to start pulling leads" />
       {_bd.bulkModal}
       {del.deleteModal}
       {view && <CampaignView campaign={view} leadCount={counts[Number(view.id)] ?? 0} onClose={() => setView(null)} onChanged={() => list.reload()} />}
@@ -3074,7 +3074,7 @@ function Campaigns() {
 /** Edit spec for a course row — the full Configure Course form, shared by the
  *  Courses screen and Administration › Masters so Course always edits with all fields. */
 const courseEditSpec = (edit: any): EditSpec => ({
-  title: `Edit Course \u2014 ${edit.name}`,
+  title: `Edit Course — ${edit.name}`,
   // Course levels (enrollment re-model, batch 1) — the id the Levels editor fetches its rows for.
   levelsCourseId: Number(edit.id),
   // DEF-2: nothing is locked — every Add Course field is editable and prefilled.
@@ -3182,22 +3182,22 @@ function Courses() {
         <EnumMulti label="Status" icon="check" value={fStatuses}
           options={[{ id: 'active', name: 'Active' }, { id: 'inactive', name: 'Inactive' }]} onChange={setFStatuses} />
         <EnumMulti label="Course Type" icon="award" value={fTypes} options={typeFilterOpts} onChange={setFTypes} />
-        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search course name / code\u2026" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search course name / code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Course" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Type', 'Level', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => [
-          { mono: String(c.code ?? '\u2014') } as Cell,
+          { mono: String(c.code ?? '—') } as Cell,
           { node: <span className="nm">{c.name}</span> } as Cell,
-          String(nameOf(ref.verticals, (c.meta as any)?.vertical_id) ?? (c.meta as any)?.vertical ?? '\u2014'),
-          String((c.meta as any)?.course_type ?? '\u2014'),
-          String((c.meta as any)?.level ?? '\u2014'),
-          String((c.meta as any)?.mode ?? '\u2014'),
-          String((c.meta as any)?.duration ?? '\u2014'),
-          String((c.meta as any)?.fee ?? '\u2014'),
-          String(nameOf(ref.branches, (c.meta as any)?.branch_id) ?? '\u2014'),
+          String(nameOf(ref.verticals, (c.meta as any)?.vertical_id) ?? (c.meta as any)?.vertical ?? '—'),
+          String((c.meta as any)?.course_type ?? '—'),
+          String((c.meta as any)?.level ?? '—'),
+          String((c.meta as any)?.mode ?? '—'),
+          String((c.meta as any)?.duration ?? '—'),
+          String((c.meta as any)?.fee ?? '—'),
+          String(nameOf(ref.branches, (c.meta as any)?.branch_id) ?? '—'),
           toggleCell({
             active: c.is_active !== false, name: c.name, entity: 'Course', canToggle: canEdit,
             onToggle: async (next) => { await api.patch(`/masters/course/${c.id}`, { is_active: next }); after(); },
@@ -3210,26 +3210,26 @@ function Courses() {
       {_bd.bulkModal}
       {del.deleteModal}
       {view && (
-        <DetailModal title={`Course \u2014 ${view.name}`} icon="book" onClose={() => setView(null)}>
+        <DetailModal title={`Course — ${view.name}`} icon="book" onClose={() => setView(null)}>
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
-              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
-              ['Branch', nameOf(ref.branches, (view.meta as any)?.branch_id) ?? '\u2014'],
-              ['Vertical', nameOf(ref.verticals, (view.meta as any)?.vertical_id) ?? '\u2014'],
-              ['Course type', String((view.meta as any)?.course_type ?? '\u2014')],
-              ['Course level', String((view.meta as any)?.level ?? '\u2014')],
-              ['Training mode', String((view.meta as any)?.mode ?? '\u2014')],
-              ['Duration', String((view.meta as any)?.duration ?? '\u2014')],
-              ['Standard fee', String((view.meta as any)?.fee ?? '\u2014')],
-              ['Description', String((view.meta as any)?.description ?? '\u2014')],
+              ['Code', <span className="mono">{view.code ?? '—'}</span>],
+              ['Branch', nameOf(ref.branches, (view.meta as any)?.branch_id) ?? '—'],
+              ['Vertical', nameOf(ref.verticals, (view.meta as any)?.vertical_id) ?? '—'],
+              ['Course type', String((view.meta as any)?.course_type ?? '—')],
+              ['Course level', String((view.meta as any)?.level ?? '—')],
+              ['Training mode', String((view.meta as any)?.mode ?? '—')],
+              ['Duration', String((view.meta as any)?.duration ?? '—')],
+              ['Standard fee', String((view.meta as any)?.fee ?? '—')],
+              ['Description', String((view.meta as any)?.description ?? '—')],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
             ]} />
           </Section>
           <Section title="Record">
             <KV rows={[
               ['Created', fmtFull(view.created_at)],
-              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '—'],
               ['Updated', fmtFull(view.updated_at)],
             ]} />
           </Section>
@@ -3252,19 +3252,19 @@ function UserView({ user, onClose }: { user: any; onClose: () => void }) {
   const scopeOf = (a: any) => {
     const bits = [nameOf(ref.branches, a.branch_id), nameOf(ref.verticals, a.vertical_id),
       nameOf(ref.pipelines, a.pipeline_id), nameOf(ref.campaigns, a.campaign_id)].filter(Boolean);
-    return bits.length ? bits.join(' \u203a ') : 'Org-wide';
+    return bits.length ? bits.join(' › ') : 'Org-wide';
   };
   return (
-    <DetailModal title={`User \u2014 ${user.name}`} icon="users" width={620} onClose={onClose}>
-      {!d ? <div className="empty-note">Loading\u2026</div> : (
+    <DetailModal title={`User — ${user.name}`} icon="users" width={620} onClose={onClose}>
+      {!d ? <div className="empty-note">Loading…</div> : (
         <>
           <Section title="Profile">
             <KV rows={[
               ['Name', d.name],
               ['Email', <span className="mono">{d.email}</span>],
-              ['Phone', d.phone ? <span className="mono">{d.phone}</span> : '\u2014'],
+              ['Phone', d.phone ? <span className="mono">{d.phone}</span> : '—'],
               ['Status', renderCell(statusBadge(d.status !== 'disabled'))],
-              ['Reports to', d.report_to_name || '\u2014'],
+              ['Reports to', d.report_to_name || '—'],
               ['MFA', d.mfa_enabled ? 'Enabled' : 'Off'],
             ]} />
           </Section>
@@ -3279,7 +3279,7 @@ function UserView({ user, onClose }: { user: any; onClose: () => void }) {
             {(d.teams ?? []).length === 0 ? <div className="empty-note">Not part of any team</div> : (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {(d.teams ?? []).map((t: any) => (
-                  <span key={t.id} className={`bdg ${t.is_leader ? 'b-green' : 'b-cyan'}`}>{t.name}{t.is_leader ? ' \u00b7 leader' : ''}</span>
+                  <span key={t.id} className={`bdg ${t.is_leader ? 'b-green' : 'b-cyan'}`}>{t.name}{t.is_leader ? ' · leader' : ''}</span>
                 ))}
               </div>
             )}
@@ -3509,7 +3509,7 @@ function Users() {
             <option value="">All</option><option value="active">Active</option><option value="disabled">Inactive</option>
           </select>
         </div>
-        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email\u2026" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
+        <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / email…" value={fq} onChange={(e) => setFq(e.target.value)} /></div>
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="users" /><b>{rows.length}</b> users</div>
       </div>
       <BulkBar count={_bdSel.count} entityLabel="User" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
@@ -3524,10 +3524,10 @@ function Users() {
               <div className="cell-u"><Avatar name={u.name} />
                 <div><div className="nm">{u.name}</div><div className="sub">{u.email}</div></div>
               </div>) } as Cell,
-            u.role_names || (d ? '\u2014' : '\u2026'),
-            u.report_to_name || '\u2014',
-            scopeBits.length ? scopeBits.join(' \u00b7 ') : a ? 'Org-wide' : '\u2014',
-            '\u2014',
+            u.role_names || (d ? '—' : '…'),
+            u.report_to_name || '—',
+            scopeBits.length ? scopeBits.join(' · ') : a ? 'Org-wide' : '—',
+            '—',
             toggleCell({
               active: u.status !== 'disabled', name: u.name, entity: 'User', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/users/${u.id}`, { status: next ? 'active' : 'disabled' }); after(); },
@@ -3672,7 +3672,7 @@ function Roles() {
     return g.some((x) => x.record_scope === 'all') ? 'y' : 'p';
   };
   const pm = (v: string, i: number) => (
-    <td key={i}><span className={`pm ${v}`}>{v === 'y' ? '\u2713' : v === 'p' ? '\u25d0' : '\u2013'}</span></td>
+    <td key={i}><span className={`pm ${v}`}>{v === 'y' ? '✓' : v === 'p' ? '◐' : '–'}</span></td>
   );
 
   return (
@@ -3689,9 +3689,9 @@ function Roles() {
             </tbody>
           </table>
           <div className="legend" style={{ marginTop: 14 }}>
-            <span className="li"><span className="pm y">\u2713</span> Full</span>
-            <span className="li"><span className="pm p">\u25d0</span> Partial / scoped</span>
-            <span className="li"><span className="pm n">\u2013</span> No access</span>
+            <span className="li"><span className="pm y">✓</span> Full</span>
+            <span className="li"><span className="pm p">◐</span> Partial / scoped</span>
+            <span className="li"><span className="pm n">–</span> No access</span>
           </div>
         </div>
       </div>
@@ -3747,33 +3747,33 @@ function Audit() {
       <Kpis items={[
         { lab: 'Activities today', val: String(todays.length), ic: 'bolt' },
         { lab: 'Edits', val: String(todays.filter((r) => r.action === 'update').length), ic: 'note' },
-        { lab: 'Messages sent', val: '\u2014', ic: 'wa' },
-        { lab: 'Calls logged', val: '\u2014', ic: 'phone' },
+        { lab: 'Messages sent', val: '—', ic: 'wa' },
+        { lab: 'Calls logged', val: '—', ic: 'phone' },
       ]} />
       <div className="filters" style={{ marginBottom: 12 }}>
         <DateRange value={range} onChange={setRange} idPrefix="audit-dr" />
       </div>
-      <TableCard fill title="Activity log \u2014 all users" more={<ListActions onExport={() => downloadObjectsCsv('audit-log.csv', logs.data ?? [])} onRefresh={() => logs.reload()} />} cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
+      <TableCard fill title="Activity log — all users" more={<ListActions onExport={() => downloadObjectsCsv('audit-log.csv', logs.data ?? [])} onRefresh={() => logs.reload()} />} cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
         rows={rows.map((r) => [
           { mono: new Date(r.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), dim: true } as Cell,
           r.actor_name ?? 'System',
-          String(r.entity_type ?? '\u2014'),
+          String(r.entity_type ?? '—'),
           { b: ACT[r.action] ?? [r.action, 'b-gray'] } as Cell,
-          r.entity_id ? `#${r.entity_id}` : '\u2014',
+          r.entity_id ? `#${r.entity_id}` : '—',
           rowActions({ onView: () => setSel(r) }),
         ])} empty="No audit entries yet"
         onRowClick={(i) => setSel(rows[i])} />
       {sel && (
-        <DetailModal title={`Audit \u2014 ${sel.action} ${sel.entity_type ?? ''} ${sel.entity_id ? `#${sel.entity_id}` : ''}`} icon="shield" width={640} onClose={() => setSel(null)}>
+        <DetailModal title={`Audit — ${sel.action} ${sel.entity_type ?? ''} ${sel.entity_id ? `#${sel.entity_id}` : ''}`} icon="shield" width={640} onClose={() => setSel(null)}>
           <Section title="Event">
             <KV rows={[
               ['When', fmtFull(sel.occurred_at)],
               ['Actor', sel.actor_name ?? 'System'],
               ['Action', renderCell({ b: ACT[sel.action] ?? [sel.action, 'b-gray'] })],
-              ['Module', String(sel.entity_type ?? '\u2014')],
-              ['Record', sel.entity_id ? `#${sel.entity_id}` : '\u2014'],
-              ['IP', sel.ip ? <span className="mono">{sel.ip}</span> : '\u2014'],
-              ['Agent', sel.user_agent ? <span style={{ fontSize: 11.5 }}>{sel.user_agent}</span> : '\u2014'],
+              ['Module', String(sel.entity_type ?? '—')],
+              ['Record', sel.entity_id ? `#${sel.entity_id}` : '—'],
+              ['IP', sel.ip ? <span className="mono">{sel.ip}</span> : '—'],
+              ['Agent', sel.user_agent ? <span style={{ fontSize: 11.5 }}>{sel.user_agent}</span> : '—'],
             ]} />
           </Section>
           {sel.before ? (
@@ -4168,9 +4168,9 @@ function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {})
         rows={rows.map((m) => {
           const cells: Cell[] = [
             { node: <span className="nm">{m.name}</span> },
-            { mono: String(m.code ?? '\u2014') },
+            { mono: String(m.code ?? '—') },
           ];
-          if (hasParent) cells.push(String(m.parent_name ?? '\u2014'));
+          if (hasParent) cells.push(String(m.parent_name ?? '—'));
           cells.push(
             { mono: String(m.sort_order ?? 0), dim: true },
             toggleCell({
@@ -4193,12 +4193,12 @@ function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {})
         ? <AddModal formKey="students.courses" onClose={() => setEdit(null)} onSaved={after} edit={courseEditSpec(edit)} />
         : <AddMasterModal type={type} initial={edit} onClose={() => setEdit(null)} onCreated={after} />)}
       {view && (
-        <DetailModal title={`${label.replace(/s$/, '')} \u2014 ${view.name}`} icon="cfg" onClose={() => setView(null)}>
+        <DetailModal title={`${label.replace(/s$/, '')} — ${view.name}`} icon="cfg" onClose={() => setView(null)}>
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
-              ['Code', <span className="mono">{view.code ?? '\u2014'}</span>],
-              hasParent ? ['Parent', String(view.parent_name ?? '\u2014')] : null,
+              ['Code', <span className="mono">{view.code ?? '—'}</span>],
+              hasParent ? ['Parent', String(view.parent_name ?? '—')] : null,
               ['Sort order', String(view.sort_order ?? 0)],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
               Object.keys((view.meta as any) ?? {}).length
@@ -4209,7 +4209,7 @@ function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {})
           <Section title="Record">
             <KV rows={[
               ['Created', fmtFull(view.created_at)],
-              ['Created by', nameOf(ref.users, view.created_by) ?? '\u2014'],
+              ['Created by', nameOf(ref.users, view.created_by) ?? '—'],
               ['Updated', fmtFull(view.updated_at)],
             ]} />
           </Section>
@@ -4446,7 +4446,7 @@ const BATCH_TYPE_OPTS: Array<{ id: string; name: string }> = [
   { id: 'online', name: 'Online' }, { id: 'corporate', name: 'Corporate' },
   { id: 'customized', name: 'Customized' },
 ];
-const batchStatusMeta = (status: string) => BATCH_STATUS_META[status] ?? { label: status || '\u2014', cls: 'b-gray', meaning: '', manual: false };
+const batchStatusMeta = (status: string) => BATCH_STATUS_META[status] ?? { label: status || '—', cls: 'b-gray', meaning: '', manual: false };
 const batchStatusCell = (status: string): Cell => { const m = batchStatusMeta(status); return { b: [m.label, m.cls] }; };
 
 /* Multi-select STATUS filter for the Batches list — the 7 lifecycle codes (string-valued, so a
@@ -5988,18 +5988,18 @@ export function AdmissionActionModal({ enrolment, action, onClose, onDone }:
             <option value="phone">Phone</option>
             <option value="email">Email</option>
             <option value="signed_form">Signed form</option>
-            {/* dev/84 item 5 — manual override when the student\u2019s confirmation cannot be captured (technical issue). */}
+            {/* dev/84 item 5 — manual override when the student’s confirmation cannot be captured (technical issue). */}
             <option value="manual">Manual confirmation (technical issue)</option>
           </select>
           <div className="sub" style={{ fontSize: 11, marginTop: 4 }}>{via === 'manual'
-            ? 'Manual override \u2014 record a reason below; it is stamped with your name as the person who confirmed.'
-            : 'OTP / e-sign capture can be added later \u2014 this records the confirmation event.'}</div>
+            ? 'Manual override — record a reason below; it is stamped with your name as the person who confirmed.'
+            : 'OTP / e-sign capture can be added later — this records the confirmation event.'}</div>
         </div>
       )}
       {(action === 'confirm' || action === 'admit') && (
         <div className="fld"><label htmlFor="adm-note">{action === 'confirm' && via === 'manual' ? <>Reason <span className="star">*</span></> : 'Note'}</label>
           <input id="adm-note" className="ainp" value={note} disabled={busy}
-            placeholder={action === 'confirm' && via === 'manual' ? 'e.g. Confirmed manually \u2014 OTP/e-sign channel down' : 'Optional note'}
+            placeholder={action === 'confirm' && via === 'manual' ? 'e.g. Confirmed manually — OTP/e-sign channel down' : 'Optional note'}
             onChange={(e) => setNote(e.target.value)} data-testid="admj-note" />
         </div>
       )}

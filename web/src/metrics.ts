@@ -17,7 +17,7 @@
  */
 
 /** won / ALL leads. The dashboard KPI and the Funnel report — the same number. */
-export const CONVERSION_LABEL_LEAD_WON = 'Lead\u2192won conversion';
+export const CONVERSION_LABEL_LEAD_WON = 'Lead→won conversion';
 
 /** enrolments / leads the counsellor OWNS. May exceed 100% and that is correct. */
 export const CONVERSION_LABEL_COUNSELLOR = 'Counsellor conversion (own leads)';

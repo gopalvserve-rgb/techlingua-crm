@@ -261,7 +261,7 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
     const cid = String(lines[i].course_id ?? '');
     const lv = (levelCache[cid] ?? []).find((x: any) => String(x.id) === levelId);
     const baseName = (ref.courses.find((x) => String(x.id) === cid)?.name) ?? lines[i].description;
-    if (lv) setLine(i, { unit_price: minorToInput(Number(lv.fee_minor ?? 0)), description: `${baseName} \u2014 ${lv.label || lv.code}` });
+    if (lv) setLine(i, { unit_price: minorToInput(Number(lv.fee_minor ?? 0)), description: `${baseName} — ${lv.label || lv.code}` });
     else setLine(i, { description: baseName });
   };
 
@@ -325,8 +325,8 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
                 : <LeadLookup inputId="q-lead" value={leadLabel} onPick={(id, label) => { setLead(id); setLeadLabel(label); }} />}
               <div className="fhint">
                 {revising
-                  ? 'A revision stays with its own quotation\u2019s lead — the same customer, a new version. Quote somebody else and it is a new quotation, not a revision.'
-                  : 'The branch, vertical, pipeline and campaign are taken from the lead — a quotation cannot contradict its own lead\u2019s path.'}
+                  ? 'A revision stays with its own quotation’s lead — the same customer, a new version. Quote somebody else and it is a new quotation, not a revision.'
+                  : 'The branch, vertical, pipeline and campaign are taken from the lead — a quotation cannot contradict its own lead’s path.'}
               </div>
             </div>
             <div className="fld">
@@ -338,7 +338,7 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
             <div className="fld">
               <label htmlFor="q-plan">Payment plan</label>
               <select id="q-plan" className="ainp" value={plan} onChange={(e) => setPlan(e.target.value)} data-testid="quote-plan">
-                <option value="">\u2014</option>
+                <option value="">—</option>
                 {(qMeta.data?.payment_plans ?? [{ key: 'full', label: 'Full payment' }]).map((p: any) => (
                   <option key={p.key} value={p.key}>{p.label}</option>
                 ))}
@@ -348,7 +348,7 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
             <div className="fld">
               <label htmlFor="q-number">Number</label>
               <input id="q-number" className="ainp"
-                value={revising ? `${String(initial.quote_no).replace(/-R\d+$/, '')}-R\u2026` : initial?.quote_no ?? 'Allocated on save'}
+                value={revising ? `${String(initial.quote_no).replace(/-R\d+$/, '')}-R…` : initial?.quote_no ?? 'Allocated on save'}
                 readOnly disabled />
               <div className="fhint">
                 {revising
@@ -383,10 +383,10 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
                       <div className="fld">
                         <label htmlFor={`q-level-${i}`}>Course Level</label>
                         <select id={`q-level-${i}`} className="ainp" defaultValue="" onChange={(e) => pickLevel(i, e.target.value)} data-testid={`quote-level-${i}`}>
-                          <option value="">\u2014 Whole course \u2014</option>
-                          {(levelCache[String(l.course_id)] ?? []).map((lv: any) => <option key={lv.id} value={lv.id}>{lv.label || lv.code}{lv.fee_minor != null ? ` \u00b7 ${fmtINR(Number(lv.fee_minor))}` : ''}</option>)}
+                          <option value="">— Whole course —</option>
+                          {(levelCache[String(l.course_id)] ?? []).map((lv: any) => <option key={lv.id} value={lv.id}>{lv.label || lv.code}{lv.fee_minor != null ? ` · ${fmtINR(Number(lv.fee_minor))}` : ''}</option>)}
                         </select>
-                        <div className="fhint">Optional \u2014 sets the rate to that level.</div>
+                        <div className="fhint">Optional — sets the rate to that level.</div>
                       </div>
                     )}
                     <div className="fld">
@@ -1310,8 +1310,8 @@ export function CounsellorPerformance() {
   const rows = data ?? [];
   const s = summary.data;
 
-  const tat = (m: number | null) => (m === null ? '\u2014' : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`);
-  const pctVal = (v: number | null | undefined) => (v === null || v === undefined ? '\u2014' : `${v}%`);
+  const tat = (m: number | null) => (m === null ? '—' : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`);
+  const pctVal = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${v}%`);
 
   return (
     <>
@@ -1339,14 +1339,14 @@ export function CounsellorPerformance() {
         { lab: 'Leads Assigned', val: String(s?.leads ?? 0), ic: 'leads' },
         { lab: 'Leads Contacted', val: String(s?.leads_contacted ?? 0), ic: 'wa' },
         { lab: 'Enrolments', val: String(s?.enrolments ?? 0), ic: 'check' },
-        { lab: CONVERSION_LABEL_COUNSELLOR, val: s ? pctVal(s.conversion_pct) : '\u2014', ic: 'target' },
+        { lab: CONVERSION_LABEL_COUNSELLOR, val: s ? pctVal(s.conversion_pct) : '—', ic: 'target' },
       ]} />
       {/* Row 2 — Financial & Productivity */}
       <Kpis items={[
-        { lab: 'Revenue Booked', val: s ? fmtINR(s.revenue_minor) : '\u2014', ic: 'rupee' },
-        { lab: 'Revenue Collected', val: s ? fmtINR(s.collected_minor) : '\u2014', ic: 'rupee' },
+        { lab: 'Revenue Booked', val: s ? fmtINR(s.revenue_minor) : '—', ic: 'rupee' },
+        { lab: 'Revenue Collected', val: s ? fmtINR(s.collected_minor) : '—', ic: 'rupee' },
         { lab: 'Meetings Scheduled', val: String(s?.meetings ?? 0), ic: 'clock' },
-        { lab: 'Follow-up Adherence', val: s ? pctVal(s.adherence_pct) : '\u2014', ic: 'perf' },
+        { lab: 'Follow-up Adherence', val: s ? pctVal(s.adherence_pct) : '—', ic: 'perf' },
       ]} />
 
       <TableCard
@@ -1365,7 +1365,7 @@ export function CounsellorPerformance() {
           { mono: fmtINR(r.revenue_minor) },
           { mono: fmtINR(r.collected_minor) },
           tat(r.tat_median_minutes),
-          r.adherence_pct === null ? '\u2014' : `${r.adherence_pct}%`,
+          r.adherence_pct === null ? '—' : `${r.adherence_pct}%`,
         ])}
       />
       <div className="card" style={{ marginTop: 12 }}>
@@ -1404,8 +1404,8 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
 
   const list = enrolments.data ?? [];
   const chosen = list.find((e) => String(e.id) === enrolment);
-  // item #6 — Branch \u203a Vertical \u203a Course breadcrumb for the chosen enrolment (same path pattern as the receipt modal).
-  const chosenPath = chosen ? [chosen.branch_name, chosen.vertical_name, chosen.course_name].filter(Boolean).join(' \u203a ') : '';
+  // item #6 — Branch › Vertical › Course breadcrumb for the chosen enrolment (same path pattern as the receipt modal).
+  const chosenPath = chosen ? [chosen.branch_name, chosen.vertical_name, chosen.course_name].filter(Boolean).join(' › ') : '';
   const needsRef = ['cheque', 'upi', 'online'].includes(mode);
   // dev/143 (client 28aug, item 3 REDO) — the search now FILLS the modal: picking a result sets
   // the enrolment (breadcrumb + fee lines follow) and defaults the amount to the outstanding
@@ -1459,7 +1459,7 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
                     ) : list.slice(0, 8).map((e) => (
                       <button type="button" key={e.id} role="option" aria-selected={String(e.id) === enrolment}
                         className={`collect-result${String(e.id) === enrolment ? ' on' : ''}`} onClick={() => pickEnrol(e)}>
-                        <span className="cr-main"><b className="mono">{e.enrolment_no}</b> \u00b7 {e.lead_name}{e.lead_phone ? ` \u00b7 ${e.lead_phone}` : ''}{e.course_name ? ` \u00b7 ${e.course_name}` : ''}</span>
+                        <span className="cr-main"><b className="mono">{e.enrolment_no}</b> · {e.lead_name}{e.lead_phone ? ` · ${e.lead_phone}` : ''}{e.course_name ? ` · ${e.course_name}` : ''}</span>
                         <span className="cr-bal">{fmtINR(e.balance_minor)} due</span>
                       </button>
                     ))}
@@ -1479,7 +1479,7 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
               </select>
               {chosen ? (
                 <>
-                  <div className="fhint"><span className="kl">Branch \u203a Vertical \u203a Course</span> <b>{chosenPath || '\u2014'}</b></div>
+                  <div className="fhint"><span className="kl">Branch › Vertical › Course</span> <b>{chosenPath || '—'}</b></div>
                   <div className="fhint">
                     Net fee {fmtINR(chosen.net_fee_minor)}{Number(chosen.exam_fee_minor ?? 0) > 0 ? ` + exam ${fmtINR(chosen.exam_fee_minor)}` : ''} ·
                     total payable {fmtINR(Number(chosen.total_payable_minor ?? (Number(chosen.net_fee_minor) + Number(chosen.exam_fee_minor ?? 0))))} · paid {fmtINR(chosen.paid_minor)} ·
@@ -1540,7 +1540,7 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
  * PDF is downloaded from the separate "Download receipt PDF" action (R2/streamed by the API).
  */
 export function ReceiptViewModal({ r, onClose }: { r: any; onClose: () => void }) {
-  const path = [r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '\u2014';
+  const path = [r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' › ') || '—';
   return (
     <div className="add-scrim">
       <div className="add-modal" style={{ maxWidth: 520 }}>
@@ -1551,7 +1551,7 @@ export function ReceiptViewModal({ r, onClose }: { r: any; onClose: () => void }
             <div><span className="kl">Enrolment</span><span className="kvv">{r.enrolment_no}</span></div>
             <div><span className="kl">Amount</span><span className="kvv">{fmtINR(r.amount_minor)}</span></div>
             <div><span className="kl">Mode</span><span className="kvv">{String(r.mode).toUpperCase()}</span></div>
-            <div><span className="kl">Reference</span><span className="kvv">{r.reference || '\u2014'}</span></div>
+            <div><span className="kl">Reference</span><span className="kvv">{r.reference || '—'}</span></div>
             <div><span className="kl">Received</span><span className="kvv">{fmtDateTimeIST(r.received_at)}</span></div>
             <div className="span2"><span className="kl">Branch › Vertical › Course</span><span className="kvv">{path}</span></div>
             {r.note ? <div className="span2"><span className="kl">Note</span><span className="kvv">{r.note}</span></div> : null}
@@ -1634,7 +1634,7 @@ export function FeeCollection() {
         empty="No payments recorded yet" />
       <TableCard
         title="Fee Receipt Records" icon="rupee"
-        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Date', 'Branch \u203a Vertical \u203a Course', 'Actions']}
+        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Date', 'Branch › Vertical › Course', 'Actions']}
         empty="No payments recorded yet"
         rows={rows.map((r): Cell[] => [
           { node: <b className="mono">{r.receipt_no}</b> },
@@ -1645,7 +1645,7 @@ export function FeeCollection() {
           r.reference ? { mono: r.reference } : '—',
           dt(r.received_at),
           dt(r.received_at), // item #2 — receipt/payment Date column
-          { node: <span>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' \u203a ') || '—'}</span> },
+          { node: <span>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' › ') || '—'}</span> },
           {
             node: (
               <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
