@@ -4,6 +4,8 @@ import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { NumberingService } from '../numbering/numbering.service';
 import { requireDateString } from '../common/date.util';
+import { studentIdCardPdf, Letterhead } from '../pdf/documents';
+import { DocTemplateService } from '../doctemplates/doc-template.service';
 
 /**
  * EMPLOYEE DIRECTORY — the staff register (Phase 2 ERP Batch 6, Basic HR). Branch-scoped
@@ -19,7 +21,9 @@ const STATUSES = ['active', 'inactive'];
 
 @Injectable()
 export class EmployeeService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService, private readonly numbering: NumberingService) {}
+  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService, private readonly numbering: NumberingService,
+    /** dev/143 item 5 — Template Setup overrides for the Employee ID card. Optional. */
+    private readonly docTemplates?: DocTemplateService) {}
 
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -89,6 +93,41 @@ export class EmployeeService {
         WHERE e.id = $1::bigint AND e.deleted_at IS NULL AND ${w}`, params);
     if (!row) throw new NotFoundException('Employee not found (or outside your access).');
     return row;
+  }
+
+  /**
+   * EMPLOYEE ID CARD (dev/143 item 5) — a printable ID card that CONSUMES the `employee_id`
+   * document template (header title / logo / footer). Reuses the ID-card layout; employee
+   * fields are mapped onto it and the template header title relabels it as an employee card.
+   */
+  async idCard(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string }> {
+    const e = await this.get(id, scope);
+    const org = await this.db.one<any>(`SELECT name FROM organisation ORDER BY id LIMIT 1`);
+    const today = new Date();
+    const lh: Letterhead = {
+      org_name: org?.name || 'Tech Lingua LLP', vertical_name: e.vertical_name ?? null,
+      branch_name: e.branch_name ?? null, branch_address: null, branch_email: e.email ?? null, branch_phone: e.phone ?? null,
+    };
+    lh.tpl = this.docTemplates ? await this.docTemplates.overridesFor('employee_id') : null;
+    // If the template gives no header title, default the card label to an employee card.
+    if (!lh.tpl || !lh.tpl.header_title || !String(lh.tpl.header_title).trim()) {
+      lh.tpl = { ...(lh.tpl ?? {}), header_title: 'Employee Identity Card' };
+    }
+    const buffer = studentIdCardPdf({
+      student_name: e.name,
+      student_no: e.employee_code,
+      roll_no: e.designation ?? null,
+      enrollment_no: null,
+      courses: e.department ? [e.department] : [],
+      batch_name: e.employment_type ?? null,
+      branch_name: e.branch_name ?? null,
+      vertical_name: e.vertical_name ?? null,
+      phone: e.phone ?? null,
+      issue_date: today.toISOString(),
+      valid_until: new Date(today.getFullYear() + 3, today.getMonth(), today.getDate()).toISOString(),
+      photo: null,
+    }, lh);
+    return { buffer, filename: `employee-id-${String(e.employee_code ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
   }
 
   private async assertHierarchy(branchId: number, verticalId: number | null) {

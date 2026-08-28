@@ -33,6 +33,17 @@ export interface Letterhead {
   branch_address?: string | null;
   branch_phone?: string | null;
   branch_email?: string | null;
+  /** dev/143 (item 5) — Template Setup overrides for THIS document type (document_template).
+   *  Threaded on the Letterhead so no doc-function signature changes. */
+  tpl?: DocTemplateOverrides | null;
+}
+
+/** Editable per-template settings consumed by the generators (Template Setup, Administration). */
+export interface DocTemplateOverrides {
+  header_title?: string | null;
+  show_logo?: boolean | null;
+  footer_text?: string | null;
+  terms?: string | null;
 }
 
 const money = (minor: number) => formatINR(Number(minor ?? 0), { symbol: false });
@@ -55,8 +66,9 @@ function letterhead(p: PdfPage, lh: Letterhead, docTitle: string, docNo: string)
   if (contact) { p.text(contact, M, y, { size: 8.5, color: MUTED }); y += 11; }
   if (lh.org_gst) { p.text(`GSTIN: ${lh.org_gst}`, M, y, { size: 8.5, color: MUTED }); y += 11; }
 
-  // the document block, right-aligned
-  p.text(docTitle.toUpperCase(), M, 58, { size: 15, font: 'Helvetica-Bold', color: BRAND, align: 'right', width: W });
+  // the document block, right-aligned — the Template Setup header title overrides the default.
+  const headTitle = (lh.tpl?.header_title && lh.tpl.header_title.trim()) ? lh.tpl.header_title.trim() : docTitle;
+  p.text(headTitle.toUpperCase(), M, 58, { size: 15, font: 'Helvetica-Bold', color: BRAND, align: 'right', width: W });
   p.text(docNo, M, 76, { size: 11, font: 'Helvetica-Bold', color: INK, align: 'right', width: W });
 
   y = Math.max(y + 8, 100);
@@ -251,6 +263,7 @@ export function receiptPdf(r: ReceiptDoc, lh: Letterhead): Buffer {
   p.text('Authorised signatory', M + W - 170, y + 38, { size: 8, color: MUTED });
 
   footer(p,
+    (lh.tpl?.footer_text && lh.tpl.footer_text.trim() ? lh.tpl.footer_text.trim() + ' ' : '') +
     'Computer-generated receipt; valid without signature. ' +
     'This acknowledges the amount received only and is not a GST tax invoice. ' +
     'Cheque payments are subject to realisation. Amounts are in Indian Rupees (Rs.). ' +
@@ -694,7 +707,8 @@ export function invoicePdf(inv: InvoiceDoc, lh: Letterhead): Buffer {
   }
 
   if (inv.notes) { p.text('Notes', M, y, { size: 8, color: MUTED }); y = p.paragraph(inv.notes, M, y + 12, W, { size: 9, color: INK }) + 6; }
-  if (inv.terms) { p.text('Terms', M, y, { size: 8, color: MUTED }); y = p.paragraph(inv.terms, M, y + 12, W, { size: 9, color: INK }) + 6; }
+  const invTerms = inv.terms || (lh.tpl?.terms && lh.tpl.terms.trim() ? lh.tpl.terms.trim() : null);
+  if (invTerms) { p.text('Terms', M, y, { size: 8, color: MUTED }); y = p.paragraph(invTerms, M, y + 12, W, { size: 9, color: INK }) + 6; }
 
   y += 18;
   p.line(M + W - 170, y + 26, PdfPage.WIDTH - M, y + 26, { color: RULE });
@@ -708,6 +722,7 @@ export function invoicePdf(inv: InvoiceDoc, lh: Letterhead): Buffer {
   }
 
   footer(p,
+    (lh.tpl?.footer_text && lh.tpl.footer_text.trim() ? lh.tpl.footer_text.trim() + ' ' : '') +
     'This is a GST tax invoice issued under the CGST/SGST/IGST Acts. ' +
     'Tax is charged as CGST+SGST for intra-state supplies and IGST for inter-state supplies, per the place of supply. ' +
     'Amounts are in Indian Rupees (Rs.). ' +
@@ -761,9 +776,10 @@ export function studentIdCardPdf(c: StudentIdCardDoc, lh: Letterhead): Buffer {
   // header band
   p.rect(x0, y0, cardW, 72, BRAND);
   p.text((lh.vertical_name || lh.org_name).toUpperCase(), x0, y0 + 26, { size: 14, font: 'Helvetica-Bold', color: WHITE, align: 'center', width: cardW });
-  const sub = lh.vertical_name && lh.vertical_name !== lh.org_name ? `a ${lh.org_name} initiative` : 'STUDENT IDENTITY CARD';
+  const idTitle = (lh.tpl?.header_title && lh.tpl.header_title.trim()) ? lh.tpl.header_title.trim().toUpperCase() : 'STUDENT IDENTITY CARD';
+  const sub = lh.vertical_name && lh.vertical_name !== lh.org_name ? `a ${lh.org_name} initiative` : idTitle;
   p.text(sub, x0, y0 + 44, { size: 8.5, color: rgb('#e5e7ff'), align: 'center', width: cardW });
-  p.text('STUDENT IDENTITY CARD', x0, y0 + 60, { size: 8, font: 'Helvetica-Bold', color: rgb('#e5e7ff'), align: 'center', width: cardW });
+  p.text(idTitle, x0, y0 + 60, { size: 8, font: 'Helvetica-Bold', color: rgb('#e5e7ff'), align: 'center', width: cardW });
 
   // photo box
   const pw = 112, ph = 134, pxx = cx - pw / 2, pyy = y0 + 92;

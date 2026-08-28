@@ -9,6 +9,7 @@ import { NotificationEventService } from '../notificationevents/notification-eve
 import { StorageService } from '../storage/storage.service';
 import { PdfAssetService } from '../storage/pdf-asset.service';
 import { studentIdCardPdf, StudentIdCardDoc, Letterhead } from '../pdf/documents';
+import { DocTemplateService } from '../doctemplates/doc-template.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
 import { studentLmsAccess, canViewMaterial, canAttempt, SENSITIVE_STATUSES, REVENUE_CANCELLING_STATUSES, lmsBlockedMessage, combineAccess, ENROLMENT_STATUSES } from './lms-access';
 import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
@@ -81,6 +82,8 @@ export class StudentService {
      *  (convert / add-enrolment / edit), so an over-cap discount is capped + held pending
      *  instead of being silently applied in full (DEF-4, dev/104). */
     private readonly discountMaster?: DiscountMasterService,
+    /** dev/143 item 5 — Template Setup overrides for the Student ID card PDF. Optional (unit tests). */
+    private readonly docTemplates?: DocTemplateService,
   ) {}
 
   /* ------------------------------------ over-cap discount decision (dev/103, DEF-4) */
@@ -582,7 +585,7 @@ export class StudentService {
               e.gross_fee_minor, e.discount_type, e.discount_value, e.discount_amount_minor,
               e.exam_fee_minor,
               (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0))::bigint AS total_payable_minor,
-              e.payment_plan, e.start_date, e.created_at, e.course_id, e.batch_id,
+              e.payment_plan, e.start_date, e.created_at, e.course_id, e.course_type, e.batch_id,
               e.branch_id, e.vertical_id,
               e.course_status, e.course_status_reason, e.course_status_effective_date,
               e.course_status_changed_at, e.admission_stage, co.name AS course_name, bt.name AS batch_name,
@@ -1110,6 +1113,7 @@ export class StudentService {
    *  vertical-wise Student ID so the two verticals' cards never overwrite each other). */
   async idCard(id: number, scope: ResolvedScope, verticalId?: number | null): Promise<{ buffer: Buffer; filename: string; r2_key: string | null }> {
     const { doc, lh, orgId, refId, docNo } = await this.idCardData(id, scope, verticalId);
+    lh.tpl = this.docTemplates ? await this.docTemplates.overridesFor('student_id') : null;
     const buffer = studentIdCardPdf(doc, lh);
     let key: string | null = null;
     try { key = (await this.pdfAssets?.persist('student_id_card', refId, docNo, buffer, orgId)) ?? null; } catch { /* R2 off — stream anyway */ }
@@ -1725,7 +1729,7 @@ export class StudentService {
   async createConvertEnrolments(studentId: number, leadId: number, lead: any, rows: any[], me: { id: number }) {
     const orgId = await this.orgId();
     type R = { courseId: number; courseName: string; courseCode: string; branchId: number; verticalId: number;
-      batchId: number | null; feeMinor: number; disc: number; net: number; examMinor: number; plan: string; startDate: string | null;
+      batchId: number | null; feeMinor: number; disc: number; net: number; examMinor: number; plan: string; startDate: string | null; courseType: string | null;
       discount_type: string; discount_value: number; discountScope: DiscountScope; levels: ResolvedLevel[];
       discRequested: number; appStatus: DiscountApprovalStatus; capMinor: number | null;
       requestedBy: number | null; approvedBy: number | null };
@@ -1801,7 +1805,11 @@ export class StudentService {
           feeMinor, discRequested, me.id);
       }
       disc = dd.applied; net = feeMinor - disc;
-      resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, examMinor, plan, startDate,
+      // dev/143 (item 6) — course type recorded on the enrolment: the row's explicit choice
+      // (Course Type selector in the convert / new-enrolment form) else the course master's own type.
+      const courseType = (row?.course_type != null && String(row.course_type).trim() !== '')
+        ? String(row.course_type).trim() : ((course.meta as any)?.course_type ?? null);
+      resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, examMinor, plan, startDate, courseType,
         discount_type, discount_value, discountScope, levels,
         discRequested, appStatus: dd.status, capMinor: dd.capMinor, requestedBy: dd.requestedBy, approvedBy: dd.approvedBy });
     }
@@ -1815,19 +1823,19 @@ export class StudentService {
                                   net_fee_minor, payment_plan, start_date, status, course_status, remarks, created_by,
                                   gross_fee_minor, discount_type, discount_value, discount_amount_minor, discount_scope,
                                   discount_approval_status, discount_requested_minor, discount_cap_minor,
-                                  discount_requested_by, discount_approved_by, exam_fee_minor, discount_approved_at)
+                                  discount_requested_by, discount_approved_by, exam_fee_minor, course_type, discount_approved_at)
            VALUES ($1::bigint,$2::varchar,$3::bigint,$4::bigint,$5::bigint,$6::bigint,
                    $7::bigint,$8::bigint,$9::bigint,$10::bigint,$11::bigint,
                    $12::bigint,$13::varchar,$14::date,'active','active',$15,$16::bigint,
                    $17::bigint,$18::varchar,$19::numeric,$20::bigint,$21::varchar,
-                   $22::varchar,$23::bigint,$24::bigint,$25::bigint,$26::bigint,$27::bigint,
+                   $22::varchar,$23::bigint,$24::bigint,$25::bigint,$26::bigint,$27::bigint,$28::varchar,
                    CASE WHEN $22::varchar = 'approved' THEN now() ELSE NULL END)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, r.branchId, r.verticalId, lead.owner_id ?? me.id,
             r.courseId, r.batchId, studentId, r.feeMinor, r.disc, r.net, r.plan, r.startDate,
             `Enrolled in ${r.courseName} on conversion`, me.id,
             r.feeMinor, r.discount_type, r.discount_value, r.disc, r.discountScope,
-            r.appStatus, r.discRequested, r.capMinor, r.requestedBy, r.approvedBy, r.examMinor ?? 0]);
+            r.appStatus, r.discRequested, r.capMinor, r.requestedBy, r.approvedBy, r.examMinor ?? 0, r.courseType ?? null]);
         const eid = Number(ins.rows[0].id);
         if (r.levels.length) await this.insertEnrolmentLevels(c, orgId, eid, r.levels);
         await c.query(
@@ -1838,7 +1846,7 @@ export class StudentService {
             `Enrolled in ${r.courseName}`, r.startDate, r.net, me.id]);
         // VERTICAL-WISE STUDENT ID — mint (or reuse) the per-vertical display ID for THIS enrolment's vertical.
         const svid = await this.ensureVerticalId(c, studentId, r.branchId, r.verticalId, me.id);
-        out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName,
+        out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName, course_type: r.courseType,
           vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected',
           student_vertical_no: svid.student_vertical_no, exam_fee_minor: r.examMinor ?? 0,
           total_fee_minor: r.feeMinor, gross_fee_minor: r.feeMinor, discount_type: r.discount_type, discount_value: r.discount_value,

@@ -171,7 +171,7 @@ function TargetDashboardModal({ target, onClose }: { target: any; onClose: () =>
 }
 
 /* -------- create / edit a target -------- */
-function TargetModal({ initial, onClose, onSaved }: { initial?: any; onClose: () => void; onSaved?: () => void }) {
+export function TargetModal({ initial, onClose, onSaved }: { initial?: any; onClose: () => void; onSaved?: () => void }) {
   const ref = useRef_();
   const teams = useFetch<Named[]>('/teams', []);
   const plans = useFetch<any[]>('/performance/incentive-plans', []);
@@ -196,12 +196,28 @@ function TargetModal({ initial, onClose, onSaved }: { initial?: any; onClose: ()
   const [planId, setPlanId] = useState<string>(String(initial?.incentive_plan_id ?? ''));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-
-  const entities: Named[] = targetFor === 'user' ? selectableUsers(ref.users)
+  // dev/143 (client 28aug, item 4) — Branch -> Vertical CASCADE for the scope entity. When
+  // Target For = Vertical / Course / Individual Employee the user first picks a Branch (then a
+  // Vertical for Course), and the entity list is FILTERED to that branch's available
+  // verticals / courses / employees — not a flat global list. Verticals carry branch_id; the
+  // course master carries meta.branch_id/meta.vertical_id; employees are fetched per branch
+  // (server /users?branch_id filters through user_assignment, so multi-branch users resolve
+  // correctly). Branch / Team targets need no cascade.
+  const cascades = targetFor === 'vertical' || targetFor === 'course' || targetFor === 'user';
+  const [scopeBranch, setScopeBranch] = useState<string>('');
+  const [scopeVertical, setScopeVertical] = useState<string>('');
+  const branchUsers = useFetch<Named[]>(
+    targetFor === 'user' && scopeBranch ? `/users?branch_id=${scopeBranch}` : null, [targetFor, scopeBranch]);
+  const cascVerticals: Named[] = (ref.verticals as any[]).filter(
+    (v) => !scopeBranch || String(v.branch_id) === scopeBranch);
+  const entities: Named[] =
+    targetFor === 'user' ? selectableUsers((scopeBranch ? (branchUsers.data ?? []) : ref.users) as any)
     : targetFor === 'team' ? (teams.data ?? [])
     : targetFor === 'branch' ? ref.branches
-    : targetFor === 'vertical' ? ref.verticals
-    : ref.courses;
+    : targetFor === 'vertical' ? cascVerticals
+    : (ref.courses as any[]).filter((c) =>
+        (!scopeBranch || String(c.meta?.branch_id ?? '') === scopeBranch)
+        && (!scopeVertical || String(c.meta?.vertical_id ?? '') === scopeVertical));
   const entityLabel = TARGET_FOR.find(([k]) => k === targetFor)?.[1] ?? 'Entity';
 
   const save = async () => {
@@ -240,14 +256,36 @@ function TargetModal({ initial, onClose, onSaved }: { initial?: any; onClose: ()
             </div>
             <div className="fld">
               <label htmlFor="ti-for">Target for <span className="star">*</span></label>
-              <select id="ti-for" className="ainp" value={targetFor} onChange={(e) => { setTargetFor(e.target.value); setEntity(''); }}>
+              <select id="ti-for" className="ainp" value={targetFor} onChange={(e) => { setTargetFor(e.target.value); setEntity(''); setScopeBranch(''); setScopeVertical(''); }}>
                 {TARGET_FOR.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </div>
+            {cascades && (
+              <div className="fld">
+                <label htmlFor="ti-scope-branch">Branch <span className="star">*</span></label>
+                <select id="ti-scope-branch" className="ainp" value={scopeBranch}
+                  onChange={(e) => { setScopeBranch(e.target.value); setScopeVertical(''); setEntity(''); }}>
+                  <option value="">All branches</option>
+                  {ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+            )}
+            {targetFor === 'course' && (
+              <div className="fld">
+                <label htmlFor="ti-scope-vertical">Vertical</label>
+                <select id="ti-scope-vertical" className="ainp" value={scopeVertical}
+                  disabled={!scopeBranch}
+                  onChange={(e) => { setScopeVertical(e.target.value); setEntity(''); }}>
+                  <option value="">{scopeBranch ? 'All verticals' : 'Pick a branch first'}</option>
+                  {cascVerticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="fld">
               <label htmlFor="ti-entity">{entityLabel} <span className="star">*</span></label>
-              <select id="ti-entity" className="ainp" value={entity} onChange={(e) => setEntity(e.target.value)}>
-                <option value="">—</option>
+              <select id="ti-entity" className="ainp" value={entity} onChange={(e) => setEntity(e.target.value)}
+                disabled={cascades && !scopeBranch}>
+                <option value="">{cascades && !scopeBranch ? 'Pick a branch first' : '\u2014'}</option>
                 {entities.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
             </div>

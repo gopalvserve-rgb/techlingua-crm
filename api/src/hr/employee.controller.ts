@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentScope, CurrentUser, RequirePermission } from '../rbac/rbac.decorators';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { EmployeeService } from './employee.service';
@@ -23,6 +24,16 @@ export class EmployeeController {
 
   @Get(':id') @RequirePermission('employee.read')
   get(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) { return this.svc.get(id, scope); }
+
+  /** dev/143 item 5 — printable Employee ID card (consumes the employee_id document template). */
+  @Get(':id/id-card') @RequirePermission('employee.read')
+  async idCard(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope, @Res() res: Response) {
+    const { buffer, filename } = await this.svc.idCard(id, scope);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buffer.length));
+    res.end(buffer);
+  }
 
   @Post() @RequirePermission('employee.create')
   create(@Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) { return this.svc.create(dto, me, scope); }

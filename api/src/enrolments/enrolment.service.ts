@@ -129,13 +129,28 @@ export class EnrolmentService {
     if (_dr.from) { params.push(_dr.from); where.push(`e.created_at >= $${params.length}::timestamptz`); }
     if (_dr.to) { params.push(_dr.to); where.push(`e.created_at < ($${params.length}::date + 1)`); }
     // Search by enrolment number / student name / phone (dev/140 items 2 & 6 — Fee Invoice + Record Fee).
-    if (f.q) { params.push(`%${f.q}%`); where.push(`(e.enrolment_no ILIKE $${params.length} OR l.full_name ILIKE $${params.length} OR l.phone ILIKE $${params.length})`); }
+    // dev/143 (client 28aug, item 3 REDO) — Record-payment search MUST find by enrolment no,
+    // student name OR phone. The previous phone match used a plain ILIKE on the stored value, so a
+    // number stored formatted ("+91 98765 43210") never matched a plain-digit query ("9876543210").
+    // Match phone on DIGITS-ONLY on BOTH sides so any formatting matches; keep ILIKE for no/name.
+    if (f.q) {
+      params.push(`%${f.q}%`);
+      const like = params.length;
+      const digits = String(f.q).replace(/\D+/g, '');
+      if (digits) {
+        params.push(`%${digits}%`);
+        const dpos = params.length;
+        where.push(`(e.enrolment_no ILIKE $${like} OR l.full_name ILIKE $${like} OR regexp_replace(COALESCE(l.phone,''),'\\D','','g') ILIKE $${dpos})`);
+      } else {
+        where.push(`(e.enrolment_no ILIKE $${like} OR l.full_name ILIKE $${like} OR l.phone ILIKE $${like})`);
+      }
+    }
     params.push(Math.min(Number(f.limit ?? 200), 500));
 
     return this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.status, e.start_date, e.payment_plan,
               e.fee_minor, e.discount_minor, e.net_fee_minor, e.first_payment_minor,
-              e.created_at, e.lead_id, e.quotation_id, e.course_id,
+              e.created_at, e.lead_id, e.quotation_id, e.course_id, e.course_type,
               l.full_name AS lead_name, l.phone AS lead_phone,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               u.name AS counsellor_name, q.quote_no,
@@ -273,10 +288,15 @@ export class EnrolmentService {
     const orgId = await this.orgId();
     // Enrolment No — <COURSE_CODE>-<YEAR>-<NNN> (client ID re-model), sequence per course+year.
     let courseCode = 'CRS';
+    let courseTypeFromMaster: string | null = null;
     if (courseId) {
-      const cc = await this.db.one<{ code: string }>(`SELECT code FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
+      const cc = await this.db.one<{ code: string; meta: any }>(`SELECT code, meta FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
       courseCode = String(cc?.code ?? '').trim() || 'CRS';
+      courseTypeFromMaster = ((cc?.meta as any)?.course_type ?? null);
     }
+    // dev/143 (item 6) — course type on the enrolment: form's explicit choice else the master's.
+    const courseType = (dto?.course_type != null && String(dto.course_type).trim() !== '')
+      ? String(dto.course_type).trim() : courseTypeFromMaster;
 
     const out = await this.db.tx(async (c) => {
       const enrolmentNo = await this.numbering.allocateCoded('enrolment', courseCode, c);
@@ -289,13 +309,13 @@ export class EnrolmentService {
                                   first_payment_minor, plan_note, start_date, status, remarks, created_by,
                                   gross_fee_minor, discount_type, discount_value, discount_amount_minor,
                                   discount_approval_status, discount_requested_minor, discount_cap_minor,
-                                  discount_requested_by, discount_approved_by, exam_fee_minor, discount_approved_at)
+                                  discount_requested_by, discount_approved_by, exam_fee_minor, course_type, discount_approved_at)
            VALUES ($1::bigint, $2::varchar, $3::bigint, $4::bigint, $5::bigint, $6::bigint,
                    $7::bigint, $8::bigint, $9::bigint, $10::bigint, $11::bigint,
                    $12::bigint, $13::bigint, $14::bigint, $15::varchar,
                    $16::bigint, $17, $18::date, $19::varchar, $20, $21::bigint,
                    $22::bigint, $23::varchar, $24::numeric, $25::bigint,
-                   $26::varchar, $27::bigint, $28::bigint, $29::bigint, $30::bigint, $31::bigint,
+                   $26::varchar, $27::bigint, $28::bigint, $29::bigint, $30::bigint, $31::bigint, $32::varchar,
                    CASE WHEN $26::varchar = 'approved' THEN now() ELSE NULL END)
            RETURNING id`,
           [orgId, enrolmentNo, leadId, quotationId, lead.branch_id, lead.vertical_id,
@@ -305,7 +325,7 @@ export class EnrolmentService {
             money.gross_fee_minor, money.discount_type, money.discount_value, appliedDiscount,
             dd.status, requestedDiscountMinor, dd.capMinor,
             dd.status === 'pending' ? me.id : null,
-            dd.status === 'approved' ? me.id : null, money.exam_fee_minor],
+            dd.status === 'approved' ? me.id : null, money.exam_fee_minor, courseType],
         );
         id = Number(r.rows[0].id);
       } catch (e) {

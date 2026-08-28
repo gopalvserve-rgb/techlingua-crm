@@ -5,6 +5,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { NumberingService } from '../numbering/numbering.service';
 import { formatINR, rupeesToMinor } from '../common/money.util';
 import { Letterhead, receiptPdf } from '../pdf/documents';
+import { DocTemplateService } from '../doctemplates/doc-template.service';
 import { paidAsAtMinor } from './as-at';
 import { assertDateRange } from '../common/date.util';
 import { PlanService } from '../paymentplans/plan.service';
@@ -81,6 +82,8 @@ export class FeeService {
     private readonly messaging?: MessagingService,
     /** Reusable approval workflow (docs/dev/67) — 'Send for approval' on a receipt. Optional. */
     private readonly approvals?: ContentApprovalWorkflowService,
+    /** dev/143 item 5 — Template Setup overrides for the Fee Receipt PDF. Optional (unit tests). */
+    private readonly docTemplates?: DocTemplateService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -245,6 +248,7 @@ export class FeeService {
       branch_name: r.branch_name, branch_address: r.branch_address,
       branch_phone: r.branch_phone, branch_email: r.branch_email,
     };
+    lh.tpl = this.docTemplates ? await this.docTemplates.overridesFor('fee_receipt') : null;
     const out = {
       buffer: receiptPdf({
         receipt_no: r.receipt_no, received_at: r.received_at,

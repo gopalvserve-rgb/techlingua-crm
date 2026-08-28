@@ -14,7 +14,7 @@
  *                              approval the balance is deducted and the days show as Leave.
  */
 import { useMemo, useState } from 'react';
-import { api } from './api';
+import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
@@ -23,6 +23,17 @@ import { rowActions, ConfirmModal, DetailModal, Section, KV } from './rowactions
 import { DateRange } from './daterange';
 import { useScope } from './scope';
 import { FilterMulti } from './dyn';
+
+/** dev/143 item 5 — open an authed PDF the API streams (Employee ID card). */
+async function openHrPdf(path: string) {
+  try {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error(`Could not open the PDF (${res.status}).`);
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e: any) { toast(e.message, true); }
+}
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 
 const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
@@ -109,7 +120,8 @@ export function EmployeeDirectoryScreen() {
           r.branch_name ?? '—',
           r.manager_name ?? '—',
           { b: [r.status === 'active' ? 'Active' : 'Inactive', r.status === 'active' ? 'b-green' : 'b-gray'] } as Cell,
-          rowActions({ onView: () => setView(r), onEdit: can('employee.update') ? () => setEdit(r) : undefined, onDelete: can('employee.delete') ? () => setDel(r) : undefined }),
+          rowActions({ onView: () => setView(r), onEdit: can('employee.update') ? () => setEdit(r) : undefined, onDelete: can('employee.delete') ? () => setDel(r) : undefined,
+            extra: [{ k: 'doc', title: 'ID card (PDF)', onClick: () => openHrPdf(`/employees/${r.id}/id-card`) }] }),
         ])} />
       {edit && <EmployeeForm emp={edit} rd={rd} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); after(); }} />}
       {view && <EmployeeDetail id={view.id} onClose={() => setView(null)} />}

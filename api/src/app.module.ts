@@ -25,6 +25,7 @@ import { MessagingModule } from './messaging/messaging.module';
 import { StorageModule } from './storage/storage.module';
 import { TemplatesModule } from './templates/templates.module';
 import { SmsTemplatesModule } from './smstemplates/sms-templates.module';
+import { DocTemplatesModule } from './doctemplates/doctemplates.module';
 import { JourneysModule } from './journeys/journeys.module';
 import { SettingsModule } from './settings/settings.module';
 import { NumberingModule } from './numbering/numbering.module';
@@ -94,6 +95,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     StorageModule,      // Cloudflare R2 — the SINGLE file/asset store (admission docs, generated PDFs, materials); nothing on disk / no DB blobs
     TemplatesModule,    // dynamic templates per channel, merge variables, live preview
     SmsTemplatesModule, // DLT SMS templates (Branch+Vertical) + Nimbus auto-send on new lead
+    DocTemplatesModule, // dev/143 item 5 — Template Setup (document/ID formats) consumed by PDF/ID generators
     JourneysModule,     // trigger -> conditions -> actions, idempotent, guard-railed
     SettingsModule,     // Administration › Settings: credentials (encrypted), hours, holidays, matrix, numbering
     // Sprint 5 — conversion & money-lite

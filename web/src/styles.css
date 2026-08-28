@@ -828,6 +828,15 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .main.main--list .card.tbl-fill{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column}
 .main.main--list .card.tbl-fill>.tbl-scroll,
 .main.main--list .card.tbl-fill>.scroll-x{flex:1;min-height:0;min-width:0;max-height:none}
+/* dev/143 (client 28aug) — SCROLL ROBUSTNESS for KPI-heavy list screens (Follow-ups &
+ * Today's Follow-ups). These carry a tall fixed header (KPI cards + one/two filter rows), so
+ * under the `.main--list` full-height flex the table body could be squeezed toward zero — the
+ * client's "scroll not working" (the Roles/Branch class of collapse). Guarantee the results
+ * card + its scroll body always keep a usable, bounded, scrollable height so the sticky-header
+ * table body scrolls and the filters/KPIs stay fixed above it (still a single scrollbar). */
+.main.main--list .card.tbl-fill{min-height:200px}
+.main.main--list .card.tbl-fill>.tbl-scroll,
+.main.main--list .card.tbl-fill>.scroll-x{min-height:132px}
 /* Leads Modern + Inbox views fill the same bounded region (don't break them / the Kanban). */
 .main.main--list .lv-modern{flex:1;min-height:0;display:flex;flex-direction:column}
 .main.main--list .lv-modern>.lv-cards{flex:1;min-height:0;overflow:auto}
@@ -958,3 +967,15 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .att-btn.att-h.on { background: var(--amber); }
 .att-btn.att-l.on { background: var(--amber); }
 .att-btn.att-e.on { background: var(--text-muted); }
+
+/* dev/143 (client 28aug, item 3) — Record-payment search results picker. Clicking a result
+ * fills the modal (sets the enrolment + defaults the amount to the outstanding balance). */
+.collect-results{display:flex;flex-direction:column;gap:4px;margin-top:6px;max-height:220px;overflow:auto;
+  border:1px solid var(--border);border-radius:10px;padding:6px;background:var(--surface-2)}
+.collect-result{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;
+  text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:8px 10px;cursor:pointer;font-size:12.5px;color:var(--text)}
+.collect-result:hover{border-color:var(--primary)}
+.collect-result.on{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary) inset}
+.collect-result .cr-main{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.collect-result .cr-bal{flex:none;font-weight:700;color:var(--text-muted)}

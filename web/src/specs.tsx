@@ -548,6 +548,9 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Soft-deleted records across every module — deleted rows are hidden from lists, dropdowns & KPIs while their children stay intact. Review impact and restore (Super Admin / Org Admin).' } },
     { id: 'settings', label: 'Settings', spec: { dyn: 'settings',
       sub: 'Channels & credentials (SMTP per vertical · WhatsApp · SMS · Razorpay per vertical · AI keys — encrypted at rest), business hours, holidays, numbering series, automation guardrails and the notification matrix.' } },
+    // dev/143 item 5 — Template Setup (document/ID formats). Reachable from Administration › Settings area.
+    { id: 'templates', label: 'Template Setup', spec: { dyn: 'templateSetup',
+      sub: 'Configure the header/title, logo, footer & terms for each generated document — Fee Invoice, Fee Receipt, Student ID, Employee ID, Quotation, Certificate, Marksheet — plus the ID number format for ID cards. The Fee Invoice / Fee Receipt PDFs and the Student / Employee ID cards consume these settings live.' } },
     // Client request — Finance Settings: discount / scholarship / capping limit, BOTH by
     // percentage and by amount, org-wide or per vertical. Enforced everywhere a discount
     // is applied (quotation line, enrolment). Only a permitted user changes the caps.

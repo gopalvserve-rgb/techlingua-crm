@@ -19,11 +19,11 @@ interface ExistingStudent { id: number; student_no: string; full_name: string; s
 type LevelDiscType = 'amount' | 'percent';
 /** A convert row's course selection, with an optional per-level discount (dev/110). */
 interface ConvRow {
-  vertical_id: string; course_id: string; fee: string; disc_type: EnrolDiscountType; disc_value: string;
+  vertical_id: string; course_id: string; course_type: string; fee: string; disc_type: EnrolDiscountType; disc_value: string;
   levels: string[]; disc_scope: 'overall' | 'level'; level_disc: Record<string, { type: LevelDiscType; value: string }>;
 }
 const newRow = (o: Partial<ConvRow> = {}): ConvRow =>
-  ({ vertical_id: '', course_id: '', fee: '', disc_type: 'none', disc_value: '', levels: [], disc_scope: 'overall', level_disc: {}, ...o });
+  ({ vertical_id: '', course_id: '', course_type: '', fee: '', disc_type: 'none', disc_value: '', levels: [], disc_scope: 'overall', level_disc: {}, ...o });
 
 export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJourney }: {
   leadId: number; leadName?: string; onDone?: () => void; onClose: () => void;
@@ -82,7 +82,8 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
   // Choosing a course prefills the fee from the Course master (editable) + loads its levels.
   const chooseCourse = (i: number, cid: string) => {
     const course = (ref.courses ?? []).find((c: any) => Number(c.id) === Number(cid));
-    setRow(i, { course_id: cid, fee: course ? String((course.meta as any)?.fee ?? '') : '', levels: [] });
+    setRow(i, { course_id: cid, fee: course ? String((course.meta as any)?.fee ?? '') : '',
+      course_type: course ? String((course.meta as any)?.course_type ?? '') : '', levels: [] });
     setRowLevels((m) => ({ ...m, [i]: [] }));
     if (cid) fetchLevels(i, cid);
   };
@@ -131,6 +132,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
         return {
           vertical_id: r.vertical_id ? Number(r.vertical_id) : undefined,
           course_id: Number(r.course_id),
+          course_type: r.course_type || undefined,
           fee_minor: gross || (r.fee !== '' ? Math.round(Number(r.fee) * 100) : undefined),
           discount_type: r.disc_type,
           discount_value: r.disc_type === 'percent' ? Number(r.disc_value || 0)
@@ -183,7 +185,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                   <div key={e.id} className="notice" style={{ marginBottom: 6, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <Ic k="grid" />
                     <div>
-                      <div><b>{e.course_name}</b> · <span className="mono">{e.enrolment_no}</span> · {money(e.net_fee_minor)}</div>
+                      <div><b>{e.course_name}</b>{e.course_type ? <> · <span className="ttag">{e.course_type}</span></> : null} · <span className="mono">{e.enrolment_no}</span> · {money(e.net_fee_minor)}</div>
                       <div className="sub" style={{ fontSize: 12 }}>
                         Admission stage: <b>Course Selected</b> — awaiting Payment → Invoice → Approval → Confirmation → Admit
                       </div>
@@ -237,6 +239,13 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                           {coursesFor(r.vertical_id).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                         <div style={{ marginTop: 4 }}><MasterQuickAdd type="course" onAdded={(row) => chooseCourse(i, String(row.id))} /></div>
+                        {/* dev/143 (item 6) — Course Type on the enrolment (course_type master #186);
+                            defaults from the picked course, editable, persisted on the enrolment. */}
+                        <select className="ainp" style={{ marginTop: 4 }} data-testid={`conv-coursetype-${i}`}
+                          value={r.course_type} onChange={(e) => setRow(i, { course_type: e.target.value })}>
+                          <option value="">— Course Type —</option>
+                          {(ref.courseTypes ?? []).map((ct: any) => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
+                        </select>
                         {(rowLevels[i] ?? []).length > 0 && (
                           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }} data-testid={`conv-levels-${i}`}>
                             <div className="sub" style={{ fontSize: 11 }}>Levels (select one or more):</div>

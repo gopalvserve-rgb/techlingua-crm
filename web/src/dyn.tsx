@@ -2047,8 +2047,12 @@ function Followups() {
           onChange={(v) => setF((x) => ({ ...x, priorities: v }))} />
         <EnumMulti label="Status" icon="check" value={f.statuses} options={STATUSES}
           onChange={(v) => setF((x) => ({ ...x, statuses: v }))} />
-        <DateRange value={{ from: f.from, to: f.to }} idPrefix="fu-dr"
-          onChange={(v) => setF((x) => ({ ...x, from: v.from, to: v.to }))} />
+        {/* dev/143 (client 28aug) — REMOVED the duplicate generic DateRange here. The
+            Follow-ups module previously mounted TWO date/"calendar" controls: this shared
+            DateRange (from/to) AND the FollowupFilter below (which has its own Custom From/To).
+            Both filtered the SAME follow-up due date (f.scheduled_at — see followups.service.ts
+            215-228), so the screen showed two calendars doing the same job. We keep the ONE
+            purpose-built follow-up control (presets + Custom range) below. */}
         {/* Client Aug 2026 — the Follow-up preset filter is now a single ROW OF BUTTONS
             (segmented toggle group) instead of a dropdown; same emitted params + logic. */}
         <FollowupFilter value={{ followup: f.followup, fu_from: f.fu_from, fu_to: f.fu_to }} allowNoFollowup={false}
@@ -7853,6 +7857,114 @@ export function BatchMessageModal({ batch, batchIds, onClose, onDone }:
 }
 
 
+
+/* ============================ TEMPLATE SETUP (dev/143 item 5) ============================ */
+/* Administration -> Template Setup. Configure the header/title, logo, footer & terms for each
+ * generated document, plus the ID number format for ID cards. Stored as JSON per template type
+ * (PUT /document-templates/:type); the Fee Invoice / Fee Receipt PDFs and the Student / Employee
+ * ID cards consume these settings live. */
+const TPL_ID_TYPES = new Set(['student_id', 'employee_id']);
+const TPL_DOC_TYPES = new Set(['fee_invoice', 'fee_receipt', 'quotation', 'certificate', 'marksheet']);
+
+function TemplateEditModal({ tpl, onClose, onSaved }: { tpl: any; onClose: () => void; onSaved: () => void }) {
+  const s0 = (tpl?.settings ?? {}) as any;
+  const [headerTitle, setHeaderTitle] = useState<string>(String(s0.header_title ?? ''));
+  const [showLogo, setShowLogo] = useState<boolean>(s0.show_logo !== false);
+  const [footer, setFooter] = useState<string>(String(s0.footer_text ?? ''));
+  const [terms, setTerms] = useState<string>(String(s0.terms ?? ''));
+  const [idFormat, setIdFormat] = useState<string>(String(s0.id_format ?? ''));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isId = TPL_ID_TYPES.has(tpl.type);
+  const isDoc = TPL_DOC_TYPES.has(tpl.type);
+  const save = async () => {
+    setErr(''); setBusy(true);
+    try {
+      const settings = { ...s0, header_title: headerTitle, show_logo: showLogo, footer_text: footer,
+        ...(isDoc ? { terms } : {}), ...(isId ? { id_format: idFormat } : {}) };
+      await api.put(`/document-templates/${tpl.type}`, { settings });
+      toast('Template saved'); onSaved(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 620 }}>
+        <div className="ah"><h3><Ic k="doc" />{tpl.name} template</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld span2">
+              <label htmlFor="tpl-title">Header / title</label>
+              <input id="tpl-title" className="ainp" data-testid="tpl-header-title" value={headerTitle} onChange={(e) => setHeaderTitle(e.target.value)} placeholder="e.g. Fee Receipt" />
+            </div>
+            <div className="fld span2">
+              <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                <input type="checkbox" data-testid="tpl-show-logo" checked={showLogo} onChange={(e) => setShowLogo(e.target.checked)} /> Show logo / brand band
+              </label>
+            </div>
+            {isId && (
+              <div className="fld span2">
+                <label htmlFor="tpl-idfmt">ID number format</label>
+                <input id="tpl-idfmt" className="ainp" data-testid="tpl-id-format" value={idFormat} onChange={(e) => setIdFormat(e.target.value)} placeholder="e.g. STU-<YYYY>-<NNN>" />
+                <div className="fhint">Tokens: <b>&lt;CENTRE&gt;</b> / <b>&lt;YYYY&gt;</b> / <b>&lt;NNN&gt;</b>. The live series still lives under Settings &rsaquo; Numbering.</div>
+              </div>
+            )}
+            <div className="fld span2">
+              <label htmlFor="tpl-footer">Footer text</label>
+              <textarea id="tpl-footer" className="ainp" rows={2} data-testid="tpl-footer" value={footer} onChange={(e) => setFooter(e.target.value)} />
+            </div>
+            {isDoc && (
+              <div className="fld span2">
+                <label htmlFor="tpl-terms">Terms / notes</label>
+                <textarea id="tpl-terms" className="ainp" rows={3} data-testid="tpl-terms" value={terms} onChange={(e) => setTerms(e.target.value)} />
+              </div>
+            )}
+          </div>
+          {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save template'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TemplateSetup() {
+  const { data, loading, reload } = useFetch<any[]>('/document-templates', []);
+  const [edit, setEdit] = useState<any | null>(null);
+  const rows = data ?? [];
+  return (
+    <>
+      <Kpis items={[{ lab: 'Templates', val: String(rows.length || 0), ic: 'doc' }]} />
+      <div className="card tbl-fill">
+        <div className="card-head"><h3><Ic k="doc" />Document & ID Templates</h3></div>
+        <div className="tbl-scroll">
+          <table className="tbl">
+            <thead><tr><th>Template</th><th>Header / title</th><th>Logo</th><th>Last updated</th><th>Actions</th></tr></thead>
+            <tbody>
+              {loading && rows.length === 0 ? <tr><td className="empty" colSpan={5}>Loading…</td></tr>
+                : rows.length === 0 ? <tr><td className="empty" colSpan={5}>No templates</td></tr>
+                : rows.map((t) => (
+                  <tr key={t.type}>
+                    <td><b>{t.name}</b> <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.type}</span></td>
+                    <td>{(t.settings?.header_title) || '—'}</td>
+                    <td>{t.settings?.show_logo === false ? 'Off' : 'On'}</td>
+                    <td>{t.updated_at ? fmtDateTimeIST(t.updated_at) : '—'}</td>
+                    <td>
+                      <button className="btn sm" data-testid={`tpl-edit-${t.type}`} onClick={() => setEdit(t)}><Ic k="edit" />Edit</button>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {edit && <TemplateEditModal tpl={edit} onClose={() => setEdit(null)} onSaved={reload} />}
+    </>
+  );
+}
+
 export const DYN: Record<string, () => JSX.Element> = {
   dashOverview: DashOverview,
   quickContact: QuickContact,
@@ -7878,6 +7990,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   notificationEvents: NotificationEvents,
   bulkWhatsApp: BulkWhatsApp,
   settings: Settings,
+  templateSetup: TemplateSetup,
   financeSettings: FinanceSettings,
   discountMaster: DiscountMaster,
   // Phase 3 Batch 1 — GST tax invoices + finance dashboard

@@ -1407,6 +1407,16 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
   // item #6 — Branch \u203a Vertical \u203a Course breadcrumb for the chosen enrolment (same path pattern as the receipt modal).
   const chosenPath = chosen ? [chosen.branch_name, chosen.vertical_name, chosen.course_name].filter(Boolean).join(' \u203a ') : '';
   const needsRef = ['cheque', 'upi', 'online'].includes(mode);
+  // dev/143 (client 28aug, item 3 REDO) — the search now FILLS the modal: picking a result sets
+  // the enrolment (breadcrumb + fee lines follow) and defaults the amount to the outstanding
+  // balance. Previously the search only narrowed a separate <select> the user still had to open,
+  // so it felt like "search does nothing"; and phone matching missed formatted numbers (fixed
+  // server-side to match on digits-only).
+  const pickEnrol = (e: any) => {
+    setEnrolment(String(e.id));
+    const bal = Number(e.balance_minor ?? 0);
+    if ((!amount || amount === (defaultAmount ?? '')) && bal > 0) setAmount((bal / 100).toFixed(2));
+  };
 
   const save = async () => {
     setErr(''); setBusy(true);
@@ -1439,7 +1449,22 @@ export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClos
               <div className="fld span2">
                 <label htmlFor="c-search">Find student / enrolment</label>
                 <input id="c-search" className="ainp" value={search} onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by enrolment no / student name / phone" />
+                  placeholder="Search by enrolment no / student name / phone" autoComplete="off" />
+                {search.trim() ? (
+                  <div className="collect-results" data-testid="collect-search-results" role="listbox">
+                    {enrolments.loading && list.length === 0 ? (
+                      <div className="fhint">Searching&hellip;</div>
+                    ) : list.length === 0 ? (
+                      <div className="fhint">No active enrolment matches '{search.trim()}'.</div>
+                    ) : list.slice(0, 8).map((e) => (
+                      <button type="button" key={e.id} role="option" aria-selected={String(e.id) === enrolment}
+                        className={`collect-result${String(e.id) === enrolment ? ' on' : ''}`} onClick={() => pickEnrol(e)}>
+                        <span className="cr-main"><b className="mono">{e.enrolment_no}</b> \u00b7 {e.lead_name}{e.lead_phone ? ` \u00b7 ${e.lead_phone}` : ''}{e.course_name ? ` \u00b7 ${e.course_name}` : ''}</span>
+                        <span className="cr-bal">{fmtINR(e.balance_minor)} due</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             )}
             <div className="fld span2">
