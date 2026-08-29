@@ -1089,17 +1089,17 @@ function AssessmentDashboardCards() {
       </div>
       <Kpis cols={6} items={[
         { lab: 'Tests / Exams', val: String(k?.assessments ?? 0), ic: 'doc',
-          onClick: () => go('students', 'exams'), navLabel: `Tests: ${k?.assessments ?? 0}. Open Tests / Exams` },
+          onClick: () => go('learning', 'exams'), navLabel: `Tests: ${k?.assessments ?? 0}. Open Tests / Exams` },
         { lab: 'Attempts', val: String(k?.attempts ?? 0), ic: 'users',
-          onClick: () => go('students', 'evaluation'), navLabel: `Attempts: ${k?.attempts ?? 0}. Open the Evaluation Queue` },
+          onClick: () => go('learning', 'evaluation'), navLabel: `Attempts: ${k?.attempts ?? 0}. Open the Evaluation Queue` },
         { lab: 'Pass rate', val: k?.pass_rate != null ? `${k.pass_rate}%` : '—', ic: 'target',
-          onClick: () => go('students', 'assessmentresults'), navLabel: 'Pass rate. Open Results' },
+          onClick: () => go('learning', 'assessmentresults'), navLabel: 'Pass rate. Open Results' },
         { lab: 'Average %', val: k?.avg_pct != null ? `${k.avg_pct}%` : '—', ic: 'bolt',
-          onClick: () => go('students', 'assessmentresults'), navLabel: 'Average score. Open Results' },
+          onClick: () => go('learning', 'assessmentresults'), navLabel: 'Average score. Open Results' },
         { lab: 'Pending evaluation', val: String((fk?.pending_evaluations ?? 0) + (fk?.pending_submissions ?? 0)), ic: 'clock',
-          onClick: () => go('students', 'evaluation'), navLabel: `Pending evaluations. Open the Evaluation Queue` },
+          onClick: () => go('learning', 'evaluation'), navLabel: `Pending evaluations. Open the Evaluation Queue` },
         { lab: 'Certificates', val: String(k?.certificates_issued ?? 0), ic: 'shield',
-          onClick: () => go('students', 'assessmentcerts'), navLabel: `Certificates issued. Open Certificates` },
+          onClick: () => go('learning', 'assessmentcerts'), navLabel: `Certificates issued. Open Certificates` },
       ]} />
       <div className="row2" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <HBars title="Grade distribution" rows={bars} empty="No evaluated attempts yet" />
