@@ -15,13 +15,21 @@ import { ConfirmModal } from './rowactions';
 
 /** Branch › Vertical › (Pipeline) › Campaign strict cascade + owner behaviour, shared by
  *  the single and bulk transfer dialogs. Emits campaign_id + owner_mode. */
+type OwnerMode = 'keep' | 'distribute' | 'manual';
+export type TransferValue = { branch?: number; vertical?: number; pipeline?: number; campaign?: number; owner_mode: OwnerMode; owner_id?: number };
+
 function TransferTargetPicker({ value, onChange }: {
-  value: { campaign?: number; owner_mode: 'keep' | 'distribute' };
-  onChange: (v: { branch?: number; vertical?: number; pipeline?: number; campaign?: number; owner_mode: 'keep' | 'distribute' }) => void;
+  value: TransferValue;
+  onChange: (v: TransferValue) => void;
 }) {
   const ref = useRef_();
   const [t, setT] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number }>({});
-  const push = (next: typeof t) => { setT(next); onChange({ ...next, owner_mode: value.owner_mode }); };
+  // A branch change invalidates a manually-picked counsellor (the list is branch-scoped).
+  const push = (next: typeof t) => {
+    setT(next);
+    const ownerId = next.branch === t.branch ? value.owner_id : undefined;
+    onChange({ ...next, owner_mode: value.owner_mode, owner_id: ownerId });
+  };
   const sel = (label: string, icon: string, cur: number | undefined, list: Array<{ id: number; name: string }>, on: (v?: number) => void, disabled?: boolean) => (
     <div className="fld"><label>{label}</label>
       <select value={cur ?? ''} disabled={disabled} onChange={(e) => on(e.target.value ? Number(e.target.value) : undefined)}>
@@ -39,9 +47,20 @@ function TransferTargetPicker({ value, onChange }: {
       <div className="fld"><label>Lead Counsellor after transfer</label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <label className="qc-src"><input type="radio" name="owner_mode" checked={value.owner_mode === 'keep'}
-            onChange={() => onChange({ ...t, owner_mode: 'keep' })} /> Keep the current Lead Counsellor</label>
+            onChange={() => onChange({ ...t, owner_mode: 'keep', owner_id: undefined })} /> Keep the current Lead Counsellor</label>
           <label className="qc-src"><input type="radio" name="owner_mode" checked={value.owner_mode === 'distribute'}
-            onChange={() => onChange({ ...t, owner_mode: 'distribute' })} /> Assign via the target campaign's distribution (round-robin)</label>
+            onChange={() => onChange({ ...t, owner_mode: 'distribute', owner_id: undefined })} /> Assign via the target campaign's distribution (round-robin)</label>
+          {/* client Sep-1: assign a counsellor MANUALLY — the list is scoped to the target branch. */}
+          <label className="qc-src"><input type="radio" name="owner_mode" checked={value.owner_mode === 'manual'}
+            onChange={() => onChange({ ...t, owner_mode: 'manual' })} /> Assign a Lead Counsellor manually</label>
+          {value.owner_mode === 'manual' && (
+            <div style={{ paddingLeft: 22 }}>
+              {t.branch ? (
+                <UserPicker value={value.owner_id ? [value.owner_id] : []} onChange={(ids) => onChange({ ...t, owner_mode: 'manual', owner_id: ids[0] })}
+                  multiple={false} branchId={t.branch} placeholder="Search a counsellor in this branch…" />
+              ) : <div className="empty-note" style={{ fontSize: 12, textAlign: 'left', padding: 0 }}>Pick the target Branch first — counsellors are shown for that branch.</div>}
+            </div>
+          )}
         </div>
       </div>
     </>
@@ -50,14 +69,15 @@ function TransferTargetPicker({ value, onChange }: {
 
 /** Single-lead transfer modal. */
 export function LeadTransferModal({ leadId, leadName, onDone, onClose }: { leadId: number; leadName?: string; onDone: () => void; onClose: () => void }) {
-  const [v, setV] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number; owner_mode: 'keep' | 'distribute' }>({ owner_mode: 'keep' });
+  const [v, setV] = useState<TransferValue>({ owner_mode: 'keep' });
   const [busy, setBusy] = useState(false);
+  const manualIncomplete = v.owner_mode === 'manual' && !v.owner_id;
   const go = async () => {
-    if (!v.campaign) return;
+    if (!v.campaign || manualIncomplete) return;
     setBusy(true);
     try {
-      await api.post(`/leads/${leadId}/transfer`, { campaign_id: v.campaign, owner_mode: v.owner_mode });
-      toast(`Lead transferred${v.owner_mode === 'distribute' ? ' and reassigned' : ''}`);
+      await api.post(`/leads/${leadId}/transfer`, { campaign_id: v.campaign, owner_mode: v.owner_mode, owner_id: v.owner_id });
+      toast(`Lead transferred${v.owner_mode === 'distribute' ? ' and reassigned' : v.owner_mode === 'manual' ? ' and assigned' : ''}`);
       onDone(); onClose();
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
@@ -73,7 +93,7 @@ export function LeadTransferModal({ leadId, leadName, onDone, onClose }: { leadI
         </div>
         <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !v.campaign} onClick={go}><Ic k="check" />Transfer</button>
+          <button className="btn primary" disabled={busy || !v.campaign || manualIncomplete} onClick={go}><Ic k="check" />Transfer</button>
         </div>
       </div>
     </div>
@@ -82,13 +102,14 @@ export function LeadTransferModal({ leadId, leadName, onDone, onClose }: { leadI
 
 /** Bulk transfer modal (N selected leads). */
 export function BulkTransferModal({ ids, onDone, onClose }: { ids: number[]; onDone: () => void; onClose: () => void }) {
-  const [v, setV] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number; owner_mode: 'keep' | 'distribute' }>({ owner_mode: 'keep' });
+  const [v, setV] = useState<TransferValue>({ owner_mode: 'keep' });
   const [busy, setBusy] = useState(false);
+  const manualIncomplete = v.owner_mode === 'manual' && !v.owner_id;
   const go = async () => {
-    if (!v.campaign) return;
+    if (!v.campaign || manualIncomplete) return;
     setBusy(true);
     try {
-      const r = await api.post<{ transferred: number; skipped: number }>(`/leads/bulk/transfer`, { lead_ids: ids, campaign_id: v.campaign, owner_mode: v.owner_mode });
+      const r = await api.post<{ transferred: number; skipped: number }>(`/leads/bulk/transfer`, { lead_ids: ids, campaign_id: v.campaign, owner_mode: v.owner_mode, owner_id: v.owner_id });
       toast(`${r.transferred} lead${r.transferred === 1 ? '' : 's'} transferred${r.skipped ? ` · ${r.skipped} skipped (out of scope)` : ''}`);
       onDone(); onClose();
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
@@ -105,7 +126,7 @@ export function BulkTransferModal({ ids, onDone, onClose }: { ids: number[]; onD
         </div>
         <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy || !v.campaign} onClick={go}><Ic k="check" />Transfer all</button>
+          <button className="btn primary" disabled={busy || !v.campaign || manualIncomplete} onClick={go}><Ic k="check" />Transfer all</button>
         </div>
       </div>
     </div>

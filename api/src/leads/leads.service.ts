@@ -661,7 +661,7 @@ export class LeadsService {
    *  behaviour + activity + audit). Shared by the single and bulk transfer endpoints. */
   private async transferOneLead(
     leadId: number, target: Awaited<ReturnType<LeadsService['resolveTransferTarget']>>,
-    ownerMode: 'keep' | 'distribute', actorId: number,
+    ownerMode: 'keep' | 'distribute' | 'manual', actorId: number, manualOwnerId?: number,
   ) {
     const before = await this.db.one<Record<string, any>>(
       `SELECT * FROM lead WHERE id = $1 AND deleted_at IS NULL`, [leadId]);
@@ -690,6 +690,8 @@ export class LeadsService {
         const picked = await this.ingestion.pickOwner(c, target.campaign_id, pool);
         if (picked != null) ownerId = Number(picked);
       }
+      // client Sep-1: a manually-chosen counsellor (validated in scope + branch by the caller).
+      if (ownerMode === 'manual' && manualOwnerId) ownerId = Number(manualOwnerId);
       const newStage = crossPipeline ? target.default_stage_id : (before.stage_id == null ? null : Number(before.stage_id));
       const upd = await c.query(
         `UPDATE lead SET branch_id = $1, vertical_id = $2, pipeline_id = $3, campaign_id = $4,
@@ -877,10 +879,26 @@ export class LeadsService {
   }
 
   /** Single-lead transfer (controller gates on lead.transfer + @ScopedEntity(:id)). */
+  /** Resolve owner mode + validate a manual counsellor is active AND assigned to the target branch. */
+  private async resolveTransferOwner(dto: Record<string, unknown>, target: Awaited<ReturnType<LeadsService['resolveTransferTarget']>>): Promise<{ mode: 'keep' | 'distribute' | 'manual'; ownerId?: number }> {
+    if (dto.owner_mode === 'distribute') return { mode: 'distribute' };
+    if (dto.owner_mode === 'manual') {
+      const ownerId = Number(dto.owner_id);
+      await assertActiveUser(this.db, ownerId, 'owner_id');
+      const branchId = Number(target.branch_id);
+      const ok = await this.db.one<{ x: number }>(
+        `SELECT 1 AS x FROM user_assignment WHERE user_id = $1::bigint AND branch_id = $2::bigint AND is_active LIMIT 1`,
+        [ownerId, branchId]).catch(() => null);
+      if (!ok) throw new BadRequestException('That counsellor is not assigned to the target branch.');
+      return { mode: 'manual', ownerId };
+    }
+    return { mode: 'keep' };
+  }
+
   async transfer(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
     const target = await this.resolveTransferTarget(dto, actorId, scope);
-    const ownerMode = dto.owner_mode === 'distribute' ? 'distribute' : 'keep';
-    await this.transferOneLead(Number(id), target, ownerMode, actorId);
+    const owner = await this.resolveTransferOwner(dto, target);
+    await this.transferOneLead(Number(id), target, owner.mode, actorId, owner.ownerId);
     return this.get(Number(id));
   }
 
@@ -914,12 +932,12 @@ export class LeadsService {
   async bulkTransfer(leadIds: unknown, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
     const ids = this.normIds(leadIds);
     const target = await this.resolveTransferTarget(dto, actorId, scope);
-    const ownerMode = dto.owner_mode === 'distribute' ? 'distribute' : 'keep';
+    const owner = await this.resolveTransferOwner(dto, target);
     const rows = await this.scopedLeadRows(ids, scope);
     let transferred = 0;
-    for (const r of rows) { await this.transferOneLead(Number(r.id), target, ownerMode as any, actorId); transferred++; }
+    for (const r of rows) { await this.transferOneLead(Number(r.id), target, owner.mode, actorId, owner.ownerId); transferred++; }
     return { transferred, skipped: ids.length - rows.length, requested: ids.length,
-             owner_mode: ownerMode, campaign_id: target.campaign_id };
+             owner_mode: owner.mode, campaign_id: target.campaign_id };
   }
 
   /** Bulk REASSIGN — every in-scope selected lead to one active, in-scope user. Reuses the

@@ -120,12 +120,17 @@ export class EnrolmentService {
 
   /* ------------------------------------------------------------------ reads */
 
-  async list(scope: ResolvedScope, f: { status?: string; q?: string; from?: string; to?: string; limit?: number; lead_id?: number } = {}) {
+  async list(scope: ResolvedScope, f: { status?: string; q?: string; from?: string; to?: string; limit?: number; lead_id?: number; origin?: string } = {}) {
     const params: unknown[] = [];
     const where = [`e.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params)];
     if (f.status) { params.push(f.status); where.push(`e.status = $${params.length}::varchar`); }
     // client 30-Aug (bug): record-payment inside a student profile must be scoped to THAT student.
     if (f.lead_id) { params.push(f.lead_id); where.push(`e.lead_id = $${params.length}::bigint`); }
+    // client Sep-1 (Admissions & Enrolment tabs): ONLINE = the enrolment's student came from an
+    // approved online admission; DIRECT = converted from a lead / added in Student Management.
+    const ADM_EXISTS = `EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL)`;
+    if (f.origin === 'online') where.push(ADM_EXISTS);
+    else if (f.origin === 'direct') where.push(`NOT ${ADM_EXISTS}`);
     // DEF-DR-02: one strict validator — malformed date -> 400, not a 500 at the ::date cast.
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`e.created_at >= $${params.length}::timestamptz`); }
@@ -152,7 +157,8 @@ export class EnrolmentService {
     return this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.status, e.start_date, e.payment_plan,
               e.fee_minor, e.discount_minor, e.net_fee_minor, e.first_payment_minor,
-              e.created_at, e.lead_id, e.quotation_id, e.course_id, e.course_type,
+              e.created_at, e.lead_id, e.quotation_id, e.course_id, e.course_type, e.student_profile_id, e.branch_id, e.vertical_id,
+              EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL) AS from_admission,
               l.full_name AS lead_name, l.phone AS lead_phone,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               u.name AS counsellor_name, q.quote_no,

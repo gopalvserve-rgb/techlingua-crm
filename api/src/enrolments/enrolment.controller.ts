@@ -20,6 +20,7 @@ export class EnrolmentController {
     return this.svc.list(scope, {
       status: q?.status, q: q?.q, from: q?.from, to: q?.to,
       lead_id: q?.lead_id ? Number(q.lead_id) : undefined,
+      origin: q?.origin,
       limit: q?.limit ? Number(q.limit) : undefined,
     });
   }

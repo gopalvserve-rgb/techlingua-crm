@@ -45,7 +45,7 @@ function ScopeFilters({ rd, fB, setFB, fV, setFV, fC, setFC, extra }: any) {
 }
 
 /* ========================================================= REVIEW QUEUE === */
-export function AdmissionsScreen() {
+function OnlineApplicationsTab() {
   const ref = useRef_();
   const { scope: gScope } = useScope();
   const { can } = useAuth();
@@ -57,7 +57,6 @@ export function AdmissionsScreen() {
   const [tick, setTick] = useState(0);
   const [view, setView] = useState<any | null>(null);
   const [del, setDel] = useState<any | null>(null);
-  const [links, setLinks] = useState(false);
 
   const qs = new URLSearchParams();
   if (fB.length) qs.set('branch_id', fB.join(','));
@@ -78,9 +77,6 @@ export function AdmissionsScreen() {
 
   return (
     <>
-      <div className="page-actions">
-        {can('admission.manage') && <button className="btn" onClick={() => setLinks(true)}><Ic k="link" />Form links</button>}
-      </div>
       <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
         extra={<>
           <label className="fchip"><Ic k="shield" />
@@ -113,7 +109,6 @@ export function AdmissionsScreen() {
         ])} />
       {view && <AdmissionDetail id={view.id} onClose={() => setView(null)} onChanged={after} rd={ref} />}
       {del && <ConfirmModal title="Delete admission?" body={`Delete the submission from "${del.full_name}"?`} danger confirmLabel="Delete" onConfirm={doDelete} onClose={() => setDel(null)} />}
-      {links && <FormLinksModal onClose={() => setLinks(false)} rd={ref} />}
       {bulkModal}
     </>
   );
@@ -238,7 +233,109 @@ function AdmissionEdit({ a, rd, onClose, onSaved }: { a: any; rd: any; onClose: 
 }
 
 /* ---- public form links manager ---- */
-function FormLinksModal({ onClose, rd }: { onClose: () => void; rd: any }) {
+/* ---- Enrolments tab (Direct Enrolments + Master Directory) ------------------ */
+const ENR_STATUS_CELL = (st: string): Cell => {
+  const map: Record<string, string> = { active: 'b-green', pending_approval: 'b-amber', cancelled: 'b-gray', rejected: 'b-red', completed: 'b-indigo' };
+  return { b: [String(st ?? '—').replace(/_/g, ' '), map[String(st)] ?? 'b-gray'] };
+};
+
+function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?: boolean }) {
+  const ref = useRef_();
+  const { scope: gScope } = useScope();
+  const [fB, setFB] = useState<number[]>(gScope.branches);
+  const [fV, setFV] = useState<number[]>(gScope.verticals);
+  const [fC, setFC] = useState<number[]>([]);
+  const [fStatus, setFStatus] = useState('');
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const [q, setQ] = useState('');
+  const [tick, setTick] = useState(0);
+  const qs = new URLSearchParams();
+  if (origin) qs.set('origin', origin);
+  if (fStatus) qs.set('status', fStatus);
+  if (range.from) qs.set('from', range.from);
+  if (range.to) qs.set('to', range.to);
+  if (q.trim()) qs.set('q', q.trim());
+  qs.set('limit', '500');
+  const list = useFetch<any[]>(`/enrolments?${qs.toString()}`, [qs.toString(), tick]);
+  const after = () => setTick((t) => t + 1);
+  const all = list.data ?? [];
+  // Branch/Vertical/Course are filtered client-side (the /enrolments list filters are date/status/q).
+  const rows = all.filter((e: any) =>
+    (!fB.length || fB.includes(Number(e.branch_id))) &&
+    (!fV.length || fV.includes(Number(e.vertical_id))) &&
+    (!fC.length || fC.includes(Number(e.course_id))));
+  const fmtDate = (v?: string) => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+  const cols = ['Enrolment', 'Student', 'Branch', 'Vertical', 'Course', ...(showOrigin ? ['Origin'] : []), 'Status', 'Enrolled on'];
+  return (
+    <>
+      <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
+        extra={<>
+          <label className="fchip"><Ic k="shield" />
+            <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
+              <option value="">All statuses</option><option value="active">Active</option><option value="pending_approval">Pending approval</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option>
+            </select></label>
+          <DateRange value={range} onChange={setRange} idPrefix="enr-dr" style={{ marginLeft: 'auto' }} />
+        </>} />
+      <TableCard fill title={showOrigin ? 'Master Directory — all enrolments' : 'Direct Enrolments'} icon="students" listKey={showOrigin ? 'adm-master' : 'adm-direct'}
+        more={<ListActions onExport={() => downloadObjectsCsv(showOrigin ? 'master-directory.csv' : 'direct-enrolments.csv', rows.map((e: any) => ({
+          enrolment_no: e.enrolment_no, student: e.lead_name, branch: e.branch_name, vertical: e.vertical_name, course: e.course_name,
+          origin: e.from_admission ? 'Online application' : 'Direct enrolment', status: e.status, enrolled_on: e.created_at,
+        })))} onRefresh={after} />}
+        cols={cols}
+        empty={showOrigin ? 'No enrolments yet.' : 'No direct enrolments yet — convert a lead or enrol from Student Management.'}
+        rows={rows.map((e: any) => [
+          { node: <div><b className="nm mono">{e.enrolment_no}</b>{e.course_type ? <div className="sub">{e.course_type}</div> : null}</div> } as Cell,
+          e.lead_name ?? '—',
+          e.branch_name ?? '—',
+          e.vertical_name ?? '—',
+          e.course_name ?? '—',
+          ...(showOrigin ? [{ b: e.from_admission ? ['Online application', 'b-indigo'] : ['Direct enrolment', 'b-gray'] } as Cell] : []),
+          ENR_STATUS_CELL(e.status),
+          fmtDate(e.created_at),
+        ])} />
+    </>
+  );
+}
+
+/* ---- Application Links tab -------------------------------------------------- */
+function ApplicationLinksTab() {
+  const ref = useRef_();
+  return (
+    <div className="card" style={{ padding: 16 }}>
+      <FormLinksPanel rd={ref} />
+    </div>
+  );
+}
+
+/* ---- Admissions & Enrolment — 4 tabs (client Sep-1) ------------------------- */
+const ADM_TABS: Array<{ id: string; label: string; icon: string }> = [
+  { id: 'online', label: 'Online Applications', icon: 'doc' },
+  { id: 'direct', label: 'Direct Enrolments', icon: 'users' },
+  { id: 'links', label: 'Application Links', icon: 'link' },
+  { id: 'master', label: 'Master Directory', icon: 'students' },
+];
+export function AdmissionsScreen() {
+  const { can } = useAuth();
+  const [tab, setTab] = useState('online');
+  const tabs = ADM_TABS.filter((t) => t.id !== 'links' || can('admission.manage'));
+  return (
+    <>
+      <div className="seg-tabs" role="tablist" style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        {tabs.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} className={`btn${tab === t.id ? ' primary' : ''}`} onClick={() => setTab(t.id)}>
+            <Ic k={t.icon} />{t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'online' && <OnlineApplicationsTab />}
+      {tab === 'direct' && <EnrolmentsTab origin="direct" />}
+      {tab === 'links' && can('admission.manage') && <ApplicationLinksTab />}
+      {tab === 'master' && <EnrolmentsTab showOrigin />}
+    </>
+  );
+}
+
+function FormLinksPanel({ rd }: { rd: any }) {
   const [tick, setTick] = useState(0);
   const list = useFetch<any[]>('/admissions/forms', [tick]);
   const rows = list.data ?? [];
@@ -265,7 +362,7 @@ function FormLinksModal({ onClose, rd }: { onClose: () => void; rd: any }) {
   const remove = async (f: any) => { try { await api.del(`/admissions/forms/${f.id}`); toast('Form link deleted'); after(); } catch (e: any) { toast(e.message, true); } };
 
   return (
-    <DetailModal title="Public admission form links" icon="link" onClose={onClose} width={720}>
+    <>
       <Section title="Generate a link">
         <div className="form-grid">
           <div className="fld"><label>Title</label><input className="ainp" placeholder="Admission Form" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
@@ -302,7 +399,7 @@ function FormLinksModal({ onClose, rd }: { onClose: () => void; rd: any }) {
           </div>
         ))}
       </Section>
-    </DetailModal>
+    </>
   );
 }
 

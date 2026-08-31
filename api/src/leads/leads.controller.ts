@@ -183,7 +183,7 @@ export class LeadsController {
   @Post(':id/transfer') @RequirePermission('lead.transfer') @ScopedEntity('lead')
   transfer(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { campaign_id?: number; source_id?: number; owner_mode?: 'keep' | 'distribute' } & Record<string, unknown>,
+    @Body() dto: { campaign_id?: number; source_id?: number; owner_mode?: 'keep' | 'distribute' | 'manual'; owner_id?: number } & Record<string, unknown>,
     @CurrentUser() u: U, @CurrentScope() s: ResolvedScope,
   ) {
     return this.leads.transfer(id, dto ?? {}, u.id, s);
