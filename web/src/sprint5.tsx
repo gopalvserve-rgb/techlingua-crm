@@ -1470,9 +1470,9 @@ export function CollectModal({ enrolmentId, installmentId, leadId, defaultAmount
             )}
             <div className="fld span2">
               <label htmlFor="c-enrolment">Enrolment <span className="star">*</span></label>
-              <select id="c-enrolment" className="ainp" value={enrolment} onChange={(e) => setEnrolment(e.target.value)} disabled={!!installmentId}>
+              <select id="c-enrolment" className="ainp" value={enrolment} onChange={(e) => setEnrolment(e.target.value)} disabled={!!installmentId || !!enrolmentId}>
                 <option value="">—</option>
-                {list.map((e) => (
+                {(enrolmentId ? list.filter((e) => String(e.id) === String(enrolmentId)) : list).map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.enrolment_no} · {e.lead_name}{e.course_name ? ` · ${e.course_name}` : ''} — {fmtINR(e.balance_minor)} due
                   </option>
