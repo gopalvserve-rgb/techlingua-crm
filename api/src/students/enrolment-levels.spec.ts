@@ -158,13 +158,28 @@ describe('add-level UPGRADE — same enrolment, Total/Net up, plan reconciled, n
     expect(Math.max(0, out.net_fee_minor - 500000)).toBe(1700000);
   });
 
-  it('re-applies an OVERALL percent discount on the new total', async () => {
+  // client 30-Aug (point 6): adding a level must NOT re-apply the enrolment's overall % to the new
+  // level. Past levels' discount is FROZEN (the ₹1,000 stays as-is) and the added level takes its OWN
+  // discount (here none), so the new total's discount stays ₹1,000 and net = total − ₹1,000.
+  it('freezes the past overall discount and adds the new level at its own (here no) discount', async () => {
     const { svc, issued } = makeUpgrade({ enr: ENR({ discount_type: 'percent', discount_value: 10, discount_minor: 100000, discount_amount_minor: 100000, net_fee_minor: 900000 }) });
     await svc.addEnrolmentLevel(900, { levels: [{ code: 'A2' }] }, { id: 5 }, scopeAll, 7);
     const upd = find(issued, /UPDATE enrolment SET fee_minor/)!;
     expect(upd.params[1]).toBe(2200000);  // total 22,000
-    expect(upd.params[2]).toBe(220000);   // discount = 10% of 22,000 = ₹2,200
-    expect(upd.params[3]).toBe(1980000);  // net = ₹19,800
+    expect(upd.params[2]).toBe(100000);   // discount FROZEN at the past ₹1,000 (not re-applied to A2)
+    expect(upd.params[3]).toBe(2100000);  // net = 22,000 − 1,000 = ₹21,000
+  });
+
+  // client 30-Aug (point 6): the added level can carry its OWN discount (% or ₹), applied to just
+  // that level and ADDED on top of the frozen past discount.
+  it('adds the new level with its own per-level discount, on top of the frozen past discount', async () => {
+    const { svc, issued } = makeUpgrade({ enr: ENR({ discount_type: 'percent', discount_value: 10, discount_minor: 100000, discount_amount_minor: 100000, net_fee_minor: 900000 }) });
+    // A2 fee is 12,000 (per the makeUpgrade master); give it its own 10% => ₹1,200 discount.
+    await svc.addEnrolmentLevel(900, { levels: [{ code: 'A2', discount_type: 'percent', discount_value: 10 }] }, { id: 5 }, scopeAll, 7);
+    const upd = find(issued, /UPDATE enrolment SET fee_minor/)!;
+    expect(upd.params[1]).toBe(2200000);  // total 22,000
+    expect(upd.params[2]).toBe(220000);   // ₹1,000 (past, frozen) + ₹1,200 (A2's own 10%) = ₹2,200
+    expect(upd.params[3]).toBe(1980000);  // net = 22,000 − 2,200 = ₹19,800
   });
 
   it('rejects a duplicate level and a non-active enrolment', async () => {

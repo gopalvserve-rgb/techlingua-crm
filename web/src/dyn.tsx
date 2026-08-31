@@ -6630,9 +6630,6 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
   const [disc, setDisc] = useState<Record<string, string>>({});
   const [discType, setDiscType] = useState<Record<string, LevelDiscType>>({});
   const [busy, setBusy] = useState(false);
-  // A level-scoped enrolment carries a discount PER LEVEL, so the level being ADDED can get its own
-  // discount (the client's "next level a year later at a different discount" case).
-  const levelScope = String(enrolment.discount_scope ?? 'overall') === 'level';
   const already = new Set<string>((enrolment.levels ?? []).map((l: any) => String(l.code).toLowerCase())
     .concat(String(enrolment.level_summary ?? '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean)));
   useEffect(() => {
@@ -6644,14 +6641,16 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
   }, [enrolment.course_id]);   // eslint-disable-line react-hooks/exhaustive-deps
   const chosen = levels.filter((l) => sel[String(l.code)]);
   const addFeeMinor = chosen.reduce((s, l) => s + Number(l.fee_minor || 0), 0);
-  const addDiscMinor = levelScope ? chosen.reduce((s, l) => s + perLevelDiscMinor(Number(l.fee_minor || 0), discType[String(l.code)] || 'amount', disc[String(l.code)] || ''), 0) : 0;
+  // client 30-Aug: the added level ALWAYS offers its own discount (% or ₹), regardless of the
+  // enrolment's original discount scope. Compute it here for the live preview.
+  const addDiscMinor = chosen.reduce((s, l) => s + perLevelDiscMinor(Number(l.fee_minor || 0), discType[String(l.code)] || 'amount', disc[String(l.code)] || ''), 0);
   const save = async () => {
     if (!chosen.length) { toast('Select at least one level to add.', true); return; }
     setBusy(true);
     try {
       await api.post(`/students/${student.id}/enrolments/${enrolment.id}/levels`, {
         levels: chosen.map((l) => ({ course_level_id: Number(l.id), code: String(l.code), fee_minor: Number(l.fee_minor || 0),
-          ...(levelScope ? { discount_type: (discType[String(l.code)] || 'amount'), discount_value: Number(disc[String(l.code)] || 0) } : {}) })),
+          discount_type: (discType[String(l.code)] || 'amount'), discount_value: Number(disc[String(l.code)] || 0) })),
       });
       toast('Level added — the enrolment fee and plan were updated.'); onDone();
     } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
@@ -6661,7 +6660,7 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
       footer={<button className="btn primary" onClick={save} disabled={busy || !chosen.length} data-testid="enrol-addlevel-save"><Ic k="plus" />Add to this enrolment</button>}>
       <div className="form-grid">
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
-          <div className="sub" style={{ marginBottom: 6 }}>Current levels: <b>{enrolment.level_summary || '—'}</b>. Adding a level increases the Total &amp; Net of this same enrolment; future installments cover the extra.{levelScope ? ' This enrolment tracks discounts per level, so the new level can take its own discount.' : ''}</div>
+          <div className="sub" style={{ marginBottom: 6 }}>Current levels: <b>{enrolment.level_summary || '—'}</b>. Adding a level increases the Total &amp; Net of this same enrolment; future installments cover the extra. The new level can take its own discount (by % or ₹); it is added separately and does not change any past level's discount.</div>
           {levels.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', background: 'var(--surface-2,#f8fafc)', borderRadius: 8 }} data-testid="addlevel-list">
               {levels.map((l) => {
@@ -6671,7 +6670,7 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
                     <input type="checkbox" disabled={busy} checked={on} onChange={(e) => setSel((s) => ({ ...s, [code]: e.target.checked }))} data-testid={`addlevel-cb-${code}`} />
                     <b>{code}</b>{l.label && l.label !== code ? <span className="sub">{l.label}</span> : null}
                     <span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
-                    {levelScope && on && (
+                    {on && (
                       <>
                         <select className="ainp" style={{ width: 60 }} disabled={busy} value={discType[code] || 'amount'}
                           onChange={(e) => setDiscType((d) => ({ ...d, [code]: e.target.value as LevelDiscType }))} data-testid={`addlevel-disctype-${code}`}>
@@ -6687,7 +6686,7 @@ export function AddEnrolmentLevelModal({ student, enrolment, onClose, onDone }:
               })}
             </div>
           ) : <div className="empty-note">No further levels available to add for this course.</div>}
-          {chosen.length > 0 && <div style={{ marginTop: 8, fontSize: 13 }}>Adds <b data-testid="addlevel-total">{fmtINR(addFeeMinor)}</b> gross{levelScope && addDiscMinor > 0 ? <> · discount <b style={{ color: 'var(--red,#b91c1c)' }}>− {fmtINR(addDiscMinor)}</b> · net <b style={{ color: 'var(--green,#15803d)' }}>{fmtINR(addFeeMinor - addDiscMinor)}</b></> : null} to the enrolment.</div>}
+          {chosen.length > 0 && <div style={{ marginTop: 8, fontSize: 13 }}>Adds <b data-testid="addlevel-total">{fmtINR(addFeeMinor)}</b> gross{addDiscMinor > 0 ? <> · discount <b style={{ color: 'var(--red,#b91c1c)' }}>− {fmtINR(addDiscMinor)}</b> · net <b style={{ color: 'var(--green,#15803d)' }}>{fmtINR(addFeeMinor - addDiscMinor)}</b></> : null} to the enrolment.</div>}
         </div>
       </div>
     </DetailModal>
@@ -6764,14 +6763,21 @@ export function AssignEnrolmentBatchModal({ student, enrolment, onClose, onDone 
  * On save it PATCHes the enrolment's discount/fee (net recomputed + capped server-side) and
  * (re)builds the payment plan — replacing an existing plan when it has no payments applied.
  */
-export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enrolmentId: number; onClose: () => void; onSaved: () => void }) {
-  const enr = useFetch<any>(`/enrolments/${enrolmentId}`, [enrolmentId]);
-  const planFetch = useFetch<any[]>(`/payment-plans?enrolment_id=${enrolmentId}`, [enrolmentId]);
+export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enrolmentId?: number; onClose: () => void; onSaved: () => void }) {
+  // client 30-Aug (point 4): the same builder powers BOTH the Fee Management fee-setup (fixed
+  // enrolmentId) AND the Payment Plans module's "New payment plan" (no id → pick an enrolment,
+  // Branch › Vertical shown in the picker). Same function, same instalment setup, one component.
+  const [picked, setPicked] = useState<number>(enrolmentId ?? 0);
+  const eid = enrolmentId ?? picked;
+  const pickList = useFetch<any[]>(!enrolmentId ? '/enrolments?status=active' : null, [enrolmentId]);
+  const enr = useFetch<any>(eid ? `/enrolments/${eid}` : null, [eid]);
+  const planFetch = useFetch<any[]>(eid ? `/payment-plans?enrolment_id=${eid}` : null, [eid]);
   const e = enr.data;
   const existingPlan = (planFetch.data ?? []).find((p: any) => p.status === 'active');
   const cfg = useFeeConfig();
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  useEffect(() => { setLoaded(false); }, [eid]);
   if (e && !loaded) {
     const dtp = (e.discount_type ?? 'none') as EnrolDiscountType;
     cfg.setFee(String(Number(e.gross_fee_minor ?? e.fee_minor ?? 0) / 100));
@@ -6782,11 +6788,12 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
     setLoaded(true);
   }
   const save = async () => {
+    if (!eid) { toast('Choose an enrolment first.', true); return; }
     if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
     try {
       // 1) persist the discount/fee on the enrolment (net recomputed + finance-capped server-side)
-      await api.patch(`/enrolments/${enrolmentId}`, {
+      await api.patch(`/enrolments/${eid}`, {
         fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
         payment_plan: cfg.planIntent, start_date: cfg.start || undefined,
       });
@@ -6796,7 +6803,7 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
         try { await api.del(`/payment-plans/${existingPlan.id}`); }
         catch (de) { toast(`Fee saved. The existing plan was kept — ${(de as Error).message}`, true); onSaved(); return; }
       }
-      try { await api.post('/payment-plans', feePlanBody(cfg, enrolmentId)); }
+      try { await api.post('/payment-plans', feePlanBody(cfg, eid)); }
       catch (pe) { toast(`Fee saved; payment plan not created — ${(pe as Error).message}`, true); onSaved(); return; }
       toast('Fee setup saved.'); onSaved();
     } catch (err) { toast((err as Error).message, true); } finally { setBusy(false); }
@@ -6804,7 +6811,21 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
   return (
     <DetailModal title={`Fee setup — ${e?.enrolment_no ?? ''}`} icon="rupee" onClose={onClose} width={620}
       footer={<button className="btn primary" onClick={save} disabled={busy || !e} data-testid="feesetup-save"><Ic k="check" />Save fee setup</button>}>
-      {!e ? <div className="fhint">Loading…</div> : (
+      {!enrolmentId && (
+        <div className="form-grid" style={{ marginBottom: 10 }}>
+          <div className="fld span2">
+            <label htmlFor="fs-enr">Enrolment <span className="star">*</span></label>
+            <select id="fs-enr" className="ainp" value={picked || ''} onChange={(ev) => setPicked(Number(ev.target.value) || 0)}>
+              <option value="">— pick an enrolment —</option>
+              {(pickList.data ?? []).map((en: any) => (
+                <option key={en.id} value={en.id}>{en.enrolment_no} · {en.lead_name}{[en.branch_name, en.vertical_name].filter(Boolean).length ? ` · ${[en.branch_name, en.vertical_name].filter(Boolean).join(' › ')}` : ''}{en.course_name ? ` · ${en.course_name}` : ''} — net {fmtINR(en.net_fee_minor)}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+      {!eid ? <div className="fhint">Pick an enrolment to set up its fee plan &amp; instalments.</div>
+        : !e ? <div className="fhint">Loading…</div> : (
         <>
           <div className="notice" style={{ marginBottom: 10 }}>
             <Ic k="rupee" /><div>{e.course_name ?? 'Course'} · <span className="mono">{e.enrolment_no}</span> · {[e.branch_name, e.vertical_name].filter(Boolean).join(' › ') || '—'}. Configure the payment plan &amp; discount — same as an enrollment.</div>

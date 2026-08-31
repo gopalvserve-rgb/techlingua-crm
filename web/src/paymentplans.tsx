@@ -250,7 +250,8 @@ export function PaymentPlansScreen() {
             ]} />,
           },
         ])} />
-      {create && <PlanCreateModal onClose={() => setCreate(false)} onSaved={() => { setCreate(false); after(); }} />}
+      {/* client 30-Aug (point 4): New payment plan uses the SAME builder as Fee Management fee-setup. */}
+      {create && <EnrolmentFeeSetupModal onClose={() => setCreate(false)} onSaved={() => { setCreate(false); after(); }} />}
       {detail != null && <PlanDetailModal id={detail} onClose={() => setDetail(null)} onChanged={after} />}
       {bulkModal}
     </>
@@ -528,7 +529,10 @@ export function FeeDuesScreen() {
         more={<ListActions onExport={() => downloadObjectsCsv('fee-management.csv', rows.map((r) => ({
           roll_number: r.roll_no || '', enrolment: r.enrolment_no, branch: r.branch_name, vertical: r.vertical_name,
           course: r.course_name || '', level: r.level_summary || '',
+          enrolment_date: dt(r.enrolment_date), next_due_date: dt(r.due_date),
           total_fee: (Number(r.total_fee_minor ?? r.amount_minor) / 100).toFixed(2),
+          discount: ((Number(r.total_fee_minor ?? r.amount_minor) - Number(r.net_fee_minor ?? r.amount_minor)) / 100).toFixed(2),
+          paid_to_date: (Number(r.enrolment_paid_minor ?? r.paid_minor ?? 0) / 100).toFixed(2),
           net_fee: (Number(r.net_fee_minor ?? r.amount_minor) / 100).toFixed(2),
           fee_plan: FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '',
           due_fee: (Number(r.outstanding_minor) / 100).toFixed(2),
@@ -537,7 +541,7 @@ export function FeeDuesScreen() {
           ageing: (BUCKET_BADGE[r.bucket]?.[0]) ?? r.bucket, days_overdue: r.overdue_days,
           student: r.student_name, trainer: r.trainer_name || '', owner: r.owner_name || '', source: r.source,
         })))} onRefresh={after} />}
-        cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Balance', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
+        cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Enrolment Date', 'Next Due Date', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Balance', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
         empty="No outstanding dues — every active enrolment is paid up."
         rows={rows.map((r): Cell[] => [
           { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div> : <div className="sub">Installment {r.seq_no}</div>}</div> },
@@ -547,12 +551,24 @@ export function FeeDuesScreen() {
           r.vertical_name || '—',
           r.course_name || '—',
           { node: r.level_summary ? <b>{r.level_summary}</b> : <span className="sub">—</span> },
-          { mono: fmtINR(Number(r.total_fee_minor ?? r.amount_minor)) },
+          { node: <span className="mono">{dt(r.enrolment_date)}</span> },
+          { node: <span className="mono">{dt(r.due_date)}</span> },
+          // Total Fee shows the gross fee with the discount detail (gross − net) inline (client 30-Aug).
+          { node: (() => {
+              const gross = Number(r.total_fee_minor ?? r.amount_minor);
+              const net = Number(r.net_fee_minor ?? r.amount_minor);
+              const disc = gross - net;
+              return <span><b className="mono">{fmtINR(gross)}</b>{disc > 0 ? <div className="sub" style={{ color: 'var(--good)' }}>− {fmtINR(disc)} disc</div> : null}</span>;
+            })() },
           { mono: fmtINR(Number(r.net_fee_minor ?? r.amount_minor)) },
           FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '—',
           { mono: fmtINR(r.outstanding_minor) },
-          // Balance = enrolment-level Net − everything receipted (the true outstanding).
-          { mono: fmtINR(r.balance_minor ?? r.outstanding_minor) },
+          // Balance = enrolment-level Net − everything receipted; also show paid-to-date (client 30-Aug).
+          { node: (() => {
+              const bal = Number(r.balance_minor ?? r.outstanding_minor);
+              const paid = Number(r.enrolment_paid_minor ?? r.paid_minor ?? 0);
+              return <span><b className="mono">{fmtINR(bal)}</b>{paid > 0 ? <div className="sub">paid {fmtINR(paid)}</div> : null}</span>;
+            })() },
           { node: <span className="bdg b-gray">{r.course_status_label || r.course_status || '—'}</span> },
           { b: BUCKET_BADGE[r.bucket] ?? [r.bucket, 'b-gray'] },
           Number(r.overdue_days) > 0 ? String(r.overdue_days) : '—',

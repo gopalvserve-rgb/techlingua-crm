@@ -120,10 +120,12 @@ export class EnrolmentService {
 
   /* ------------------------------------------------------------------ reads */
 
-  async list(scope: ResolvedScope, f: { status?: string; q?: string; from?: string; to?: string; limit?: number } = {}) {
+  async list(scope: ResolvedScope, f: { status?: string; q?: string; from?: string; to?: string; limit?: number; lead_id?: number } = {}) {
     const params: unknown[] = [];
     const where = [`e.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params)];
     if (f.status) { params.push(f.status); where.push(`e.status = $${params.length}::varchar`); }
+    // client 30-Aug (bug): record-payment inside a student profile must be scoped to THAT student.
+    if (f.lead_id) { params.push(f.lead_id); where.push(`e.lead_id = $${params.length}::bigint`); }
     // DEF-DR-02: one strict validator — malformed date -> 400, not a 500 at the ::date cast.
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`e.created_at >= $${params.length}::timestamptz`); }

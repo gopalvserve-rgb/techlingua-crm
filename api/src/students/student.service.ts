@@ -2638,8 +2638,12 @@ export class StudentService {
       : (dto?.course_level_id != null || dto?.code != null ? [dto] : []);
     if (!input.length) throw new BadRequestException('Choose a level to add.');
     const stdFeeMinor = await this.fetchStandardFeeMinor(courseId);
+    // client 30-Aug (point 6): a level ADDED later always gets its OWN discount (by % or ₹),
+    // applied to just that level and ADDED on top of the existing enrolment discount. Past levels'
+    // discount structure is never touched. So resolve the added levels with per-level ('level')
+    // discount semantics regardless of the enrolment's original scope.
     let newLevels: ResolvedLevel[];
-    try { newLevels = resolveLevels(master, input, scopeD, stdFeeMinor); }
+    try { newLevels = resolveLevels(master, input, 'level', stdFeeMinor); }
     catch (e) { throw new BadRequestException((e as Error).message); }
     // must not already be part of this enrolment (the unique index would 23505 anyway)
     const existing = await this.db.query<any>(`SELECT lower(code) AS code FROM enrolment_level WHERE enrolment_id = $1::bigint`, [enrolmentId]);
@@ -2656,16 +2660,14 @@ export class StudentService {
     const oldNet = Number(enr.net_fee_minor ?? 0);
     const newTotal = oldTotal + addedFee;
 
-    let newDiscount: number; let discType: EnrolmentDiscountType; let discValue: number;
-    if (scopeD === 'level') {
-      newDiscount = Math.min(oldDiscount + sumLevelDiscounts(newLevels), newTotal);
-      discType = newDiscount > 0 ? 'amount' : 'none'; discValue = newDiscount;
-    } else if (String(enr.discount_type) === 'percent') {
-      const d = computeEnrolmentDiscount(newTotal, 'percent', Number(enr.discount_value ?? 0));
-      newDiscount = d.discount_amount_minor; discType = 'percent'; discValue = Number(enr.discount_value ?? 0);
-    } else if (String(enr.discount_type) === 'amount') {
-      newDiscount = Math.min(oldDiscount, newTotal); discType = 'amount'; discValue = newDiscount;
-    } else { newDiscount = 0; discType = 'none'; discValue = 0; }
+    // The new level's own discount is ADDED to whatever the enrolment already discounted; the prior
+    // levels' discount amount (oldDiscount) is preserved exactly. The enrolment aggregate becomes an
+    // absolute amount = old discount + this level's discount (so past % structure is frozen, not re-
+    // applied to the new level). enrolment_level rows carry each added level's own discount_minor.
+    const addedDiscount = sumLevelDiscounts(newLevels);
+    const newDiscount = Math.min(oldDiscount + addedDiscount, newTotal);
+    const discType: EnrolmentDiscountType = newDiscount > 0 ? 'amount' : 'none';
+    const discValue = newDiscount;
     const newNet = newTotal - newDiscount;
     if (this.finance) {
       await this.finance.assertAllowed({

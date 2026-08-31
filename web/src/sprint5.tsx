@@ -1385,12 +1385,13 @@ export function CounsellorPerformance() {
 /*  FEE COLLECTION — LITE                                                */
 /* ==================================================================== */
 
-export function CollectModal({ enrolmentId, installmentId, defaultAmount, onClose, onSaved }: {
-  enrolmentId?: number; installmentId?: number; defaultAmount?: string; onClose: () => void; onSaved?: () => void;
+export function CollectModal({ enrolmentId, installmentId, leadId, defaultAmount, onClose, onSaved }: {
+  enrolmentId?: number; installmentId?: number; leadId?: number; defaultAmount?: string; onClose: () => void; onSaved?: () => void;
 }) {
   // item #6 — search the existing enrolments/students to collect against (server-side q filter).
   const [search, setSearch] = useState('');
-  const enrolQuery = `/enrolments?status=active${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`;
+  // client 30-Aug (bug): when opened inside a student profile, scope enrolments to that student only.
+  const enrolQuery = `/enrolments?status=active${leadId ? `&lead_id=${leadId}` : ''}${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`;
   const enrolments = useFetch<any[]>(enrolQuery, [enrolQuery]);
   const meta = useFetch<any>('/fees/meta');
   const [enrolment, setEnrolment] = useState<string>(String(enrolmentId ?? ''));
@@ -1634,7 +1635,7 @@ export function FeeCollection() {
         empty="No payments recorded yet" />
       <TableCard
         title="Fee Receipt Records" icon="rupee"
-        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Date', 'Branch › Vertical › Course', 'Actions']}
+        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Date', 'Branch', 'Vertical', 'Course', 'Actions']}
         empty="No payments recorded yet"
         rows={rows.map((r): Cell[] => [
           { node: <b className="mono">{r.receipt_no}</b> },
@@ -1645,7 +1646,9 @@ export function FeeCollection() {
           r.reference ? { mono: r.reference } : '—',
           dt(r.received_at),
           dt(r.received_at), // item #2 — receipt/payment Date column
-          { node: <span>{[r.branch_name, r.vertical_name, r.course_name].filter(Boolean).join(' › ') || '—'}</span> },
+          r.branch_name || '—',
+          r.vertical_name || '—',
+          r.course_name || '—',
           {
             node: (
               <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>

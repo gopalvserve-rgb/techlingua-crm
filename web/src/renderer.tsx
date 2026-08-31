@@ -1,5 +1,5 @@
 /** Generic spec-driven block renderer — mirrors the prototype's renderBlock(). */
-import { Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent, useState, useMemo } from 'react';
 import { Block, KpiItem } from './specs';
 import { Ic, checkS } from './icons';
 import { useColumnVisibility, ColumnsButton } from './colprefs';
@@ -85,7 +85,7 @@ export interface TableSelect {
   /** toggle all visible rows */ onToggleAll: () => void;
 }
 
-export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill, listKey }: {
+export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill, listKey, serial }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
   /** optional per-row tint class (e.g. error-log severity highlighting) */
@@ -102,18 +102,35 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
    *  full-page listing, which auto-keys off the title) a "Columns" control appears in the header and
    *  the user's hidden columns are remembered in localStorage. */
   listKey?: string;
+  /** client 30-Aug: prepend a 1-based Serial No column. Auto-on for any main list
+   *  (has select / column chooser); pass serial={false} to suppress, serial={true} to force. */
+  serial?: boolean;
 }) {
   // A real listing shows the Columns chooser: any explicit listKey, or a `fill` full-page list
   // (auto-keyed off its title). Hooks run unconditionally; when off, every column stays visible.
   const chooserKey = listKey ?? (fill && title ? title : undefined);
   const chooserOn = !!chooserKey && cols.length > 1;
+  // client 30-Aug: a 'main list' is any table with row selection or a column chooser.
+  const isList = !!select || chooserOn;
+  const showSerial = serial ?? isList;
+  // Fallback row-selection: give every main list a working select checkbox even when the
+  // screen didn't wire one to a bulk action (internal, index-keyed, resets on refresh).
+  const [internalSel, setInternalSel] = useState<Set<number>>(new Set());
+  const rowCount = rows.length;
+  const fallbackSelect: TableSelect | undefined = useMemo(() => (!select && isList) ? {
+    checked: (ri: number) => internalSel.has(ri),
+    onToggle: (ri: number) => setInternalSel((p) => { const n = new Set(p); n.has(ri) ? n.delete(ri) : n.add(ri); return n; }),
+    allChecked: rowCount > 0 && internalSel.size === rowCount,
+    onToggleAll: () => setInternalSel((p) => (p.size === rowCount ? new Set() : new Set(Array.from({ length: rowCount }, (_, i) => i)))),
+  } : undefined, [select, isList, internalSel, rowCount]);
+  const sel = select ?? fallbackSelect;
   const cv = useColumnVisibility(chooserOn ? chooserKey : undefined, cols);
   const shownIdx = chooserOn ? cv.visibleIdx : cols.map((_, i) => i);
   const shownCols = shownIdx.map((i) => cols[i]);
   const colsBtn = chooserOn
     ? <ColumnsButton cols={cols} ids={cv.ids} hidden={cv.hidden} onToggle={cv.toggle} onReset={cv.reset} />
     : null;
-  const span = shownCols.length + (select ? 1 : 0);
+  const span = shownCols.length + (sel ? 1 : 0) + (showSerial ? 1 : 0);
   const scrollCls = (sticky || fill) ? 'tbl-scroll' : 'scroll-x';
   return (
     <div className={`card${fill ? ' tbl-fill' : ''}`}>
@@ -126,12 +143,13 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
       <div className={scrollCls}>
         <table className="tbl">
           <thead><tr>
-            {select && (
+            {sel && (
               <th style={{ width: 34 }}>
                 <input type="checkbox" aria-label="Select all rows on this page"
-                  checked={select.allChecked} onChange={select.onToggleAll} onClick={(e) => e.stopPropagation()} />
+                  checked={sel.allChecked} onChange={sel.onToggleAll} onClick={(e) => e.stopPropagation()} />
               </th>
             )}
+            {showSerial && <th style={{ width: 44 }}>#</th>}
             {shownCols.map((c, i) => <th key={i}>{c}</th>)}
           </tr></thead>
           <tbody>
@@ -140,12 +158,13 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
             ) : rows.map((r, ri) => (
               <tr key={ri} className={rowClass?.(ri) || undefined} onClick={onRowClick ? () => onRowClick(ri) : undefined}
                 style={onRowClick ? { cursor: 'pointer' } : undefined}>
-                {select && (
+                {sel && (
                   <td style={{ width: 34 }} onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" aria-label={`Select row ${ri + 1}`}
-                      checked={select.checked(ri)} onChange={() => select.onToggle(ri)} />
+                      checked={sel.checked(ri)} onChange={() => sel.onToggle(ri)} />
                   </td>
                 )}
+                {showSerial && <td className="mono" style={{ color: 'var(--muted)' }}>{ri + 1}</td>}
                 {shownIdx.map((ci) => <td key={ci}>{renderCell(r[ci])}</td>)}
               </tr>
             ))}
