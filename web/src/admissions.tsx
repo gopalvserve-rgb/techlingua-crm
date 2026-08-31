@@ -15,12 +15,12 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
-import { toast, useFetch, useRef_ } from './refdata';
+import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { MasterQuickAdd } from './forms';
 import { rowActions, ConfirmModal, DetailModal, Section, KV } from './rowactions';
 import { DateRange } from './daterange';
 import { useScope } from './scope';
-import { FilterMulti } from './dyn';
+import { FilterMulti, ViewEnrolmentModal } from './dyn';
 import { DOC_ACCEPT, DOC_MAX_FILES, SINGLE_DOCS, docError, fileToDoc, DocumentList } from './documents';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 
@@ -242,16 +242,21 @@ const ENR_STATUS_CELL = (st: string): Cell => {
 function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?: boolean }) {
   const ref = useRef_();
   const { scope: gScope } = useScope();
+  const trainersQ = useFetch<any[]>('/users?role=Trainer', []);
   const [fB, setFB] = useState<number[]>(gScope.branches);
   const [fV, setFV] = useState<number[]>(gScope.verticals);
   const [fC, setFC] = useState<number[]>([]);
+  const [fTrainer, setFTrainer] = useState<number[]>([]);
+  const [fOwner, setFOwner] = useState<number[]>([]);
   const [fStatus, setFStatus] = useState('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [q, setQ] = useState('');
   const [tick, setTick] = useState(0);
+  const [view, setView] = useState<any | null>(null);
   const qs = new URLSearchParams();
   if (origin) qs.set('origin', origin);
   if (fStatus) qs.set('status', fStatus);
+  if (fTrainer.length) qs.set('trainer_id', fTrainer.join(','));
   if (range.from) qs.set('from', range.from);
   if (range.to) qs.set('to', range.to);
   if (q.trim()) qs.set('q', q.trim());
@@ -259,26 +264,32 @@ function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?:
   const list = useFetch<any[]>(`/enrolments?${qs.toString()}`, [qs.toString(), tick]);
   const after = () => setTick((t) => t + 1);
   const all = list.data ?? [];
-  // Branch/Vertical/Course are filtered client-side (the /enrolments list filters are date/status/q).
+  // Branch / Vertical / Course / Owner filter client-side (the /enrolments list filters status/trainer/date/q server-side).
   const rows = all.filter((e: any) =>
     (!fB.length || fB.includes(Number(e.branch_id))) &&
     (!fV.length || fV.includes(Number(e.vertical_id))) &&
-    (!fC.length || fC.includes(Number(e.course_id))));
+    (!fC.length || fC.includes(Number(e.course_id))) &&
+    (!fOwner.length || fOwner.includes(Number(e.counsellor_id))));
   const fmtDate = (v?: string) => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
-  const cols = ['Enrolment', 'Student', 'Branch', 'Vertical', 'Course', ...(showOrigin ? ['Origin'] : []), 'Status', 'Enrolled on'];
+  const cols = ['Enrolment', 'Student', 'Branch', 'Vertical', 'Course', 'Trainer', 'Owner', ...(showOrigin ? ['Origin'] : []), 'Status', 'Enrolled on', 'Actions'];
   return (
     <>
       <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
         extra={<>
+          <FilterMulti label="Trainer" icon="users" value={fTrainer} options={(trainersQ.data ?? []) as any} onChange={setFTrainer} />
+          <FilterMulti label="Owner" icon="users" value={fOwner} options={selectableUsers(ref.users) as any} onChange={setFOwner} />
           <label className="fchip"><Ic k="shield" />
             <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
               <option value="">All statuses</option><option value="active">Active</option><option value="pending_approval">Pending approval</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option>
             </select></label>
+          <label className="fchip" style={{ minWidth: 150 }}><Ic k="search" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search enrolment / student / phone" style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12, width: '100%' }} /></label>
           <DateRange value={range} onChange={setRange} idPrefix="enr-dr" style={{ marginLeft: 'auto' }} />
         </>} />
       <TableCard fill title={showOrigin ? 'Master Directory — all enrolments' : 'Direct Enrolments'} icon="students" listKey={showOrigin ? 'adm-master' : 'adm-direct'}
         more={<ListActions onExport={() => downloadObjectsCsv(showOrigin ? 'master-directory.csv' : 'direct-enrolments.csv', rows.map((e: any) => ({
           enrolment_no: e.enrolment_no, student: e.lead_name, branch: e.branch_name, vertical: e.vertical_name, course: e.course_name,
+          trainer: e.trainer_name || '', owner: e.counsellor_name || '',
           origin: e.from_admission ? 'Online application' : 'Direct enrolment', status: e.status, enrolled_on: e.created_at,
         })))} onRefresh={after} />}
         cols={cols}
@@ -289,10 +300,14 @@ function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?:
           e.branch_name ?? '—',
           e.vertical_name ?? '—',
           e.course_name ?? '—',
+          e.trainer_name ?? '—',
+          e.counsellor_name ?? '—',
           ...(showOrigin ? [{ b: e.from_admission ? ['Online application', 'b-indigo'] : ['Direct enrolment', 'b-gray'] } as Cell] : []),
           ENR_STATUS_CELL(e.status),
           fmtDate(e.created_at),
+          rowActions({ extra: [{ k: 'eye', title: 'View enrolment', onClick: () => setView(e) }] }),
         ])} />
+      {view && <ViewEnrolmentModal enrolment={view} onClose={() => setView(null)} />}
     </>
   );
 }

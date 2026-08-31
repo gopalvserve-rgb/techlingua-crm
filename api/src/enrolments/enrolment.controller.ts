@@ -21,6 +21,7 @@ export class EnrolmentController {
       status: q?.status, q: q?.q, from: q?.from, to: q?.to,
       lead_id: q?.lead_id ? Number(q.lead_id) : undefined,
       origin: q?.origin,
+      trainer_ids: q?.trainer_id ? String(q.trainer_id).split(',').map(Number).filter(Boolean) : undefined,
       limit: q?.limit ? Number(q.limit) : undefined,
     });
   }

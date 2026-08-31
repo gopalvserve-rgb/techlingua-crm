@@ -120,7 +120,7 @@ export class EnrolmentService {
 
   /* ------------------------------------------------------------------ reads */
 
-  async list(scope: ResolvedScope, f: { status?: string; q?: string; from?: string; to?: string; limit?: number; lead_id?: number; origin?: string } = {}) {
+  async list(scope: ResolvedScope, f: { status?: string; q?: string; from?: string; to?: string; limit?: number; lead_id?: number; origin?: string; trainer_ids?: number[] } = {}) {
     const params: unknown[] = [];
     const where = [`e.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params)];
     if (f.status) { params.push(f.status); where.push(`e.status = $${params.length}::varchar`); }
@@ -131,6 +131,8 @@ export class EnrolmentService {
     const ADM_EXISTS = `EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL)`;
     if (f.origin === 'online') where.push(ADM_EXISTS);
     else if (f.origin === 'direct') where.push(`NOT ${ADM_EXISTS}`);
+    // client Sep-1: ERP Trainer filter — the trainer of the enrolment's batch.
+    if (f.trainer_ids?.length) { params.push(f.trainer_ids); where.push(`bt.trainer_id = ANY($${params.length}::bigint[])`); }
     // DEF-DR-02: one strict validator — malformed date -> 400, not a 500 at the ::date cast.
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`e.created_at >= $${params.length}::timestamptz`); }
@@ -161,7 +163,8 @@ export class EnrolmentService {
               EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL) AS from_admission,
               l.full_name AS lead_name, l.phone AS lead_phone,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
-              u.name AS counsellor_name, q.quote_no,
+              e.counsellor_id, u.name AS counsellor_name, q.quote_no,
+              e.batch_id, bt.name AS batch_name, bt.trainer_id, tr.name AS trainer_name,
               COALESCE(p.paid_minor, 0) AS paid_minor,
               COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor,
               (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) AS total_payable_minor,
@@ -173,6 +176,8 @@ export class EnrolmentService {
          LEFT JOIN m_course c ON c.id = e.course_id
          LEFT JOIN "user" u ON u.id = e.counsellor_id
          LEFT JOIN quotation q ON q.id = e.quotation_id
+         LEFT JOIN batch bt ON bt.id = e.batch_id
+         LEFT JOIN "user" tr ON tr.id = bt.trainer_id
          LEFT JOIN LATERAL (
            SELECT COALESCE(sum(fr.amount_minor), 0) AS paid_minor
              FROM fee_receipt fr WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL
@@ -215,7 +220,7 @@ export class EnrolmentService {
     const e = await this.db.one<any>(
       `SELECT e.*, l.full_name AS lead_name, l.phone AS lead_phone, l.email AS lead_email,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
-              u.name AS counsellor_name, q.quote_no,
+              e.counsellor_id, u.name AS counsellor_name, q.quote_no,
               COALESCE(p.paid_minor, 0) AS paid_minor,
               COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor,
               (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) AS total_payable_minor,
