@@ -1,0 +1,9 @@
+<!-- Merge these into android/app/src/main/AndroidManifest.xml -->
+<!-- permissions (declare above <application>) -->
+<uses-permission android:name="android.permission.READ_CALL_LOG"/>
+<uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+<uses-permission android:name="android.permission.INTERNET"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+<!-- ACTION_DIAL needs no permission; add CALL_PHONE only if you ever switch to ACTION_CALL. -->
+<!-- <uses-permission android:name="android.permission.CALL_PHONE"/> -->

@@ -1,6 +1,7 @@
 /** Lead detail / edit slide-in sheet — ported 1:1 from the prototype's renderLead(). */
 import { useEffect, useState } from 'react';
 import { api } from './api';
+import { LeadCallsTab } from './calls';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
 import { AddMasterModal } from './mastermodal';
@@ -545,7 +546,7 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                 </div>
               </>
             )}
-            {tab === 'calls' && <div className="empty-note">Telephony is out of scope for this CRM — calls are made from your own phone, so call logs are not recorded here.</div>}
+            {tab === 'calls' && <LeadCallsTab leadId={Number(lead.id)} phone={lead.phone} />}
             {tab === 'whatsapp' && <div className="empty-note">WhatsApp message history appears here once WhatsApp is connected in Settings › Channels.</div>}
           </div>
         </div>

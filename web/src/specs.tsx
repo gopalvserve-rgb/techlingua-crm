@@ -312,7 +312,8 @@ const APP_FULL: ModuleItem[] = [
 
   /* ---------------- Calls ---------------- */
   { id: 'calls', label: 'Calls', icon: 'calls', subs: [
-    { id: 'overview', label: 'Calls', spec: gen('Calls', 'Calls') },
+    { id: 'overview', label: 'Calls', spec: { dyn: 'callLogs',
+      sub: 'Every call auto-logged against its lead — from the phone\'s own call log (authoritative) and live dial events. Duration, SIM, disposition and the OEM recording, RBAC-scoped.' } },
     { id: 'dialer', label: 'Dialer', spec: {
       sub: 'NeoDove integration. Manual, preview & predictive dialer. Call from any lead/student record.',
       sprintNote: 'Telephony / calls are out of scope — this screen is a design reference only; no dialler ships.',
@@ -342,17 +343,12 @@ const APP_FULL: ModuleItem[] = [
     { id: 'transfer', label: 'Call Transfer', spec: gen('Calls', 'Call Transfer') },
     { id: 'conference', label: 'Conference Calling', spec: gen('Calls', 'Conference Calling') },
     { id: 'routing', label: 'Call Routing', spec: gen('Calls', 'Call Routing') },
-    { id: 'logs', label: 'Call Logs', spec: {
-      sub: 'Every call auto-logged against the lead with a disposition prompt after each call.',
-      sprintNote: 'Telephony is out of scope, so automatic call logging is not built — this screen is a design reference only.',
-      blocks: [emptyTable('Call logs', ['Lead', 'Direction', 'Duration', 'Disposition', 'Owner', 'Recording'], 'No calls logged yet')] } },
-    { id: 'recordings', label: 'Recordings', spec: {
-      sub: 'Recordings via third-party software. Access control & retention. Caller consent captured.',
-      blocks: [{ type: 'cfg', title: 'Recording settings', rows: [
-        { ic: 'calls', k: 'Recording source', s: 'Third-party software', v: 'External', toggle: true },
-        { ic: 'shield', k: 'Caller consent', s: 'Played before recording', v: 'On', toggle: true },
-        { ic: 'clock', k: 'Retention', s: 'Auto-purge after period', v: '90 days', toggle: true },
-        { ic: 'admin', k: 'Access control', s: 'Manager + owner only', v: 'Restricted', toggle: true }] }] } },
+    { id: 'logs', label: 'Call Logs', spec: { dyn: 'callLogs',
+      sub: 'Every call auto-logged against its lead, imported from the phone\'s own call log. Search, filter, play the recording and log a disposition.' } },
+    { id: 'recordings', label: 'Recordings', spec: { dyn: 'callRecordings',
+      sub: 'Call recordings synced from the phone\'s own dialer folder and attached to the matching lead. Playable inline; RBAC-scoped.' } },
+    { id: 'callsettings', label: 'Call Settings', spec: { dyn: 'callSettings',
+      sub: 'Per-user call tracking: enable/disable, SIM slots, recording folder, sync intervals, and a tap-to-dial tester (Android app).' } },
     { id: 'telSettings', label: 'Telephony Settings', spec: {
       sub: 'Provider, numbers & routing. Transfer / conference not required per requirements.',
       blocks: [{ type: 'cfg', title: 'Provider', rows: [

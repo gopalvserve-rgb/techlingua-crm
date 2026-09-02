@@ -43,6 +43,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
 import { ApiAccessModule } from './apiaccess/api-access.module';
 import { SupportModule } from './support/support.module';
 import { CrossSellModule } from './crosssell/crosssell.module';
+import { CallsModule } from './calls/calls.module';
 import { CustomFieldsModule } from './customfields/custom-fields.module';
 import { StudentsModule } from './students/students.module';
 import { FinanceModule } from './finance/finance.module';
@@ -118,6 +119,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     // Post-Phase-1 client request — Help & Support › Support Tickets (internal, full lifecycle)
     SupportModule,      // support_ticket + comments, ticket.* RBAC, SLA, notify assignee
     CrossSellModule,
+    CallsModule,       // real call pipeline: tap-to-dial + call-log import + recording sync (Sep 2026)
     CustomFieldsModule,  // client Aug 2026: DEFINE lead custom fields → render on Add/Edit lead form    // cross_sell_rule + cross_sell_attempt, crosssell.* RBAC, act via follow-up or LeadIngestionService
     // Phase 2 (CRM-level) — Students & Academics: lead->student conversion, students dir + dashboard, batches
     StudentsModule,
