@@ -149,9 +149,9 @@ export class EnrolmentService {
       if (digits) {
         params.push(`%${digits}%`);
         const dpos = params.length;
-        where.push(`(e.enrolment_no ILIKE $${like} OR l.full_name ILIKE $${like} OR regexp_replace(COALESCE(l.phone,''),'\\D','','g') ILIKE $${dpos})`);
+        where.push(`(e.enrolment_no ILIKE $${like} OR l.full_name ILIKE $${like} OR sp.full_name ILIKE $${like} OR regexp_replace(COALESCE(l.phone, sp.phone,''),'\\D','','g') ILIKE $${dpos})`);
       } else {
-        where.push(`(e.enrolment_no ILIKE $${like} OR l.full_name ILIKE $${like} OR l.phone ILIKE $${like})`);
+        where.push(`(e.enrolment_no ILIKE $${like} OR l.full_name ILIKE $${like} OR sp.full_name ILIKE $${like} OR l.phone ILIKE $${like})`);
       }
     }
     params.push(Math.min(Number(f.limit ?? 200), 500));
@@ -161,7 +161,7 @@ export class EnrolmentService {
               e.fee_minor, e.discount_minor, e.net_fee_minor, e.first_payment_minor,
               e.created_at, e.lead_id, e.quotation_id, e.course_id, e.course_type, e.student_profile_id, e.branch_id, e.vertical_id,
               EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL) AS from_admission,
-              l.full_name AS lead_name, l.phone AS lead_phone,
+              COALESCE(l.full_name, sp.full_name) AS lead_name, COALESCE(l.phone, sp.phone) AS lead_phone,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               e.counsellor_id, u.name AS counsellor_name, q.quote_no,
               e.batch_id, bt.name AS batch_name, bt.trainer_id, tr.name AS trainer_name,
@@ -171,6 +171,7 @@ export class EnrolmentService {
               (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(p.paid_minor, 0) AS balance_minor
          FROM enrolment e
          LEFT JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN student sp ON sp.id = e.student_profile_id
          JOIN branch b ON b.id = e.branch_id
          JOIN vertical v ON v.id = e.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id
@@ -218,7 +219,7 @@ export class EnrolmentService {
     const params: unknown[] = [id];
     const w = this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params);
     const e = await this.db.one<any>(
-      `SELECT e.*, l.full_name AS lead_name, l.phone AS lead_phone, l.email AS lead_email,
+      `SELECT e.*, COALESCE(l.full_name, sp.full_name) AS lead_name, COALESCE(l.phone, sp.phone) AS lead_phone, COALESCE(l.email, sp.email) AS lead_email,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,
               e.counsellor_id, u.name AS counsellor_name, q.quote_no,
               COALESCE(p.paid_minor, 0) AS paid_minor,
@@ -227,6 +228,7 @@ export class EnrolmentService {
               (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(p.paid_minor, 0) AS balance_minor
          FROM enrolment e
          LEFT JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN student sp ON sp.id = e.student_profile_id
          JOIN branch b ON b.id = e.branch_id
          JOIN vertical v ON v.id = e.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id
