@@ -5801,7 +5801,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           <Section title="Collection Summary">
             <KV rows={[
               ['Net Fee', money(fees?.summary?.net_fee_minor)],
-              ['Collected', money(fees?.summary?.collected_minor)],
+              ['Paid', money(fees?.summary?.collected_minor)],
               ['Balance', money(fees?.summary?.balance_minor)],
               ['Receipts', String(fees?.summary?.receipt_count ?? 0)],
             ]} />

@@ -129,7 +129,7 @@ function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged:
 }
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
 
-const PLAN_TYPE_LABEL: Record<string, string> = { full: 'Full', installment: 'Installment', emi: 'EMI', custom: 'Custom' };
+const PLAN_TYPE_LABEL: Record<string, string> = { full: 'Full', installment: 'Installment', emi: 'Installments', custom: 'Custom' };
 // The enrolment's payment-plan INTENT code (enrolment.payment_plan) → a readable Fee Plan label.
 const FEE_PLAN_LABEL: Record<string, string> = { full: 'Full payment', emi_3: '3 installments', emi_6: '6 installments', custom: 'Custom' };
 const PLAN_STATUS_BADGE: Record<string, [string, string]> = {
@@ -209,13 +209,13 @@ export function PaymentPlansScreen() {
       <Kpis items={[
         { lab: 'Active plans', val: String(s?.active_plans ?? 0), ic: 'doc' },
         { lab: 'Scheduled', val: s ? fmtINR(s.scheduled_minor) : '—', ic: 'rupee' },
-        { lab: 'Collected', val: s ? fmtINR(s.collected_minor) : '—', ic: 'rupee' },
+        { lab: 'Paid', val: s ? fmtINR(s.collected_minor) : '—', ic: 'rupee' },
         { lab: 'Outstanding', val: s ? fmtINR(s.outstanding_minor) : '—', ic: 'clock' },
       ]} />
       <div className="filters" style={{ marginBottom: 12 }}>
         <label className="fchip"><Ic k="search" /><input placeholder="Search enrolment / student" value={q} onChange={(e) => setQ(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit' }} /></label>
         <FilterMulti label="Status" icon="shield" value={fStatus as any} options={asOpts([['active', 'Active'], ['completed', 'Completed'], ['cancelled', 'Cancelled']]) as any} onChange={setFStatus as any} />
-        <FilterMulti label="Type" icon="grid" value={fType as any} options={asOpts([['full', 'Full'], ['installment', 'Installment'], ['emi', 'EMI'], ['custom', 'Custom']]) as any} onChange={setFType as any} />
+        <FilterMulti label="Type" icon="grid" value={fType as any} options={asOpts([['full', 'Full'], ['installment', 'Installment'], ['emi', 'Installments'], ['custom', 'Custom']]) as any} onChange={setFType as any} />
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={(ref.branches ?? []) as any} onChange={setFBranches} />
         <FilterMulti label="Vertical" icon="ops" value={fVerticals} options={(ref.verticals ?? []) as any} onChange={setFVerticals} />
       </div>
@@ -230,7 +230,7 @@ export function PaymentPlansScreen() {
           outstanding: ((Number(r.scheduled_minor) - Number(r.paid_minor)) / 100).toFixed(2),
           overdue: r.overdue_count, branch: r.branch_name, vertical: r.vertical_name, status: r.status,
         })))} onRefresh={after} />}
-        cols={['Enrolment', 'Student', 'Type', 'Installments', 'Total', 'Collected', 'Outstanding', 'Overdue', 'Branch', 'Status', 'Actions']}
+        cols={['Enrolment', 'Student', 'Type', 'Installments', 'Total', 'Paid', 'Outstanding', 'Overdue', 'Branch', 'Status', 'Actions']}
         empty="No payment plans yet — build one on an enrolment to schedule installments."
         rows={rows.map((r): Cell[] => [
           { node: <b className="mono">{r.enrolment_no}</b> },
@@ -323,7 +323,7 @@ export function PlanCreateModal({ onClose, onSaved, enrolmentId }: { onClose: ()
             <div className="fld"><label htmlFor="pp-type">Plan type</label>
               <select id="pp-type" className="ainp" value={planType} onChange={(e) => setPlanType(e.target.value as any)}>
                 <option value="full">Full payment</option><option value="installment">Installment</option>
-                <option value="emi">EMI</option><option value="custom">Custom</option>
+                <option value="emi">Installments</option><option value="custom">Custom</option>
               </select></div>
             {planType !== 'full' && (
               <>

@@ -60,7 +60,7 @@ export const COURSE_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'Beginner', 'I
 export const DELIVERY_MODES = ['Offline', 'Online', 'Hybrid'];
 
 const _BR = ['—'], _VERT = ['—'], _PIPE = ['—'], _COURSE = ['—'], _USERS = ['—'];
-const _PLAN = ['Full Payment', '3 EMI', '6 EMI', 'Custom'];
+const _PLAN = ['Full Payment', '3 Installments', '6 Installments', 'Custom'];
 
 /**
  * THE HIERARCHY CASCADE, declared once. A child <select> is filtered to its parent's

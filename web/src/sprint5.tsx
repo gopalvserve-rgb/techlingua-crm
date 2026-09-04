@@ -1058,7 +1058,7 @@ export function SaleClosure() {
       )}
       <Kpis items={[
         { lab: 'Enrolments (MTD)', val: String(s?.mtd_count ?? 0), ic: 'check' },
-        { lab: 'Revenue closed (MTD)', val: s ? fmtINR(s.mtd_revenue_minor) : '—', ic: 'rupee' },
+        { lab: 'Fees Booked (MTD)', val: s ? fmtINR(s.mtd_revenue_minor) : '—', ic: 'rupee' },
         { lab: 'Avg discount', val: s ? `${s.avg_discount_pct}%` : '—', ic: 'perf' },
         { lab: 'Pending approval', val: String(s?.pending_approval ?? 0), ic: 'clock' },
       ]} />
