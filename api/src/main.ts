@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import * as express from 'express';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { AppModule } from './app.module';
 import { config } from './config';
@@ -46,8 +46,19 @@ async function bootstrap() {
   {
     const httpServer = app.getHttpAdapter().getInstance() as express.Express;
     const APK_KEY = 'apk/techlingua-crm.apk';
+    const localApk = join(__dirname, '..', 'public', 'downloads', 'techlingua-crm.apk');
     const serveApk = async (_req: express.Request, res: express.Response) => {
       try {
+        // Prefer an APK bundled with the deploy (web/public/downloads); fall back to R2.
+        if (existsSync(localApk)) {
+          const body = readFileSync(localApk);
+          res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+          res.setHeader('Content-Disposition', 'attachment; filename="techlingua-crm.apk"');
+          res.setHeader('Content-Length', String(body.length));
+          res.setHeader('Cache-Control', 'public, max-age=60');
+          res.status(200).end(body);
+          return;
+        }
         const storage = app.get(StorageService, { strict: false });
         const { body } = await storage.getObject(APK_KEY);
         res.setHeader('Content-Type', 'application/vnd.android.package-archive');
