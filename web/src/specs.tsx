@@ -679,6 +679,9 @@ export const MOBILE_ALLOW: Record<string, Set<string>> = {
   // Start Calling, Campaigns (operate/view), Follow-ups, Kanban, Import.
   // Masters + config-only lead screens are deliberately excluded.
   leads: new Set(['all', 'calling', 'campaigns', 'followups', 'pipeline', 'import']),
+  // Call tracking is a field/mobile feature — surface Call History, Recordings, Call
+  // Settings (SIM + recording folder + permissions + tap-to-dial) and the Activity Report.
+  calls: new Set(['logs', 'recordings', 'callsettings', 'activityreport']),
 };
 
 /** True when running inside the Android/Capacitor mobile wrapper (or `?app=mobile`). */
