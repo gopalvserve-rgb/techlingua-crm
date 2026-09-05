@@ -249,6 +249,12 @@ export function CallSettings() {
     try { const r = await deviceSyncNow(); toast(r.message, !r.ok); }
     catch (e) { toast((e as Error).message, true); }
   };
+  const cap = () => (window as any).Capacitor?.Plugins?.CallPlugin;
+  const tl = () => (window as any).TLNative;
+  const grantPerms = async () => { try { if (cap()?.requestCallPermissions) await cap().requestCallPermissions(); else if (tl()?.requestAllPermissions) tl().requestAllPermissions(); toast('Permission request sent — approve on the phone'); } catch (e) { toast((e as Error).message, true); } };
+  const pickFolder = async () => { try { if (cap()?.pickRecordingFolder) await cap().pickRecordingFolder(); else if (tl()?.pickRecordingFolder) tl().pickRecordingFolder(); else toast('Open this in the Android app', true); } catch (e) { toast((e as Error).message, true); } };
+  const openOverlay = () => { try { if (cap()?.openOverlaySettings) cap().openOverlaySettings(); else if (tl()?.openOverlaySettings) tl().openOverlaySettings(); else toast('Open this in the Android app', true); } catch { /* noop */ } };
+  const openAppInfo = () => { try { if (tl()?.openAppSettings) tl().openAppSettings(); else toast('Open this in the Android app', true); } catch { /* noop */ } };
   if (!s) return <div className="main"><p className="muted">Loading…</p></div>;
   const slotOn = (n: number) => Array.isArray(s.sim_slots) && s.sim_slots.includes(n);
   const toggleSlot = (n: number) => setS((p: any) => {
@@ -299,6 +305,19 @@ export function CallSettings() {
           Records a dial event and opens the phone dialer (on the mobile app). The call's real outcome and
           duration are filled in automatically when the call-log sync runs.
         </p>
+      </div>
+
+      <div className="card" style={{ maxWidth: 640, marginTop: 16 }}>
+        <div className="card-head"><h3><Ic k="cfg" /> Device permissions & access (Android app)</h3></div>
+        <div style={{ padding: 16, display: 'grid', gap: 10 }}>
+          <p className="muted" style={{ margin: 0 }}>These open the phone's system screens to grant access. They work inside the installed Android app; in a desktop browser they do nothing.</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn" onClick={grantPerms}><Ic k="check" /> Grant call permissions</button>
+            <button className="btn ghost" onClick={pickFolder}><Ic k="calls" /> Pick recording folder</button>
+            <button className="btn ghost" onClick={openOverlay}>Draw over apps</button>
+            <button className="btn ghost" onClick={openAppInfo}>Open app settings</button>
+          </div>
+        </div>
       </div>
 
       <div className="card" style={{ maxWidth: 640, marginTop: 16 }}>
