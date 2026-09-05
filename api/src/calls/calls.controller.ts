@@ -24,6 +24,10 @@ export class CallsController {
   @RequirePermission('calls.read')
   summary(@CurrentScope() scope: ResolvedScope) { return this.svc.summary(scope); }
 
+  @Get('report')
+  @RequirePermission('calls.read')
+  report(@CurrentScope() scope: ResolvedScope, @Query() q: any) { return this.svc.report(scope, q ?? {}); }
+
   @Get('settings')
   @RequirePermission('calls.read')
   getSettings(@CurrentUser() me: Me) { return this.svc.getSettings(me); }

@@ -144,6 +144,93 @@ export class CallsService {
     };
   }
 
+  /** Shared WHERE for the activity report: RBAC scope + date range + optional user filter. */
+  private reportFilter(scope: ResolvedScope, q: any): { where: string; params: unknown[] } {
+    const params: unknown[] = [];
+    const scopeSql = this.scopeWhere(scope, params);
+    const where: string[] = [scopeSql, `ce.src IS DISTINCT FROM 'live-dup'`];
+    const users = csvNums(q.user_ids ?? q.user_id);
+    if (users.length) { params.push(users); where.push(`ce.user_id = ANY($${params.length}::bigint[])`); }
+    const tcol = `coalesce(ce.call_start_at, ce.created_at)`;
+    if (q.from) { params.push(q.from); where.push(`${tcol} >= $${params.length}::timestamptz`); }
+    if (q.to)   { params.push(q.to);   where.push(`${tcol} < ($${params.length}::timestamptz + interval '1 day')`); }
+    if (!q.from && !q.to) where.push(`${tcol} >= ((now() AT TIME ZONE 'Asia/Kolkata')::date - interval '30 days')`);
+    return { where: where.join(' AND '), params };
+  }
+
+  /** Call Activity report — full productivity picture over a date range, RBAC-scoped (IST buckets). */
+  async report(scope: ResolvedScope, q: any) {
+    const base = `FROM call_event ce LEFT JOIN lead l ON l.id = ce.lead_id`;
+    const tcol = `coalesce(ce.call_start_at, ce.created_at)`;
+
+    const f1 = this.reportFilter(scope, q);
+    const totals = await this.db.one<any>(
+      `SELECT count(*) AS total_calls,
+         count(*) FILTER (WHERE ce.duration_s > 0) AS connected,
+         count(*) FILTER (WHERE ce.direction='missed') AS missed,
+         count(*) FILTER (WHERE ce.direction='in') AS incoming,
+         count(*) FILTER (WHERE ce.direction='out') AS outgoing,
+         coalesce(sum(ce.duration_s),0) AS talk_time_s,
+         coalesce(round(avg(NULLIF(ce.duration_s,0))),0) AS avg_duration_s,
+         count(DISTINCT ce.lead_id) FILTER (WHERE ce.lead_id IS NOT NULL) AS unique_leads,
+         count(*) FILTER (WHERE ce.recording_id IS NOT NULL) AS recordings,
+         count(DISTINCT ce.user_id) AS users_active
+       ${base} WHERE ${f1.where}`, f1.params);
+
+    const f2 = this.reportFilter(scope, q);
+    const gapRow = await this.db.one<any>(
+      `WITH g AS (SELECT EXTRACT(EPOCH FROM (${tcol} - LAG(${tcol}) OVER (PARTITION BY ce.user_id ORDER BY ${tcol}))) AS gap
+         ${base} WHERE ${f2.where})
+       SELECT coalesce(round(avg(gap) FILTER (WHERE gap > 0 AND gap < 28800)),0) AS avg_gap_s FROM g`, f2.params);
+
+    const f3 = this.reportFilter(scope, q);
+    const dayWise = await this.db.query(
+      `SELECT (${tcol} AT TIME ZONE 'Asia/Kolkata')::date AS day,
+         count(*) AS calls, count(*) FILTER (WHERE ce.duration_s>0) AS connected,
+         count(*) FILTER (WHERE ce.direction='missed') AS missed,
+         coalesce(sum(ce.duration_s),0) AS talk_time_s,
+         coalesce(round(avg(NULLIF(ce.duration_s,0))),0) AS avg_duration_s
+       ${base} WHERE ${f3.where} GROUP BY 1 ORDER BY 1 DESC`, f3.params);
+
+    const f4 = this.reportFilter(scope, q);
+    const userWise = await this.db.query(
+      `WITH b AS (SELECT ce.user_id, ${tcol} AS ts, ce.duration_s, ce.direction, ce.recording_id
+         ${base} WHERE ${f4.where}),
+       gaps AS (SELECT user_id, EXTRACT(EPOCH FROM (ts - LAG(ts) OVER (PARTITION BY user_id ORDER BY ts))) AS gap FROM b),
+       gap_agg AS (SELECT user_id, round(avg(gap) FILTER (WHERE gap>0 AND gap<28800)) AS avg_gap_s FROM gaps GROUP BY user_id)
+       SELECT b.user_id, u.name AS user_name, mgr.name AS manager_name,
+         count(*) AS calls, count(*) FILTER (WHERE b.duration_s>0) AS connected,
+         count(*) FILTER (WHERE b.direction='missed') AS missed,
+         coalesce(sum(b.duration_s),0) AS talk_time_s,
+         coalesce(round(avg(NULLIF(b.duration_s,0))),0) AS avg_duration_s,
+         count(DISTINCT date_trunc('hour', b.ts AT TIME ZONE 'Asia/Kolkata')) AS active_hours,
+         count(*) FILTER (WHERE b.recording_id IS NOT NULL) AS recordings,
+         min(b.ts) AS first_call, max(b.ts) AS last_call, coalesce(ga.avg_gap_s,0) AS avg_gap_s
+       FROM b LEFT JOIN "user" u ON u.id=b.user_id
+       LEFT JOIN "user" mgr ON mgr.id=u.report_to_id
+       LEFT JOIN gap_agg ga ON ga.user_id=b.user_id
+       GROUP BY b.user_id, u.name, mgr.name, ga.avg_gap_s ORDER BY calls DESC`, f4.params);
+
+    const f5 = this.reportFilter(scope, q);
+    const managerWise = await this.db.query(
+      `SELECT coalesce(mgr.id,0) AS manager_id, coalesce(mgr.name,'— No manager —') AS manager_name,
+         count(DISTINCT ce.user_id) AS reps, count(*) AS calls,
+         count(*) FILTER (WHERE ce.duration_s>0) AS connected,
+         coalesce(sum(ce.duration_s),0) AS talk_time_s,
+         coalesce(round(avg(NULLIF(ce.duration_s,0))),0) AS avg_duration_s
+       ${base} LEFT JOIN "user" u ON u.id=ce.user_id LEFT JOIN "user" mgr ON mgr.id=u.report_to_id
+       WHERE ${f5.where} GROUP BY mgr.id, mgr.name ORDER BY calls DESC`, f5.params);
+
+    const f6 = this.reportFilter(scope, q);
+    const hourly = await this.db.query(
+      `SELECT EXTRACT(HOUR FROM (${tcol} AT TIME ZONE 'Asia/Kolkata'))::int AS hour,
+         count(*) AS calls, count(*) FILTER (WHERE ce.duration_s>0) AS connected,
+         coalesce(sum(ce.duration_s),0) AS talk_time_s
+       ${base} WHERE ${f6.where} GROUP BY 1 ORDER BY 1`, f6.params);
+
+    return { totals: { ...(totals || {}), avg_gap_s: Number(gapRow?.avg_gap_s || 0) }, dayWise, userWise, managerWise, hourly };
+  }
+
   /** Call history for one lead (used by the lead Calls tab). Scoped. */
   async leadCalls(scope: ResolvedScope, leadId: number) {
     if (!leadId) throw new BadRequestException('lead_id required');

@@ -349,6 +349,8 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Call recordings synced from the phone\'s own dialer folder and attached to the matching lead. Playable inline; RBAC-scoped.' } },
     { id: 'callsettings', label: 'Call Settings', spec: { dyn: 'callSettings',
       sub: 'Per-user call tracking: enable/disable, SIM slots, recording folder, sync intervals, and a tap-to-dial tester (Android app).' } },
+    { id: 'activityreport', label: 'Call Activity Report', spec: { dyn: 'callActivityReport',
+      sub: 'Complete call productivity over any date range — totals (calls, talk time, avg duration, avg gap), day-wise, user-wise (with manager, active hours), manager-wise rollup and an hourly productivity chart. RBAC-scoped.' } },
     { id: 'telSettings', label: 'Telephony Settings', spec: {
       sub: 'Provider, numbers & routing. Transfer / conference not required per requirements.',
       blocks: [{ type: 'cfg', title: 'Provider', rows: [

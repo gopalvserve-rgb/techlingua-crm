@@ -52,7 +52,7 @@ import { ConvertStudentModal, BulkConvertStudentsModal } from './convertstudent'
 import { AdmissionsScreen } from './admissions';
 import { CustomFieldsAdmin, fetchCfDefs, coerceCf, collectCf, type CfDef } from './customfields';
 import StartCalling from './calling';
-import CallLogs, { Recordings as CallRecordings, CallSettings } from './calls';
+import CallLogs, { Recordings as CallRecordings, CallSettings, CallReport } from './calls';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
   BulkWhatsApp, Journeys, Settings, SmsTemplates, Templates,
@@ -8007,6 +8007,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   callLogs: CallLogs,
   callRecordings: CallRecordings,
   callSettings: CallSettings,
+  callActivityReport: CallReport,
   sla: Sla,
   // Sprint 4 — engagement & automation
   templates: Templates,

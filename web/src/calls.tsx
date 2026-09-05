@@ -351,3 +351,113 @@ export function LeadCallsTab({ leadId, phone }: { leadId: number; phone?: string
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ Call Activity Report */
+
+const fmtHM = (s: unknown) => {
+  const n = Math.max(0, Math.round(Number(s) || 0));
+  const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60);
+  if (h) return `${h}h ${m}m`;
+  const sec = n % 60; return m ? `${m}m ${sec}s` : `${sec}s`;
+};
+const dnum = (v: unknown) => Number(v || 0);
+const dayLabel = (v: unknown) => v
+  ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—';
+
+interface RepResp {
+  totals: Record<string, unknown>;
+  dayWise: Record<string, unknown>[]; userWise: Record<string, unknown>[];
+  managerWise: Record<string, unknown>[]; hourly: Record<string, unknown>[];
+}
+
+export function CallReport() {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const qs = useMemo(() => {
+    const p = new URLSearchParams();
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    const s = p.toString(); return s ? `?${s}` : '';
+  }, [from, to]);
+  const { data, loading, reload } = useFetch<RepResp>('/calls/report' + qs, [qs]);
+  const t = data?.totals || {};
+  const hourly = data?.hourly || [];
+  const maxHour = Math.max(1, ...hourly.map((h) => dnum(h.calls)));
+
+  const dayCols = ['Date', 'Calls', 'Connected', 'Missed', 'Talk time', 'Avg duration'];
+  const dayBody: Cell[][] = (data?.dayWise || []).map((r) => [
+    dayLabel(r.day), String(dnum(r.calls)), String(dnum(r.connected)), String(dnum(r.missed)),
+    fmtHM(r.talk_time_s), fmtDur(r.avg_duration_s),
+  ]);
+
+  const userCols = ['Counsellor', 'Manager', 'Calls', 'Connected', 'Missed', 'Talk time', 'Avg call', 'Avg gap', 'Active hrs', 'Recordings', 'First call', 'Last call'];
+  const userBody: Cell[][] = (data?.userWise || []).map((r) => [
+    (r.user_name as string) || '—', (r.manager_name as string) || '—',
+    String(dnum(r.calls)), String(dnum(r.connected)), String(dnum(r.missed)),
+    fmtHM(r.talk_time_s), fmtDur(r.avg_duration_s), fmtDur(r.avg_gap_s),
+    String(dnum(r.active_hours)), String(dnum(r.recordings)),
+    dttime(r.first_call), dttime(r.last_call),
+  ]);
+
+  const mgrCols = ['Manager', 'Team size', 'Calls', 'Connected', 'Talk time', 'Avg call'];
+  const mgrBody: Cell[][] = (data?.managerWise || []).map((r) => [
+    (r.manager_name as string) || '—', String(dnum(r.reps)), String(dnum(r.calls)),
+    String(dnum(r.connected)), fmtHM(r.talk_time_s), fmtDur(r.avg_duration_s),
+  ]);
+
+  return (
+    <div className="main main--list">
+      <div className="card toolbar-surface">
+        <div className="filter-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="muted">Date range:</span>
+          <input className="inp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
+          <input className="inp" type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
+          <button className="btn ghost" onClick={reload}><Ic k="refresh" /> Refresh</button>
+          <span className="muted" style={{ marginLeft: 'auto' }}>{loading ? 'Loading…' : (from || to ? 'Custom range' : 'Default: last 30 days')}</span>
+        </div>
+      </div>
+
+      <Kpis cols={4} items={[
+        { lab: 'Total calls', val: String(dnum(t.total_calls)), ic: 'calls' },
+        { lab: 'Connected', val: String(dnum(t.connected)), ic: 'check' },
+        { lab: 'Missed', val: String(dnum(t.missed)), ic: 'calls' },
+        { lab: 'Total talk time', val: fmtHM(t.talk_time_s), ic: 'clock' },
+        { lab: 'Avg call duration', val: fmtDur(t.avg_duration_s), ic: 'clock' },
+        { lab: 'Avg gap between calls', val: fmtDur(t.avg_gap_s), ic: 'clock' },
+        { lab: 'Unique leads called', val: String(dnum(t.unique_leads)), ic: 'list' },
+        { lab: 'Active counsellors', val: String(dnum(t.users_active)), ic: 'list' },
+      ]} />
+
+      <TableCard title={`User-wise activity (${(data?.userWise || []).length})`} icon="calls"
+        cols={userCols} rows={userBody} fill listKey="callReportUsers"
+        empty="No call activity in this range." />
+
+      <TableCard title={`Manager-wise rollup (${(data?.managerWise || []).length})`} icon="calls"
+        cols={mgrCols} rows={mgrBody} fill listKey="callReportMgrs" empty="No data in this range." />
+
+      <div className="card" style={{ padding: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
+          <Ic k="clock" /> Hourly productivity — calls by hour of day (IST)
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 130 }}>
+          {Array.from({ length: 24 }, (_, h) => {
+            const row = hourly.find((x) => dnum(x.hour) === h);
+            const c = row ? dnum(row.calls) : 0;
+            return (
+              <div key={h} title={`${h}:00 — ${c} calls`}
+                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                <span style={{ fontSize: 9, color: '#6b7280' }}>{c || ''}</span>
+                <div style={{ width: '100%', background: c ? '#7c3aed' : '#e5e7eb',
+                  height: `${Math.round((c / maxHour) * 90) + 2}px`, borderRadius: 3 }} />
+                <span style={{ fontSize: 9, color: '#6b7280' }}>{h}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <TableCard title={`Day-wise activity (${(data?.dayWise || []).length})`} icon="calls"
+        cols={dayCols} rows={dayBody} fill listKey="callReportDays" empty="No data in this range." />
+    </div>
+  );
+}
