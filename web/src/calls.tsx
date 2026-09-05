@@ -20,7 +20,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch } from './refdata';
-import { deviceSyncNow } from './callsync';
+import { deviceSyncNow, deviceSyncWindow } from './callsync';
 
 const dttime = (v: unknown) => v
   ? new Date(String(v)).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -30,6 +30,19 @@ const fmtDur = (s: unknown) => {
   if (!n) return '—';
   const m = Math.floor(n / 60), r = n % 60;
   return m ? `${m}m ${r}s` : `${r}s`;
+};
+const SYNC_DAY_MS = 86400000;
+const syncSinceMs = (k: string): number => {
+  const now = Date.now(); const t = new Date(); t.setHours(0, 0, 0, 0);
+  switch (k) {
+    case 'today': return t.getTime();
+    case 'yest': return t.getTime() - SYNC_DAY_MS;
+    case '7d': return now - 7 * SYNC_DAY_MS;
+    case '30d': return now - 30 * SYNC_DAY_MS;
+    case '6mo': return now - 182 * SYNC_DAY_MS;
+    case '1yr': return now - 365 * SYNC_DAY_MS;
+    default: return now - 30 * SYNC_DAY_MS;
+  }
 };
 const dirBadge = (d: string): Cell => {
   const map: Record<string, [string, string]> = {
@@ -249,6 +262,12 @@ export function CallSettings() {
     try { const r = await deviceSyncNow(); toast(r.message, !r.ok); }
     catch (e) { toast((e as Error).message, true); }
   };
+  const [winBusy, setWinBusy] = useState('');
+  const syncWin = async (kind: 'log' | 'rec', k: string) => {
+    setWinBusy(kind + k);
+    try { const r = await deviceSyncWindow(kind, syncSinceMs(k)); toast(r.message, !r.ok); }
+    catch (e) { toast((e as Error).message, true); } finally { setWinBusy(''); }
+  };
   const cap = () => (window as any).Capacitor?.Plugins?.CallPlugin;
   const tl = () => (window as any).TLNative;
   const grantPerms = async () => { try { if (cap()?.requestCallPermissions) await cap().requestCallPermissions(); else if (tl()?.requestAllPermissions) tl().requestAllPermissions(); toast('Permission request sent — approve on the phone'); } catch (e) { toast((e as Error).message, true); } };
@@ -305,6 +324,21 @@ export function CallSettings() {
           Records a dial event and opens the phone dialer (on the mobile app). The call's real outcome and
           duration are filled in automatically when the call-log sync runs.
         </p>
+      </div>
+
+      <div className="card" style={{ maxWidth: 640, marginTop: 16 }}>
+        <div className="card-head"><h3><Ic k="refresh" /> On-demand sync (this device)</h3></div>
+        <div style={{ padding: 16, display: 'grid', gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Call logs — sync window</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('log','today')}>{winBusy==='logtoday'?'…':'Today'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('log','yest')}>{winBusy==='logyest'?'…':'Yesterday'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('log','7d')}>{winBusy==='log7d'?'…':'7 days'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('log','30d')}>{winBusy==='log30d'?'…':'30 days'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('log','6mo')}>{winBusy==='log6mo'?'…':'6 months'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('log','1yr')}>{winBusy==='log1yr'?'…':'1 year'}</button></div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Recordings — sync window</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('rec','today')}>{winBusy==='rectoday'?'…':'Today'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('rec','yest')}>{winBusy==='recyest'?'…':'Yesterday'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('rec','7d')}>{winBusy==='rec7d'?'…':'7 days'}</button><button className="btn ghost" disabled={!!winBusy} onClick={() => syncWin('rec','30d')}>{winBusy==='rec30d'?'…':'30 days'}</button></div>
+          </div>
+          <p className="muted" style={{ margin: 0 }}>Pulls that window from the phone and re-uploads it — safe to re-run; the server skips duplicates. Call logs also auto-sync each time you open the app.</p>
+        </div>
       </div>
 
       <div className="card" style={{ maxWidth: 640, marginTop: 16 }}>

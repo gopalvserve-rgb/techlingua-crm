@@ -231,6 +231,23 @@ export class CallsService {
     return { totals: { ...(totals || {}), avg_gap_s: Number(gapRow?.avg_gap_s || 0) }, dayWise, userWise, managerWise, hourly };
   }
 
+  /** Mobile app notification feed: my new leads + my due follow-ups since a timestamp. */
+  async mobileFeed(me: Me, sinceIso?: string) {
+    const orgId = await this.orgId();
+    const since = (sinceIso && !Number.isNaN(Date.parse(sinceIso))) ? sinceIso : new Date(Date.now() - 3600_000).toISOString();
+    const newLeads = await this.db.query(
+      `SELECT id, full_name, phone, created_at FROM lead
+        WHERE org_id=$1 AND deleted_at IS NULL AND owner_id=$2 AND created_at > $3::timestamptz
+        ORDER BY created_at DESC LIMIT 20`, [orgId, me.id, since]);
+    const dueFollowups = await this.db.query(
+      `SELECT f.id, f.lead_id, f.scheduled_at, l.full_name FROM follow_up f
+         JOIN lead l ON l.id = f.lead_id AND l.deleted_at IS NULL
+        WHERE f.owner_id=$1 AND f.status='pending'
+          AND f.scheduled_at <= now() AND f.scheduled_at > ($2::timestamptz - interval '2 days')
+        ORDER BY f.scheduled_at DESC LIMIT 20`, [me.id, since]);
+    return { new_leads: newLeads, due_followups: dueFollowups, server_time: new Date().toISOString() };
+  }
+
   /** Call history for one lead (used by the lead Calls tab). Scoped. */
   async leadCalls(scope: ResolvedScope, leadId: number) {
     if (!leadId) throw new BadRequestException('lead_id required');

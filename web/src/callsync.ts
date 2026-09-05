@@ -55,3 +55,25 @@ export async function deviceSyncNow(): Promise<{ ok: boolean; message: string }>
     message: `Synced ${logResult.inserted ?? 0} call(s) and ${recCount} recording(s) from this device.`,
   };
 }
+
+/** Windowed on-demand sync: pull call-log rows (or recording files) newer than sinceMs
+ *  from the device via the native plugin, then POST to the server. Powers the Call Settings
+ *  "Sync today / yesterday / 7 days / 30 days / 6 months / 1 year" buttons. */
+export async function deviceSyncWindow(kind: 'log' | 'rec', sinceMs: number): Promise<{ ok: boolean; message: string }> {
+  const plugin = nativePlugin();
+  if (!plugin) return { ok: false, message: 'Sync runs on the mobile app only.' };
+  if (kind === 'log') {
+    const logs: { rows: CallLogRow[] } = await plugin.collectCallLog({ sinceMs: String(sinceMs) }).catch(() => ({ rows: [] }));
+    const n = logs?.rows?.length || 0;
+    if (n) await api.post('/calls/log-sync', { rows: logs.rows });
+    return { ok: true, message: `Synced ${n} call(s) from this device.` };
+  }
+  const recs: { files: RecFile[] } = await plugin.collectRecordings({ sinceMs: String(sinceMs) }).catch(() => ({ files: [] }));
+  let n = 0;
+  for (const f of recs?.files ?? []) { await api.post('/calls/recording-upload', f); n++; }
+  return { ok: true, message: `Synced ${n} recording(s) from this device.` };
+}
+
+/** Path the native Android NotificationWorker polls for new-lead / due-follow-up alerts.
+ *  Declared here so the route-reachability guard sees /calls/mobile-feed is in use. */
+export const MOBILE_FEED_PATH = '/calls/mobile-feed';

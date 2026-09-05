@@ -28,6 +28,10 @@ export class CallsController {
   @RequirePermission('calls.read')
   report(@CurrentScope() scope: ResolvedScope, @Query() q: any) { return this.svc.report(scope, q ?? {}); }
 
+  @Get('mobile-feed')
+  @RequirePermission('calls.read')
+  mobileFeed(@CurrentUser() me: Me, @Query('since') since?: string) { return this.svc.mobileFeed(me, since); }
+
   @Get('settings')
   @RequirePermission('calls.read')
   getSettings(@CurrentUser() me: Me) { return this.svc.getSettings(me); }
