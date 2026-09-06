@@ -21,8 +21,8 @@ async function bootstrap() {
   const keepRaw = (req: express.Request, _res: express.Response, buf: Buffer) => {
     if (buf?.length) (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
   };
-  app.use(express.json({ limit: '8mb', verify: keepRaw }));
-  app.use(express.urlencoded({ limit: '8mb', extended: true, verify: keepRaw }));
+  app.use(express.json({ limit: '40mb', verify: keepRaw }));
+  app.use(express.urlencoded({ limit: '40mb', extended: true, verify: keepRaw }));
   app.setGlobalPrefix('api');
 
   // CORS. The app itself is same-origin; the ONE exception is the public website-form
