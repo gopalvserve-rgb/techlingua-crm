@@ -372,9 +372,9 @@ export function DashAiInsights({ go }: { go?: (m: string, s: string) => void }) 
         <div style={{ padding: '4px 12px 12px' }}>
           {recent.slice(0, 4).map((r) => (
             <div key={r.id} style={{ borderTop: '1px solid var(--line)', padding: '6px 0' }}>
-              <div className="sub" style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }}>
-                <b>{r.subject_label ?? 'Transcript'}</b>
-                <span>{TYPE_LABEL[r.analysis_type] ?? r.analysis_type}{r.quality_score != null ? ` · ${r.quality_score}/100` : ''}{r.sentiment ? ` · ${r.sentiment}` : ''}</span>
+              <div className="sub" style={{ display: 'flex', gap: 8, justifyContent: 'space-between', minWidth: 0 }}>
+                <b style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{r.subject_label ?? 'Transcript'}</b>
+                <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{TYPE_LABEL[r.analysis_type] ?? r.analysis_type}{r.quality_score != null ? ` · ${r.quality_score}/100` : ''}{r.sentiment ? ` · ${r.sentiment}` : ''}</span>
               </div>
               {r.summary_text ? <div className="sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.summary_text}</div> : null}
             </div>
