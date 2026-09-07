@@ -227,9 +227,15 @@ const NOT_UI_DRIVEN: Record<string, string> = {
   'OPTIONS /webhooks/form/:key':
     'The CORS preflight for the public website form. The caller is a browser on the client\'s site, not this SPA.',
   'GET /webhooks/whatsapp':
-    'WHATSAPP CLOUD API webhook verification (hub.challenge). The caller is Meta.',
+    'WHATSAPP delivery/read receipts + STOP opt-out handshake (messaging module). The caller is Meta.',
+  'GET /webhooks/whatsapp/:key':
+    'WHATSAPP CLOUD API webhook verification (hub.challenge) for a per-campaign inbound Lead-Capture channel. The caller is Meta.',
   'POST /webhooks/whatsapp':
-    'WHATSAPP delivery/read receipts and inbound STOP, signature-verified. The caller is Meta.',
+    'WHATSAPP delivery/read receipts + inbound STOP (messaging module), signature-verified. The caller is Meta.',
+  'POST /webhooks/whatsapp/:key':
+    'WHATSAPP inbound-message delivery for a per-campaign Lead-Capture channel — each message is logged on the matching lead; unknown numbers optionally become leads. The caller is Meta.',
+  'GET /webhooks/fb/callback':
+    'FACEBOOK OAUTH redirect target for the one-click Connect-Page flow. Facebook redirects the browser here with ?code&state; the handler stores the Page token on the Meta channel and subscribes it to leadgen. The caller is Facebook / the admin\'s browser, not the SPA.',
   'GET /webhooks/health':
     'A machine health probe for the capture endpoints — deliberately answerable without a session.',
   'POST /webhooks/razorpay':

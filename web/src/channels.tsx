@@ -461,6 +461,20 @@ export default function Channels() {
     } finally { setBusyId(null); bump(); }
   };
 
+  // Meta only — one-click "Connect Facebook Page": ask the API for the Facebook login
+  // URL and open it. The public /webhooks/fb/callback stores the Page token + subscribes
+  // the Page to leadgen, so the client never pastes a Page access token by hand.
+  const connectFb = async (c: Channel) => {
+    setBusyId(c.id);
+    try {
+      const r = await api.get<{ url: string | null; error?: string }>(`/channels/${c.id}/fb/connect`);
+      if (r.url) window.open(r.url, '_blank', 'noopener');
+      else toast(r.error || 'Facebook app is not configured on the server.', true);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally { setBusyId(null); bump(); }
+  };
+
   const toggle = async (c: Channel) => {
     setBusyId(c.id);
     try {
@@ -598,6 +612,11 @@ export default function Channels() {
               {c.webhook_path && (
                 <button className="btn" title="Copy the webhook URL"
                   onClick={() => copy(`${origin()}${c.webhook_path}`, 'Webhook URL')}><Ic k="doc" />URL</button>
+              )}
+              {canManage && c.provider === 'meta' && (
+                <button className="btn" title="Connect a Facebook Page (one-click OAuth)" disabled={busyId === c.id} onClick={() => connectFb(c)}>
+                  <Ic k="link" />{busyId === c.id ? 'Connecting…' : 'Connect Page'}
+                </button>
               )}
               {canManage && c.kind === 'poll' && (
                 <button className="btn" title="Sync — pull the latest now" disabled={busyId === c.id} onClick={() => pull(c)}>

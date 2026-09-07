@@ -14,6 +14,7 @@ import { ChannelController } from './channels/channel.controller';
 import { WebhookController } from './channels/webhook.controller';
 import { WebhookService } from './channels/webhook.service';
 import { SheetWorker } from './channels/sheet.worker';
+import { MarketplacePullWorker } from './channels/marketplace.worker';
 
 /**
  * The shared lead-ingestion pipeline and EVERY capture channel that feeds it:
@@ -36,7 +37,7 @@ import { SheetWorker } from './channels/sheet.worker';
   controllers: [ImportController, ChannelController, WebhookController],
   providers: [
     LeadIngestionService, LeadMergeService, ImportService, ImportWorker,
-    ChannelService, WebhookService, SheetWorker,
+    ChannelService, WebhookService, SheetWorker, MarketplacePullWorker,
   ],
   exports: [LeadIngestionService, LeadMergeService, ChannelService],
 })

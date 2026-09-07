@@ -1,6 +1,7 @@
 import {
-  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query,
+  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { NotConfiguredException } from '../../common/not-configured.exception';
 import { ChannelService } from './channel.service';
 import { WebhookService } from './webhook.service';
@@ -84,13 +85,34 @@ export class ChannelController {
   async poll(@Param('id', ParseIntPipe) id: number, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
     await this.svc.get(id, s, u.id);                 // scope + existence
     const row = await this.svc.raw(id);
-    if (!row || row.provider !== 'google_sheet') {
-      throw new NotConfiguredException('This channel is not a Google Sheet channel.');
+    const PULL = ['tradeindia_pull', 'indiamart_pull'];
+    if (!row || (row.provider !== 'google_sheet' && !PULL.includes(row.provider))) {
+      throw new NotConfiguredException('This channel is not a pollable (Sheet / marketplace-pull) channel.');
     }
     const missing = this.svc.missing(row);
     if (missing.length) {
       throw new NotConfiguredException(`Not configured — still needed: ${missing.join(', ')}`);
     }
-    return this.hooks.pollSheet(row, { manual: true });
+    return row.provider === 'google_sheet'
+      ? this.hooks.pollSheet(row, { manual: true })
+      : this.hooks.pollMarketplace(row, { manual: true });
+  }
+
+  /**
+   * Start the Facebook "Connect Page" OAuth flow for a Meta channel. Returns the
+   * Facebook login URL the browser should open; the callback (public) stores the
+   * Page token + subscribes the Page to leadgen. 400 when FB_APP_ID is not set.
+   */
+  @Get(':id/fb/connect') @RequirePermission('channel.manage')
+  async fbConnect(@Param('id', ParseIntPipe) id: number, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Req() req: Request) {
+    await this.svc.get(id, s, u.id);                 // scope + existence
+    const row = await this.svc.raw(id);
+    if (!row || row.provider !== 'meta') {
+      throw new NotConfiguredException('This channel is not a Meta Lead Ads channel.');
+    }
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/webhooks/fb/callback`;
+    const out = this.hooks.fbConnectUrl(id, redirectUri);
+    if (!out.url) throw new NotConfiguredException(out.error ?? 'Facebook app is not configured on the server.');
+    return out;
   }
 }

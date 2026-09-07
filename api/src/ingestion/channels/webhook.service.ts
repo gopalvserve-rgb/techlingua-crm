@@ -6,7 +6,10 @@ import { IngestChannel, IngestOutcome, IngestPayload, IngestValidationError } fr
 import { LeadIngestionService } from '../lead-ingestion.service';
 import { ChannelRow, ChannelService } from './channel.service';
 import { RateLimiter } from './rate-limit.util';
-import { adaptMarketplace } from './source-adapters';
+import {
+  adaptMarketplace, parseWhatsApp, tradeIndiaRows,
+  buildFbAuthUrl, parseFbPages, FB_GRAPH_BASE, WaMsg,
+} from './source-adapters';
 import { SheetNotConfiguredError, SheetsClient, HttpFn } from './sheets.client';
 import {
   extraFields, formToPayload, googleToPayload, metaToPayload, parseFieldMap, sheetRowToPayload,
@@ -715,6 +718,331 @@ export class WebhookService {
       `Read ${counts.read} new row(s): ${counts.created} created · ${counts.duplicate} duplicate · ${counts.skipped} already imported · ${counts.failed} failed`,
       firstLead,
     );
+  }
+
+  // ======================================================= MARKETPLACE PULL ===
+
+  /**
+   * Poll ONE marketplace-pull channel (TradeIndia / IndiaMART). Same topology as the
+   * Google-Sheet poller: `next_poll_at` is the schedule, the ingest ledger (external_key
+   * = <source>:<vendor id>) is the authoritative dedup guard, and a channel with no
+   * credentials yet is a first-class `skipped` state, NOT an error. Starts producing
+   * leads the moment the client pastes their key in Settings — no deploy needed.
+   */
+  async pollMarketplace(ch: ChannelRow, opts: { manual?: boolean } = {}): Promise<{
+    status: 'ingested' | 'skipped' | 'failed';
+    read: number; created: number; duplicate: number; skipped: number; failed: number; reason: string;
+  }> {
+    const t0 = Date.now();
+    const cfg = (ch.config ?? {}) as any;
+    const secrets = this.channels.secretsOf(ch);
+    const source = ch.provider === 'indiamart_pull' ? 'indiamart' : 'tradeindia';
+    const pollMin = Math.max(1, Number(cfg.poll_minutes) || 60);
+    const lookbackDays = Math.max(1, Number(cfg.lookback_days) || 7);
+    const counts = { read: 0, created: 0, duplicate: 0, skipped: 0, failed: 0 };
+    const cursor = (ch.cursor ?? {}) as { last_at?: string };
+    const now = new Date();
+    const fromAt = cursor.last_at ? new Date(cursor.last_at) : new Date(now.getTime() - lookbackDays * 86400000);
+
+    const finish = async (status: 'ingested' | 'skipped' | 'failed', reason: string, advanceCursor: boolean, lead: number | null = null) => {
+      await this.channels.logEvent({
+        channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: ch.public_key, method: 'POLL',
+        raw: { source, from: fromAt.toISOString(), to: now.toISOString(), ...counts, manual: !!opts.manual },
+        status, reason, lead_id: lead, duration_ms: Date.now() - t0,
+      });
+      const nextCursor = advanceCursor ? { ...cursor, last_at: now.toISOString() } : cursor;
+      await this.channels.setCursor(ch.id, nextCursor, pollMin);
+      return { status, ...counts, reason };
+    };
+
+    if (!ch.is_active) return finish('skipped', 'Channel is paused', false);
+
+    // ---- credentials: the "not configured yet" state is normal, not a failure ----
+    const missing = this.channels.missing(ch);
+    if (missing.length) {
+      return finish('skipped', `Not configured yet — missing: ${missing.join(', ')}. Paste your ${source === 'indiamart' ? 'IndiaMART CRM key' : 'TradeIndia credentials'} in Settings to start pulling.`, false);
+    }
+
+    // ---- fetch from the vendor API ----
+    let rows: Record<string, unknown>[];
+    try {
+      const url = source === 'indiamart'
+        ? this.indiamartUrl(secrets.crm_key, fromAt, now)
+        : this.tradeIndiaUrl(secrets.userid, secrets.profile_id, secrets.api_key, fromAt, now);
+      const res = await this.http(url);
+      const text = await res.text();
+      if (!res.ok) return finish('failed', `${source} API returned ${res.status}: ${text.slice(0, 200)}`, false);
+      let json: any;
+      try { json = JSON.parse(text); } catch { return finish('failed', `${source} API returned non-JSON: ${text.slice(0, 160)}`, false); }
+      // IndiaMART signals throttle/no-data with a CODE; surface it as skipped so we retry later
+      if (source === 'indiamart' && json && json.CODE && Number(json.CODE) !== 200) {
+        return finish('skipped', `IndiaMART: ${json.MESSAGE ?? 'no new leads / throttled'} (CODE ${json.CODE})`, Number(json.CODE) === 204);
+      }
+      rows = source === 'indiamart' ? (adaptMarketplace('indiamart', json) as any) : tradeIndiaRows(json);
+    } catch (e) {
+      return finish('failed', `${source} fetch failed: ${(e as Error).message}`, false);
+    }
+
+    // IndiaMART path already returns IngestPayload[]; TradeIndia returns raw rows to adapt per-row
+    const records = source === 'indiamart'
+      ? (rows as any as IngestPayload[])
+      : rows.flatMap((r) => adaptMarketplace('tradeindia', r));
+
+    if (!records.length) return finish('skipped', 'No new enquiries since the last check.', true);
+
+    let firstLead: number | null = null;
+    for (const rec of records) {
+      if (!rec || (!rec.full_name && !rec.phone && !rec.email)) { counts.skipped++; continue; }
+      counts.read++;
+      const key = rec.external_id ? `${source}:${rec.external_id}` : null;
+      try {
+        const out = await this.ingestion.ingest(rec, {
+          channel: 'webhook' as IngestChannel,
+          campaign_id: ch.campaign_id, source_id: ch.source_id, actor_id: null,
+          external_key: key, duplicate_policy: 'campaign',
+        });
+        if (out.status === 'created') counts.created++;
+        else if (out.status === 'duplicate') counts.duplicate++;
+        else if (out.status === 'skipped') counts.skipped++;
+        else counts.failed++;
+        if (out.lead_id && !firstLead) firstLead = out.lead_id;
+      } catch (e) {
+        counts.failed++;
+        this.log.warn(`${source} record failed: ${(e as Error).message}`);
+      }
+    }
+    return finish(
+      counts.failed && !counts.created ? 'failed' : 'ingested',
+      `${source}: read ${counts.read}, ${counts.created} created · ${counts.duplicate} duplicate · ${counts.skipped} skipped · ${counts.failed} failed`,
+      true, firstLead,
+    );
+  }
+
+  /** TradeIndia "Get Inquiries" API. */
+  private tradeIndiaUrl(userid: string, profileId: string, key: string, from: Date, to: Date): string {
+    const d = (x: Date) => x.toISOString().slice(0, 10);   // YYYY-MM-DD
+    const p = new URLSearchParams({
+      userid: userid ?? '', profile_id: profileId ?? '', key: key ?? '',
+      from_date: d(from), to_date: d(to),
+    });
+    return `https://www.tradeindia.com/utils/my_inquiry.html?${p.toString()}`;
+  }
+
+  /** IndiaMART Pull (Lead Manager) API v2. Dates as DD-Mon-YYYY. */
+  private indiamartUrl(crmKey: string, from: Date, to: Date): string {
+    const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const d = (x: Date) => `${String(x.getUTCDate()).padStart(2, '0')}-${mon[x.getUTCMonth()]}-${x.getUTCFullYear()}`;
+    const p = new URLSearchParams({ glusr_crm_key: crmKey ?? '', start_time: d(from), end_time: d(to) });
+    return `https://mapi.indiamart.com/wservce/crm/crmListing/v2/?${p.toString()}`;
+  }
+
+  // ============================================================== WHATSAPP ===
+
+  /** GET handshake for the WhatsApp Cloud API webhook — identical shape to Meta. */
+  async whatsappVerify(publicKey: string, q: Record<string, unknown>, meta: ReqMeta): Promise<WebhookResult> {
+    const ch = await this.channels.byPublicKey(publicKey, 'whatsapp_inbound');
+    const mode = String(q['hub.mode'] ?? '');
+    const token = String(q['hub.verify_token'] ?? '');
+    const challenge = String(q['hub.challenge'] ?? '');
+    if (!ch) {
+      await this.channels.logEvent({ provider: 'whatsapp_inbound', public_key: publicKey, method: 'GET', ip: meta.ip, raw: q, status: 'rejected', reason: 'No WhatsApp channel with that webhook key' });
+      throw new WebhookRejected(404, 'Unknown webhook');
+    }
+    const expected = this.channels.secretsOf(ch).verify_token ?? '';
+    const ok = mode === 'subscribe' && !!expected && safeEqual(token, expected);
+    await this.channels.logEvent({
+      channel_id: ch.id, org_id: ch.org_id, provider: 'whatsapp_inbound', public_key: publicKey, method: 'GET',
+      ip: meta.ip, raw: q, signature_ok: ok, status: ok ? 'verified' : 'rejected',
+      reason: ok ? 'WhatsApp webhook verified (GET handshake)'
+        : !expected ? 'Verify token not configured on this channel'
+          : mode !== 'subscribe' ? `Unexpected hub.mode "${mode}"` : 'hub.verify_token does not match',
+    });
+    if (!ok) throw new WebhookRejected(403, 'Verification failed');
+    return { http: 200, body: challenge };   // MUST be the bare challenge
+  }
+
+  /**
+   * POST — inbound WhatsApp messages (Meta Cloud API). Each message is appended to the
+   * matching lead (by last-10 phone digits) as a lead_activity 'message'. An unknown
+   * number optionally becomes a new lead (config.auto_create). Status/delivery
+   * callbacks carry no messages and are simply acknowledged.
+   */
+  async whatsappReceive(publicKey: string, body: any, meta: ReqMeta): Promise<WebhookResult> {
+    const t0 = Date.now();
+    const ch = await this.channels.byPublicKey(publicKey, 'whatsapp_inbound');
+    if (!ch) {
+      await this.channels.logEvent({ provider: 'whatsapp_inbound', public_key: publicKey, ip: meta.ip, raw: body, status: 'rejected', reason: 'No WhatsApp channel with that webhook key' });
+      throw new WebhookRejected(404, 'Unknown webhook');
+    }
+    this.assertRate(`wa:${publicKey}`, HARD_WEBHOOK_LIMIT);
+    if (!ch.is_active) {
+      await this.channels.logEvent({ channel_id: ch.id, org_id: ch.org_id, provider: 'whatsapp_inbound', public_key: publicKey, ip: meta.ip, raw: body, status: 'skipped', reason: 'Channel is paused', duration_ms: Date.now() - t0 });
+      return { http: 200, body: { received: true } };
+    }
+    const msgs = parseWhatsApp(body);
+    if (!msgs.length) {
+      await this.channels.logEvent({ channel_id: ch.id, org_id: ch.org_id, provider: 'whatsapp_inbound', public_key: publicKey, ip: meta.ip, raw: body, status: 'skipped', reason: 'No inbound message (status/delivery callback)', duration_ms: Date.now() - t0 });
+      return { http: 200, body: { received: true, messages: 0 } };
+    }
+    const autoCreate = !!(ch.config as any)?.auto_create;
+    let logged = 0, created = 0;
+    let firstLead: number | null = null;
+    for (const m of msgs) {
+      let lead = await this.findLeadByPhone(ch.org_id, m.phone);
+      if (!lead && autoCreate) {
+        try {
+          const out = await this.ingestion.ingest(
+            { full_name: m.name || `WhatsApp ${m.phone}`, phone: m.phone, whatsapp_phone: m.phone, note: `First WhatsApp message: ${m.text}` } as IngestPayload,
+            { channel: 'webhook' as IngestChannel, campaign_id: ch.campaign_id, source_id: ch.source_id, actor_id: null, external_key: `wa:${m.wamid || m.phone}`, duplicate_policy: 'campaign' },
+          );
+          if (out.status === 'created') created++;
+          const lid = out.lead_id ?? out.duplicate_of ?? null;
+          if (lid) lead = await this.findLeadById(lid);
+        } catch (e) {
+          this.log.warn(`whatsapp auto-create failed: ${(e as Error).message}`);
+        }
+      }
+      if (lead) {
+        await this.logWhatsAppOnLead(lead, m);
+        logged++;
+        if (!firstLead) firstLead = lead.id;
+      }
+    }
+    const eid = await this.channels.logEvent({
+      channel_id: ch.id, org_id: ch.org_id, provider: 'whatsapp_inbound', public_key: publicKey, ip: meta.ip,
+      raw: body, signature_ok: true, status: (logged || created) ? 'ingested' : 'skipped',
+      reason: `${msgs.length} message(s): ${logged} logged on lead(s), ${created} new lead(s)` + (autoCreate ? '' : ' — auto-create off, unknown numbers not captured'),
+      lead_id: firstLead, duration_ms: Date.now() - t0,
+    });
+    return { http: 200, body: { received: true, messages: msgs.length, logged, created }, event_id: eid };
+  }
+
+  /** Most-recent live lead in this org whose phone/alt/whatsapp matches (last 10 digits). */
+  private async findLeadByPhone(orgId: number, phone: string): Promise<{ id: number; org_id: number; branch_id: number } | null> {
+    const digits = String(phone).replace(/\D/g, '');
+    if (digits.length < 8) return null;
+    const last10 = digits.slice(-10);
+    return this.db.one<any>(
+      `SELECT id, org_id, branch_id FROM lead
+        WHERE org_id = $1 AND deleted_at IS NULL
+          AND ( right(regexp_replace(phone,'\\D','','g'),10) = $2
+             OR right(regexp_replace(coalesce(alt_phone,''),'\\D','','g'),10) = $2
+             OR right(regexp_replace(coalesce(whatsapp_phone,''),'\\D','','g'),10) = $2 )
+        ORDER BY id DESC LIMIT 1`,
+      [orgId, last10],
+    );
+  }
+
+  private async findLeadById(id: number): Promise<{ id: number; org_id: number; branch_id: number } | null> {
+    return this.db.one<any>(`SELECT id, org_id, branch_id FROM lead WHERE id = $1 AND deleted_at IS NULL`, [id]);
+  }
+
+  /** Append one inbound WhatsApp message to a lead's activity timeline. */
+  private async logWhatsAppOnLead(lead: { id: number; org_id: number; branch_id: number }, m: WaMsg): Promise<void> {
+    await this.db.query(
+      `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, to_value, note)
+       VALUES ($1,$2,$3,NULL,'message',$4,$5)`,
+      [lead.id, lead.org_id, lead.branch_id,
+        JSON.stringify({ channel: 'whatsapp', direction: 'inbound', from: m.phone, wamid: m.wamid, name: m.name }),
+        `[WhatsApp] ${m.text}`.slice(0, 2000)],
+    );
+  }
+
+  // ============================================================= META OAUTH ===
+
+  /** Build the Facebook login URL for a Meta channel (authed admin action). */
+  fbConnectUrl(channelId: number, redirectUri: string): { url: string | null; error?: string } {
+    const appId = process.env.FB_APP_ID ?? '';
+    if (!appId) return { url: null, error: 'Facebook App ID is not configured on the server (set FB_APP_ID / FB_APP_SECRET).' };
+    return { url: buildFbAuthUrl(appId, redirectUri, this.signState(channelId)) };
+  }
+
+  /**
+   * OAuth redirect target (PUBLIC — Facebook redirects the browser here with ?code).
+   * Exchanges the code for a user token, lists Pages, picks the one matching the
+   * channel's page_id (or the first), stores the Page token + id, and subscribes the
+   * Page to leadgen. Returns a small HTML page for the human who is looking at it.
+   */
+  async fbCallback(q: Record<string, unknown>, redirectUri: string): Promise<WebhookResult> {
+    const code = String(q['code'] ?? '');
+    const state = String(q['state'] ?? '');
+    const err = String(q['error_description'] ?? q['error'] ?? '');
+    if (err) return { http: 200, body: this.fbHtml(`Facebook returned an error: ${err}`, false) };
+    const channelId = this.verifyState(state);
+    if (!channelId || !code) return { http: 200, body: this.fbHtml('This connect link is invalid or has expired — start again from the CRM.', false) };
+    const ch = await this.channels.raw(channelId);
+    if (!ch || ch.provider !== 'meta') return { http: 200, body: this.fbHtml('That channel no longer exists.', false) };
+
+    const appId = process.env.FB_APP_ID ?? '';
+    const appSecret = process.env.FB_APP_SECRET ?? (this.channels.secretsOf(ch).app_secret ?? '');
+    if (!appId || !appSecret) return { http: 200, body: this.fbHtml('Facebook app credentials are not configured on the server.', false) };
+
+    try {
+      const tokenUrl = `${FB_GRAPH_BASE}/oauth/access_token?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
+      const userTok = await this.fbGet(tokenUrl);
+      const userToken = String(userTok.access_token ?? '');
+      if (!userToken) throw new Error('No access_token in Facebook response');
+
+      const accounts = await this.fbGet(`${FB_GRAPH_BASE}/me/accounts?limit=200&access_token=${encodeURIComponent(userToken)}`);
+      const pages = parseFbPages(accounts);
+      if (!pages.length) return { http: 200, body: this.fbHtml('No Facebook Pages were returned — make sure you granted the app access to your Page.', false) };
+
+      const wantId = String((ch.config as any)?.page_id ?? '').trim();
+      const page = (wantId && pages.find((p) => p.page_id === wantId)) || pages[0];
+
+      await this.channels.mergeSecrets(channelId, { page_access_token: page.access_token });
+      await this.channels.mergeConfig(channelId, { page_id: page.page_id, page_name: page.page_name });
+
+      let subscribed = false;
+      try {
+        const sub = await this.fbPost(`${FB_GRAPH_BASE}/${encodeURIComponent(page.page_id)}/subscribed_apps?subscribed_fields=leadgen&access_token=${encodeURIComponent(page.access_token)}`);
+        subscribed = !!sub.success;
+      } catch (e) { this.log.warn(`leadgen subscribe failed: ${(e as Error).message}`); }
+
+      await this.channels.logEvent({
+        channel_id: ch.id, org_id: ch.org_id, provider: 'meta', public_key: ch.public_key, method: 'GET',
+        raw: { page_id: page.page_id, page_name: page.page_name, subscribed }, status: 'verified',
+        reason: `Facebook Page "${page.page_name}" connected` + (subscribed ? ' and subscribed to leadgen' : ' (token stored; subscribe to leadgen in Meta if leads do not arrive)'),
+      });
+      return { http: 200, body: this.fbHtml(`Connected Page "${page.page_name}". You can close this tab and return to the CRM.`, true) };
+    } catch (e) {
+      return { http: 200, body: this.fbHtml(`Could not connect: ${(e as Error).message}`, false) };
+    }
+  }
+
+  private async fbGet(url: string): Promise<any> {
+    const res = await this.http(url);
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Facebook API ${res.status}: ${text.slice(0, 200)}`);
+    return JSON.parse(text);
+  }
+  private async fbPost(url: string): Promise<any> {
+    const res = await this.http(url, { method: 'POST' });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Facebook API ${res.status}: ${text.slice(0, 200)}`);
+    return JSON.parse(text);
+  }
+  private stateSecret(): string {
+    return process.env.FB_STATE_SECRET || process.env.JWT_SECRET || process.env.APP_KEY || 'tl-fb-oauth-fallback';
+  }
+  private signState(channelId: number): string {
+    const payload = `${channelId}.${Date.now()}`;
+    const sig = createHmac('sha256', this.stateSecret()).update(payload).digest('hex').slice(0, 24);
+    return Buffer.from(`${payload}.${sig}`).toString('base64url');
+  }
+  private verifyState(state: string): number | null {
+    try {
+      const [id, ts, sig] = Buffer.from(state, 'base64url').toString('utf8').split('.');
+      if (!id || !ts || !sig) return null;
+      const expect = createHmac('sha256', this.stateSecret()).update(`${id}.${ts}`).digest('hex').slice(0, 24);
+      if (!safeEqual(sig, expect)) return null;
+      if (Date.now() - Number(ts) > 15 * 60_000) return null;   // 15-minute window
+      return Number(id) || null;
+    } catch { return null; }
+  }
+  private fbHtml(msg: string, ok: boolean): string {
+    const color = ok ? '#0a7d33' : '#b00020';
+    return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:system-ui,Segoe UI,Arial;background:#f6f8fb;margin:0"><div style="max-width:460px;margin:12vh auto;background:#fff;border:1px solid #e3e8ef;border-radius:14px;padding:28px 26px;text-align:center"><div style="font-size:44px;line-height:1">${ok ? '&#9989;' : '&#9888;&#65039;'}</div><h2 style="margin:10px 0 6px;color:${color}">${ok ? 'Facebook Page connected' : 'Connection problem'}</h2><p style="color:#425466;margin:0">${msg}</p></div></body>`;
   }
 
   // ================================================================ helpers ===

@@ -4,14 +4,18 @@ import {
 } from './providers';
 
 describe('provider registry', () => {
-  it('the Available Tools grid is EXACTLY the client\'s 12 tools (DEF-INT-01)', () => {
+  it('the Available Tools grid is the client\'s 12 tools + the 3 Lead-Intake-Blueprint tiles (DEF-INT-01)', () => {
     // The grid = the non-hidden providers (what ChannelService.providers() returns).
+    // The original DEF-INT-01 set was 12; the client's Lead Intake Blueprint then added
+    // three first-class intake tiles — TradeIndia auto-pull, IndiaMART auto-pull and
+    // WhatsApp inbound lead-capture — so the canonical grid is now 15.
     const visible = Object.values(PROVIDERS).filter((p) => !p.hidden).map((p) => p.key).sort();
     expect(visible).toEqual([
       '99acres', 'custom', 'google_ads', 'google_form', 'google_sheet',
-      'housing', 'indiamart', 'justdial', 'meta', 'meta_whatsapp', 'tradeindia', 'webhook',
+      'housing', 'indiamart', 'indiamart_pull', 'justdial', 'meta', 'meta_whatsapp',
+      'tradeindia', 'tradeindia_pull', 'webhook', 'whatsapp_inbound',
     ]);
-    expect(visible).toHaveLength(12);
+    expect(visible).toHaveLength(15);
     // Meta WhatsApp is present and deep-links to Settings; the website form is HIDDEN, not deleted
     // (existing website channels + ingestion keep working), so it never shows in the grid.
     expect(PROVIDERS.meta_whatsapp?.deeplink).toBeTruthy();

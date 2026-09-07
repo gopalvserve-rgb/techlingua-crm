@@ -132,3 +132,62 @@ export function adaptMarketplace(source: string, body: any): IngestPayload[] {
   const out = fn(body) || [];
   return out.filter((p) => p && (p.full_name || p.phone || p.whatsapp_phone || p.email));
 }
+
+/* ============================ WhatsApp inbound ============================ */
+export interface WaMsg { phone: string; text: string; name: string; wamid: string; }
+
+/** Flatten a Meta WhatsApp Cloud API webhook body → inbound messages. Pure. */
+export function parseWhatsApp(body: any): WaMsg[] {
+  const out: WaMsg[] = [];
+  const entries = Array.isArray(body?.entry) ? body.entry : [];
+  for (const e of entries) {
+    for (const ch of (e?.changes ?? [])) {
+      const val = ch?.value ?? {};
+      const contacts: any[] = val.contacts ?? [];
+      const nameByWa: Record<string, string> = {};
+      for (const c of contacts) if (c?.wa_id) nameByWa[String(c.wa_id)] = S(c?.profile?.name);
+      for (const m of (val.messages ?? [])) {
+        const phone = S(m?.from);
+        if (!phone) continue;
+        const text = S(m?.text?.body) || S(m?.button?.text) || S(m?.interactive?.list_reply?.title)
+          || S(m?.interactive?.button_reply?.title) || `[${S(m?.type) || 'message'}]`;
+        out.push({ phone, text, name: nameByWa[phone] || '', wamid: S(m?.id) });
+      }
+    }
+  }
+  return out;
+}
+
+/* ============================ TradeIndia pull ============================ */
+/** Extract inquiry rows from TradeIndia's my_inquiry response (tolerant of shapes). */
+export function tradeIndiaRows(json: any): Raw[] {
+  if (Array.isArray(json)) return json;
+  for (const k of ['data', 'RESPONSE', 'inquiries', 'result', 'records']) {
+    if (Array.isArray(json?.[k])) return json[k];
+  }
+  if (json && typeof json === 'object') return [json];
+  return [];
+}
+
+/* ============================ Facebook OAuth ============================ */
+const FB_GRAPH = 'https://graph.facebook.com/v21.0';
+export const FB_SCOPES = ['leads_retrieval', 'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement'];
+
+/** Build the Facebook login-dialog URL. Pure. */
+export function buildFbAuthUrl(appId: string, redirectUri: string, state: string): string {
+  const p = new URLSearchParams({
+    client_id: appId, redirect_uri: redirectUri, state,
+    response_type: 'code', scope: FB_SCOPES.join(','),
+  });
+  return `https://www.facebook.com/v21.0/dialog/oauth?${p.toString()}`;
+}
+
+/** Parse /me/accounts into a monitor-able page list. Pure. */
+export function parseFbPages(accounts: any): Array<{ page_id: string; page_name: string; access_token: string }> {
+  const rows = Array.isArray(accounts?.data) ? accounts.data : [];
+  return rows.filter((r: any) => r?.id && r?.access_token).map((r: any) => ({
+    page_id: S(r.id), page_name: S(r.name), access_token: S(r.access_token),
+  }));
+}
+
+export const FB_GRAPH_BASE = FB_GRAPH;

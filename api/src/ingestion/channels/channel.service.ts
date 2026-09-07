@@ -258,6 +258,54 @@ export class ChannelService {
     return this.db.one<any>(`SELECT * FROM capture_channel WHERE id = $1 AND deleted_at IS NULL`, [id]);
   }
 
+  // ---- unscoped machine setters (OAuth callback + pull worker) --------------
+  // These write to a single, already-resolved channel row. They are NEVER reachable
+  // from a scoped HTTP handler with user input; callers hold the row id from a
+  // signed OAuth `state` or from the worker's own `claim()`.
+
+  /** Merge new plaintext secrets into a channel, encrypting each. */
+  async mergeSecrets(id: number, plain: Record<string, string>): Promise<void> {
+    const row = await this.raw(id);
+    if (!row) return;
+    const merged: Record<string, string> = { ...(row.secrets ?? {}) };
+    for (const [k, v] of Object.entries(plain)) {
+      const s = String(v ?? '').trim();
+      if (s) merged[k] = encryptSecret(s);
+    }
+    await this.db.query(
+      `UPDATE capture_channel SET secrets = $2, updated_at = now() WHERE id = $1`,
+      [id, JSON.stringify(merged)],
+    );
+  }
+
+  /** Shallow-merge config keys on a channel (e.g. write the connected page_id). */
+  async mergeConfig(id: number, patch: Record<string, unknown>): Promise<void> {
+    const row = await this.raw(id);
+    if (!row) return;
+    const merged = { ...(row.config ?? {}), ...patch };
+    await this.db.query(
+      `UPDATE capture_channel SET config = $2, updated_at = now() WHERE id = $1`,
+      [id, JSON.stringify(merged)],
+    );
+  }
+
+  /** Replace the poll cursor and (optionally) push next_poll_at forward. */
+  async setCursor(id: number, cursor: Record<string, unknown>, pollMinutes?: number): Promise<void> {
+    if (pollMinutes && pollMinutes > 0) {
+      await this.db.query(
+        `UPDATE capture_channel
+            SET cursor = $2, next_poll_at = now() + ($3 || ' minutes')::interval, updated_at = now()
+          WHERE id = $1`,
+        [id, JSON.stringify(cursor), String(Math.max(1, Math.floor(pollMinutes)))],
+      );
+    } else {
+      await this.db.query(
+        `UPDATE capture_channel SET cursor = $2, updated_at = now() WHERE id = $1`,
+        [id, JSON.stringify(cursor)],
+      );
+    }
+  }
+
   /** Resolve a public endpoint hit. Inactive/unknown keys resolve to null (404). */
   async byPublicKey(publicKey: string, provider?: string): Promise<ChannelRow | null> {
     if (!publicKey) return null;

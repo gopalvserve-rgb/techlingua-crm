@@ -39,7 +39,7 @@ export interface ProviderSpec {
   blurb: string;
   kind: 'webhook' | 'poll';
   /** the public route family: /api/webhooks/<endpoint>/<public_key> */
-  endpoint: 'meta' | 'google' | 'form' | 'push' | null;
+  endpoint: 'meta' | 'google' | 'form' | 'push' | 'whatsapp' | null;
   config: FieldSpec[];
   secrets: FieldSpec[];
   /** what Gopal must paste where (rendered verbatim in the Configure drawer) */
@@ -298,6 +298,68 @@ Object.assign(PROVIDERS, {
       'Contact Number is required; Contact Name and Email are matched automatically.',
       'Turn on "Capture other fields" to keep everything else on the lead note.',
     ]),
+
+  /* ---- Scheduled PULL marketplaces (Lead Intake Blueprint §4) ---- */
+  tradeindia_pull: {
+    key: 'tradeindia_pull', label: 'TradeIndia (auto-pull)',
+    blurb: 'We poll TradeIndia\'s Inquiry API on a schedule and import new enquiries. Deduped by TradeIndia\'s own QUERY_ID so nothing is imported twice.',
+    kind: 'poll', endpoint: null,
+    config: [
+      { key: 'poll_minutes', label: 'Check every (minutes)', type: 'number', placeholder: '60' },
+      { key: 'lookback_days', label: 'First-run look-back (days)', type: 'number', placeholder: '7' },
+      { key: 'field_map', label: 'Extra field mapping (JSON)', type: 'textarea', placeholder: '{"product_name":"course"}' },
+    ],
+    secrets: [
+      { key: 'userid', label: 'TradeIndia User ID', type: 'password', required: true },
+      { key: 'profile_id', label: 'Profile ID', type: 'password', required: true },
+      { key: 'api_key', label: 'API key', type: 'password', required: true },
+    ],
+    setup: [
+      'TradeIndia Seller panel → API → get your User ID, Profile ID and Key.',
+      'Paste them here and press "Pull now". The poller then runs on your interval (default hourly).',
+      'Enquiries are deduped by QUERY_ID and flow through the normal dedup/distribution pipeline.',
+    ],
+  },
+  indiamart_pull: {
+    key: 'indiamart_pull', label: 'IndiaMART (auto-pull)',
+    blurb: 'We poll IndiaMART\'s Pull (Lead Manager) API on a schedule with your CRM key and import new buy-leads. Deduped by UNIQUE_QUERY_ID.',
+    kind: 'poll', endpoint: null,
+    config: [
+      { key: 'poll_minutes', label: 'Check every (minutes)', type: 'number', placeholder: '60' },
+      { key: 'lookback_days', label: 'First-run look-back (days)', type: 'number', placeholder: '7' },
+      { key: 'field_map', label: 'Extra field mapping (JSON)', type: 'textarea', placeholder: '{"QUERY_PRODUCT_NAME":"course"}' },
+    ],
+    secrets: [
+      { key: 'crm_key', label: 'IndiaMART CRM key (glusr_crm_key)', type: 'password', required: true,
+        hint: 'Seller Panel → Lead Manager → Import Leads to CRM → your CRM key.' },
+    ],
+    setup: [
+      'IndiaMART Seller Panel → Lead Manager → CRM → copy your CRM key.',
+      'Paste it here and press "Pull now"; the poller then runs on your interval.',
+      'Buy-leads are deduped by UNIQUE_QUERY_ID.',
+    ],
+  },
+
+  /* ---- WhatsApp inbound → lead (Lead Intake Blueprint §6) ---- */
+  whatsapp_inbound: {
+    key: 'whatsapp_inbound', label: 'WhatsApp inbound (lead capture)',
+    blurb: 'Meta WhatsApp Cloud API webhook — every inbound message is logged on the matching lead, and (optionally) an unknown number becomes a new lead.',
+    kind: 'webhook', endpoint: 'whatsapp',
+    config: [
+      { key: 'auto_create', label: 'Create a lead from an unknown number', type: 'bool',
+        hint: 'On: a first message from a number that is not already a lead creates one. Off: unknown numbers are logged only.' },
+      { key: 'field_map', label: 'Extra field mapping (JSON)', type: 'textarea', placeholder: '{}' },
+    ],
+    secrets: [
+      { key: 'verify_token', label: 'Verify token', type: 'password', required: true, generated: true,
+        hint: 'Generated for you. Paste into Meta → WhatsApp → Configuration → Webhook verify token.' },
+    ],
+    setup: [
+      'Meta App → WhatsApp → Configuration → Callback URL = the URL above, Verify token = the token above.',
+      'Subscribe to the "messages" field.',
+      'Inbound messages append a [WhatsApp] note to the matching lead (by phone); turn on auto-create to capture new numbers as leads.',
+    ],
+  },
 });
 
 /**

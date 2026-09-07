@@ -86,6 +86,34 @@ export function makeChannelDb(channels: any[], init: Partial<FakeState> = {}) {
       }
       return [];
     }
+    // ---- new-feature statements (WhatsApp lead match + OAuth setters) ----
+    if (s.startsWith('SELECT id, org_id, branch_id FROM lead WHERE org_id')) {
+      const last10 = String(params[1] ?? '');
+      const d = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10);
+      const hit = [...st.leads].reverse().find((l: any) => !l.deleted_at && Number(l.org_id) === Number(params[0])
+        && (d(l.phone) === last10 || d(l.alt_phone) === last10 || d(l.whatsapp_phone) === last10));
+      return hit ? [{ id: hit.id, org_id: hit.org_id, branch_id: hit.branch_id }] : [];
+    }
+    if (s.startsWith('SELECT id, org_id, branch_id FROM lead WHERE id')) {
+      const hit = st.leads.find((l: any) => Number(l.id) === Number(params[0]) && !l.deleted_at);
+      return hit ? [{ id: hit.id, org_id: hit.org_id, branch_id: hit.branch_id }] : [];
+    }
+    if (s.startsWith('UPDATE capture_channel SET secrets')) {
+      const ch = cst.channels.find((c) => Number(c.id) === Number(params[0]));
+      if (ch) ch.secrets = typeof params[1] === 'string' ? JSON.parse(params[1] as string) : params[1];
+      return [];
+    }
+    if (s.startsWith('UPDATE capture_channel SET config')) {
+      const ch = cst.channels.find((c) => Number(c.id) === Number(params[0]));
+      if (ch) ch.config = typeof params[1] === 'string' ? JSON.parse(params[1] as string) : params[1];
+      return [];
+    }
+    if (s.startsWith('UPDATE capture_channel SET cursor = $2, updated_at')) {
+      const ch = cst.channels.find((c) => Number(c.id) === Number(params[0]));
+      if (ch) ch.cursor = typeof params[1] === 'string' ? JSON.parse(params[1] as string) : params[1];
+      return [];
+    }
+
     return (db as any).query(sql, params);
   };
 

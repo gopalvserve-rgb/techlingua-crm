@@ -148,7 +148,51 @@ export class WebhookController {
     }
   }
 
+  /** WhatsApp Cloud API GET verification handshake — echoes hub.challenge as text. */
+  @Public() @Get('whatsapp/:key')
+  async whatsappVerify(
+    @Param('key') key: string, @Query() q: Record<string, unknown>,
+    @Req() req: Request, @Res() res: Response,
+  ) {
+    try {
+      const out = await this.hooks.whatsappVerify(key, q, this.meta(req));
+      res.status(out.http).type('text/plain').send(String(out.body ?? ''));
+    } catch (e) {
+      const r = e as WebhookRejected;
+      res.status(r.http ?? 403).type('text/plain').send(r.message ?? 'Verification failed');
+    }
+  }
+
+  /** WhatsApp Cloud API inbound-message delivery. */
+  @Public() @Post('whatsapp/:key')
+  async whatsappReceive(@Param('key') key: string, @Body() body: unknown, @Req() req: Request, @Res() res: Response) {
+    try {
+      const out = await this.hooks.whatsappReceive(key, body, this.meta(req));
+      res.status(out.http).json(out.body);
+    } catch (e) {
+      const r = e as WebhookRejected;
+      res.status(r.http ?? 500).json({ received: false, error: r.message ?? 'Rejected' });
+    }
+  }
+
+  /**
+   * Facebook OAuth redirect target (PUBLIC — Facebook redirects the browser here with
+   * ?code&state). Exchanges the code, stores the Page token on the channel, subscribes
+   * the Page to leadgen, and shows the human a small confirmation page.
+   */
+  @Public() @Get('fb/callback')
+  async fbCallback(@Query() q: Record<string, unknown>, @Req() req: Request, @Res() res: Response) {
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/webhooks/fb/callback`;
+    try {
+      const out = await this.hooks.fbCallback(q, redirectUri);
+      res.status(out.http).type('text/html').send(String(out.body ?? ''));
+    } catch (e) {
+      const r = e as WebhookRejected;
+      res.status(r.http ?? 500).type('text/plain').send(r.message ?? 'Callback failed');
+    }
+  }
+
   /** A liveness probe an integrator can curl before wiring anything up. */
   @Public() @Get('health') @Header('Cache-Control', 'no-store')
-  health() { return { ok: true, endpoints: ['meta/:key', 'google/:key', 'form/:key', 'push/:key', 'leadsource/:source/:key'] }; }
+  health() { return { ok: true, endpoints: ['meta/:key', 'google/:key', 'form/:key', 'push/:key', 'leadsource/:source/:key', 'whatsapp/:key', 'fb/callback'] }; }
 }
