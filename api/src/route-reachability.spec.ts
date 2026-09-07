@@ -220,6 +220,8 @@ const NOT_UI_DRIVEN: Record<string, string> = {
     'GOOGLE ADS lead-form delivery, authenticated by the google_key shared secret. The caller is Google.',
   'POST /webhooks/push/:key':
     'THE GENERIC KEYED PUSH endpoint for the marketplaces (IndiaMART / JustDial / TradeIndia / Housing.com / 99acres), Google Form, Custom Integration and raw Webhook. The caller is that external system, authenticated by the unguessable URL key (plus an optional X-Webhook-Key). Deliberately outside this SPA — the client pastes the URL into each marketplace panel.',
+  'POST /webhooks/leadsource/:source/:key':
+    'MARKETPLACE INTAKE with a built-in per-source adapter (:source = indiamart / justdial / sulekha / tradeindia / property portals). The caller is the marketplace, authenticated by the push integration\'s unguessable URL key; the :source label selects the field adapter + source_ref dedup. Deliberately outside this SPA.',
   'POST /webhooks/form/:key':
     'THE PUBLIC WEBSITE FORM endpoint. The caller is the client\'s own marketing site, using the snippet the Lead Capture screen gives him — deliberately outside this app.',
   'OPTIONS /webhooks/form/:key':

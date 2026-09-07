@@ -130,7 +130,25 @@ export class WebhookController {
     }
   }
 
+  /**
+   * Marketplace intake — IndiaMART / JustDial / Sulekha / TradeIndia / property portals.
+   * The :source label picks a built-in adapter; :key is the push integration's public key.
+   */
+  @Public() @Post('leadsource/:source/:key')
+  async leadsourceReceive(
+    @Param('source') source: string, @Param('key') key: string,
+    @Body() body: unknown, @Req() req: Request, @Res() res: Response,
+  ) {
+    try {
+      const out = await this.hooks.leadsourceReceive(source, key, body, this.meta(req));
+      res.status(out.http).json(out.body);
+    } catch (e) {
+      const r = e as WebhookRejected;
+      res.status(r.http ?? 500).json({ ok: false, error: r.message ?? 'Rejected' });
+    }
+  }
+
   /** A liveness probe an integrator can curl before wiring anything up. */
   @Public() @Get('health') @Header('Cache-Control', 'no-store')
-  health() { return { ok: true, endpoints: ['meta/:key', 'google/:key', 'form/:key', 'push/:key'] }; }
+  health() { return { ok: true, endpoints: ['meta/:key', 'google/:key', 'form/:key', 'push/:key', 'leadsource/:source/:key'] }; }
 }

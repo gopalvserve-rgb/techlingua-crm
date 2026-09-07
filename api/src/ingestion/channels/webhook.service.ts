@@ -6,6 +6,7 @@ import { IngestChannel, IngestOutcome, IngestPayload, IngestValidationError } fr
 import { LeadIngestionService } from '../lead-ingestion.service';
 import { ChannelRow, ChannelService } from './channel.service';
 import { RateLimiter } from './rate-limit.util';
+import { adaptMarketplace } from './source-adapters';
 import { SheetNotConfiguredError, SheetsClient, HttpFn } from './sheets.client';
 import {
   extraFields, formToPayload, googleToPayload, metaToPayload, parseFieldMap, sheetRowToPayload,
@@ -541,6 +542,82 @@ export class WebhookService {
       reason: this.describe(out, null), lead_id: out.lead_id ?? null, duration_ms: Date.now() - t0,
     });
     return { http: 200, body: { ok: true, lead_id: out.lead_id ?? null }, event_id: eventId, outcomes: [out] };
+  }
+
+  /**
+   * MARKETPLACE INTAKE (Lead Intake Blueprint §3). POST /webhooks/leadsource/:source/:key
+   * — one keyed endpoint for IndiaMART, JustDial, Sulekha, TradeIndia and the property
+   * portals. A built-in adapter (source-adapters.ts) maps the provider's payload with
+   * NO per-field config; the marketplace's own record id becomes the source_ref, so the
+   * same enquiry is never imported twice. IndiaMART batch RESPONSE[] arrays fan out to
+   * multiple leads. Any saved channel field_map still overlays on top.
+   */
+  async leadsourceReceive(source: string, publicKey: string, body: any, meta: ReqMeta): Promise<WebhookResult> {
+    const t0 = Date.now();
+    const ch = await this.channels.byPublicKey(publicKey);
+    if (!ch || PROVIDER_ENDPOINT(ch.provider) !== 'push') {
+      await this.channels.logEvent({
+        provider: source || 'marketplace', public_key: publicKey, ip: meta.ip, raw: body,
+        status: 'rejected', reason: 'No push integration with that webhook key',
+      });
+      throw new WebhookRejected(404, 'Unknown webhook');
+    }
+    const perMin = Number((ch.config as any)?.rate_limit_per_min) || FORM_DEFAULT_LIMIT;
+    const ipCap = Math.max(3, Math.floor(perMin / IP_DIVISOR));
+    if (!this.limiter.allow(`ls:${publicKey}`, perMin) || !this.limiter.allow(`ls:${publicKey}:${meta.ip ?? '?'}`, ipCap)) {
+      await this.channels.logEvent({ channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip, raw: body, status: 'rejected', reason: 'Rate limit exceeded', duration_ms: Date.now() - t0 });
+      throw new WebhookRejected(429, 'Too many submissions — please try again in a minute.');
+    }
+    const expectedKey = this.channels.secretsOf(ch).webhook_key ?? '';
+    const providedKey = String(meta.apiKey ?? (body && (body.key ?? body.secret)) ?? '').trim();
+    if (providedKey && expectedKey && !safeEqual(providedKey, expectedKey)) {
+      await this.channels.logEvent({ channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip, raw: body, signature_ok: false, status: 'rejected', reason: 'Webhook key does not match', duration_ms: Date.now() - t0 });
+      throw new WebhookRejected(401, 'Webhook key does not match.');
+    }
+    if (!ch.is_active) {
+      await this.channels.logEvent({ channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip, raw: body, status: 'skipped', reason: 'Integration is paused', duration_ms: Date.now() - t0 });
+      return { http: 200, body: { ok: true, ingested: 0 } };
+    }
+
+    const src = String(source || 'generic').toLowerCase();
+    let records = adaptMarketplace(src, body);
+    // fall back to the channel's own field_map if the adapter recognised nothing
+    if (!records.length) {
+      const fieldMap = parseFieldMap((ch.config as any)?.field_map);
+      const clean: Record<string, unknown> = { ...(body ?? {}) };
+      delete clean.key; delete clean.secret;
+      const p = formToPayload(clean, fieldMap);
+      if (p.full_name || p.phone || p.email) records = [p];
+    }
+    if (!records.length) {
+      const eid = await this.channels.logEvent({ channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip, raw: body, status: 'skipped', reason: `No usable lead in ${src} payload (need at least a name or phone)`, duration_ms: Date.now() - t0 });
+      return { http: 200, body: { ok: true, ingested: 0 }, event_id: eid };
+    }
+
+    const outcomes: IngestOutcome[] = [];
+    let ingested = 0;
+    for (const rec of records) {
+      try {
+        const out = await this.ingestion.ingest(rec, {
+          channel: 'webhook' as IngestChannel,
+          campaign_id: ch.campaign_id, source_id: ch.source_id, actor_id: null,
+          external_key: rec.external_id ? `${src}:${rec.external_id}` : null,
+          duplicate_policy: 'campaign',
+        });
+        outcomes.push(out);
+        if (out.status === 'created') ingested++;
+      } catch (e) {
+        outcomes.push({ status: 'failed', reason: (e as Error).message } as IngestOutcome);
+      }
+    }
+    const eventId = await this.channels.logEvent({
+      channel_id: ch.id, org_id: ch.org_id, provider: ch.provider, public_key: publicKey, ip: meta.ip,
+      raw: body, signature_ok: true,
+      status: ingested > 0 ? 'ingested' : (outcomes.some((o) => o.status === 'failed') ? 'failed' : outcomes.some((o) => o.status === 'duplicate') ? 'duplicate' : 'skipped'),
+      reason: `${src}: ${records.length} record(s), ${ingested} created`,
+      lead_id: outcomes.find((o) => o.lead_id)?.lead_id ?? null, duration_ms: Date.now() - t0,
+    });
+    return { http: 200, body: { ok: true, source: src, records: records.length, ingested }, event_id: eventId, outcomes };
   }
 
   // ========================================================== GOOGLE SHEET ===
