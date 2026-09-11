@@ -168,7 +168,8 @@ a{color:inherit;text-decoration:none}
 .card-head h3 svg{width:15px;height:15px;color:var(--text-muted)}
 .card-head .more{color:var(--text-dim);font-size:12px;font-weight:600}
 .grid{display:grid;gap:15px}
-.stack{display:flex;flex-direction:column;gap:15px}
+.stack{display:flex;flex-direction:column;gap:15px;min-width:0}
+.stack>*{min-width:0;max-width:100%}
 
 /* kpis */
 .kpi-strip{display:grid;gap:14px;margin-bottom:16px}
@@ -243,6 +244,19 @@ a{color:inherit;text-decoration:none}
 .lrow-act{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);flex:none;transition:.13s;cursor:pointer}
 .lrow-act:hover{color:var(--primary);border-color:var(--primary)}
 .lrow-act svg{width:14px;height:14px}
+
+/* DEF-UI-SCROLL — dashboard recent-row cards must never force a horizontal page scroll.
+   A long lead label + course + tags used to push .gr (flex:1) out to its full single-line
+   width, blowing the card past the content column. The text group now truncates to one
+   ellipsised line; hover/click still opens the record. Applies to every .lrow list. */
+.lrow{min-width:0}
+/* the real root cause: .row2 is a CSS grid; a grid item defaults to min-width:auto and a
+   wide card (long recent-row) forced the 1fr track out to its content width, scrolling the
+   whole page sideways. min-width:0 lets the grid/flex items shrink to their column. */
+.row2>*{min-width:0}
+.lrow .gr{overflow:hidden}
+.lrow .t1,.lrow .t2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.lrow .t2 span{white-space:nowrap}
 .cqa{display:inline-flex;gap:3px;align-items:center;vertical-align:middle}
 .cqa-ic{width:22px;height:22px;border-radius:6px;display:inline-grid;place-items:center;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);flex:none;cursor:pointer;padding:0;transition:.13s}
 .cqa-ic:hover{color:var(--primary);border-color:var(--primary)}
