@@ -111,7 +111,7 @@ export class ChannelController {
       throw new NotConfiguredException('This channel is not a Meta Lead Ads channel.');
     }
     const redirectUri = `${req.protocol}://${req.get('host')}/api/webhooks/fb/callback`;
-    const out = this.hooks.fbConnectUrl(id, redirectUri);
+    const out = await this.hooks.fbConnectUrl(id, redirectUri);
     if (!out.url) throw new NotConfiguredException(out.error ?? 'Facebook app is not configured on the server.');
     return out;
   }

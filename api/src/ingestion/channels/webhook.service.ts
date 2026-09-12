@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac } from 'crypto';
 import { DatabaseService } from '../../database/database.service';
-import { safeEqual } from '../../common/crypto.util';
+import { safeEqual, decryptSecret } from '../../common/crypto.util';
 import { IngestChannel, IngestOutcome, IngestPayload, IngestValidationError } from '../ingestion.types';
 import { LeadIngestionService } from '../lead-ingestion.service';
 import { ChannelRow, ChannelService } from './channel.service';
@@ -950,10 +950,37 @@ export class WebhookService {
 
   // ============================================================= META OAUTH ===
 
-  /** Build the Facebook login URL for a Meta channel (authed admin action). */
-  fbConnectUrl(channelId: number, redirectUri: string): { url: string | null; error?: string } {
-    const appId = process.env.FB_APP_ID ?? '';
-    if (!appId) return { url: null, error: 'Facebook App ID is not configured on the server (set FB_APP_ID / FB_APP_SECRET).' };
+  /**
+   * The one Meta app, saved ONCE. Facebook Page lead sync uses the SAME Meta app as
+   * WhatsApp Embedded Signup — stored in channel_config as provider 'meta_cloud'
+   * (App ID + App Secret, entered once in Settings › Channels). Env vars are only a
+   * fallback for a self-hosted deploy. This is why any branch can just click "Log in
+   * with Facebook": the app is shared, only the Page token (per channel) differs.
+   */
+  private async fbAppCreds(): Promise<{ appId: string; appSecret: string }> {
+    let appId = '', appSecret = '';
+    try {
+      const row = await this.db.one<any>(
+        `SELECT config, secrets FROM channel_config
+          WHERE deleted_at IS NULL AND is_active = TRUE AND provider = 'meta_cloud'
+          ORDER BY updated_at DESC LIMIT 1`,
+      );
+      if (row) {
+        appId = String((row.config ?? {}).app_id ?? '').trim();
+        const enc = (row.secrets ?? {}).app_secret;
+        appSecret = enc ? (decryptSecret(enc) || '') : '';
+      }
+    } catch { /* fall through to env */ }
+    if (!appId) appId = process.env.FB_APP_ID ?? '';
+    if (!appSecret) appSecret = process.env.FB_APP_SECRET ?? '';
+    return { appId, appSecret };
+  }
+
+  /** Build the Facebook login URL for a Meta channel (authed admin action). Uses the
+   *  Meta app saved once in Settings › Channels (provider 'meta_cloud'); env fallback. */
+  async fbConnectUrl(channelId: number, redirectUri: string): Promise<{ url: string | null; error?: string }> {
+    const { appId } = await this.fbAppCreds();
+    if (!appId) return { url: null, error: 'Facebook is not connected yet — save your Meta App ID + App secret once in Settings › Channels, then Log in with Facebook.' };
     return { url: buildFbAuthUrl(appId, redirectUri, this.signState(channelId)) };
   }
 
@@ -973,9 +1000,10 @@ export class WebhookService {
     const ch = await this.channels.raw(channelId);
     if (!ch || ch.provider !== 'meta') return { http: 200, body: this.fbHtml('That channel no longer exists.', false) };
 
-    const appId = process.env.FB_APP_ID ?? '';
-    const appSecret = process.env.FB_APP_SECRET ?? (this.channels.secretsOf(ch).app_secret ?? '');
-    if (!appId || !appSecret) return { http: 200, body: this.fbHtml('Facebook app credentials are not configured on the server.', false) };
+    const saved = await this.fbAppCreds();
+    const appId = saved.appId;
+    const appSecret = saved.appSecret || (this.channels.secretsOf(ch).app_secret ?? '');
+    if (!appId || !appSecret) return { http: 200, body: this.fbHtml('The Meta app is not configured yet — save the App ID + App secret in Settings › Channels, then try again.', false) };
 
     try {
       const tokenUrl = `${FB_GRAPH_BASE}/oauth/access_token?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;

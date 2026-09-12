@@ -75,11 +75,11 @@ describe('Facebook Page OAuth connect', () => {
   const metaCh = () => makeChannel({ id: 21, provider: 'meta', public_key: 'pubkeyM',
     secrets: { verify_token: 'v', app_secret: 'as' }, config: { page_id: '' } });
 
-  it('fbConnectUrl is 400-ish (no url) when FB_APP_ID unset, and a valid URL when set', () => {
+  it('fbConnectUrl has no url when no Meta app configured, and a valid URL once the app id is set', async () => {
     const { hooks } = makeWebhook([metaCh()]);
-    expect(hooks.fbConnectUrl(21, 'https://x/cb').url).toBeNull();
-    process.env.FB_APP_ID = 'APP123';
-    const out = hooks.fbConnectUrl(21, 'https://x/cb');
+    expect((await hooks.fbConnectUrl(21, 'https://x/cb')).url).toBeNull();
+    process.env.FB_APP_ID = 'APP123';           // env is the fallback for the saved meta_cloud app
+    const out = await hooks.fbConnectUrl(21, 'https://x/cb');
     expect(out.url).toContain('client_id=APP123');
     expect(out.url).toContain('state=');
   });
@@ -105,7 +105,7 @@ describe('Facebook Page OAuth connect', () => {
       return { ok: false, text: async () => 'unexpected' } as any;
     }) as any;
 
-    const state = hooks.fbConnectUrl(21, 'https://x/cb').url!.match(/state=([^&]+)/)![1];
+    const state = (await hooks.fbConnectUrl(21, 'https://x/cb')).url!.match(/state=([^&]+)/)![1];
     const out = await hooks.fbCallback({ code: 'THECODE', state: decodeURIComponent(state) }, 'https://x/cb');
     expect(String(out.body)).toContain('Connected Page "My School"');
     // the Page token + id are now stored on the channel

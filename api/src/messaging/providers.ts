@@ -197,8 +197,8 @@ const SPECS: MsgProviderSpec[] = [
   {
     key: 'meta_cloud',
     channel: 'whatsapp',
-    label: 'WhatsApp — Meta Cloud API',
-    blurb: 'Click "Connect WhatsApp", log in to Meta, and we store the permanent token, the WABA, the phone number and the app secret ourselves — then subscribe the webhook for you. No token pasting, no 24-hour-token trap.',
+    label: 'Meta app (WhatsApp + Facebook Lead Ads)',
+    blurb: 'Your ONE Meta app, saved once. The App ID + App secret here also power Facebook Page lead sync — after saving, any branch goes to Marketing › Integrations › Facebook Leads and clicks "Log in with Facebook" to connect its own Page. Click "Connect WhatsApp" to log in to Meta; we store the permanent token, WABA, phone number and app secret and subscribe the webhook for you. No token pasting, no 24-hour-token trap.',
     perVertical: false,
     config: [
       // ---- Embedded Signup: the two ids that make the Connect button work. Not secret
