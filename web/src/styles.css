@@ -1039,3 +1039,26 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .wa-fld label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin-bottom:3px}
 .wa-val{font-size:13px;font-weight:500}
 .wa-note{margin-top:14px;font-size:11.5px;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px;text-align:left;line-height:1.5}
+
+/* --- WhatsApp Live Chat — Stage 2 (two-way send, resolve/bot, editable panel) --- */
+.wa-from{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border);flex:none}
+.wa-from label{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);flex:none}
+.wa-from select{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:6px 9px;color:var(--text);font-size:12px;font-family:inherit;outline:none}
+.wa-from select:focus{border-color:var(--success)}
+.wa-from-none{font-size:11.5px;color:var(--text-muted)}
+.wa-from-none a{color:var(--success);cursor:pointer;text-decoration:underline}
+.wa-th-head{position:relative}
+.wa-th-actions{margin-left:auto;display:flex;gap:7px;flex:none}
+.wa-tgl{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:6px 11px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer}
+.wa-tgl svg{width:13px;height:13px}
+.wa-tgl:hover{border-color:var(--text-dim)}
+.wa-tgl.on{background:rgba(37,99,235,.12);border-color:var(--primary);color:var(--primary)}
+.wa-tgl.res{background:rgba(22,163,74,.12);border-color:var(--success);color:var(--success)}
+.wa-tgl:disabled{opacity:.55;cursor:default}
+.wa-tag-res{color:var(--success);font-weight:700}
+.wa-comp input:disabled{opacity:.6;cursor:not-allowed}
+.wa-comp .send:disabled{opacity:.45;cursor:not-allowed}
+.wa-fld select,.wa-fld input{width:100%;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:8px 10px;color:var(--text);font-size:13px;font-family:inherit;outline:none}
+.wa-fld select:focus,.wa-fld input:focus{border-color:var(--success)}
+.wa-save{width:100%;margin-top:14px;padding:10px;border-radius:10px;background:var(--success);color:#fff;font-weight:600;font-size:13px;border:none;cursor:pointer}
+.wa-save:disabled{opacity:.55;cursor:default}

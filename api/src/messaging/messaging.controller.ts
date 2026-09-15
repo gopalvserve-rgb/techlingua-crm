@@ -67,6 +67,32 @@ export class MessagingController {
     return this.messaging.waThread(scope, String(phone || ''));
   }
 
+  /** Chat pickers — agents, the connected WhatsApp number(s), and the status master. */
+  @Get('wa/meta')
+  @RequirePermission('message.read')
+  waMeta(@CurrentScope() scope: ResolvedScope) { return this.messaging.waMeta(scope); }
+
+  /** Reply in a WhatsApp thread (queues through the normal send path). */
+  @Post('wa/send')
+  @RequirePermission('message.send')
+  waSend(@Body() dto: any, @CurrentScope() scope: ResolvedScope, @CurrentUser() me: Me) {
+    return this.messaging.waSend(scope, { id: Number(me.id) }, dto);
+  }
+
+  /** Edit the lead card from the chat (status / assignee / next follow-up). */
+  @Post('wa/lead')
+  @RequirePermission('message.send')
+  waLead(@Body() dto: any, @CurrentScope() scope: ResolvedScope, @CurrentUser() me: Me) {
+    return this.messaging.waLeadUpdate(scope, { id: Number(me.id) }, dto);
+  }
+
+  /** Resolve / re-open, toggle the bot, or set the chat assignee. */
+  @Post('wa/state')
+  @RequirePermission('message.send')
+  waState(@Body() dto: any, @CurrentScope() scope: ResolvedScope, @CurrentUser() me: Me) {
+    return this.messaging.waSetState(scope, { id: Number(me.id) }, dto);
+  }
+
   /**
    * Send one message now (the lead sheet's Send button, and Settings' "Send test").
    * Degrades to a clean 503 when the channel has no credentials — never a 500, never an

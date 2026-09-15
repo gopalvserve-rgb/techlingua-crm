@@ -507,8 +507,8 @@ export class MessagingService {
     const filt: string[] = [`c.ph <> ''`];
     if (f.window !== 'all') filt.push(`c.last_at >= now() - INTERVAL '7 days'`);
     if (f.unread) filt.push(`c.last_dir = 'in'`);                       // awaiting our reply
-    if (f.agent_id === -1) { params.push(userId); filt.push(`l.owner_id = $${params.length}`); }  // "Mine"
-    else if (f.agent_id) { params.push(f.agent_id); filt.push(`l.owner_id = $${params.length}`); }
+    if (f.agent_id === -1) { params.push(userId); filt.push(`COALESCE(wc.assigned_user_id, l.owner_id) = $${params.length}`); }  // "Mine"
+    else if (f.agent_id) { params.push(f.agent_id); filt.push(`COALESCE(wc.assigned_user_id, l.owner_id) = $${params.length}`); }
     if (f.q) { params.push('%' + String(f.q).trim() + '%'); const p = `$${params.length}`;
       filt.push(`(coalesce(l.full_name,'') ILIKE ${p} OR c.ph ILIKE ${p} OR coalesce(c.last_text,'') ILIKE ${p})`); }
     params.push(Math.min(Number(f.limit) || 200, 500));
@@ -524,12 +524,17 @@ export class MessagingService {
            FROM msgs GROUP BY ph
        )
        SELECT c.ph AS phone, c.last_at, c.last_text, c.last_dir, c.total, c.in_count,
-              c.lead_id, l.full_name AS name, l.owner_id AS agent_id, u.name AS agent,
-              st.name AS status
+              c.lead_id, l.full_name AS name,
+              COALESCE(wc.assigned_user_id, l.owner_id) AS agent_id,
+              COALESCE(au.name, u.name) AS agent,
+              st.name AS status, COALESCE(wc.resolved, FALSE) AS resolved,
+              COALESCE(wc.bot_on, TRUE) AS bot_on
          FROM conv c
          LEFT JOIN lead l   ON l.id = c.lead_id
          LEFT JOIN "user" u ON u.id = l.owner_id
          LEFT JOIN m_status st ON st.id = l.status_id
+         LEFT JOIN wa_conversation wc ON wc.org_id = $1 AND wc.phone10 = c.ph
+         LEFT JOIN "user" au ON au.id = wc.assigned_user_id
         WHERE ${filt.join(' AND ')}
         ORDER BY c.last_at DESC
         LIMIT $${params.length}`,
@@ -552,7 +557,7 @@ export class MessagingService {
       [orgId, ph10],
     );
     const lead = await this.db.one<any>(
-      `SELECT l.id, l.full_name AS name, l.phone, l.owner_id AS agent_id, u.name AS agent,
+      `SELECT l.id, l.full_name AS name, l.phone, l.owner_id, l.owner_id AS agent_id, u.name AS agent,
               st.name AS status, l.status_id, l.next_follow_up_at, l.branch_id, l.vertical_id
          FROM lead l
          LEFT JOIN "user" u ON u.id = l.owner_id
@@ -562,7 +567,94 @@ export class MessagingService {
         ORDER BY l.id DESC LIMIT 1`,
       [orgId, ph10],
     );
-    return { phone: ph10, messages, lead: lead ?? null };
+    const state = await this.db.one<any>(
+      `SELECT resolved, bot_on FROM wa_conversation WHERE org_id = $1 AND phone10 = $2`,
+      [orgId, ph10],
+    );
+    return {
+      phone: ph10, messages, lead: lead ?? null,
+      resolved: state?.resolved ?? false,
+      bot_on: state?.bot_on ?? true,
+    };
+  }
+
+  /** Reply in a WhatsApp thread — queues through the SAME send path as everywhere else,
+   *  so it delivers the moment the number is connected and degrades to a clean logged
+   *  attempt until then (never a 500). */
+  async waSend(scope: ResolvedScope, me: { id: number }, body: { to?: string; phone?: string; text?: string }) {
+    const text = String(body?.text ?? '').trim();
+    if (!text) return { ok: false, reason: 'Empty message' };
+    const orgId = await this.orgId();
+    const ph10 = String(body?.phone ?? body?.to ?? '').replace(/\D/g, '').slice(-10);
+    // prefer the lead's stored E.164; else use whatever the client had
+    const lead = ph10.length >= 8 ? await this.db.one<any>(
+      `SELECT id, phone, branch_id, vertical_id FROM lead
+        WHERE org_id = $1 AND deleted_at IS NULL AND right(regexp_replace(phone,'\\D','','g'),10) = $2
+        ORDER BY id DESC LIMIT 1`, [orgId, ph10]) : null;
+    const to = String(body?.to || lead?.phone || ('+' + ph10));
+    const r = await this.sendNow({
+      channel: 'whatsapp' as MsgChannel, to, body: text,
+      lead_id: lead?.id ?? null, branch_id: lead?.branch_id ?? null, vertical_id: lead?.vertical_id ?? null,
+    } as QueueMessage);
+    return { ok: r.status !== 'failed', ...r };
+  }
+
+  /** Edit the lead card from the chat's right panel (status / assignee / next follow-up). */
+  async waLeadUpdate(scope: ResolvedScope, me: { id: number }, body: { lead_id?: number; status_id?: number; owner_id?: number; next_follow_up_at?: string }) {
+    const id = Number(body?.lead_id);
+    if (!id) return { ok: false, reason: 'No lead linked to this conversation yet' };
+    const orgId = await this.orgId();
+    const sets: string[] = []; const params: unknown[] = [id, orgId];
+    if (body.status_id != null) { params.push(Number(body.status_id)); sets.push(`status_id = $${params.length}`); }
+    if (body.owner_id != null) { params.push(Number(body.owner_id)); sets.push(`owner_id = $${params.length}`); }
+    if (body.next_follow_up_at !== undefined) { params.push(body.next_follow_up_at || null); sets.push(`next_follow_up_at = $${params.length}`); }
+    if (!sets.length) return { ok: true, unchanged: true };
+    await this.db.query(`UPDATE lead SET ${sets.join(', ')}, updated_at = now() WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`, params);
+    return { ok: true };
+  }
+
+  /** Resolve / re-open, toggle the bot, or set the chat assignee — the state the message
+   *  stores do not carry. Upserts one row per org+contact. */
+  async waSetState(scope: ResolvedScope, me: { id: number }, body: { phone?: string; resolved?: boolean; bot_on?: boolean; assigned_user_id?: number | null }) {
+    const orgId = await this.orgId();
+    const ph10 = String(body?.phone ?? '').replace(/\D/g, '').slice(-10);
+    if (ph10.length < 8) return { ok: false, reason: 'Bad phone' };
+    const cols: string[] = ['org_id', 'phone10', 'updated_by']; const vals: unknown[] = [orgId, ph10, me.id];
+    const upd: string[] = ['updated_at = now()', 'updated_by = EXCLUDED.updated_by'];
+    if (body.resolved !== undefined) { cols.push('resolved'); vals.push(!!body.resolved); upd.push('resolved = EXCLUDED.resolved'); }
+    if (body.bot_on !== undefined) { cols.push('bot_on'); vals.push(!!body.bot_on); upd.push('bot_on = EXCLUDED.bot_on'); }
+    if (body.assigned_user_id !== undefined) { cols.push('assigned_user_id'); vals.push(body.assigned_user_id ?? null); upd.push('assigned_user_id = EXCLUDED.assigned_user_id'); }
+    const ph = cols.map((_, i) => `$${i + 1}`).join(', ');
+    await this.db.query(
+      `INSERT INTO wa_conversation (${cols.join(', ')}) VALUES (${ph})
+       ON CONFLICT (org_id, phone10) DO UPDATE SET ${upd.join(', ')}`, vals);
+    // if the chat assignee changed, keep the lead owner in step (best-effort)
+    if (body.assigned_user_id) {
+      await this.db.query(
+        `UPDATE lead SET owner_id = $3, updated_at = now()
+          WHERE org_id = $1 AND deleted_at IS NULL AND right(regexp_replace(phone,'\\D','','g'),10) = $2`,
+        [orgId, ph10, Number(body.assigned_user_id)]);
+    }
+    return { ok: true };
+  }
+
+  /** The chat pickers: agents (staff) + the connected WhatsApp number(s) + status master. */
+  async waMeta(scope: ResolvedScope) {
+    const orgId = await this.orgId();
+    const [agents, statuses, numbers] = await Promise.all([
+      this.db.query<any>(`SELECT id, name FROM "user" WHERE is_active = TRUE ORDER BY lower(name)`),
+      this.db.query<any>(`SELECT id, name FROM m_status ORDER BY sort_order NULLS LAST, lower(name)`),
+      this.db.query<any>(
+        `SELECT COALESCE(cc.config->>'display_phone_number', cc.config->>'connected_number') AS number,
+                v.name AS label
+           FROM channel_config cc
+           LEFT JOIN vertical v ON v.id = cc.vertical_id
+          WHERE cc.org_id = $1 AND cc.provider = 'meta_cloud' AND cc.deleted_at IS NULL`, [orgId]),
+    ]);
+    const nums = (numbers as any[])
+      .filter((n) => n.number)
+      .map((n) => ({ number: String(n.number), label: n.label || 'WhatsApp' }));
+    return { agents, statuses, numbers: nums };
   }
 
   private async orgId(): Promise<number> {

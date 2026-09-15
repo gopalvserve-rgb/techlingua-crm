@@ -3826,6 +3826,20 @@ function WaChat() {
   const [sel, setSel] = useState<string | null>(null);
   const [thread, setThread] = useState<any>(null);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // editable right-panel buffer
+  const [pStatus, setPStatus] = useState<string>('');
+  const [pOwner, setPOwner] = useState<string>('');
+  const [pFu, setPФU] = useState<string>('');
+
+  const meta = useFetch<{ agents: any[]; statuses: any[]; numbers: any[] }>(`/messages/wa/meta`, []);
+  const agents = meta.data?.agents ?? [];
+  const statuses = meta.data?.statuses ?? [];
+  const numbers = meta.data?.numbers ?? [];
+  const [fromNo, setFromNo] = useState<string>('');
+  const activeNo = fromNo || (numbers[0]?.number ?? '');
 
   const qs = new URLSearchParams();
   if (tab === 'unread') qs.set('unread', '1');
@@ -3837,15 +3851,68 @@ function WaChat() {
   const list = convs.data?.conversations ?? [];
   const counts = convs.data?.counts ?? { total: 0, unread: 0 };
 
+  const loadThread = async (phone: string) => {
+    try {
+      const t: any = await api.get(`/messages/wa/thread?phone=${encodeURIComponent(phone)}`);
+      setThread(t);
+      const ld = t?.lead ?? null;
+      setPStatus(ld?.status_id != null ? String(ld.status_id) : '');
+      setPOwner(ld?.owner_id != null ? String(ld.owner_id) : '');
+      setPФU(ld?.next_follow_up_at ? String(ld.next_follow_up_at).slice(0, 16) : '');
+    } catch { setThread({ messages: [], lead: null }); }
+  };
   const openConv = async (phone: string) => {
-    setSel(phone); setLoadingThread(true); setThread(null);
-    try { setThread(await api.get(`/messages/wa/thread?phone=${encodeURIComponent(phone)}`)); }
-    catch { setThread({ messages: [], lead: null }); }
-    finally { setLoadingThread(false); }
+    setSel(phone); setLoadingThread(true); setThread(null); setDraft('');
+    await loadThread(phone);
+    setLoadingThread(false);
   };
 
   const initials = (name: string, phone: string) => (name || phone || '?').trim().slice(0, 2).toUpperCase();
   const lead = thread?.lead ?? null;
+  const canSend = !!numbers.length;
+
+  const doSend = async () => {
+    const text = draft.trim();
+    if (!text || !sel || sending) return;
+    if (!canSend) { toast('Connect a WhatsApp number first (Settings › Channels › Connect WhatsApp).'); return; }
+    setSending(true);
+    try {
+      await api.post('/messages/wa/send', { phone: sel, text, from: activeNo || undefined });
+      setDraft('');
+      await loadThread(sel);
+      convs.reload();
+      toast('Message queued');
+    } catch (e: any) { toast(e?.message || 'Could not send'); }
+    finally { setSending(false); }
+  };
+
+  const setState = async (patch: any) => {
+    if (!sel || busy) return;
+    setBusy(true);
+    try {
+      await api.post('/messages/wa/state', { phone: sel, ...patch });
+      await loadThread(sel);
+      convs.reload();
+    } catch (e: any) { toast(e?.message || 'Could not update'); }
+    finally { setBusy(false); }
+  };
+
+  const savePanel = async () => {
+    if (!lead?.id || busy) return;
+    setBusy(true);
+    try {
+      await api.post('/messages/wa/lead', {
+        lead_id: lead.id,
+        status_id: pStatus ? Number(pStatus) : undefined,
+        owner_id: pOwner ? Number(pOwner) : undefined,
+        next_follow_up_at: pFu ? new Date(pFu).toISOString() : undefined,
+      });
+      await loadThread(sel!);
+      convs.reload();
+      toast('Lead updated');
+    } catch (e: any) { toast(e?.message || 'Could not save'); }
+    finally { setBusy(false); }
+  };
 
   return (
     <div className="wa-wrap wa3">
@@ -3854,7 +3921,15 @@ function WaChat() {
         <div className="wa-acct">
           <div className="wa-acct-ic"><Ic k="wa" /></div>
           <div className="wa-acct-t"><b>WhatsApp Live Chat</b><span>{counts.total} chats · {counts.unread} unread</span></div>
-          <button className="lrow-act" title="Refresh" onClick={() => convs.reload()}><Ic k="refresh" /></button>
+          <button className="lrow-act" title="Refresh" onClick={() => { convs.reload(); if (sel) loadThread(sel); }}><Ic k="refresh" /></button>
+        </div>
+        <div className="wa-from">
+          <label>Sending from</label>
+          {numbers.length ? (
+            <select value={activeNo} onChange={(e) => setFromNo(e.target.value)}>
+              {numbers.map((n: any, i: number) => <option key={i} value={n.number}>{n.label ? n.label + ' · ' : ''}{n.number}</option>)}
+            </select>
+          ) : <span className="wa-from-none">No number connected — <a onClick={() => (window.location.hash = '#/settings')}>connect WhatsApp</a></span>}
         </div>
         <div className="wa-search"><Ic k="search" /><input placeholder="Search by name, phone, or message" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <div className="wa-pills">
@@ -3874,11 +3949,11 @@ function WaChat() {
                   <div className="wa-av">{initials(c.name, c.phone)}</div>
                   <div className="wa-conv-mid">
                     <div className="wa-conv-top"><span className="wa-conv-name">{c.name || c.phone}</span>{c.agent ? <span className="wa-conv-agent">{c.agent}</span> : null}</div>
-                    <div className="wa-conv-prev">{c.last_dir === 'in' ? '' : '↗ '}{c.last_text || ''}</div>
+                    <div className="wa-conv-prev">{c.resolved ? <span className="wa-tag-res">✓ </span> : null}{c.last_dir === 'in' ? '' : '↗ '}{c.last_text || ''}</div>
                   </div>
                   <div className="wa-conv-right">
                     <span className="wa-conv-time">{fmtDateTimeIST(c.last_at)}</span>
-                    {c.last_dir === 'in' ? <span className="wa-badge">new</span> : null}
+                    {!c.resolved && c.last_dir === 'in' ? <span className="wa-badge">new</span> : null}
                   </div>
                 </div>
               ))}
@@ -3894,6 +3969,10 @@ function WaChat() {
             <div className="wa-th-head">
               <div className="wa-av sm">{initials(lead?.name, sel)}</div>
               <div className="wa-th-who"><b>{lead?.name || sel}</b><span>{lead?.phone || ('+' + sel)}{lead?.status ? ' · ' + lead.status : ''}</span></div>
+              <div className="wa-th-actions">
+                <button className={'wa-tgl' + (thread?.bot_on ? ' on' : '')} disabled={busy} title="AI bot auto-reply" onClick={() => setState({ bot_on: !thread?.bot_on })}><Ic k="bolt" />{thread?.bot_on ? 'Bot on' : 'Bot off'}</button>
+                <button className={'wa-tgl' + (thread?.resolved ? ' res' : '')} disabled={busy} onClick={() => setState({ resolved: !thread?.resolved })}>{thread?.resolved ? 'Reopen' : 'Resolve'}</button>
+              </div>
             </div>
             <div className="wa-msgs">
               {loadingThread ? <div className="empty-note" style={{ margin: 'auto' }}>Loading…</div>
@@ -3905,9 +3984,12 @@ function WaChat() {
                   ))}
             </div>
             <div className="wa-comp">
-              <button className="tplbtn"><Ic k="doc" /></button>
-              <input placeholder="Sending goes live once your WhatsApp number is connected…" disabled />
-              <button className="send" onClick={() => toast('Replying goes live in Stage 2 — connect your WhatsApp number (Settings › Channels › Connect WhatsApp) and I will switch on send.')}><Ic k="send" /></button>
+              <input
+                placeholder={canSend ? 'Type a reply…' : 'Connect a WhatsApp number to reply (Settings › Channels)'}
+                value={draft} disabled={!canSend || sending}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } }} />
+              <button className="send" disabled={!canSend || sending || !draft.trim()} onClick={doSend}><Ic k="send" /></button>
             </div>
           </>
         )}
@@ -3921,12 +4003,24 @@ function WaChat() {
           <div className="wa-panel-ph">{lead?.phone || ('+' + sel)}</div>
           {lead ? (
             <>
-              <div className="wa-fld"><label>Status</label><div className="wa-val">{lead.status || '—'}</div></div>
-              <div className="wa-fld"><label>Assigned to</label><div className="wa-val">{lead.agent || 'Unassigned'}</div></div>
-              <div className="wa-fld"><label>Next follow-up</label><div className="wa-val">{lead.next_follow_up_at ? fmtDateTimeIST(lead.next_follow_up_at) : '—'}</div></div>
-              <div className="wa-note">Status, assignment, notes & AI summary become editable here in Stage 2, alongside two-way send.</div>
+              <div className="wa-fld"><label>Status</label>
+                <select value={pStatus} onChange={(e) => setPStatus(e.target.value)}>
+                  <option value="">—</option>
+                  {statuses.map((s: any) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+                </select>
+              </div>
+              <div className="wa-fld"><label>Assigned to</label>
+                <select value={pOwner} onChange={(e) => setPOwner(e.target.value)}>
+                  <option value="">Unassigned</option>
+                  {agents.map((a: any) => <option key={a.id} value={String(a.id)}>{a.name}</option>)}
+                </select>
+              </div>
+              <div className="wa-fld"><label>Next follow-up</label>
+                <input type="datetime-local" value={pFu} onChange={(e) => setPФU(e.target.value)} />
+              </div>
+              <button className="wa-save" disabled={busy} onClick={savePanel}>Save changes</button>
             </>
-          ) : <div className="wa-note">This number isn’t linked to a lead yet. In Stage 2 you’ll be able to create one from the chat.</div>}
+          ) : <div className="wa-note">This number isn’t linked to a lead yet.</div>}
         </div>
       )}
     </div>
