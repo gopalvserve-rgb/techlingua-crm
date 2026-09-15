@@ -46,6 +46,27 @@ export class MessagingController {
     return this.messaging.summary(scope);
   }
 
+  /** WhatsApp Live Chat — the left-pane conversation list (Stage-1 read model). */
+  @Get('wa/conversations')
+  @RequirePermission('message.read')
+  waConversations(
+    @CurrentScope() scope: ResolvedScope, @CurrentUser() me: Me,
+    @Query('q') q?: string, @Query('agent_id') agentId?: string,
+    @Query('unread') unread?: string, @Query('window') window?: string, @Query('limit') limit?: string,
+  ) {
+    return this.messaging.waConversations(scope, Number(me.id), {
+      q, agent_id: agentId ? Number(agentId) : undefined,
+      unread: unread === '1' || unread === 'true', window, limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  /** WhatsApp Live Chat — the middle-pane thread for one contact. */
+  @Get('wa/thread')
+  @RequirePermission('message.read')
+  waThread(@CurrentScope() scope: ResolvedScope, @Query('phone') phone: string) {
+    return this.messaging.waThread(scope, String(phone || ''));
+  }
+
   /**
    * Send one message now (the lead sheet's Send button, and Settings' "Send test").
    * Degrades to a clean 503 when the channel has no credentials — never a 500, never an

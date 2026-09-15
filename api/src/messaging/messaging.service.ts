@@ -473,6 +473,98 @@ export class MessagingService {
     return { id, deleted: true };
   }
 
+  // ==================================================== WHATSAPP LIVE CHAT ===
+  // Stage-1 READ MODEL. Conversations are grouped by contact phone across BOTH existing
+  // stores, so nothing already captured is lost: OUTBOUND lives in message_log
+  // (channel='whatsapp'); INBOUND was logged on the lead as a lead_activity 'message'
+  // with to_value.channel='whatsapp' (the WhatsApp-inbound capture feature). No new table,
+  // no migration, no writes — the send/assign/resolve side comes in Stage 2.
+
+  private waUnionCte(orgParamIdx: number): string {
+    return `WITH msgs AS (
+        SELECT right(regexp_replace(coalesce(to_addr,''),'\\D','','g'),10) AS ph,
+               direction AS dir, body AS text, COALESCE(sent_at, created_at) AS at,
+               status, lead_id
+          FROM message_log
+         WHERE org_id = $${orgParamIdx} AND channel = 'whatsapp'
+        UNION ALL
+        SELECT right(regexp_replace(coalesce(to_value->>'from',''),'\\D','','g'),10) AS ph,
+               'in' AS dir, regexp_replace(coalesce(note,''),'^\\[WhatsApp\\]\\s*','') AS text,
+               occurred_at AS at, 'received' AS status, lead_id
+          FROM lead_activity
+         WHERE org_id = $${orgParamIdx} AND type = 'message'
+           AND (to_value->>'channel') = 'whatsapp'
+      )`;
+  }
+
+  /** The left-pane conversation list, grouped by contact phone (last 10 digits). */
+  async waConversations(
+    scope: ResolvedScope, userId: number,
+    f: { q?: string; agent_id?: number; unread?: boolean; window?: string; limit?: number } = {},
+  ) {
+    const orgId = await this.orgId();
+    const params: unknown[] = [orgId];
+    const filt: string[] = [`c.ph <> ''`];
+    if (f.window !== 'all') filt.push(`c.last_at >= now() - INTERVAL '7 days'`);
+    if (f.unread) filt.push(`c.last_dir = 'in'`);                       // awaiting our reply
+    if (f.agent_id === -1) { params.push(userId); filt.push(`l.owner_id = $${params.length}`); }  // "Mine"
+    else if (f.agent_id) { params.push(f.agent_id); filt.push(`l.owner_id = $${params.length}`); }
+    if (f.q) { params.push('%' + String(f.q).trim() + '%'); const p = `$${params.length}`;
+      filt.push(`(coalesce(l.full_name,'') ILIKE ${p} OR c.ph ILIKE ${p} OR coalesce(c.last_text,'') ILIKE ${p})`); }
+    params.push(Math.min(Number(f.limit) || 200, 500));
+
+    const rows = await this.db.query<any>(
+      `${this.waUnionCte(1)},
+       conv AS (
+         SELECT ph, max(at) AS last_at, count(*) AS total,
+                count(*) FILTER (WHERE dir = 'in') AS in_count,
+                (array_agg(text ORDER BY at DESC))[1] AS last_text,
+                (array_agg(dir  ORDER BY at DESC))[1] AS last_dir,
+                (array_agg(lead_id ORDER BY at DESC) FILTER (WHERE lead_id IS NOT NULL))[1] AS lead_id
+           FROM msgs GROUP BY ph
+       )
+       SELECT c.ph AS phone, c.last_at, c.last_text, c.last_dir, c.total, c.in_count,
+              c.lead_id, l.full_name AS name, l.owner_id AS agent_id, u.name AS agent,
+              st.name AS status
+         FROM conv c
+         LEFT JOIN lead l   ON l.id = c.lead_id
+         LEFT JOIN "user" u ON u.id = l.owner_id
+         LEFT JOIN m_status st ON st.id = l.status_id
+        WHERE ${filt.join(' AND ')}
+        ORDER BY c.last_at DESC
+        LIMIT $${params.length}`,
+      params,
+    );
+    const total = rows.length;
+    const unread = rows.filter((r) => r.last_dir === 'in').length;
+    return { conversations: rows, counts: { total, unread } };
+  }
+
+  /** The middle-pane thread: every message with this contact, oldest first, + the lead card. */
+  async waThread(scope: ResolvedScope, phone: string) {
+    const orgId = await this.orgId();
+    const ph10 = String(phone || '').replace(/\D/g, '').slice(-10);
+    if (ph10.length < 8) return { phone, messages: [], lead: null };
+    const messages = await this.db.query<any>(
+      `${this.waUnionCte(1)}
+       SELECT dir AS direction, text, at, status, lead_id
+         FROM msgs WHERE ph = $2 ORDER BY at ASC LIMIT 500`,
+      [orgId, ph10],
+    );
+    const lead = await this.db.one<any>(
+      `SELECT l.id, l.full_name AS name, l.phone, l.owner_id AS agent_id, u.name AS agent,
+              st.name AS status, l.status_id, l.next_follow_up_at, l.branch_id, l.vertical_id
+         FROM lead l
+         LEFT JOIN "user" u ON u.id = l.owner_id
+         LEFT JOIN m_status st ON st.id = l.status_id
+        WHERE l.org_id = $1 AND l.deleted_at IS NULL
+          AND right(regexp_replace(l.phone,'\\D','','g'),10) = $2
+        ORDER BY l.id DESC LIMIT 1`,
+      [orgId, ph10],
+    );
+    return { phone: ph10, messages, lead: lead ?? null };
+  }
+
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
     return Number(r!.id);

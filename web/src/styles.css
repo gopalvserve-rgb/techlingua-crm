@@ -993,3 +993,49 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .collect-result.on{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary) inset}
 .collect-result .cr-main{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .collect-result .cr-bal{flex:none;font-weight:700;color:var(--text-muted)}
+
+/* ============ WhatsApp Live Chat — 3-pane inbox (Stage 1) ============ */
+.wa-wrap.wa3{grid-template-columns:330px 1fr 260px}
+@media(max-width:1100px){.wa-wrap.wa3{grid-template-columns:300px 1fr}.wa-panel{display:none!important}}
+.wa-acct{display:flex;align-items:center;gap:10px;padding:11px 13px;border-bottom:1px solid var(--border)}
+.wa-acct-ic{width:34px;height:34px;border-radius:10px;background:var(--success);color:#fff;display:grid;place-items:center;flex:none}
+.wa-acct-ic svg{width:18px;height:18px}
+.wa-acct-t{min-width:0;flex:1;display:flex;flex-direction:column}
+.wa-acct-t b{font-size:13.5px}.wa-acct-t span{font-size:11px;color:var(--text-muted)}
+.wa-search{display:flex;align-items:center;gap:8px;margin:10px 12px;padding:8px 11px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}
+.wa-search svg{width:15px;height:15px;color:var(--text-dim);flex:none}
+.wa-search input{flex:1;min-width:0;border:none;background:none;outline:none;font:inherit;font-size:13px;color:var(--text)}
+.wa-pills,.wa-tabs{display:flex;gap:7px;padding:0 12px 8px}
+.wa-tabs{border-bottom:1px solid var(--border);padding-bottom:0}
+.wa-pills button{border:1px solid var(--border);background:var(--surface-2);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:5px}
+.wa-pills button.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+.wa-tabs button{border:none;background:none;padding:9px 4px;margin-right:14px;font-size:12.5px;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent}
+.wa-tabs button.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+.wa-conv-list{flex:1;overflow-y:auto;min-height:0}
+.wa-conv-row{display:flex;align-items:center;gap:10px;padding:10px 13px;border-bottom:1px solid var(--border);cursor:pointer;min-width:0}
+.wa-conv-row:hover{background:var(--surface-2)}.wa-conv-row.on{background:var(--surface-2)}
+.wa-av{width:38px;height:38px;border-radius:50%;background:var(--primary);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:600;flex:none}
+.wa-av.sm{width:32px;height:32px;font-size:12px}.wa-av.lg{width:72px;height:72px;font-size:22px;margin:6px auto}
+.wa-conv-mid{flex:1;min-width:0}
+.wa-conv-top{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.wa-conv-name{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa-conv-agent{font-size:10.5px;color:var(--text-dim);flex:none}
+.wa-conv-prev{font-size:11.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa-conv-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}
+.wa-conv-time{font-size:10px;color:var(--text-dim);white-space:nowrap}
+.wa-badge{background:var(--success);color:#fff;border-radius:999px;font-size:10px;font-weight:700;padding:1px 7px}
+.wa-th-head{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border);flex:none}
+.wa-th-who{display:flex;flex-direction:column;min-width:0}
+.wa-th-who b{font-size:14px}.wa-th-who span{font-size:11.5px;color:var(--text-muted)}
+.wa-msg{display:flex;max-width:78%}.wa-msg.in{align-self:flex-start}.wa-msg.out{align-self:flex-end}
+.wa-bubble{padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:var(--shadow)}
+.wa-msg.in .wa-bubble{background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:3px}
+.wa-msg.out .wa-bubble{background:#d9fdd3;color:#111;border-bottom-right-radius:3px}
+.wa-msg-time{display:block;font-size:9.5px;color:#5b6b8c;margin-top:3px;text-align:right}
+.wa-panel{border-left:1px solid var(--border);padding:16px 14px;overflow-y:auto;text-align:center;background:var(--surface)}
+.wa-panel-name{font-weight:700;font-size:15px;margin-top:4px}
+.wa-panel-ph{font-size:12px;color:var(--text-muted);margin-bottom:12px}
+.wa-fld{text-align:left;margin:10px 0}
+.wa-fld label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin-bottom:3px}
+.wa-val{font-size:13px;font-weight:500}
+.wa-note{margin-top:14px;font-size:11.5px;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:10px;text-align:left;line-height:1.5}

@@ -3820,25 +3820,115 @@ function WorkTasks() {
 }
 
 function WaChat() {
+  const [tab, setTab] = useState<'all' | 'unread' | 'mine'>('all');
+  const [win, setWin] = useState<'recent' | 'all'>('recent');
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState<string | null>(null);
+  const [thread, setThread] = useState<any>(null);
+  const [loadingThread, setLoadingThread] = useState(false);
+
+  const qs = new URLSearchParams();
+  if (tab === 'unread') qs.set('unread', '1');
+  if (tab === 'mine') qs.set('agent_id', '-1');
+  qs.set('window', win);
+  if (q.trim()) qs.set('q', q.trim());
+  const convs = useFetch<{ conversations: any[]; counts: { total: number; unread: number } }>(
+    `/messages/wa/conversations?${qs.toString()}`, [tab, win, q]);
+  const list = convs.data?.conversations ?? [];
+  const counts = convs.data?.counts ?? { total: 0, unread: 0 };
+
+  const openConv = async (phone: string) => {
+    setSel(phone); setLoadingThread(true); setThread(null);
+    try { setThread(await api.get(`/messages/wa/thread?phone=${encodeURIComponent(phone)}`)); }
+    catch { setThread({ messages: [], lead: null }); }
+    finally { setLoadingThread(false); }
+  };
+
+  const initials = (name: string, phone: string) => (name || phone || '?').trim().slice(0, 2).toUpperCase();
+  const lead = thread?.lead ?? null;
+
   return (
-    <div className="wa-wrap">
+    <div className="wa-wrap wa3">
+      {/* LEFT — conversation list */}
       <div className="wa-list">
-        <div className="wa-list-head"><Ic k="wa" />Conversations</div>
-        <div className="empty-note" style={{ marginTop: 30 }}>No conversations yet</div>
+        <div className="wa-acct">
+          <div className="wa-acct-ic"><Ic k="wa" /></div>
+          <div className="wa-acct-t"><b>WhatsApp Live Chat</b><span>{counts.total} chats · {counts.unread} unread</span></div>
+          <button className="lrow-act" title="Refresh" onClick={() => convs.reload()}><Ic k="refresh" /></button>
+        </div>
+        <div className="wa-search"><Ic k="search" /><input placeholder="Search by name, phone, or message" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <div className="wa-pills">
+          <button className={tab === 'all' ? 'on' : ''} onClick={() => setTab('all')}>All</button>
+          <button className={tab === 'unread' ? 'on' : ''} onClick={() => setTab('unread')}>Unread {counts.unread ? <span className="wa-badge">{counts.unread}</span> : null}</button>
+          <button className={tab === 'mine' ? 'on' : ''} onClick={() => setTab('mine')}>Mine</button>
+        </div>
+        <div className="wa-tabs">
+          <button className={win === 'recent' ? 'on' : ''} onClick={() => setWin('recent')}>Recent (7d)</button>
+          <button className={win === 'all' ? 'on' : ''} onClick={() => setWin('all')}>History (all)</button>
+        </div>
+        <div className="wa-conv-list">
+          {convs.loading ? <div className="empty-note" style={{ marginTop: 24 }}>Loading…</div>
+            : !list.length ? <div className="empty-note" style={{ marginTop: 24 }}>No conversations yet</div>
+              : list.map((c: any) => (
+                <div key={c.phone} className={'wa-conv-row' + (sel === c.phone ? ' on' : '')} onClick={() => openConv(c.phone)}>
+                  <div className="wa-av">{initials(c.name, c.phone)}</div>
+                  <div className="wa-conv-mid">
+                    <div className="wa-conv-top"><span className="wa-conv-name">{c.name || c.phone}</span>{c.agent ? <span className="wa-conv-agent">{c.agent}</span> : null}</div>
+                    <div className="wa-conv-prev">{c.last_dir === 'in' ? '' : '↗ '}{c.last_text || ''}</div>
+                  </div>
+                  <div className="wa-conv-right">
+                    <span className="wa-conv-time">{fmtDateTimeIST(c.last_at)}</span>
+                    {c.last_dir === 'in' ? <span className="wa-badge">new</span> : null}
+                  </div>
+                </div>
+              ))}
+        </div>
       </div>
+
+      {/* MIDDLE — thread */}
       <div className="wa-thread">
-        <div className="wa-msgs">
-          <div className="empty-note" style={{ margin: 'auto' }}>
-            WhatsApp Live Chat (two-way inbox) is planned for Phase 2.<br />
-            Outbound WhatsApp — templates, bulk sends and automation — is live now under Engagement & Workflow.
-          </div>
-        </div>
-        <div className="wa-comp">
-          <button className="tplbtn"><Ic k="doc" /></button>
-          <input placeholder="Type a message…" disabled />
-          <button className="send" onClick={() => toast('The two-way WhatsApp inbox is planned for Phase 2. Outbound WhatsApp is live under Engagement & Workflow.')}><Ic k="send" /></button>
-        </div>
+        {!sel ? (
+          <div className="wa-msgs"><div className="empty-note" style={{ margin: 'auto' }}><Ic k="wa" /><br />Select a conversation to start</div></div>
+        ) : (
+          <>
+            <div className="wa-th-head">
+              <div className="wa-av sm">{initials(lead?.name, sel)}</div>
+              <div className="wa-th-who"><b>{lead?.name || sel}</b><span>{lead?.phone || ('+' + sel)}{lead?.status ? ' · ' + lead.status : ''}</span></div>
+            </div>
+            <div className="wa-msgs">
+              {loadingThread ? <div className="empty-note" style={{ margin: 'auto' }}>Loading…</div>
+                : !(thread?.messages?.length) ? <div className="empty-note" style={{ margin: 'auto' }}>No messages in this conversation.</div>
+                  : thread.messages.map((m: any, i: number) => (
+                    <div key={i} className={'wa-msg ' + (m.direction === 'in' ? 'in' : 'out')}>
+                      <div className="wa-bubble">{m.text}<span className="wa-msg-time">{fmtDateTimeIST(m.at)}{m.direction !== 'in' ? ' · ' + (m.status || '') : ''}</span></div>
+                    </div>
+                  ))}
+            </div>
+            <div className="wa-comp">
+              <button className="tplbtn"><Ic k="doc" /></button>
+              <input placeholder="Sending goes live once your WhatsApp number is connected…" disabled />
+              <button className="send" onClick={() => toast('Replying goes live in Stage 2 — connect your WhatsApp number (Settings › Channels › Connect WhatsApp) and I will switch on send.')}><Ic k="send" /></button>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* RIGHT — lead panel */}
+      {sel && (
+        <div className="wa-panel">
+          <div className="wa-av lg">{initials(lead?.name, sel)}</div>
+          <div className="wa-panel-name">{lead?.name || ('+' + sel)}</div>
+          <div className="wa-panel-ph">{lead?.phone || ('+' + sel)}</div>
+          {lead ? (
+            <>
+              <div className="wa-fld"><label>Status</label><div className="wa-val">{lead.status || '—'}</div></div>
+              <div className="wa-fld"><label>Assigned to</label><div className="wa-val">{lead.agent || 'Unassigned'}</div></div>
+              <div className="wa-fld"><label>Next follow-up</label><div className="wa-val">{lead.next_follow_up_at ? fmtDateTimeIST(lead.next_follow_up_at) : '—'}</div></div>
+              <div className="wa-note">Status, assignment, notes & AI summary become editable here in Stage 2, alongside two-way send.</div>
+            </>
+          ) : <div className="wa-note">This number isn’t linked to a lead yet. In Stage 2 you’ll be able to create one from the chat.</div>}
+        </div>
+      )}
     </div>
   );
 }
