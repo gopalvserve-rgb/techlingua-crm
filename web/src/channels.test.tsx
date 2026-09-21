@@ -13,6 +13,10 @@ import Channels from './channels';
 
 // Channels + FacebookConnect use useNavigate; there is no <Router> in this jsdom test.
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('./whatsappsignup', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./whatsappsignup')>()),
+  ensureFbSdk: async () => undefined,
+}));
 
 let CAN: (p: string) => boolean = () => true;
 vi.mock('./auth', () => ({ useAuth: () => ({ can: (p: string) => CAN(p), me: { user: { id: 1 } } }) }));
@@ -118,6 +122,7 @@ const EVENTS = [
     lead_id: 501, created_at: '2026-07-14T08:50:00Z' },
 ];
 
+let SIGNUP_READY = false;
 const get = vi.fn(async (path: string) => {
   if (path === '/channels/providers') return PROVIDERS;
   if (path === '/channels') return CHANNELS;
@@ -126,7 +131,11 @@ const get = vi.fn(async (path: string) => {
   if (path === '/channels/4/credentials') return { id: 4, provider: 'google_sheet' };
   if (path === '/channels/3/credentials') return { id: 3, provider: 'website' };
   if (path === '/channels/99/credentials') return { id: 99, provider: 'custom', webhook_key: 'WH-PUSH-KEY-1' };
-  if (path === '/settings/whatsapp/embedded-signup') return { ready: false, missing: ['Meta App ID', 'App secret', 'Embedded Signup Configuration ID'], app_id: '' };
+  if (path === '/settings/whatsapp/embedded-signup') {
+    return SIGNUP_READY
+      ? { ready: true, missing: [], app_id: 'APP-123' }
+      : { ready: false, missing: ['Meta App ID', 'App secret', 'Embedded Signup Configuration ID'], app_id: '' };
+  }
   throw new Error(`unexpected GET ${path}`);
 });
 const post = vi.fn(async (path: string, b?: unknown) => {
@@ -159,6 +168,7 @@ describe('Lead Capture Channels screen', () => {
     cleanup();
     CAN = () => true;
     get.mockClear(); post.mockClear(); patch.mockClear(); toastFn.mockClear(); writeText.mockClear();
+    SIGNUP_READY = false; delete (window as any).FB;
   });
 
   it('renders the channel list with status, target path and the last lead received', async () => {
@@ -352,6 +362,57 @@ describe('Lead Capture Channels screen', () => {
     // credential-gated: with no Meta app configured it points at Settings, not nothing
     await waitFor(() => expect(get).toHaveBeenCalledWith('/settings/whatsapp/embedded-signup'));
     expect(screen.getByText(/Settings . Channels/)).toBeTruthy();
+  });
+
+  it('DEF-INT-04 REGRESSION: the popup code is POSTED to the server, not thrown away', async () => {
+    // The button used to call FB.login, receive authResponse.code and only toast. The code
+    // was discarded, so the popup closed and NOTHING was ever stored — the admin saw a
+    // Facebook prompt and then nothing. The code must reach the server.
+    SIGNUP_READY = true;
+    (window as any).FB = { login: (cb: (r: any) => void) => cb({ authResponse: { code: 'SDK-CODE-1' } }) };
+    post.mockImplementationOnce((async () => ({ pages: 3, primary: 'School A', subscribed: true, others: 2 })) as never);
+
+    render(<Channels />);
+    await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByText('Edit')[0]);              // channel 1 = the Meta channel
+    await waitFor(() => screen.getByTestId('continue-with-facebook'));
+
+    fireEvent.click(screen.getByTestId('continue-with-facebook'));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/channels/1/fb/sdk-connect', { code: 'SDK-CODE-1' }));
+    await waitFor(() => expect(toastFn).toHaveBeenCalledWith(
+      expect.stringContaining('School A'), undefined));
+  });
+
+  it('a cancelled Facebook popup posts nothing and says so', async () => {
+    SIGNUP_READY = true;
+    (window as any).FB = { login: (cb: (r: any) => void) => cb({ status: 'unknown' }) };
+
+    render(<Channels />);
+    await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByText('Edit')[0]);
+    await waitFor(() => screen.getByTestId('continue-with-facebook'));
+
+    fireEvent.click(screen.getByTestId('continue-with-facebook'));
+
+    await waitFor(() => expect(toastFn).toHaveBeenCalledWith('Facebook sign-in was cancelled.', true));
+    expect(post).not.toHaveBeenCalledWith(expect.stringContaining('fb/sdk-connect'), expect.anything());
+  });
+
+  it('on a NEW (unsaved) channel the button asks you to save first instead of opening a dead popup', async () => {
+    SIGNUP_READY = true;
+    const login = vi.fn();
+    (window as any).FB = { login };
+
+    render(<Channels />);
+    await waitFor(() => screen.getByTestId('available-tools'));
+    fireEvent.click(within(screen.getByTestId('available-tools')).getByText('Meta Lead Ads (Facebook / Instagram)'));
+    await waitFor(() => screen.getByTestId('continue-with-facebook'));
+
+    fireEvent.click(screen.getByTestId('continue-with-facebook'));
+
+    expect(login).not.toHaveBeenCalled();
+    expect(toastFn).toHaveBeenCalledWith('Save this channel first — then press Continue with Facebook.', true);
   });
 
   // -------------------------------------------------------------------- RBAC

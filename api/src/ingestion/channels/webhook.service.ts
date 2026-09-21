@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { NotConfiguredException } from '../../common/not-configured.exception';
 import { createHmac } from 'crypto';
 import { DatabaseService } from '../../database/database.service';
 import { safeEqual, decryptSecret } from '../../common/crypto.util';
@@ -1070,68 +1071,111 @@ export class WebhookService {
       const userToken = String(userTok.access_token ?? '');
       if (!userToken) throw new Error('No access_token in Facebook response');
 
-      const accounts = await this.fbGet(`${FB_GRAPH_BASE}/me/accounts?limit=200&access_token=${encodeURIComponent(userToken)}`);
-      const pages = parseFbPages(accounts);
-      if (!pages.length) return { http: 200, body: this.fbHtml('No Facebook Pages were returned — make sure you granted the app access to your Page.', false) };
-
-      // PRIMARY Page = the one the channel is bound to (config.page_id), else the first —
-      // exactly the old single-Page choice. It gets the legacy fields + a leadgen subscribe.
-      const wantId = String((ch.config as any)?.page_id ?? '').trim();
-      const page = (wantId && pages.find((p) => p.page_id === wantId)) || pages[0];
-
-      // PAGE MONITOR: keep EVERY granted Page. One encrypted token per Page (flat key —
-      // mergeSecrets encrypts string values), metadata (no tokens) in config.pages. A
-      // re-authorisation refreshes tokens and keeps each Page's monitored flag; Pages that
-      // were already stored but not returned this time are left as they are.
-      const tokens: Record<string, string> = { page_access_token: page.access_token };
-      for (const p of pages) tokens[pageTokenKey(p.page_id)] = p.access_token;
-      await this.channels.mergeSecrets(channelId, tokens);
-
-      const now = new Date().toISOString();
-      const merged: FbPageEntry[] = [...storedPages(ch.config)];
-      for (const p of pages) {
-        const cur = merged.find((m) => m.page_id === p.page_id);
-        if (cur) { cur.page_name = p.page_name || cur.page_name; continue; }
-        merged.push({
-          page_id: p.page_id, page_name: p.page_name,
-          monitored: p.page_id === page.page_id,      // only the primary is monitored by default
-          subscribed: null, subscribed_at: null, checked_at: null, last_error: null,
-        });
-      }
-      const primary = merged.find((m) => m.page_id === page.page_id)!;
-      primary.monitored = true;
-
-      let subscribed = false;
-      try {
-        const sub = await this.fbPost(`${FB_GRAPH_BASE}/${encodeURIComponent(page.page_id)}/subscribed_apps?subscribed_fields=leadgen&access_token=${encodeURIComponent(page.access_token)}`);
-        subscribed = !!sub.success;
-        primary.subscribed = subscribed; primary.checked_at = now; primary.last_error = null;
-        if (subscribed) primary.subscribed_at = now;
-      } catch (e) {
-        this.log.warn(`leadgen subscribe failed: ${(e as Error).message}`);
-        primary.subscribed = null; primary.checked_at = now;
-        primary.last_error = String((e as Error).message).replace(/access_token=[^&\s"']+/gi, 'access_token=***').slice(0, 300);
-      }
-
-      await this.channels.mergeConfig(channelId, { page_id: page.page_id, page_name: page.page_name, pages: merged });
-
-      const others = pages.length - 1;
-      await this.channels.logEvent({
-        channel_id: ch.id, org_id: ch.org_id, provider: 'meta', public_key: ch.public_key, method: 'GET',
-        raw: { page_id: page.page_id, page_name: page.page_name, subscribed, pages: pages.map((p) => ({ page_id: p.page_id, page_name: p.page_name })) },
-        status: 'verified',
-        reason: `Facebook Page "${page.page_name}" connected` + (subscribed ? ' and subscribed to leadgen' : ' (token stored; subscribe to leadgen in Meta if leads do not arrive)')
-          + (others > 0 ? ` · ${others} more Page(s) available in Page Monitor (not monitored until switched on)` : ''),
-      });
+      const out = await this.connectPagesWithUserToken(ch, userToken);
       return {
         http: 200,
-        body: this.fbHtml(`Connected Page "${page.page_name}".`
-          + (others > 0 ? ` ${others} more Page(s) were granted — switch them on under Pages in the CRM.` : '')
+        body: this.fbHtml(`Connected Page "${out.primary}".`
+          + (out.others > 0 ? ` ${out.others} more Page(s) were granted — switch them on under Pages in the CRM.` : '')
           + ' You can close this tab and return to the CRM.', true),
       };
     } catch (e) {
       return { http: 200, body: this.fbHtml(`Could not connect: ${(e as Error).message}`, false) };
     }
+  }
+
+
+  /**
+   * SHARED by BOTH Facebook entry points — the redirect flow (fbCallback) and the
+   * "Continue with Facebook" popup (fbSdkConnect). Takes a USER token, keeps every Page
+   * the admin granted (one encrypted token each), marks the primary Page monitored,
+   * subscribes it to leadgen and logs the event.
+   */
+  private async connectPagesWithUserToken(
+    ch: any, userToken: string,
+  ): Promise<{ pages: number; primary: string; subscribed: boolean; others: number }> {
+    const accounts = await this.fbGet(`${FB_GRAPH_BASE}/me/accounts?limit=200&access_token=${encodeURIComponent(userToken)}`);
+    const pages = parseFbPages(accounts);
+    if (!pages.length) throw new Error('No Facebook Pages were returned — make sure you granted the app access to your Page.');
+
+    // PRIMARY Page = the one the channel is bound to (config.page_id), else the first —
+    // exactly the old single-Page choice. It gets the legacy fields + a leadgen subscribe.
+    const wantId = String((ch.config as any)?.page_id ?? '').trim();
+    const page = (wantId && pages.find((p) => p.page_id === wantId)) || pages[0];
+
+    // PAGE MONITOR: keep EVERY granted Page. One encrypted token per Page (flat key —
+    // mergeSecrets encrypts string values), metadata (no tokens) in config.pages. A
+    // re-authorisation refreshes tokens and keeps each Page's monitored flag; Pages that
+    // were already stored but not returned this time are left as they are.
+    const tokens: Record<string, string> = { page_access_token: page.access_token };
+    for (const p of pages) tokens[pageTokenKey(p.page_id)] = p.access_token;
+    await this.channels.mergeSecrets(ch.id, tokens);
+
+    const now = new Date().toISOString();
+    const merged: FbPageEntry[] = [...storedPages(ch.config)];
+    for (const p of pages) {
+      const cur = merged.find((m) => m.page_id === p.page_id);
+      if (cur) { cur.page_name = p.page_name || cur.page_name; continue; }
+      merged.push({
+        page_id: p.page_id, page_name: p.page_name,
+        monitored: p.page_id === page.page_id,      // only the primary is monitored by default
+        subscribed: null, subscribed_at: null, checked_at: null, last_error: null,
+      });
+    }
+    const primary = merged.find((m) => m.page_id === page.page_id)!;
+    primary.monitored = true;
+
+    let subscribed = false;
+    try {
+      const sub = await this.fbPost(`${FB_GRAPH_BASE}/${encodeURIComponent(page.page_id)}/subscribed_apps?subscribed_fields=leadgen&access_token=${encodeURIComponent(page.access_token)}`);
+      subscribed = !!sub.success;
+      primary.subscribed = subscribed; primary.checked_at = now; primary.last_error = null;
+      if (subscribed) primary.subscribed_at = now;
+    } catch (e) {
+      this.log.warn(`leadgen subscribe failed: ${(e as Error).message}`);
+      primary.subscribed = null; primary.checked_at = now;
+      primary.last_error = String((e as Error).message).replace(/access_token=[^&\s"']+/gi, 'access_token=***').slice(0, 300);
+    }
+
+    await this.channels.mergeConfig(ch.id, { page_id: page.page_id, page_name: page.page_name, pages: merged });
+
+    const others = pages.length - 1;
+    await this.channels.logEvent({
+      channel_id: ch.id, org_id: ch.org_id, provider: 'meta', public_key: ch.public_key, method: 'GET',
+      raw: { page_id: page.page_id, page_name: page.page_name, subscribed, pages: pages.map((p) => ({ page_id: p.page_id, page_name: p.page_name })) },
+      status: 'verified',
+      reason: `Facebook Page "${page.page_name}" connected` + (subscribed ? ' and subscribed to leadgen' : ' (token stored; subscribe to leadgen in Meta if leads do not arrive)')
+        + (others > 0 ? ` · ${others} more Page(s) available in Page Monitor (not monitored until switched on)` : ''),
+    });
+    return { pages: pages.length, primary: page.page_name, subscribed, others };
+  }
+
+  /**
+   * "Continue with Facebook" (Facebook JS SDK popup) — DEF-INT-04 authorised the admin and
+   * then THREW THE CODE AWAY, so the popup closed and nothing was ever stored. The browser
+   * now posts that code here.
+   *
+   * SDK codes are exchanged with NO redirect_uri (there was no redirect) — the same quirk
+   * the WhatsApp Embedded Signup exchange relies on. Everything after the exchange is the
+   * shared path above, so the popup and the redirect store identical state.
+   */
+  async fbSdkConnect(channelId: number, code: string): Promise<{ pages: number; primary: string; subscribed: boolean; others: number }> {
+    const ch = await this.channels.raw(channelId);
+    if (!ch || ch.provider !== 'meta') throw new NotConfiguredException('This channel is not a Meta Lead Ads channel.');
+    if (!code) throw new BadRequestException('Facebook did not return an authorisation code — press Continue with Facebook again.');
+
+    const saved = await this.fbAppCreds();
+    const appId = saved.appId;
+    const appSecret = saved.appSecret || (this.channels.secretsOf(ch).app_secret ?? '');
+    if (!appId || !appSecret) {
+      throw new NotConfiguredException('The Meta app is not configured yet — save the App ID + App secret in Settings › Channels, then try again.');
+    }
+
+    const url = `${FB_GRAPH_BASE}/oauth/access_token?client_id=${encodeURIComponent(appId)}`
+      + `&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
+    const tok = await this.fbGet(url);
+    const userToken = String(tok.access_token ?? '');
+    if (!userToken) throw new BadRequestException('Facebook did not return an access token for that code.');
+    return this.connectPagesWithUserToken(ch, userToken);
   }
 
   private async fbGet(url: string): Promise<any> {

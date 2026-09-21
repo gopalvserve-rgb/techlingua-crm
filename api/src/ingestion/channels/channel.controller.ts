@@ -121,6 +121,20 @@ export class ChannelController {
     return out;
   }
 
+  /**
+   * Finish the "Continue with Facebook" POPUP flow. The Facebook JS SDK hands the browser
+   * a one-time `code`; DEF-INT-04 discarded it, so the popup closed and nothing was stored.
+   * The browser now posts it here and we store the Pages exactly as the redirect flow does.
+   */
+  @Post(':id/fb/sdk-connect') @RequirePermission('channel.manage')
+  async fbSdkConnect(
+    @Param('id', ParseIntPipe) id: number, @Body() dto: any,
+    @CurrentScope() s: ResolvedScope, @CurrentUser() u: U,
+  ) {
+    await this.svc.get(id, s, u.id);                 // scope + existence
+    return this.hooks.fbSdkConnect(id, String(dto?.code ?? '').trim());
+  }
+
   // ------------------------------------------------ Facebook Page Monitor ----
   // Every route: the same scope + existence check as fbConnect, then FbPagesService
   // re-checks the provider. No response below ever carries a Page token.

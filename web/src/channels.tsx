@@ -117,7 +117,7 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint?: 
  * button shows a clean "connect your Meta app in Settings first" state and points the
  * client at the manual webhook fields (which work today) — never a dead or missing button.
  */
-function FacebookConnect() {
+function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDone?: () => void }) {
   const nav = useNavigate();
   const [info, setInfo] = useState<{ ready?: boolean; missing?: string[]; app_id?: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -132,6 +132,9 @@ function FacebookConnect() {
 
   const onClick = async () => {
     if (!ready) { nav('/m/admin/settings'); return; }
+    // No channel row yet = nowhere to store the Pages. Save first; the drawer stays
+    // open in editing mode, so the button works on the very next click.
+    if (!channelId) { toast('Save this channel first — then press Continue with Facebook.', true); return; }
     setBusy(true);
     try {
       await ensureFbSdk(info!.app_id || '');
@@ -141,9 +144,20 @@ function FacebookConnect() {
       (window as unknown as { FB: { login: (cb: (r: any) => void, opts: any) => void } }).FB.login(
         (resp: any) => {
           const code = resp?.authResponse?.code;
-          toast(code
-            ? 'Facebook authorised. Choose the Page whose Lead Ads should flow here to finish connecting.'
-            : 'Facebook sign-in was cancelled.', !code);
+          if (!code) { toast('Facebook sign-in was cancelled.', true); return; }
+          // DEF-INT-04 stopped HERE and threw the code away — the popup closed and nothing
+          // was ever stored. Send it to the server, which exchanges it and keeps every Page.
+          setBusy(true);
+          api.post<{ pages: number; primary: string; subscribed: boolean; others: number }>(
+            `/channels/${channelId}/fb/sdk-connect`, { code },
+          )
+            .then((r) => {
+              toast(`Connected Page “${r.primary}”${r.subscribed ? ' and subscribed to leadgen' : ''}`
+                + (r.others > 0 ? ` · ${r.others} more Page(s) waiting under Pages` : ''));
+              onDone?.();
+            })
+            .catch((e) => toast((e as Error).message || 'Could not finish connecting to Facebook.', true))
+            .finally(() => setBusy(false));
         },
         { scope: 'pages_show_list,pages_manage_metadata,leads_retrieval', response_type: 'code', override_default_response_type: true },
       );
@@ -158,7 +172,9 @@ function FacebookConnect() {
         <Ic k="bolt" />{busy ? 'Opening Facebook…' : 'Continue with Facebook'}
       </button>
       {ready ? (
-        <span className="fhint">One-click sign-in with your connected Meta app — pick the Page whose Lead Ads should land here. You can also use the manual webhook fields below.</span>
+        <span className="fhint">{channelId
+          ? 'One-click sign-in with your connected Meta app — every Page you grant is stored, and you switch the ones you want ON under Pages.'
+          : 'Save this channel first (button below) — then press Continue with Facebook to log in and pull your Pages.'}</span>
       ) : (
         <span className="fhint">
           Connect your Meta app in{' '}
@@ -344,7 +360,7 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
                 hint="Optional shared secret. Send it in the request header X-Webhook-Key (or ?key= in the URL, or a &quot;key&quot; field in the body). A payload with the WRONG key is rejected; a source that cannot send it still works because the URL itself is unguessable." />
             )}
 
-            {spec.key === 'meta' && <FacebookConnect />}
+            {spec.key === 'meta' && <FacebookConnect channelId={editing ? (cur?.id ?? null) : null} onDone={onSaved} />}
 
             {spec.config.map((f) => field(f, false))}
             {/* `generated` secrets (Meta verify token, Google webhook key) are minted

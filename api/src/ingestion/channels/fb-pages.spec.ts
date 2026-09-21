@@ -195,6 +195,67 @@ describe('Facebook OAuth callback — keeps EVERY granted Page', () => {
   });
 });
 
+describe('"Continue with Facebook" popup — the SDK code is EXCHANGED, not discarded', () => {
+  // DEF-INT-04 opened the Facebook popup, received `authResponse.code` and then only showed
+  // a toast: the code was thrown away, nothing was stored, and the admin saw the popup close
+  // with no Pages anywhere. These tests pin the code down to the same storage path the
+  // redirect flow uses.
+  beforeEach(() => { process.env.SECRETS_KEY = 'unit-test-key'; process.env.FB_APP_ID = 'APP123'; process.env.FB_APP_SECRET = 'SEC'; resetSecretKeyCache(); });
+  afterEach(() => { delete process.env.SECRETS_KEY; delete process.env.FB_APP_ID; delete process.env.FB_APP_SECRET; resetSecretKeyCache(); });
+
+  const graph = () => graphStub((url) => {
+    if (url.includes('/oauth/access_token')) return { access_token: 'USERTOK' };
+    if (url.includes('/me/accounts')) return { data: [
+      { id: 'P1', name: 'School A', access_token: 'TOK1' },
+      { id: 'P2', name: 'School B', access_token: 'TOK2' },
+    ] };
+    if (url.includes('subscribed_apps')) return { success: true };
+    return new Error('unexpected ' + url);
+  });
+
+  it('stores EVERY granted Page, exactly like the redirect flow', async () => {
+    const ch = makeChannel({ id: 31, provider: 'meta', public_key: 'pk', secrets: { verify_token: 'v', app_secret: 'as' }, config: {} });
+    const { hooks, cst } = makeWebhook([ch]);
+    hooks.http = graph().http;
+
+    const out = await hooks.fbSdkConnect(31, 'SDKCODE');
+
+    expect(out).toMatchObject({ pages: 2, primary: 'School A', subscribed: true, others: 1 });
+    const cfg = cst.channels.find((c: any) => c.id === 31)!.config as any;
+    expect(cfg.pages.map((p: any) => p.page_id)).toEqual(['P1', 'P2']);
+    expect(cfg.pages.find((p: any) => p.page_id === 'P1').monitored).toBe(true);
+    expect(cfg.pages.find((p: any) => p.page_id === 'P2').monitored).toBe(false);
+    expect(cfg.page_id).toBe('P1');
+  });
+
+  it('exchanges the code with NO redirect_uri — an SDK code has no redirect and Meta rejects one', async () => {
+    const ch = makeChannel({ id: 32, provider: 'meta', public_key: 'pk', secrets: { verify_token: 'v', app_secret: 'as' }, config: {} });
+    const { hooks } = makeWebhook([ch]);
+    const g = graph(); hooks.http = g.http;
+
+    await hooks.fbSdkConnect(32, 'SDKCODE');
+
+    const exchange = g.calls.find((c: any) => String(c.url).includes('/oauth/access_token'))!;
+    expect(String(exchange.url)).toContain('code=SDKCODE');
+    expect(String(exchange.url)).not.toContain('redirect_uri');
+  });
+
+  it('never stores a token in readable form and refuses a blank code / a non-Meta channel', async () => {
+    const ch = makeChannel({ id: 33, provider: 'meta', public_key: 'pk', secrets: { verify_token: 'v', app_secret: 'as' }, config: {} });
+    const other = makeChannel({ id: 34, provider: 'justdial', public_key: 'pk2', secrets: {}, config: {} });
+    const { hooks, cst } = makeWebhook([ch, other]);
+    hooks.http = graph().http;
+
+    await expect(hooks.fbSdkConnect(33, '')).rejects.toThrow(/authorisation code/i);
+    await expect(hooks.fbSdkConnect(34, 'SDKCODE')).rejects.toThrow(/not a Meta Lead Ads channel/i);
+
+    await hooks.fbSdkConnect(33, 'SDKCODE');
+    const row = cst.channels.find((c: any) => c.id === 33)!;
+    expect(JSON.stringify(row.secrets)).not.toContain('TOK1');
+    expect(JSON.stringify(row.config)).not.toContain('TOK1');
+  });
+});
+
 describe('Facebook Page Monitor — service', () => {
   beforeEach(() => { process.env.SECRETS_KEY = 'unit-test-key'; process.env.FB_APP_ID = 'APP123'; resetSecretKeyCache(); });
   afterEach(() => { delete process.env.SECRETS_KEY; delete process.env.FB_APP_ID; resetSecretKeyCache(); });
@@ -414,7 +475,11 @@ describe('Facebook Form Mapping — service', () => {
   });
 
   it('saveMapping: validates targets, stores ignore as a sentinel, returns the editor payload, logs an event', async () => {
-    const { fb, cst } = makeWebhook([multiPage()]);
+    const { fb, cst, hooks } = makeWebhook([multiPage()]);
+    // saveMapping refreshes the form's cached questions. WITHOUT this stub the service falls
+    // through to the real graph.facebook.com — the suite was making live network calls (the
+    // failure is swallowed as a warning, so it passed while quietly going online).
+    hooks.http = graphStub(() => ({ id: 'F1', name: 'Enquiry', questions: [] })).http;
     await expect(fb.saveMapping(1, 'F1', { field_map: { which_course: 'colour_of_car' } }, 7))
       .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Unknown CRM field.*colour_of_car/) });
     expect(cst.formMappings).toHaveLength(0);
