@@ -228,7 +228,7 @@ describe('"Continue with Facebook" popup — the SDK code is EXCHANGED, not disc
     expect(cfg.page_id).toBe('P1');
   });
 
-  it('exchanges the code with NO redirect_uri — an SDK code has no redirect and Meta rejects one', async () => {
+  it('exchanges the code with an EMPTY redirect_uri — omitting it is what Meta rejected in production', async () => {
     const ch = makeChannel({ id: 32, provider: 'meta', public_key: 'pk', secrets: { verify_token: 'v', app_secret: 'as' }, config: {} });
     const { hooks } = makeWebhook([ch]);
     const g = graph(); hooks.http = g.http;
@@ -237,7 +237,17 @@ describe('"Continue with Facebook" popup — the SDK code is EXCHANGED, not disc
 
     const exchange = g.calls.find((c: any) => String(c.url).includes('/oauth/access_token'))!;
     expect(String(exchange.url)).toContain('code=SDKCODE');
-    expect(String(exchange.url)).not.toContain('redirect_uri');
+    // present, and empty — Meta compares it against the redirect the JS SDK used
+    expect(String(exchange.url)).toMatch(/[?&]redirect_uri=(&|$)/);
+  });
+
+  it('a code-100 refusal from Facebook is turned into an instruction the admin can act on', async () => {
+    const ch = makeChannel({ id: 35, provider: 'meta', public_key: 'pk', secrets: { verify_token: 'v', app_secret: 'as' }, config: {} });
+    const { hooks } = makeWebhook([ch]);
+    hooks.http = graphStub(() => new Error(
+      'Error validating verification code. Please make sure your redirect_uri is identical to the one you used in the OAuth dialog request')).http;
+
+    await expect(hooks.fbSdkConnect(35, 'SDKCODE')).rejects.toThrow(/Connect Page.*fb\/callback/s);
   });
 
   it('never stores a token in readable form and refuses a blank code / a non-Meta channel', async () => {

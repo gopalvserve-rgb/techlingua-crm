@@ -1154,9 +1154,12 @@ export class WebhookService {
    * then THREW THE CODE AWAY, so the popup closed and nothing was ever stored. The browser
    * now posts that code here.
    *
-   * SDK codes are exchanged with NO redirect_uri (there was no redirect) — the same quirk
-   * the WhatsApp Embedded Signup exchange relies on. Everything after the exchange is the
-   * shared path above, so the popup and the redirect store identical state.
+   * The exchange must carry redirect_uri as an EMPTY value — present, but empty. That is
+   * the redirect the JS SDK itself used, and Facebook compares the two: omitting the
+   * parameter altogether earns "Error validating verification code. Please make sure your
+   * redirect_uri is identical to the one you used in the OAuth dialog request" (code 100),
+   * which is exactly what this flow hit in production. Everything after the exchange is
+   * the shared path above, so the popup and the redirect store identical state.
    */
   async fbSdkConnect(channelId: number, code: string): Promise<{ pages: number; primary: string; subscribed: boolean; others: number }> {
     const ch = await this.channels.raw(channelId);
@@ -1171,8 +1174,22 @@ export class WebhookService {
     }
 
     const url = `${FB_GRAPH_BASE}/oauth/access_token?client_id=${encodeURIComponent(appId)}`
-      + `&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`;
-    const tok = await this.fbGet(url);
+      + `&client_secret=${encodeURIComponent(appSecret)}&redirect_uri=&code=${encodeURIComponent(code)}`;
+    let tok: any;
+    try {
+      tok = await this.fbGet(url);
+    } catch (e) {
+      // Code 100 here means the code and the redirect disagree — the admin cannot act on
+      // Facebook's wording, but they CAN use the redirect button, so say that instead.
+      const msg = String((e as Error).message ?? '');
+      if (/verification code|redirect_uri/i.test(msg)) {
+        throw new BadRequestException(
+          'Facebook would not accept that sign-in. Close this drawer and use "Connect Page" on the channel row instead — '
+          + 'it uses the redirect flow, which needs https://<your CRM>/api/webhooks/fb/callback listed under '
+          + 'Valid OAuth Redirect URIs in your Meta app.');
+      }
+      throw e;
+    }
     const userToken = String(tok.access_token ?? '');
     if (!userToken) throw new BadRequestException('Facebook did not return an access token for that code.');
     return this.connectPagesWithUserToken(ch, userToken);
