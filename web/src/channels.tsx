@@ -675,7 +675,7 @@ export default function Channels() {
         {(logFrom || logTo) && (
           <button className="btn" type="button" onClick={() => { setLogFrom(''); setLogTo(''); }}>Clear</button>
         )}
-        <span className="fhint" style={{ marginLeft: 'auto' }}>Logs are maintained for the last 30 days only.</span>
+        <span className="fhint" style={{ marginLeft: 'auto' }}>Logs are maintained for the last 1 year.</span>
       </div>
       <TableCard title="Recent inbound events" icon="clock"
         more="every request we received — accepted or rejected"

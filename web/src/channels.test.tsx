@@ -336,7 +336,7 @@ describe('Lead Capture Channels screen', () => {
     await waitFor(() => screen.getByText('Recent inbound events'));
     expect(screen.getByLabelText('Logs from date')).toBeTruthy();
     expect(screen.getByLabelText('Logs to date')).toBeTruthy();
-    expect(screen.getByText(/maintained for the last 30 days only/i)).toBeTruthy();
+    expect(screen.getByText(/maintained for the last 1 year/i)).toBeTruthy();
     // narrowing the date re-fetches the events with a from= param
     fireEvent.change(screen.getByLabelText('Logs from date'), { target: { value: '2026-07-10' } });
     await waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringContaining('from=2026-07-10')));

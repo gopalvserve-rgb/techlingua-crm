@@ -124,7 +124,7 @@ export class ChannelService {
   }
 
   /** Recent inbound events — the "why did this lead not arrive?" screen.
-   *  DEF-INT-03: optional from/to (date strings) narrow the log; retention is 30 days. */
+   *  DEF-INT-03: optional from/to (date strings) narrow the log; retention is 1 year. */
   async events(scope: ResolvedScope, channelId?: number, limit = 50, from?: string, to?: string) {
     const params: unknown[] = [];
     const where = this.scopeWhere(scope, params);
