@@ -18,6 +18,7 @@ import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { ensureFbSdk } from './whatsappsignup';
+import { FbFormMappingModal, FbPagesModal } from './fbpages';
 
 export interface FieldSpec {
   key: string; label: string; type: 'text' | 'password' | 'textarea' | 'number' | 'bool' | 'list';
@@ -422,6 +423,9 @@ export default function Channels() {
   const [logFrom, setLogFrom] = useState('');
   const [logTo, setLogTo] = useState('');
   const [open, setOpen] = useState<{ spec: ProviderSpec; channel: Channel | null } | null>(null);
+  // Meta only — the Facebook Page Monitor and the per-form Field Mapping drawers.
+  const [fbPages, setFbPages] = useState<Channel | null>(null);
+  const [fbMapping, setFbMapping] = useState<Channel | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const canRead = can('channel.read');
@@ -614,9 +618,17 @@ export default function Channels() {
                   onClick={() => copy(`${origin()}${c.webhook_path}`, 'Webhook URL')}><Ic k="doc" />URL</button>
               )}
               {canManage && c.provider === 'meta' && (
-                <button className="btn" title="Connect a Facebook Page (one-click OAuth)" disabled={busyId === c.id} onClick={() => connectFb(c)}>
+                <button className="btn" title="Log in with Facebook to connect or re-authorise your Pages (every Page you grant appears under Pages)" disabled={busyId === c.id} onClick={() => connectFb(c)}>
                   <Ic k="link" />{busyId === c.id ? 'Connecting…' : 'Connect Page'}
                 </button>
+              )}
+              {c.provider === 'meta' && (
+                <button className="btn" title="Facebook Page Monitor — every connected Page, monitored on/off, subscription status, leads received"
+                  onClick={() => setFbPages(c)}><Ic k="shield" />Pages</button>
+              )}
+              {c.provider === 'meta' && (
+                <button className="btn" title="Facebook Form Mapping — map each Lead Ad form's questions to CRM fields"
+                  onClick={() => setFbMapping(c)}><Ic k="grid" />Form Mapping</button>
               )}
               {canManage && c.kind === 'poll' && (
                 <button className="btn" title="Sync — pull the latest now" disabled={busyId === c.id} onClick={() => pull(c)}>
@@ -681,6 +693,13 @@ export default function Channels() {
       {open && (
         <ConfigureModal spec={open.spec} channel={open.channel}
           onClose={() => setOpen(null)} onSaved={bump} />
+      )}
+      {fbPages && (
+        <FbPagesModal channel={fbPages} canManage={canManage} onClose={() => setFbPages(null)}
+          onConnect={() => connectFb(fbPages)} onChanged={bump} />
+      )}
+      {fbMapping && (
+        <FbFormMappingModal channel={fbMapping} canManage={canManage} onClose={() => setFbMapping(null)} />
       )}
     </>
   );

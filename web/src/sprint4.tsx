@@ -1151,6 +1151,10 @@ export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
                     <div className="fhint">Meta › WhatsApp › Configuration › Webhook. Subscribe to the "messages" field.</div>
                   </div>
                 </div>
+                <div className="fhint" style={{ marginTop: 8 }}>
+                  Manage connected numbers, webhook health and disconnect →{' '}
+                  <a href="/m/engage/waaccount" style={{ textDecoration: 'underline' }}>WhatsApp Account</a>
+                </div>
               </div>
             </div>
           )}

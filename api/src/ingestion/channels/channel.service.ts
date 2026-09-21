@@ -12,6 +12,9 @@ export const CHANNEL_SCOPE_COLS: ScopeColumnMap = {
   branch: 'c.branch_id', vertical: 'c.vertical_id', pipeline: 'c.pipeline_id', campaign: 'c.campaign_id',
 };
 
+/** Written by the Facebook OAuth callback / Page Monitor, not by the Configure form. */
+export const MACHINE_CONFIG_KEYS = ['pages', 'page_name'] as const;
+
 export type ChannelStatus = 'connected' | 'not_configured' | 'inactive';
 
 export interface ChannelRow {
@@ -201,7 +204,13 @@ export class ChannelService {
     const secrets = this.encryptIncoming(spec, dto?.secrets ?? {}, existing.secrets ?? {});
     const config = dto?.config === undefined
       ? existing.config
-      : this.cleanConfig(spec, { ...(existing.config ?? {}), ...(dto.config ?? {}) });
+      : {
+        ...this.cleanConfig(spec, { ...(existing.config ?? {}), ...(dto.config ?? {}) }),
+        // machine-managed keys (written by the Facebook OAuth callback / Page Monitor)
+        // are not provider form fields, so cleanConfig would drop them. They are taken
+        // from the STORED row only — never from the request body.
+        ...this.machineConfig(existing.config ?? {}),
+      };
 
     const row = await this.db.one<any>(
       `UPDATE capture_channel
@@ -286,6 +295,30 @@ export class ChannelService {
     await this.db.query(
       `UPDATE capture_channel SET config = $2, updated_at = now() WHERE id = $1`,
       [id, JSON.stringify(merged)],
+    );
+  }
+
+  /** Remove secrets outright (Facebook disconnect). Unknown keys are ignored. */
+  async dropSecrets(id: number, keys: string[]): Promise<void> {
+    const row = await this.raw(id);
+    if (!row) return;
+    const kept: Record<string, string> = { ...(row.secrets ?? {}) };
+    for (const k of keys) delete kept[k];
+    await this.db.query(
+      `UPDATE capture_channel SET secrets = $2, updated_at = now() WHERE id = $1`,
+      [id, JSON.stringify(kept)],
+    );
+  }
+
+  /** Remove config keys outright (Facebook disconnect). */
+  async dropConfig(id: number, keys: string[]): Promise<void> {
+    const row = await this.raw(id);
+    if (!row) return;
+    const kept: Record<string, unknown> = { ...(row.config ?? {}) };
+    for (const k of keys) delete kept[k];
+    await this.db.query(
+      `UPDATE capture_channel SET config = $2, updated_at = now() WHERE id = $1`,
+      [id, JSON.stringify(kept)],
     );
   }
 
@@ -397,6 +430,13 @@ export class ChannelService {
     );
     if (!r) throw new NotFoundException('channel not found');
     return Number(r.campaign_id);
+  }
+
+  /** Config keys the SERVER writes (never the admin form) — survive an edit untouched. */
+  private machineConfig(existing: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const k of MACHINE_CONFIG_KEYS) if (existing[k] !== undefined) out[k] = existing[k];
+    return out;
   }
 
   /** Only keys the provider declares survive — no arbitrary JSON blobs in config. */

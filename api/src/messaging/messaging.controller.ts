@@ -191,6 +191,10 @@ export class WhatsAppWebhookController {
       // is an impostor, not a message.
       if (appSecret && !verifyMetaSignature(raw ?? JSON.stringify(body ?? {}), sig, appSecret)) return;
 
+      // WEBHOOK HEALTH (migration 119): one tiny row per VERIFIED post, so the WhatsApp
+      // Account screen can say "last inbound 2m ago". Fire-and-forget by design.
+      await this.recordEvent(body);
+
       for (const entry of body?.entry ?? []) {
         for (const change of entry?.changes ?? []) {
           const value = change?.value ?? {};
@@ -239,6 +243,34 @@ export class WhatsAppWebhookController {
       }
     } catch {
       // a malformed webhook must never take the API down, and Meta has already had its 200
+    }
+  }
+
+  /**
+   * One row per inbound POST — kind + OUR phone_number_id, never the payload. A logging
+   * failure (table not migrated yet, DB hiccup) must NEVER stop the receipt / STOP
+   * handling below it, so every error is swallowed here.
+   */
+  private async recordEvent(body: any): Promise<void> {
+    try {
+      let kind = 'other';
+      let phoneNumberId: string | null = null;
+      for (const entry of body?.entry ?? []) {
+        for (const change of entry?.changes ?? []) {
+          const value = change?.value ?? {};
+          phoneNumberId = phoneNumberId ?? (value?.metadata?.phone_number_id ? String(value.metadata.phone_number_id) : null);
+          if ((value.messages ?? []).length) kind = 'message';
+          else if (kind !== 'message' && (value.statuses ?? []).length) kind = 'status';
+          else if (kind === 'other' && change?.field) kind = String(change.field);
+        }
+      }
+      await this.db.query(
+        `INSERT INTO wa_webhook_event (org_id, kind, phone_number_id)
+         SELECT id, $1, $2 FROM organisation ORDER BY id LIMIT 1`,
+        [kind.slice(0, 40), phoneNumberId ? phoneNumberId.slice(0, 40) : null],
+      );
+    } catch {
+      // health logging is best-effort
     }
   }
 }

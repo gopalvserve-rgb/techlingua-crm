@@ -13,6 +13,7 @@ import { ChannelService } from './channels/channel.service';
 import { ChannelController } from './channels/channel.controller';
 import { WebhookController } from './channels/webhook.controller';
 import { WebhookService } from './channels/webhook.service';
+import { FbPagesService } from './channels/fb-pages.service';
 import { SheetWorker } from './channels/sheet.worker';
 import { MarketplacePullWorker } from './channels/marketplace.worker';
 
@@ -37,7 +38,7 @@ import { MarketplacePullWorker } from './channels/marketplace.worker';
   controllers: [ImportController, ChannelController, WebhookController],
   providers: [
     LeadIngestionService, LeadMergeService, ImportService, ImportWorker,
-    ChannelService, WebhookService, SheetWorker, MarketplacePullWorker,
+    ChannelService, WebhookService, FbPagesService, SheetWorker, MarketplacePullWorker,
   ],
   exports: [LeadIngestionService, LeadMergeService, ChannelService],
 })

@@ -13,10 +13,13 @@ import { FakeState, allScopeResolver, makeFakeDb, makeIngestion } from '../fake-
 import { encryptSecret, randomToken } from '../../common/crypto.util';
 import { ChannelRow, ChannelService } from './channel.service';
 import { WebhookService } from './webhook.service';
+import { FbPagesService } from './fb-pages.service';
 
 export interface FakeChannelState {
   channels: any[];
   events: any[];
+  /** fb_form_mapping rows (migration 120) */
+  formMappings: any[];
 }
 
 /** Build a capture_channel row with its secrets already encrypted at rest. */
@@ -38,8 +41,9 @@ export function makeChannel(over: Partial<ChannelRow> & { secrets?: Record<strin
 /** The ingestion fake DB + capture_channel / webhook_event handling on top. */
 export function makeChannelDb(channels: any[], init: Partial<FakeState> = {}) {
   const { db, st } = makeFakeDb(init);
-  const cst: FakeChannelState = { channels, events: [] };
+  const cst: FakeChannelState = { channels, events: [], formMappings: [] };
   let eventSeq = 900;
+  let mappingSeq = 500;
 
   const exec = async (sql: string, params: unknown[] = []): Promise<any[]> => {
     const s = sql.replace(/\s+/g, ' ').trim();
@@ -113,6 +117,63 @@ export function makeChannelDb(channels: any[], init: Partial<FakeState> = {}) {
       if (ch) ch.cursor = typeof params[1] === 'string' ? JSON.parse(params[1] as string) : params[1];
       return [];
     }
+    // ---- Facebook Form Mapping (fb_form_mapping, migration 120) ----
+    if (s.startsWith('SELECT is_enabled, field_map, form_name FROM fb_form_mapping')
+      || s.startsWith('SELECT page_id, form_id, form_name, is_enabled, field_map, questions FROM fb_form_mapping')) {
+      const hit = cst.formMappings.find((m) => Number(m.channel_id) === Number(params[0]) && String(m.form_id) === String(params[1]));
+      return hit ? [hit] : [];
+    }
+    if (s.startsWith('SELECT form_id, is_enabled, field_map FROM fb_form_mapping WHERE channel_id = $1 AND page_id')) {
+      return cst.formMappings.filter((m) => Number(m.channel_id) === Number(params[0]) && String(m.page_id) === String(params[1]));
+    }
+    if (s.startsWith('INSERT INTO fb_form_mapping (org_id, channel_id, page_id, form_id, form_name, questions)')) {
+      // the cache upsert from the forms listing: jsonb_to_recordset($4)
+      const rows = JSON.parse(String(params[3])) as Array<{ form_id: string; form_name: string; questions: unknown }>;
+      for (const r of rows) {
+        const cur = cst.formMappings.find((m) => Number(m.channel_id) === Number(params[1]) && String(m.form_id) === String(r.form_id));
+        if (cur) { cur.page_id = params[2]; cur.form_name = r.form_name; cur.questions = r.questions; continue; }
+        cst.formMappings.push({
+          id: ++mappingSeq, org_id: params[0], channel_id: params[1], page_id: params[2], form_id: r.form_id,
+          form_name: r.form_name, is_enabled: true, field_map: {}, questions: r.questions,
+        });
+      }
+      return [];
+    }
+    if (s.startsWith('INSERT INTO fb_form_mapping (org_id, channel_id, page_id, form_id, form_name, is_enabled, field_map, updated_by)')) {
+      const [org_id, channel_id, page_id, form_id, form_name, is_enabled, field_map, updated_by] = params as any[];
+      const map = typeof field_map === 'string' ? JSON.parse(field_map) : field_map;
+      const cur = cst.formMappings.find((m) => Number(m.channel_id) === Number(channel_id) && String(m.form_id) === String(form_id));
+      if (cur) {
+        if (page_id) cur.page_id = page_id;
+        if (form_name != null) cur.form_name = form_name;
+        cur.is_enabled = is_enabled; cur.field_map = map; cur.updated_by = updated_by;
+      } else {
+        cst.formMappings.push({ id: ++mappingSeq, org_id, channel_id, page_id, form_id, form_name, is_enabled, field_map: map, questions: null, updated_by });
+      }
+      return [];
+    }
+    if (s.startsWith('SELECT DISTINCT ON (field_key) field_key, label FROM custom_field_def')) {
+      return [{ field_key: 'batch', label: 'Batch' }];
+    }
+    // per-Page lead stats (FbPagesService.leadStats) — the JS twin of the SQL
+    if (s.includes('FROM webhook_event e CROSS JOIN LATERAL jsonb_array_elements')) {
+      const acc = new Map<string, { page_id: string; leads: number; last_lead_at: string }>();
+      for (const e of cst.events) {
+        if (Number(e.channel_id) !== Number(params[0]) || e.provider !== 'meta' || e.method !== 'POST') continue;
+        if (!['ingested', 'duplicate'].includes(String(e.status))) continue;
+        for (const en of (Array.isArray(e.raw?.entry) ? e.raw.entry : [])) {
+          for (const c of (Array.isArray(en?.changes) ? en.changes : [])) {
+            if (c?.field !== 'leadgen') continue;
+            const pid = String(c?.value?.page_id || en?.id || '');
+            if (!pid) continue;
+            const cur = acc.get(pid) ?? { page_id: pid, leads: 0, last_lead_at: e.created_at };
+            cur.leads++; if (e.created_at > cur.last_lead_at) cur.last_lead_at = e.created_at;
+            acc.set(pid, cur);
+          }
+        }
+      }
+      return [...acc.values()];
+    }
 
     return (db as any).query(sql, params);
   };
@@ -138,7 +199,8 @@ export function makeWebhook(channels: any[], init: Partial<FakeState> = {}) {
   const channelSvc = new ChannelService(db, passEnforcer, allScopeResolver);
   const { svc: ingestion } = makeIngestion(db);
   const hooks = new WebhookService(db, channelSvc, ingestion);
-  return { db, st, cst, hooks, channelSvc, ingestion };
+  const fb = new FbPagesService(db, channelSvc, hooks);
+  return { db, st, cst, hooks, channelSvc, ingestion, fb };
 }
 
 /** Sign a body exactly the way Meta does: HMAC-SHA256 over the RAW bytes. */

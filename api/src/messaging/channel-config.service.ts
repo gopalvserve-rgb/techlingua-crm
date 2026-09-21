@@ -145,7 +145,7 @@ export class ChannelConfigService {
   // ----------------------------------------------------------------- writes
 
   /** Create or update the row for (channel, vertical) — one row per pair, by design. */
-  async save(dto: any, actorId: number) {
+  async save(dto: any, actorId: number, opts: { system?: Record<string, unknown> } = {}) {
     const spec = this.spec(dto?.provider);
     const verticalId = spec.perVertical && dto?.vertical_id ? Number(dto.vertical_id) : null;
     if (!spec.perVertical && dto?.vertical_id) {
@@ -174,6 +174,13 @@ export class ChannelConfigService {
 
     const secrets = this.encryptIncoming(spec, dto?.secrets ?? {}, existing?.secrets ?? {});
     const config = this.cleanConfig(spec, { ...(existing?.config ?? {}), ...(dto?.config ?? {}) });
+    // SYSTEM-MANAGED keys (e.g. WhatsApp's `numbers`) are not form fields: a generic save
+    // can neither set nor wipe them. They ride over from the stored row unless the calling
+    // SERVICE passes a new value explicitly — never the request body.
+    for (const k of spec.systemConfig ?? []) {
+      const v = opts.system && k in opts.system ? opts.system[k] : existing?.config?.[k];
+      if (v !== undefined && v !== null) config[k] = v;
+    }
 
     const row = existing
       ? await this.db.one<any>(

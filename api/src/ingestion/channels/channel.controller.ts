@@ -1,10 +1,11 @@
 import {
-  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req,
+  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { NotConfiguredException } from '../../common/not-configured.exception';
 import { ChannelService } from './channel.service';
 import { WebhookService } from './webhook.service';
+import { FbPagesService } from './fb-pages.service';
 import { CurrentScope, CurrentUser, RequirePermission } from '../../rbac/rbac.decorators';
 import { ResolvedScope } from '../../rbac/rbac.types';
 
@@ -24,7 +25,11 @@ type U = { id: number };
  */
 @Controller('channels')
 export class ChannelController {
-  constructor(private readonly svc: ChannelService, private readonly hooks: WebhookService) {}
+  constructor(
+    private readonly svc: ChannelService,
+    private readonly hooks: WebhookService,
+    private readonly fb: FbPagesService,
+  ) {}
 
   /** The provider registry — drives the Configure form (add a provider, get a form). */
   @Get('providers') @RequirePermission('channel.read')
@@ -114,5 +119,73 @@ export class ChannelController {
     const out = await this.hooks.fbConnectUrl(id, redirectUri);
     if (!out.url) throw new NotConfiguredException(out.error ?? 'Facebook app is not configured on the server.');
     return out;
+  }
+
+  // ------------------------------------------------ Facebook Page Monitor ----
+  // Every route: the same scope + existence check as fbConnect, then FbPagesService
+  // re-checks the provider. No response below ever carries a Page token.
+
+  /** All Pages the admin granted, monitored flag, last known status, leads per Page. */
+  @Get(':id/fb/pages') @RequirePermission('channel.read')
+  async fbPages(@Param('id', ParseIntPipe) id: number, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.listPages(id);
+  }
+
+  /** Ask Facebook, per Page, whether our app is still subscribed to leadgen. */
+  @Post(':id/fb/pages/refresh') @RequirePermission('channel.manage')
+  async fbPagesRefresh(@Param('id', ParseIntPipe) id: number, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.refresh(id);
+  }
+
+  /** Monitor a Page (subscribe our app to its leadgen field). */
+  @Post(':id/fb/pages/:pageId/subscribe') @RequirePermission('channel.manage')
+  async fbSubscribe(@Param('id', ParseIntPipe) id: number, @Param('pageId') pageId: string, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.subscribe(id, pageId);
+  }
+
+  /** Stop monitoring a Page (unsubscribe; deliveries for it are then skipped). */
+  @Post(':id/fb/pages/:pageId/unsubscribe') @RequirePermission('channel.manage')
+  async fbUnsubscribe(@Param('id', ParseIntPipe) id: number, @Param('pageId') pageId: string, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.unsubscribe(id, pageId);
+  }
+
+  /** Disconnect Facebook: unsubscribe everything, delete every Page token. Mappings stay. */
+  @Post(':id/fb/disconnect') @RequirePermission('channel.manage')
+  async fbDisconnect(@Param('id', ParseIntPipe) id: number, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.disconnect(id);
+  }
+
+  // -------------------------------------------------- Facebook Form Mapping ----
+
+  /** A Page's Lead Ad forms (Graph API) merged with the saved mapping state. */
+  @Get(':id/fb/pages/:pageId/forms') @RequirePermission('channel.read')
+  async fbForms(@Param('id', ParseIntPipe) id: number, @Param('pageId') pageId: string, @CurrentScope() s: ResolvedScope, @CurrentUser() u: U) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.forms(id, pageId);
+  }
+
+  /** One form's questions, saved map, the CRM fields it may feed and an auto-map. */
+  @Get(':id/fb/forms/:formId/mapping') @RequirePermission('channel.read')
+  async fbMapping(
+    @Param('id', ParseIntPipe) id: number, @Param('formId') formId: string,
+    @CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query('page_id') pageId?: string,
+  ) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.getMapping(id, formId, pageId);
+  }
+
+  /** Save one form's mapping { field_map, is_enabled, page_id, form_name }. */
+  @Put(':id/fb/forms/:formId/mapping') @RequirePermission('channel.manage')
+  async fbSaveMapping(
+    @Param('id', ParseIntPipe) id: number, @Param('formId') formId: string, @Body() b: any,
+    @CurrentScope() s: ResolvedScope, @CurrentUser() u: U,
+  ) {
+    await this.svc.get(id, s, u.id);
+    return this.fb.saveMapping(id, formId, b ?? {}, u.id);
   }
 }

@@ -646,14 +646,38 @@ export class MessagingService {
       this.db.query<any>(`SELECT id, name FROM m_status ORDER BY sort_order NULLS LAST, lower(name)`),
       this.db.query<any>(
         `SELECT COALESCE(cc.config->>'display_phone_number', cc.config->>'connected_number') AS number,
-                v.name AS label
+                v.name AS label,
+                cc.config->'numbers' AS numbers, cc.config->>'phone_number_id' AS default_id
            FROM channel_config cc
            LEFT JOIN vertical v ON v.id = cc.vertical_id
           WHERE cc.org_id = $1 AND cc.provider = 'meta_cloud' AND cc.deleted_at IS NULL`, [orgId]),
     ]);
-    const nums = (numbers as any[])
-      .filter((n) => n.number)
-      .map((n) => ({ number: String(n.number), label: n.label || 'WhatsApp' }));
+    // WhatsApp Account (Engagement) stores EVERY number of the WABA under config.numbers,
+    // with the admin's label. When it exists the "Sending from" selector lists them all,
+    // default first (the default is the one the sender uses — config.phone_number_id).
+    // A row that has never been synced falls back to its single connected number.
+    const nums: Array<{ number: string; label: string; phone_number_id?: string; is_default?: boolean }> = [];
+    for (const row of numbers as any[]) {
+      const stored = (Array.isArray(row.numbers) ? row.numbers : [])
+        .filter((x: any) => x && x.phone_number_id && x.display_phone_number);
+      if (stored.length) {
+        const defaultId = String(row.default_id ?? '');
+        const mapped = stored.map((x: any) => ({
+          number: String(x.display_phone_number),
+          label: String(x.label || x.verified_name || row.label || 'WhatsApp'),
+          phone_number_id: String(x.phone_number_id),
+          is_default: String(x.phone_number_id) === defaultId,
+        }));
+        // the sender's number must be listed even if it was connected after the last sync
+        if (defaultId && row.number && !mapped.some((m: any) => m.is_default)) {
+          mapped.push({ number: String(row.number), label: row.label || 'WhatsApp', phone_number_id: defaultId, is_default: true });
+        }
+        mapped.sort((a: any, b: any) => Number(b.is_default) - Number(a.is_default));
+        nums.push(...mapped);
+      } else if (row.number) {
+        nums.push({ number: String(row.number), label: row.label || 'WhatsApp' });
+      }
+    }
     return { agents, statuses, numbers: nums };
   }
 

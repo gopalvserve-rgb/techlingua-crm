@@ -15,6 +15,9 @@ import {
   extraFields, formToPayload, googleToPayload, metaToPayload, parseFieldMap, sheetRowToPayload,
   PROVIDERS,
 } from './providers';
+import {
+  FbPageEntry, IGNORE_TARGET, overlayFieldMap, pageTokenKey, storedPages, webhookPageId,
+} from './fb-pages.util';
 
 /** the public route family a provider serves (meta|google|form|push|null). */
 const PROVIDER_ENDPOINT = (provider: string): string | null => PROVIDERS[provider]?.endpoint ?? null;
@@ -166,10 +169,16 @@ export class WebhookService {
     const cfgPage = String((ch.config as any)?.page_id ?? '').trim();
     const graph = String((ch.config as any)?.graph_version ?? '').trim() || DEFAULT_GRAPH;
     const fieldMap = parseFieldMap((ch.config as any)?.field_map);
+    // Page Monitor: config.pages (multi-Page) — empty for a channel connected the old way
+    const pages: FbPageEntry[] = storedPages(ch.config);
     const changes: any[] = [];
+    const pageOf = new Map<any, string>();
     for (const entry of (body?.entry ?? []) as any[]) {
       for (const c of (entry?.changes ?? []) as any[]) {
-        if (String(c?.field ?? '') === 'leadgen' && c?.value) changes.push(c.value);
+        if (String(c?.field ?? '') === 'leadgen' && c?.value) {
+          changes.push(c.value);
+          pageOf.set(c.value, webhookPageId(entry?.id, c.value));
+        }
       }
     }
     if (!changes.length) {
@@ -187,20 +196,45 @@ export class WebhookService {
     let firstLead: number | null = null;
     let worst: 'ingested' | 'duplicate' | 'skipped' | 'failed' = 'ingested';
 
+    const skipped = (leadgenId: string, why: string) => {
+      notes.push(`leadgen ${leadgenId || '?'}: ${why}`);
+      if (worst === 'ingested') worst = 'skipped';
+    };
+
     for (const v of changes) {
       const leadgenId = String(v?.leadgen_id ?? v?.id ?? '');
       try {
-        if (cfgPage && v?.page_id && String(v.page_id) !== cfgPage) {
+        // ---- which Page? (Page Monitor) ------------------------------------------
+        const pageId = pageOf.get(v) ?? '';
+        const stored = pages.find((p) => p.page_id === pageId);
+        if (stored && !stored.monitored) {
+          skipped(leadgenId, `Page "${stored.page_name || stored.page_id}" (${stored.page_id}) is not monitored — delivery logged, no lead created`);
+          continue;
+        }
+        // a Page we do not know: the legacy single-Page binding applies unchanged
+        if (!stored && cfgPage && v?.page_id && String(v.page_id) !== cfgPage) {
           throw new IngestValidationError(`Payload is for Page ${v.page_id}, this channel is bound to Page ${cfgPage}`);
         }
+        // that Page's own token; the legacy token stands in for a channel connected the old way
+        const token = (stored && secrets[pageTokenKey(stored.page_id)]) || secrets.page_access_token || '';
+
+        // ---- which form? (Form Mapping) — no saved row = today's behaviour exactly ----
+        const formId = String(v?.form_id ?? '').trim();
+        const formMap = formId ? await this.formMapping(ch.id, formId) : null;
+        if (formMap && formMap.is_enabled === false) {
+          skipped(leadgenId, `form "${formMap.form_name || formId}" (${formId}) disabled in mapping — delivery logged, no lead created`);
+          continue;
+        }
+        const effectiveMap = formMap ? overlayFieldMap(fieldMap, formMap.field_map) : fieldMap;
+
         // Meta normally sends only the leadgen_id -> fetch the answers from the Graph
         // API. The Lead Ads Testing Tool (and our smoke test) may inline field_data;
         // honour it when present so a test lead needs no extra round trip.
         const fieldData: Array<{ name?: string; values?: unknown[] }> = Array.isArray(v?.field_data)
           ? v.field_data
-          : await this.fetchMetaLead(leadgenId, secrets.page_access_token ?? '', graph);
+          : await this.fetchMetaLead(leadgenId, token, graph);
 
-        const payload: IngestPayload = metaToPayload(fieldData, fieldMap);
+        const payload: IngestPayload = metaToPayload(fieldData, effectiveMap);
         payload.external_id = leadgenId || undefined;
 
         const out = await this.ingestion.ingest(payload, {
@@ -246,6 +280,31 @@ export class WebhookService {
     const json = JSON.parse(text) as { field_data?: Array<{ name?: string; values?: unknown[] }> };
     if (!json.field_data?.length) throw new IngestValidationError(`Meta returned no field_data for leadgen ${leadgenId}`);
     return json.field_data;
+  }
+
+  /**
+   * The saved per-form mapping (Form Mapping screen), or null when none — in which case
+   * the channel behaves exactly as before this feature. Never throws: a missing table
+   * (migration not run yet) or a DB hiccup must not cost a lead.
+   */
+  private async formMapping(channelId: number, formId: string): Promise<{
+    is_enabled: boolean; field_map: Record<string, string>; form_name: string | null;
+  } | null> {
+    try {
+      const row = await this.db.one<any>(
+        `SELECT is_enabled, field_map, form_name FROM fb_form_mapping WHERE channel_id = $1 AND form_id = $2`,
+        [channelId, formId],
+      );
+      if (!row) return null;
+      const map = parseFieldMap(row.field_map);
+      // an explicit "— ignore —" beats the built-in aliases: keep the sentinel so
+      // pairsToPayload drops the answer (IGNORE_TARGET is not a CHANNEL_TARGET)
+      for (const k of Object.keys(map)) if (!map[k]) map[k] = IGNORE_TARGET;
+      return { is_enabled: row.is_enabled !== false, field_map: map, form_name: row.form_name ?? null };
+    } catch (e) {
+      this.log.warn(`fb_form_mapping lookup failed (ignored): ${(e as Error).message}`);
+      return null;
+    }
   }
 
   // ================================================================ GOOGLE ===
@@ -957,7 +1016,7 @@ export class WebhookService {
    * fallback for a self-hosted deploy. This is why any branch can just click "Log in
    * with Facebook": the app is shared, only the Page token (per channel) differs.
    */
-  private async fbAppCreds(): Promise<{ appId: string; appSecret: string }> {
+  async fbAppCreds(): Promise<{ appId: string; appSecret: string }> {
     let appId = '', appSecret = '';
     try {
       const row = await this.db.one<any>(
@@ -1015,24 +1074,61 @@ export class WebhookService {
       const pages = parseFbPages(accounts);
       if (!pages.length) return { http: 200, body: this.fbHtml('No Facebook Pages were returned — make sure you granted the app access to your Page.', false) };
 
+      // PRIMARY Page = the one the channel is bound to (config.page_id), else the first —
+      // exactly the old single-Page choice. It gets the legacy fields + a leadgen subscribe.
       const wantId = String((ch.config as any)?.page_id ?? '').trim();
       const page = (wantId && pages.find((p) => p.page_id === wantId)) || pages[0];
 
-      await this.channels.mergeSecrets(channelId, { page_access_token: page.access_token });
-      await this.channels.mergeConfig(channelId, { page_id: page.page_id, page_name: page.page_name });
+      // PAGE MONITOR: keep EVERY granted Page. One encrypted token per Page (flat key —
+      // mergeSecrets encrypts string values), metadata (no tokens) in config.pages. A
+      // re-authorisation refreshes tokens and keeps each Page's monitored flag; Pages that
+      // were already stored but not returned this time are left as they are.
+      const tokens: Record<string, string> = { page_access_token: page.access_token };
+      for (const p of pages) tokens[pageTokenKey(p.page_id)] = p.access_token;
+      await this.channels.mergeSecrets(channelId, tokens);
+
+      const now = new Date().toISOString();
+      const merged: FbPageEntry[] = [...storedPages(ch.config)];
+      for (const p of pages) {
+        const cur = merged.find((m) => m.page_id === p.page_id);
+        if (cur) { cur.page_name = p.page_name || cur.page_name; continue; }
+        merged.push({
+          page_id: p.page_id, page_name: p.page_name,
+          monitored: p.page_id === page.page_id,      // only the primary is monitored by default
+          subscribed: null, subscribed_at: null, checked_at: null, last_error: null,
+        });
+      }
+      const primary = merged.find((m) => m.page_id === page.page_id)!;
+      primary.monitored = true;
 
       let subscribed = false;
       try {
         const sub = await this.fbPost(`${FB_GRAPH_BASE}/${encodeURIComponent(page.page_id)}/subscribed_apps?subscribed_fields=leadgen&access_token=${encodeURIComponent(page.access_token)}`);
         subscribed = !!sub.success;
-      } catch (e) { this.log.warn(`leadgen subscribe failed: ${(e as Error).message}`); }
+        primary.subscribed = subscribed; primary.checked_at = now; primary.last_error = null;
+        if (subscribed) primary.subscribed_at = now;
+      } catch (e) {
+        this.log.warn(`leadgen subscribe failed: ${(e as Error).message}`);
+        primary.subscribed = null; primary.checked_at = now;
+        primary.last_error = String((e as Error).message).replace(/access_token=[^&\s"']+/gi, 'access_token=***').slice(0, 300);
+      }
 
+      await this.channels.mergeConfig(channelId, { page_id: page.page_id, page_name: page.page_name, pages: merged });
+
+      const others = pages.length - 1;
       await this.channels.logEvent({
         channel_id: ch.id, org_id: ch.org_id, provider: 'meta', public_key: ch.public_key, method: 'GET',
-        raw: { page_id: page.page_id, page_name: page.page_name, subscribed }, status: 'verified',
-        reason: `Facebook Page "${page.page_name}" connected` + (subscribed ? ' and subscribed to leadgen' : ' (token stored; subscribe to leadgen in Meta if leads do not arrive)'),
+        raw: { page_id: page.page_id, page_name: page.page_name, subscribed, pages: pages.map((p) => ({ page_id: p.page_id, page_name: p.page_name })) },
+        status: 'verified',
+        reason: `Facebook Page "${page.page_name}" connected` + (subscribed ? ' and subscribed to leadgen' : ' (token stored; subscribe to leadgen in Meta if leads do not arrive)')
+          + (others > 0 ? ` · ${others} more Page(s) available in Page Monitor (not monitored until switched on)` : ''),
       });
-      return { http: 200, body: this.fbHtml(`Connected Page "${page.page_name}". You can close this tab and return to the CRM.`, true) };
+      return {
+        http: 200,
+        body: this.fbHtml(`Connected Page "${page.page_name}".`
+          + (others > 0 ? ` ${others} more Page(s) were granted — switch them on under Pages in the CRM.` : '')
+          + ' You can close this tab and return to the CRM.', true),
+      };
     } catch (e) {
       return { http: 200, body: this.fbHtml(`Could not connect: ${(e as Error).message}`, false) };
     }

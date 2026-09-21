@@ -11,3 +11,9 @@ secrets*
 *.syncfix
 api/public/
 web/tsconfig.tsbuildinfo
+
+# local data dumps (never commit)
+deploy/*.pgdump
+deploy/*.csv
+deploy/.env
+deploy/pm2/api.env

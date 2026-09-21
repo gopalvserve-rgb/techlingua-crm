@@ -405,7 +405,7 @@ export function missingRequirements(provider: string, config: Record<string, unk
 
 /** The lead fields a channel may write (custom fields via the `cf:` prefix). */
 export const CHANNEL_TARGETS = [
-  'full_name', 'phone', 'alt_phone', 'email', 'state', 'city', 'course',
+  'full_name', 'phone', 'alt_phone', 'whatsapp_phone', 'email', 'state', 'city', 'course',
   'qualification', 'budget', 'note', 'tags', 'external_id',
 ] as const;
 

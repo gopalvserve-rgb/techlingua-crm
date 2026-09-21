@@ -15,6 +15,13 @@ async function bootstrap() {
   // MAX_CSV_BYTES = 5 MB). Express's 100 KB default would 413 every real import.
   const app = await NestFactory.create(AppModule, { bodyParser: false });
 
+  // Behind a TLS-terminating reverse proxy (nginx on the dedicated server, Railway's edge):
+  // trust ONE hop so req.protocol / req.ip honour X-Forwarded-Proto / X-Forwarded-For.
+  // Without this every absolute URL we build from the request (the Facebook OAuth
+  // redirect_uri in channel.controller / webhook.controller) comes out as http:// and Meta
+  // rejects it as a redirect-URI mismatch.
+  (app.getHttpAdapter().getInstance() as express.Express).set('trust proxy', 1);
+
   // Keep the RAW body: Meta signs the exact bytes it sent (X-Hub-Signature-256 =
   // HMAC-SHA256 over the raw payload). Re-serialising the parsed JSON would change
   // key order/spacing and every signature would fail. Cheap: one Buffer reference.

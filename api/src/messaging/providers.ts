@@ -58,6 +58,14 @@ export interface MsgProviderSpec {
   testCaveat?: string;
   /** Shown in the UI when the stored config is not yet wired to anything live. */
   storedOnly?: string;
+  /**
+   * SYSTEM-MANAGED config keys — stored in `config` beside the form fields, but NEVER
+   * rendered in the generated form and NEVER accepted from a generic save. They survive
+   * every save untouched (`ChannelConfigService.save` carries them over from the stored
+   * row) and only change when a service passes them explicitly. WhatsApp keeps its list
+   * of connected numbers (labels + default) here.
+   */
+  systemConfig?: string[];
 }
 
 const SPECS: MsgProviderSpec[] = [
@@ -229,6 +237,8 @@ const SPECS: MsgProviderSpec[] = [
     ],
     test: 'probe',
     testCaveat: 'Green means Meta accepted the stored token and returned this phone number\'s details. Sending still requires an APPROVED template.',
+    // Engagement › WhatsApp Account: every number of the connected WABA + its label.
+    systemConfig: ['numbers'],
   },
 
   /* ---------------------------------------------------------------- PAYMENT */

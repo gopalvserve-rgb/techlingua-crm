@@ -43,6 +43,7 @@ import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
 import LeadImport from './leadimport';
 import Channels from './channels';
+import WhatsAppAccount from './whatsappaccount';
 import { NotificationEvents } from './notifevents';
 import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
@@ -8269,6 +8270,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   announcements: Announcements,
   workTasks: WorkTasks,
   waChat: WaChat,
+  waAccount: WhatsAppAccount,
   supportTickets: SupportTickets,
   crossSell: CrossSell,
   aiIntelligence: AiIntelligence,

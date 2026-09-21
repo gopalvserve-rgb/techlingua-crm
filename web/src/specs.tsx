@@ -213,6 +213,8 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Triggers (new lead, stage change, no response, fee due, birthday) → conditions → actions. Idempotent: a lead never receives the same step twice.' } },
     { id: 'inbox', label: 'WhatsApp Live Chat', spec: { dyn: 'waChat',
       sub: 'Live WhatsApp inbox — bot auto-replies, lead qualification, quick replies & human hand-over.' } },
+    { id: 'waaccount', label: 'WhatsApp Account', spec: { dyn: 'waAccount',
+      sub: 'Connected numbers (labels, default sender), Verify / Register phone / Disconnect, webhook health and the webhook setup checklist.' } },
     { id: 'templates', label: 'Message Templates', spec: { dyn: 'templates',
       sub: 'Dynamic templates per channel — WhatsApp (Meta template name + params), SMS (sender ID + DLT), Email (subject + HTML) — with merge variables and a live preview.' } },
     { id: 'smstpl', label: 'SMS Templates', spec: { dyn: 'smsTemplates',
