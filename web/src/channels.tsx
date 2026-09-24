@@ -107,6 +107,9 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint?: 
   );
 }
 
+/** Used only until the server answers with its own FB_SCOPES list. */
+const FB_FALLBACK_SCOPES = 'leads_retrieval,pages_show_list,pages_manage_metadata,pages_read_engagement,pages_manage_ads';
+
 /* ------------------------------------------------- Continue with Facebook --- */
 
 /**
@@ -121,12 +124,24 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
   const nav = useNavigate();
   const [info, setInfo] = useState<{ ready?: boolean; missing?: string[]; app_id?: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // The scope list lives ON THE SERVER (FB_SCOPES). Two hand-written copies had already
+  // drifted — the popup never asked for pages_read_engagement, and neither copy asked for
+  // pages_manage_ads, which is what Form Mapping needs. Fetched on mount so the click
+  // handler stays synchronous (Chrome blocks a popup opened after an await).
+  const [scopes, setScopes] = useState(FB_FALLBACK_SCOPES);
 
   useEffect(() => {
     api.get<{ ready: boolean; missing: string[]; app_id: string }>('/settings/whatsapp/embedded-signup')
       .then(setInfo)
       .catch(() => setInfo({ ready: false, missing: ['Meta App ID', 'App secret', 'Embedded Signup Configuration ID'] }));
   }, []);
+
+  useEffect(() => {
+    if (!channelId) return;
+    api.get<{ scopes?: string }>(`/channels/${channelId}/fb/connect`)
+      .then((r) => { if (r?.scopes) setScopes(r.scopes); })
+      .catch(() => { /* keep the fallback list */ });
+  }, [channelId]);
 
   const ready = !!info?.ready;
 
@@ -159,7 +174,7 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
             .catch((e) => toast((e as Error).message || 'Could not finish connecting to Facebook.', true))
             .finally(() => setBusy(false));
         },
-        { scope: 'pages_show_list,pages_manage_metadata,leads_retrieval', response_type: 'code', override_default_response_type: true },
+        { scope: scopes, response_type: 'code', override_default_response_type: true },
       );
     } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
   };

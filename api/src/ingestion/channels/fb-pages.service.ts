@@ -196,7 +196,17 @@ export class FbPagesService {
         if (forms.length >= FORMS_CAP) { truncated = !!url; url = null; }
       }
     } catch (e) {
-      throw new BadRequestException(`Could not read this Page's lead forms from Facebook: ${this.clean(e)}`);
+      const msg = this.clean(e);
+      // The Page token predates the pages_manage_ads scope, so Facebook refuses the list.
+      // A permission is only added by authorising AGAIN — say that instead of quoting Meta.
+      if (/pages_manage_ads|\(#200\)|permission/i.test(msg)) {
+        throw new BadRequestException(
+          "Facebook will not list this Page's lead forms until the connection is granted the "
+          + '"manage ads" permission (pages_manage_ads). The CRM now asks for it, but your existing '
+          + 'Page token does not have it. Press "Connect Page" on the channel row, approve Facebook '
+          + 'again, and keep this Page ticked — then reopen Form Mapping.');
+      }
+      throw new BadRequestException(`Could not read this Page's lead forms from Facebook: ${msg}`);
     }
     const list = forms.slice(0, FORMS_CAP);
 

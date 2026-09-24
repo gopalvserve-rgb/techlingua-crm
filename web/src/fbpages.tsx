@@ -124,6 +124,11 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
               <b>Monitored</b> = our app is subscribed to that Page's <b>leadgen</b> field and holds its Page token, so its
               Lead Ads land in <b>{channel.campaign_name} › {channel.source_name}</b>. A Page that is switched off is still
               connected — its deliveries are logged as <i>skipped</i> and create no lead.
+              <div style={{ marginTop: 6 }}>
+                Only the Pages you <b>ticked in Facebook's permission window</b> appear here — not everything in your
+                Business Settings. To add more, press <b>Connect Page</b> again and choose <i>Edit settings</i> /
+                <i> Opt in to current Pages only</i>, then tick the extra Pages.
+              </div>
             </div>
           </div>
           {err && <div className="form-err" role="alert">{err}</div>}

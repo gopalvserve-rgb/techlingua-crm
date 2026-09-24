@@ -171,7 +171,11 @@ export function tradeIndiaRows(json: any): Raw[] {
 
 /* ============================ Facebook OAuth ============================ */
 const FB_GRAPH = 'https://graph.facebook.com/v21.0';
-export const FB_SCOPES = ['leads_retrieval', 'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement'];
+// `pages_manage_ads` is what Facebook requires to LIST a Page's lead forms
+// (GET /{page}/leadgen_forms -> "(#200) Requires pages_manage_ads permission").
+// `leads_retrieval` only covers fetching the ANSWERS of a lead we were told about,
+// which is why delivery worked while Form Mapping could not read anything.
+export const FB_SCOPES = ['leads_retrieval', 'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_ads'];
 
 /** Build the Facebook login-dialog URL. Pure. */
 export function buildFbAuthUrl(appId: string, redirectUri: string, state: string): string {

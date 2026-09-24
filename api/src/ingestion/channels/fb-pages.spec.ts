@@ -8,6 +8,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { decryptSecret, resetSecretKeyCache } from '../../common/crypto.util';
 import { makeChannel, makeWebhook, metaSign } from './fake-channels.testkit';
+import { FB_SCOPES } from './source-adapters';
 import {
   META_CRM_FIELDS, cleanFormFieldMap, mappedCount, overlayFieldMap, parseFbForms, storedPages,
   suggestFieldMap, webhookPageId,
@@ -266,6 +267,27 @@ describe('"Continue with Facebook" popup — the SDK code is EXCHANGED, not disc
   });
 });
 
+describe('OAuth scopes — what Facebook actually needs', () => {
+  it("asks for pages_manage_ads: without it Facebook refuses to LIST a Page's lead forms", () => {
+    // Production hit "(#200) Requires pages_manage_ads permission to manage the object" the
+    // first time anyone opened Form Mapping. leads_retrieval only covers reading the ANSWERS
+    // of a lead we were notified about, which is why delivery worked and listing did not.
+    expect(FB_SCOPES).toContain('pages_manage_ads');
+    expect(FB_SCOPES).toContain('leads_retrieval');
+    expect(FB_SCOPES).toContain('pages_show_list');
+  });
+
+  it('the connect endpoint hands the popup the SAME list, so the two cannot drift again', async () => {
+    process.env.FB_APP_ID = 'APP123';
+    const ch = makeChannel({ id: 41, provider: 'meta', public_key: 'pk', secrets: {}, config: {} });
+    const { hooks } = makeWebhook([ch]);
+    const out = await hooks.fbConnectUrl(41, 'https://x/cb');
+    expect(out.scopes).toBe(FB_SCOPES.join(','));
+    expect(decodeURIComponent(out.url!)).toContain(FB_SCOPES.join(','));
+    delete process.env.FB_APP_ID;
+  });
+});
+
 describe('Facebook Page Monitor — service', () => {
   beforeEach(() => { process.env.SECRETS_KEY = 'unit-test-key'; process.env.FB_APP_ID = 'APP123'; resetSecretKeyCache(); });
   afterEach(() => { delete process.env.SECRETS_KEY; delete process.env.FB_APP_ID; resetSecretKeyCache(); });
@@ -450,6 +472,14 @@ describe('Facebook Form Mapping — service', () => {
     const f2 = cst.formMappings.find((m) => m.form_id === 'F2');
     expect(f2).toMatchObject({ is_enabled: false, field_map: { email: 'email' } });
     expect(f2.questions).toHaveLength(1);
+  });
+
+  it("a permission refusal from Facebook tells the admin to re-authorise, not to read Meta's wording", async () => {
+    const { fb, hooks } = makeWebhook([multiPage()]);
+    hooks.http = graphStub(() => new Error(
+      '(#200) Requires pages_manage_ads permission to manage the object')).http;
+
+    await expect(fb.forms(1, 'P1')).rejects.toThrow(/Connect Page.*approve Facebook again/s);
   });
 
   it('forms: an unmonitored Page still lists (mapping can be prepared before switching on); unknown Page 404s', async () => {

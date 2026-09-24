@@ -9,7 +9,7 @@ import { ChannelRow, ChannelService } from './channel.service';
 import { RateLimiter } from './rate-limit.util';
 import {
   adaptMarketplace, parseWhatsApp, tradeIndiaRows,
-  buildFbAuthUrl, parseFbPages, FB_GRAPH_BASE, WaMsg,
+  buildFbAuthUrl, parseFbPages, FB_GRAPH_BASE, FB_SCOPES, WaMsg,
 } from './source-adapters';
 import { SheetNotConfiguredError, SheetsClient, HttpFn } from './sheets.client';
 import {
@@ -1038,10 +1038,14 @@ export class WebhookService {
 
   /** Build the Facebook login URL for a Meta channel (authed admin action). Uses the
    *  Meta app saved once in Settings › Channels (provider 'meta_cloud'); env fallback. */
-  async fbConnectUrl(channelId: number, redirectUri: string): Promise<{ url: string | null; error?: string }> {
+  async fbConnectUrl(channelId: number, redirectUri: string): Promise<{ url: string | null; scopes: string; error?: string }> {
     const { appId } = await this.fbAppCreds();
-    if (!appId) return { url: null, error: 'Facebook is not connected yet — save your Meta App ID + App secret once in Settings › Channels, then Log in with Facebook.' };
-    return { url: buildFbAuthUrl(appId, redirectUri, this.signState(channelId)) };
+    // `scopes` is returned so the "Continue with Facebook" POPUP asks for exactly what the
+    // redirect asks for. They were two hand-written lists and had already drifted: the popup
+    // never requested pages_read_engagement, and neither requested pages_manage_ads.
+    const scopes = FB_SCOPES.join(',');
+    if (!appId) return { url: null, scopes, error: 'Facebook is not connected yet — save your Meta App ID + App secret once in Settings › Channels, then Log in with Facebook.' };
+    return { url: buildFbAuthUrl(appId, redirectUri, this.signState(channelId)), scopes };
   }
 
   /**
