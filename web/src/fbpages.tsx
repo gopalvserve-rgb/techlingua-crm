@@ -125,9 +125,13 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
               Lead Ads land in <b>{channel.campaign_name} › {channel.source_name}</b>. A Page that is switched off is still
               connected — its deliveries are logged as <i>skipped</i> and create no lead.
               <div style={{ marginTop: 6 }}>
-                Only the Pages you <b>ticked in Facebook's permission window</b> appear here — not everything in your
-                Business Settings. To add more, press <b>Connect Page</b> again and choose <i>Edit settings</i> /
-                <i> Opt in to current Pages only</i>, then tick the extra Pages.
+                This list is <b>exactly what Facebook granted</b> — not everything in your Business Settings.
+                Facebook <b>remembers the Pages you ticked the first time</b> and silently reuses that choice on
+                every later connect, so reconnecting alone will not add Pages. To widen it, press
+                <b> Connect Page</b> and, in the Facebook window, click <b>Edit access</b> (or <i>Edit previous
+                settings</i>) and tick the extra Pages — or opt in to all of them. If Facebook does not offer the
+                choice, remove the app under <i>Facebook → Settings &amp; privacy → Settings → Business
+                integrations</i>, then connect again for a fresh prompt.
               </div>
             </div>
           </div>

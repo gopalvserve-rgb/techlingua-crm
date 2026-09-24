@@ -177,11 +177,22 @@ const FB_GRAPH = 'https://graph.facebook.com/v21.0';
 // which is why delivery worked while Form Mapping could not read anything.
 export const FB_SCOPES = ['leads_retrieval', 'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_ads'];
 
-/** Build the Facebook login-dialog URL. Pure. */
+/**
+ * Build the Facebook login-dialog URL. Pure.
+ *
+ * `auth_type=rerequest` matters more than it looks. Facebook REMEMBERS which Pages a
+ * person ticked the first time and, on every later authorisation, silently reuses that
+ * choice — the dialog flashes past and /me/accounts returns the same short list however
+ * many times you reconnect. (Observed: a first connect granting ~180 Pages, then 3 after
+ * the admin narrowed it, then 3 on all six reconnects, including one straight after a
+ * full disconnect.) Forcing the dialog to render is what gives the admin the chance to
+ * press "Edit access" and widen the selection. Only Facebook can change that set; we can
+ * only make sure it asks.
+ */
 export function buildFbAuthUrl(appId: string, redirectUri: string, state: string): string {
   const p = new URLSearchParams({
     client_id: appId, redirect_uri: redirectUri, state,
-    response_type: 'code', scope: FB_SCOPES.join(','),
+    response_type: 'code', scope: FB_SCOPES.join(','), auth_type: 'rerequest',
   });
   return `https://www.facebook.com/v21.0/dialog/oauth?${p.toString()}`;
 }

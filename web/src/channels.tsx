@@ -174,7 +174,9 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
             .catch((e) => toast((e as Error).message || 'Could not finish connecting to Facebook.', true))
             .finally(() => setBusy(false));
         },
-        { scope: scopes, response_type: 'code', override_default_response_type: true },
+        // auth_type 'rerequest' forces the dialog to RENDER. Facebook otherwise reuses the
+        // Page selection made the first time, so reconnecting returns the same short list.
+        { scope: scopes, response_type: 'code', override_default_response_type: true, auth_type: 'rerequest' },
       );
     } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
   };

@@ -277,6 +277,17 @@ describe('OAuth scopes — what Facebook actually needs', () => {
     expect(FB_SCOPES).toContain('pages_show_list');
   });
 
+  it("forces the dialog to render (auth_type=rerequest) — Facebook reuses the first Page choice otherwise", async () => {
+    // Six reconnects in production all returned the same 3 Pages, including one immediately
+    // after a full disconnect, because Facebook remembers the selection and skips the picker.
+    process.env.FB_APP_ID = 'APP123';
+    const ch = makeChannel({ id: 42, provider: 'meta', public_key: 'pk', secrets: {}, config: {} });
+    const { hooks } = makeWebhook([ch]);
+    const out = await hooks.fbConnectUrl(42, 'https://x/cb');
+    expect(out.url).toContain('auth_type=rerequest');
+    delete process.env.FB_APP_ID;
+  });
+
   it('the connect endpoint hands the popup the SAME list, so the two cannot drift again', async () => {
     process.env.FB_APP_ID = 'APP123';
     const ch = makeChannel({ id: 41, provider: 'meta', public_key: 'pk', secrets: {}, config: {} });
