@@ -197,7 +197,7 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
       </button>
       {ready ? (
         <span className="fhint">{channelId
-          ? 'One-click sign-in with your connected Meta app — every Page you grant is stored, and you switch the ones you want ON under Pages.'
+          ? 'Log in with Facebook. If it only says "Continue as …", click "Edit previous settings" (or "Edit access") first — that is where Facebook lets you pick the Business portfolios and tick several Pages. Every Page you grant is stored; switch the ones you want ON under Pages.'
           : 'Save this channel first (button below) — then press Continue with Facebook to log in and pull your Pages.'}</span>
       ) : (
         <span className="fhint">
@@ -293,6 +293,9 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
         ) : (
           <input className="ainp" aria-label={f.label}
             type={f.type === 'password' ? 'password' : f.type === 'number' ? 'number' : 'text'}
+            // Browsers autofilled the admin's login email / saved password into these fields
+            // (Page ID became the email, App secret the password). Opt credential fields out.
+            autoComplete={f.type === 'password' ? 'new-password' : 'off'} data-lpignore="true" data-1p-ignore="true"
             placeholder={placeholder} value={val} onChange={(e) => set(e.target.value)} />
         )}
         {f.type !== 'bool' && f.hint && <span className="fhint">{f.hint}</span>}

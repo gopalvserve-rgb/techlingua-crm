@@ -1044,6 +1044,8 @@ export function ChannelConfigModal({ spec, existing, onClose, onSaved }: {
       ) : (
         <input id={`cf-${f.key}`} className="ainp"
           type={secret ? 'password' : f.type === 'number' ? 'number' : 'text'}
+          // Never let the browser autofill the admin's login email / saved password here.
+          autoComplete={secret ? 'new-password' : 'off'} data-lpignore="true" data-1p-ignore="true"
           value={secret ? (secrets[f.key] ?? '') : String(config[f.key] ?? '')}
           placeholder={secret ? (existing?.secrets_masked?.[f.key] || f.placeholder) : f.placeholder}
           onChange={(e) => (secret ? setSecrets({ ...secrets, [f.key]: e.target.value }) : setC(f.key, e.target.value))} />

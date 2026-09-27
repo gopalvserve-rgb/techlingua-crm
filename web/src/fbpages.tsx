@@ -164,7 +164,7 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
             ) : !pages.length ? (
               <div className="empty-note" data-testid="fb-pages-empty">
                 No Facebook Page is connected to this channel yet.
-                {canManage ? ' Press Connect Page, log in with Facebook and grant the Pages whose Lead Ads should flow here — every Page you grant appears in this list.' : ' An admin must press Connect Page first.'}
+                {canManage ? ' Press Connect Page and log in with Facebook. If Facebook only says "Continue as …", click "Edit previous settings" (or "Edit access") to choose the Business portfolios and tick every Page whose Lead Ads should flow here — every Page you grant appears in this list.' : ' An admin must press Connect Page first.'}
               </div>
             ) : (
               <table className="tbl" data-testid="fb-pages-table">
