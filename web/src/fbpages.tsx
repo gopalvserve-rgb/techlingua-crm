@@ -114,7 +114,7 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
   if (choosing) {
     return (
       <FbPagePicker channelId={channel.id} channelName={channel.name}
-        pages={pages.filter((p) => p.has_token)}
+        pages={pages}
         onClose={() => { setChoosing(false); load(); }} onSaved={onChanged} />
     );
   }
@@ -447,7 +447,7 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
 /* ======================================================= Portfolio + Page picker === */
 
 /** A Page as the picker needs it — from the connect response or GET /fb/pages. */
-export interface FbPickPage { page_id: string; page_name: string; business_name?: string | null; monitored: boolean }
+export interface FbPickPage { page_id: string; page_name: string; business_name?: string | null; monitored: boolean; has_token?: boolean; last_error?: string | null }
 
 const NO_BUSINESS = 'Pages not in a Business portfolio';
 
@@ -519,6 +519,10 @@ export function FbPagePicker({ channelId, channelName, pages, onClose, onSaved }
               <div className="fhint" style={{ marginBottom: 8 }}>
                 Tick a <b>Business portfolio</b> to take all its Pages, or open it and tick individual Pages.
                 Leads from every ticked Page flow into this data source. {picked.size} of {pages.length} selected.
+                {pages.some((p) => p.has_token === false) && (
+                  <> Greyed-out Pages are in your portfolios but Facebook gave no access to them — run Continue with Facebook again,
+                  click <b>Edit previous settings</b> and tick them there.</>
+                )}
               </div>
               <input className="ainp" placeholder="Search Pages…" value={q} onChange={(e) => setQ(e.target.value)}
                 aria-label="Search Pages" autoComplete="off" style={{ marginBottom: 10 }} />
@@ -526,25 +530,30 @@ export function FbPagePicker({ channelId, channelName, pages, onClose, onSaved }
                 {groups.map(([biz, list]) => {
                   const shown = visible(list);
                   if (!shown.length) return null;
-                  const ids = list.map((p) => p.page_id);
+                  // only Pages Facebook gave a token for can be switched on
+                  const ids = list.filter((p) => p.has_token !== false).map((p) => p.page_id);
                   const n = ids.filter((id) => picked.has(id)).length;
                   return (
                     <div key={biz} className="card" style={{ margin: 0, padding: 10 }} data-testid="fb-picker-business">
                       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 600, textTransform: 'none', cursor: 'pointer' }}>
-                        <input type="checkbox" aria-label={`Business portfolio ${biz}`} checked={n === ids.length}
+                        <input type="checkbox" aria-label={`Business portfolio ${biz}`} checked={ids.length > 0 && n === ids.length} disabled={!ids.length}
                           ref={(el) => { if (el) el.indeterminate = n > 0 && n < ids.length; }}
                           onChange={(e) => setMany(ids, e.target.checked)} />
                         <Ic k="branch" />{biz}
-                        <span className="sub" style={{ fontWeight: 400, marginLeft: 'auto' }}>{n}/{ids.length} Pages</span>
+                        <span className="sub" style={{ fontWeight: 400, marginLeft: 'auto' }}>{n}/{ids.length} Pages{list.length > ids.length ? ` · ${list.length - ids.length} need access` : ''}</span>
                       </label>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 4, marginTop: 8, paddingLeft: 24 }}>
-                        {shown.map((p) => (
-                          <label key={p.page_id} style={{ display: 'flex', gap: 6, alignItems: 'center', textTransform: 'none', cursor: 'pointer' }}>
-                            <input type="checkbox" aria-label={`Page ${p.page_name || p.page_id}`} checked={picked.has(p.page_id)}
-                              onChange={(e) => setMany([p.page_id], e.target.checked)} />
-                            <span>{p.page_name || p.page_id}</span>
-                          </label>
-                        ))}
+                        {shown.map((p) => {
+                          const locked = p.has_token === false;
+                          return (
+                            <label key={p.page_id} title={locked ? (p.last_error || 'No access token from Facebook') : undefined}
+                              style={{ display: 'flex', gap: 6, alignItems: 'center', textTransform: 'none', cursor: locked ? 'not-allowed' : 'pointer', opacity: locked ? 0.55 : 1 }}>
+                              <input type="checkbox" aria-label={`Page ${p.page_name || p.page_id}`} checked={picked.has(p.page_id)} disabled={locked}
+                                onChange={(e) => setMany([p.page_id], e.target.checked)} />
+                              <span>{p.page_name || p.page_id}{locked && <span className="sub" style={{ fontSize: 11 }}> — needs access on Facebook</span>}</span>
+                            </label>
+                          );
+                        })}
                       </div>
                     </div>
                   );

@@ -34,6 +34,9 @@ export interface ReqMeta {
 }
 
 /** What a controller turns into an HTTP response. */
+/** A Page one Facebook login can see; access_token '' = Facebook gave none (token_error says why). */
+interface GrantedPage { page_id: string; page_name: string; access_token: string; business_name?: string; token_error?: string | null }
+
 export interface WebhookResult {
   http: number;                       // the status code the PROVIDER must receive
   body: unknown;
@@ -1109,46 +1112,54 @@ export class WebhookService {
    */
   private async connectPagesWithUserToken(
     ch: any, userToken: string, pick = false,
-  ): Promise<{ pages: number; primary: string; subscribed: boolean; others: number; list: Array<{ page_id: string; page_name: string; business_name: string | null; monitored: boolean }> }> {
-    const pages = await this.grantedPages(userToken);
+  ): Promise<{ pages: number; primary: string; subscribed: boolean; others: number; list: Array<{ page_id: string; page_name: string; business_name: string | null; monitored: boolean; has_token: boolean; last_error: string | null }> }> {
+    const { pages, diag } = await this.grantedPages(userToken);
     if (!pages.length) throw new Error('No Facebook Pages were returned — make sure you granted the app access to your Page.');
+    const usable = pages.filter((p) => p.access_token);
+    if (!pick && !usable.length) throw new Error('Facebook returned Pages but no access token for any of them — grant the Pages on Facebook ("Edit previous settings") and try again.');
 
-    // PRIMARY Page = the one the channel is bound to (config.page_id), else the first —
-    // exactly the old single-Page choice. It gets the legacy fields + a leadgen subscribe.
+    // PRIMARY Page = the one the channel is bound to (config.page_id), else the first one
+    // that has a token. It gets the legacy fields (+ a leadgen subscribe outside pick mode).
     const wantId = String((ch.config as any)?.page_id ?? '').trim();
-    const page = (wantId && pages.find((p) => p.page_id === wantId)) || pages[0];
+    const page = (wantId && usable.find((p) => p.page_id === wantId)) || usable[0] || pages[0];
 
     // PAGE MONITOR: keep EVERY granted Page. One encrypted token per Page (flat key —
     // mergeSecrets encrypts string values), metadata (no tokens) in config.pages. A
     // re-authorisation refreshes tokens and keeps each Page's monitored flag; Pages that
     // were already stored but not returned this time are left as they are.
-    const tokens: Record<string, string> = { page_access_token: page.access_token };
-    for (const p of pages) tokens[pageTokenKey(p.page_id)] = p.access_token;
-    await this.channels.mergeSecrets(ch.id, tokens);
+    const tokens: Record<string, string> = {};
+    if (page.access_token) tokens.page_access_token = page.access_token;
+    for (const p of usable) tokens[pageTokenKey(p.page_id)] = p.access_token;
+    if (Object.keys(tokens).length) await this.channels.mergeSecrets(ch.id, tokens);
+    const noTokenMsg = (p: GrantedPage) => `No access token from Facebook${p.token_error ? ` (${p.token_error})` : ''} — grant this Page on Facebook ("Edit previous settings") to connect it.`;
 
     const now = new Date().toISOString();
     const merged: FbPageEntry[] = [...storedPages(ch.config)];
     for (const p of pages) {
       const cur = merged.find((m) => m.page_id === p.page_id);
-      if (cur) { cur.page_name = p.page_name || cur.page_name; cur.business_name = p.business_name || cur.business_name || null; continue; }
+      if (cur) {
+        cur.page_name = p.page_name || cur.page_name; cur.business_name = p.business_name || cur.business_name || null;
+        if (!p.access_token) cur.last_error = noTokenMsg(p);
+        continue;
+      }
       merged.push({
         page_id: p.page_id, page_name: p.page_name, business_name: p.business_name || null,
         // only the primary is monitored by default — none at all when the admin picks next
         monitored: !pick && p.page_id === page.page_id,
-        subscribed: null, subscribed_at: null, checked_at: null, last_error: null,
+        subscribed: null, subscribed_at: null, checked_at: null, last_error: p.access_token ? null : noTokenMsg(p),
       });
     }
     const primary = merged.find((m) => m.page_id === page.page_id)!;
-    const listOut = () => merged.map((m) => ({ page_id: m.page_id, page_name: m.page_name, business_name: m.business_name ?? null, monitored: m.monitored }));
+    const listOut = () => merged.map((m) => ({ page_id: m.page_id, page_name: m.page_name, business_name: m.business_name ?? null, monitored: m.monitored, has_token: !!tokens[pageTokenKey(m.page_id)] || !!(ch.secrets ?? {})[pageTokenKey(m.page_id)], last_error: m.last_error ?? null }));
     if (pick) {
       // The admin chooses Business portfolios + Pages in the CRM picker right after this;
       // each chosen Page is subscribed to leadgen then (FbPagesService.subscribe).
       await this.channels.mergeConfig(ch.id, { page_id: page.page_id, page_name: page.page_name, pages: merged });
       await this.channels.logEvent({
         channel_id: ch.id, org_id: ch.org_id, provider: 'meta', public_key: ch.public_key, method: 'GET',
-        raw: { pages: pages.map((p) => ({ page_id: p.page_id, page_name: p.page_name, business_name: p.business_name ?? null })) },
+        raw: { diag, pages: pages.map((p) => ({ page_id: p.page_id, page_name: p.page_name, business_name: p.business_name ?? null, has_token: !!p.access_token, token_error: p.token_error ?? null })) },
         status: 'verified',
-        reason: `Facebook login stored ${pages.length} Page(s) — waiting for the admin to choose which to monitor`,
+        reason: `Facebook login found ${pages.length} Page(s) (${usable.length} with access token) — waiting for the admin to choose which to monitor`,
       });
       return { pages: pages.length, primary: page.page_name, subscribed: false, others: pages.length - 1, list: listOut() };
     }
@@ -1180,59 +1191,85 @@ export class WebhookService {
   }
 
   /**
-   * Every Page the admin granted: /me/accounts (following paging, not only the first 200),
-   * plus the Pages of each Business portfolio they picked (owned + client Pages) — a
-   * business-owned Page is not always listed under /me/accounts. The business lookups need
-   * business_management; without it they fail and are skipped, never failing the connect.
+   * Every Page this Facebook login can see — SAME tiers as SmartCRM's _fetchAllPages:
+   * /me/accounts (all result pages), the subfield fallback, then every Business portfolio
+   * (/me/businesses) with its owned_pages + client_pages. Like SmartCRM, a portfolio Page is
+   * KEPT even when Facebook gives no access token for it (it used to be dropped silently) —
+   * it is listed with the reason so the admin sees it and knows it must be granted on
+   * Facebook before leads can be subscribed. `diag` records what each tier returned.
    */
-  private async grantedPages(userToken: string): Promise<Array<{ page_id: string; page_name: string; access_token: string; business_name?: string }>> {
+  private async grantedPages(userToken: string): Promise<{ pages: GrantedPage[]; diag: Record<string, unknown> }> {
     const tok = encodeURIComponent(userToken);
-    const out = new Map<string, { page_id: string; page_name: string; access_token: string; business_name?: string }>();
-    const collect = async (firstUrl: string, businessName?: string) => {
+    const clean = (m: unknown) => String(m ?? '').replace(/access_token=[^&\s"']+/gi, 'access_token=***').slice(0, 200);
+    const out = new Map<string, GrantedPage>();
+    const diag: Record<string, unknown> = {};
+    const collect = async (firstUrl: string, tier: string, businessName?: string) => {
       let url: string | null = firstUrl;
+      let count = 0, noToken = 0;
       for (let guard = 0; url && guard < 20; guard++) {
         const json: any = await this.fbGet(url);
-        // A business-managed Page can come back without access_token — ask for it per Page,
-        // otherwise it cannot be subscribed to leadgen (same as SmartCRM's _fetchAllPages).
         for (const r of Array.isArray(json?.data) ? json.data : []) {
-          if (r?.id && !r.access_token) {
+          if (!r?.id) continue;
+          count++;
+          const id = String(r.id);
+          let token = String(r.access_token ?? '');
+          let tokenError: string | null = null;
+          if (!token && !(out.get(id)?.access_token)) {
+            // A portfolio Page often comes back without a token — ask for it per Page.
             try {
-              const t: any = await this.fbGet(`${FB_GRAPH_BASE}/${encodeURIComponent(String(r.id))}?fields=access_token&access_token=${tok}`);
-              if (t?.access_token) r.access_token = t.access_token;
-            } catch { /* no token for this Page — skipped */ }
+              const t: any = await this.fbGet(`${FB_GRAPH_BASE}/${encodeURIComponent(id)}?fields=access_token&access_token=${tok}`);
+              token = String(t?.access_token ?? '');
+              if (!token) tokenError = 'Facebook returned no access token for this Page';
+            } catch (e) { tokenError = clean((e as Error).message); }
           }
-        }
-        for (const p of parseFbPages(json)) {
-          const cur = out.get(p.page_id);
-          if (!cur) out.set(p.page_id, { ...p, business_name: businessName });
-          else if (businessName && !cur.business_name) cur.business_name = businessName;
+          const cur = out.get(id);
+          if (!cur) {
+            out.set(id, { page_id: id, page_name: String(r.name ?? ''), access_token: token, business_name: businessName, token_error: token ? null : tokenError });
+          } else {
+            if (businessName && !cur.business_name) cur.business_name = businessName;
+            if (!cur.access_token && token) { cur.access_token = token; cur.token_error = null; }
+          }
+          if (!token && !cur?.access_token) noToken++;
         }
         url = typeof json?.paging?.next === 'string' ? json.paging.next : null;
       }
+      diag[tier] = { count, no_token: noToken };
     };
-    await collect(`${FB_GRAPH_BASE}/me/accounts?fields=id,name,access_token&limit=200&access_token=${tok}`);
+    try { await collect(`${FB_GRAPH_BASE}/me/accounts?fields=id,name,access_token&limit=200&access_token=${tok}`, 'me/accounts'); }
+    catch (e) { diag['me/accounts'] = { error: clean((e as Error).message) }; }
     if (!out.size) {
       // Login for Business tokens can return an empty /me/accounts while the selected Pages
       // are still visible through the subfield form.
       try {
         const sub: any = await this.fbGet(`${FB_GRAPH_BASE}/me?fields=accounts{id,name,access_token}&access_token=${tok}`);
-        for (const p of parseFbPages(sub?.accounts)) out.set(p.page_id, p);
-      } catch { /* fall through to the business tiers */ }
+        const arr = Array.isArray(sub?.accounts?.data) ? sub.accounts.data : [];
+        for (const r of arr) if (r?.id && !out.has(String(r.id))) {
+          out.set(String(r.id), { page_id: String(r.id), page_name: String(r.name ?? ''), access_token: String(r.access_token ?? ''), token_error: r.access_token ? null : 'Facebook returned no access token for this Page' });
+        }
+        diag['me?fields=accounts'] = { count: arr.length };
+      } catch (e) { diag['me?fields=accounts'] = { error: clean((e as Error).message) }; }
     }
     try {
       const biz: any = await this.fbGet(`${FB_GRAPH_BASE}/me/businesses?fields=id,name&limit=100&access_token=${tok}`);
-      for (const b of Array.isArray(biz?.data) ? biz.data : []) {
+      const list = Array.isArray(biz?.data) ? biz.data : [];
+      diag['me/businesses'] = { count: list.length, names: list.map((b: any) => String(b?.name ?? b?.id ?? '')) };
+      for (const b of list) {
         if (!b?.id) continue;
         for (const edge of ['owned_pages', 'client_pages']) {
+          const tier = `${String(b.name ?? b.id)}/${edge}`;
           try {
-            await collect(`${FB_GRAPH_BASE}/${encodeURIComponent(String(b.id))}/${edge}?fields=id,name,access_token&limit=200&access_token=${tok}`, String(b.name ?? ''));
+            await collect(`${FB_GRAPH_BASE}/${encodeURIComponent(String(b.id))}/${edge}?fields=id,name,access_token&limit=200&access_token=${tok}`, tier, String(b.name ?? ''));
           } catch (e) {
-            this.log.warn(`fb ${edge} for business ${b.id} skipped: ${String((e as Error).message).replace(/access_token=[^&\s"']+/gi, 'access_token=***')}`);
+            diag[tier] = { error: clean((e as Error).message) };
+            this.log.warn(`fb ${tier} skipped: ${clean((e as Error).message)}`);
           }
         }
       }
-    } catch { /* no business_management — /me/accounts alone */ }
-    return [...out.values()];
+    } catch (e) { diag['me/businesses'] = { error: clean((e as Error).message) }; }
+    const pages = [...out.values()];
+    diag.total = pages.length;
+    diag.without_token = pages.filter((p) => !p.access_token).length;
+    return { pages, diag };
   }
 
   /**

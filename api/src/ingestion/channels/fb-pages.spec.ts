@@ -179,6 +179,31 @@ describe('Facebook OAuth callback — keeps EVERY granted Page', () => {
     expect(row.config.pages.every((p: any) => p.monitored === false)).toBe(true);
   });
 
+  it('like SmartCRM, every Business-portfolio Page is kept — one without an access token is listed with the reason, not dropped', async () => {
+    const ch = makeChannel({ id: 21, provider: 'meta', public_key: 'pubkeyM', secrets: { verify_token: 'v', app_secret: 'as' }, config: {} });
+    const { hooks, cst } = makeWebhook([ch]);
+    hooks.http = graphStub((url) => {
+      if (url.includes('/oauth/access_token')) return { access_token: 'USERTOK' };
+      if (url.includes('/me/accounts')) return { data: [{ id: 'P1', name: 'Own Page', access_token: 'TOK1' }] };
+      if (url.includes('/me/businesses')) return { data: [{ id: 'B1', name: 'Smart CRM Solutions' }] };
+      if (url.includes('/B1/owned_pages')) return { data: [{ id: 'P1', name: 'Own Page' }, { id: 'P9', name: 'Portfolio Page' }] };
+      if (url.includes('/B1/client_pages')) return { data: [] };
+      if (url.includes('/P9?fields=access_token')) return new Error('(#200) The user must be an administrator of the page');
+      return new Error('unexpected ' + url);
+    }).http;
+    const out = await connect(hooks);
+    expect(out.redirectTo).toBe('/m/leads/capture?fb_pick=21');
+    const row = cst.channels[0];
+    const p9 = row.config.pages.find((p: any) => p.page_id === 'P9');
+    expect(p9).toMatchObject({ page_name: 'Portfolio Page', business_name: 'Smart CRM Solutions', monitored: false });
+    expect(p9.last_error).toMatch(/No access token from Facebook/);
+    expect(row.secrets.page_token_P9).toBeUndefined();              // nothing to store for it
+    expect(decryptSecret(row.secrets.page_token_P1)).toBe('TOK1');
+    const ev = cst.events.at(-1);
+    expect(ev.raw.diag).toMatchObject({ total: 2, without_token: 1 });
+    expect(JSON.stringify(ev.raw)).not.toContain('USERTOK');
+  });
+
   it('re-authorising keeps each Page\'s monitored flag and refreshes the tokens', async () => {
     const ch = multiPage({ id: 21, public_key: 'pubkeyM' });
     ch.config.pages[1].monitored = true;                     // admin switched P2 on earlier

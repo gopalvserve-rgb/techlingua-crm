@@ -481,7 +481,7 @@ export default function Channels() {
     window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
     if (fbErr) { toast(`Facebook: ${fbErr}`, true); return; }
     api.get<{ pages: FbPickPage[] }>(`/channels/${pickId}/fb/pages`)
-      .then((r) => setFbPick({ id: pickId, pages: (r.pages ?? []).filter((p: any) => p.has_token !== false) }))
+      .then((r) => setFbPick({ id: pickId, pages: r.pages ?? [] }))
       .catch((e) => toast((e as Error).message, true));
   }, []);
 
