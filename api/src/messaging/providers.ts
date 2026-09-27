@@ -214,6 +214,10 @@ const SPECS: MsgProviderSpec[] = [
       // everything else so there is ONE place the client configures WhatsApp.
       { key: 'app_id', label: 'Meta App ID', type: 'text', placeholder: '1234567890123456', hint: 'Meta for Developers › your app › Settings › Basic. Public — it ships to the browser.' },
       { key: 'config_id', label: 'Embedded Signup Configuration ID', type: 'text', hint: 'Meta › Facebook Login for Business › Configurations. Required for the Connect WhatsApp button.' },
+      // Facebook Lead Ads login — a SEPARATE Facebook Login for Business configuration. With it,
+      // "Continue with Facebook" shows Meta's Business portfolio + Page picker (multi-select);
+      // without it the classic scope login only re-uses the Pages granted the first time.
+      { key: 'lead_ads_config_id', label: 'Facebook Lead Ads Login Configuration ID (optional)', type: 'text', hint: 'Meta › Facebook Login for Business › Configurations › Create: token type "User access token", assets "Pages", permissions leads_retrieval, pages_show_list, pages_manage_metadata, pages_read_engagement, pages_manage_ads, business_management. Optional — leave blank to use the standard Facebook login (same as SmartCRM), which already shows the Business portfolio + Page selection.' },
       // ---- Filled BY Embedded Signup. Still editable, because the manual path must stay.
       { key: 'phone_number_id', label: 'Phone number ID', type: 'text', required: true, hint: 'Filled automatically by Connect WhatsApp. Meta › WhatsApp › API Setup if you are doing it by hand.' },
       { key: 'waba_id', label: 'WhatsApp Business Account ID', type: 'text', hint: 'Filled automatically by Connect WhatsApp.' },

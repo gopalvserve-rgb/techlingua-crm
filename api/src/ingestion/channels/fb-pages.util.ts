@@ -18,6 +18,8 @@ import { CHANNEL_TARGETS, resolveTarget } from './providers';
 export interface FbPageEntry {
   page_id: string;
   page_name: string;
+  /** Business portfolio the Page came from (Facebook Login for Business), when known */
+  business_name?: string | null;
   /** leads for this Page are ingested (false -> deliveries are logged as skipped) */
   monitored: boolean;
   /** last known Graph status of our app's leadgen subscription; null = never checked */
@@ -50,6 +52,7 @@ export function storedPages(config: unknown): FbPageEntry[] {
     out.push({
       page_id: id,
       page_name: S(r.page_name),
+      business_name: S(r.business_name) || null,
       monitored: r.monitored === true,
       subscribed: typeof r.subscribed === 'boolean' ? r.subscribed : null,
       subscribed_at: S(r.subscribed_at) || null,

@@ -148,7 +148,7 @@ export class WebhookService {
     const sigOk = !!appSecret && !!sig && safeEqual(sig, expected);
 
     if (!sigOk) {
-      const reason = !appSecret ? 'App secret not configured on this channel — payload rejected'
+      const reason = !appSecret ? 'App secret not configured (Settings › Channels › Meta app › App secret) — payload rejected'
         : !sig ? 'Missing X-Hub-Signature-256 header — unsigned payloads are never accepted'
           : 'X-Hub-Signature-256 does not match (wrong app secret, or the body was altered)';
       await this.channels.logEvent({
@@ -1017,8 +1017,8 @@ export class WebhookService {
    * fallback for a self-hosted deploy. This is why any branch can just click "Log in
    * with Facebook": the app is shared, only the Page token (per channel) differs.
    */
-  async fbAppCreds(): Promise<{ appId: string; appSecret: string }> {
-    let appId = '', appSecret = '';
+  async fbAppCreds(): Promise<{ appId: string; appSecret: string; leadAdsConfigId: string }> {
+    let appId = '', appSecret = '', leadAdsConfigId = '';
     try {
       const row = await this.db.one<any>(
         `SELECT config, secrets FROM channel_config
@@ -1027,25 +1027,30 @@ export class WebhookService {
       );
       if (row) {
         appId = String((row.config ?? {}).app_id ?? '').trim();
+        leadAdsConfigId = String((row.config ?? {}).lead_ads_config_id ?? '').trim();
         const enc = (row.secrets ?? {}).app_secret;
         appSecret = enc ? (decryptSecret(enc) || '') : '';
       }
     } catch { /* fall through to env */ }
     if (!appId) appId = process.env.FB_APP_ID ?? '';
     if (!appSecret) appSecret = process.env.FB_APP_SECRET ?? '';
-    return { appId, appSecret };
+    if (!leadAdsConfigId) leadAdsConfigId = process.env.FB_LEAD_ADS_CONFIG_ID ?? '';
+    return { appId, appSecret, leadAdsConfigId };
   }
 
   /** Build the Facebook login URL for a Meta channel (authed admin action). Uses the
    *  Meta app saved once in Settings › Channels (provider 'meta_cloud'); env fallback. */
-  async fbConnectUrl(channelId: number, redirectUri: string): Promise<{ url: string | null; scopes: string; error?: string }> {
-    const { appId } = await this.fbAppCreds();
+  async fbConnectUrl(channelId: number, redirectUri: string): Promise<{ url: string | null; scopes: string; config_id: string; error?: string }> {
+    const { appId, leadAdsConfigId } = await this.fbAppCreds();
     // `scopes` is returned so the "Continue with Facebook" POPUP asks for exactly what the
     // redirect asks for. They were two hand-written lists and had already drifted: the popup
     // never requested pages_read_engagement, and neither requested pages_manage_ads.
     const scopes = FB_SCOPES.join(',');
-    if (!appId) return { url: null, scopes, error: 'Facebook is not connected yet — save your Meta App ID + App secret once in Settings › Channels, then Log in with Facebook.' };
-    return { url: buildFbAuthUrl(appId, redirectUri, this.signState(channelId)), scopes };
+    // config_id (Facebook Login for Business) is what makes Meta show the Business portfolio +
+    // multi-Page picker; both the popup and the redirect use it when it is configured.
+    const config_id = leadAdsConfigId;
+    if (!appId) return { url: null, scopes, config_id, error: 'Facebook is not connected yet — save your Meta App ID + App secret once in Settings › Channels, then Log in with Facebook.' };
+    return { url: buildFbAuthUrl(appId, redirectUri, this.signState(channelId), config_id || undefined), scopes, config_id };
   }
 
   /**
@@ -1097,8 +1102,7 @@ export class WebhookService {
   private async connectPagesWithUserToken(
     ch: any, userToken: string,
   ): Promise<{ pages: number; primary: string; subscribed: boolean; others: number }> {
-    const accounts = await this.fbGet(`${FB_GRAPH_BASE}/me/accounts?limit=200&access_token=${encodeURIComponent(userToken)}`);
-    const pages = parseFbPages(accounts);
+    const pages = await this.grantedPages(userToken);
     if (!pages.length) throw new Error('No Facebook Pages were returned — make sure you granted the app access to your Page.');
 
     // PRIMARY Page = the one the channel is bound to (config.page_id), else the first —
@@ -1118,9 +1122,9 @@ export class WebhookService {
     const merged: FbPageEntry[] = [...storedPages(ch.config)];
     for (const p of pages) {
       const cur = merged.find((m) => m.page_id === p.page_id);
-      if (cur) { cur.page_name = p.page_name || cur.page_name; continue; }
+      if (cur) { cur.page_name = p.page_name || cur.page_name; cur.business_name = p.business_name || cur.business_name || null; continue; }
       merged.push({
-        page_id: p.page_id, page_name: p.page_name,
+        page_id: p.page_id, page_name: p.page_name, business_name: p.business_name || null,
         monitored: p.page_id === page.page_id,      // only the primary is monitored by default
         subscribed: null, subscribed_at: null, checked_at: null, last_error: null,
       });
@@ -1151,6 +1155,62 @@ export class WebhookService {
         + (others > 0 ? ` · ${others} more Page(s) available in Page Monitor (not monitored until switched on)` : ''),
     });
     return { pages: pages.length, primary: page.page_name, subscribed, others };
+  }
+
+  /**
+   * Every Page the admin granted: /me/accounts (following paging, not only the first 200),
+   * plus the Pages of each Business portfolio they picked (owned + client Pages) — a
+   * business-owned Page is not always listed under /me/accounts. The business lookups need
+   * business_management; without it they fail and are skipped, never failing the connect.
+   */
+  private async grantedPages(userToken: string): Promise<Array<{ page_id: string; page_name: string; access_token: string; business_name?: string }>> {
+    const tok = encodeURIComponent(userToken);
+    const out = new Map<string, { page_id: string; page_name: string; access_token: string; business_name?: string }>();
+    const collect = async (firstUrl: string, businessName?: string) => {
+      let url: string | null = firstUrl;
+      for (let guard = 0; url && guard < 20; guard++) {
+        const json: any = await this.fbGet(url);
+        // A business-managed Page can come back without access_token — ask for it per Page,
+        // otherwise it cannot be subscribed to leadgen (same as SmartCRM's _fetchAllPages).
+        for (const r of Array.isArray(json?.data) ? json.data : []) {
+          if (r?.id && !r.access_token) {
+            try {
+              const t: any = await this.fbGet(`${FB_GRAPH_BASE}/${encodeURIComponent(String(r.id))}?fields=access_token&access_token=${tok}`);
+              if (t?.access_token) r.access_token = t.access_token;
+            } catch { /* no token for this Page — skipped */ }
+          }
+        }
+        for (const p of parseFbPages(json)) {
+          const cur = out.get(p.page_id);
+          if (!cur) out.set(p.page_id, { ...p, business_name: businessName });
+          else if (businessName && !cur.business_name) cur.business_name = businessName;
+        }
+        url = typeof json?.paging?.next === 'string' ? json.paging.next : null;
+      }
+    };
+    await collect(`${FB_GRAPH_BASE}/me/accounts?fields=id,name,access_token&limit=200&access_token=${tok}`);
+    if (!out.size) {
+      // Login for Business tokens can return an empty /me/accounts while the selected Pages
+      // are still visible through the subfield form.
+      try {
+        const sub: any = await this.fbGet(`${FB_GRAPH_BASE}/me?fields=accounts{id,name,access_token}&access_token=${tok}`);
+        for (const p of parseFbPages(sub?.accounts)) out.set(p.page_id, p);
+      } catch { /* fall through to the business tiers */ }
+    }
+    try {
+      const biz: any = await this.fbGet(`${FB_GRAPH_BASE}/me/businesses?fields=id,name&limit=100&access_token=${tok}`);
+      for (const b of Array.isArray(biz?.data) ? biz.data : []) {
+        if (!b?.id) continue;
+        for (const edge of ['owned_pages', 'client_pages']) {
+          try {
+            await collect(`${FB_GRAPH_BASE}/${encodeURIComponent(String(b.id))}/${edge}?fields=id,name,access_token&limit=200&access_token=${tok}`, String(b.name ?? ''));
+          } catch (e) {
+            this.log.warn(`fb ${edge} for business ${b.id} skipped: ${String((e as Error).message).replace(/access_token=[^&\s"']+/gi, 'access_token=***')}`);
+          }
+        }
+      }
+    } catch { /* no business_management — /me/accounts alone */ }
+    return [...out.values()];
   }
 
   /**

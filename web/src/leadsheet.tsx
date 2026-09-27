@@ -217,6 +217,14 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
   );
 
   const notes = (lead.activities as Activity[]).filter((a) => a.type === 'note');
+  // Call dispositions (leads-list "Log call disposition" + Start Calling outcomes) surface as
+  // call notes on the Calls tab, not only on the Activity timeline.
+  const callNotes = (lead.activities as Activity[]).filter((a) => a.type === 'disposition');
+  const dispName = (a: Activity) => {
+    const cd = a.to_value?.call_disposition_id, d = a.to_value?.disposition_id;
+    return (cd && ref.callDispositions?.find((x) => Number(x.id) === Number(cd))?.name)
+      || (d && ref.dispositions?.find((x) => Number(x.id) === Number(d))?.name) || 'Call outcome';
+  };
 
   return (
     <div className="modal-scrim">
@@ -546,7 +554,23 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                 </div>
               </>
             )}
-            {tab === 'calls' && <LeadCallsTab leadId={Number(lead.id)} phone={lead.phone} />}
+            {tab === 'calls' && (
+              <>
+                <h4 style={{ margin: '0 0 10px' }}>Call notes</h4>
+                <div className="tl" style={{ marginBottom: 18 }}>
+                  {callNotes.length === 0 && <div className="empty-note">No call dispositions logged yet</div>}
+                  {callNotes.map((a) => (
+                    <div className="tl-item" key={a.id}>
+                      <div className="tt"><Ic k="calls" w={2} /> {dispName(a)}</div>
+                      {a.note && <div className="td" style={{ whiteSpace: 'pre-wrap' }}>{a.note}</div>}
+                      <div className="td">{a.actor_name || ''}</div>
+                      <div className="tm">{fmtDT(a.occurred_at)}</div>
+                    </div>
+                  ))}
+                </div>
+                <LeadCallsTab leadId={Number(lead.id)} phone={lead.phone} />
+              </>
+            )}
             {tab === 'whatsapp' && <div className="empty-note">WhatsApp message history appears here once WhatsApp is connected in Settings › Channels.</div>}
           </div>
         </div>
@@ -705,6 +729,64 @@ export function RedFlagModal({ leadId, leadName, flagged, onClose, onDone }:
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={submit} disabled={busy || !remark.trim()}
             style={{ background: 'var(--red)', borderColor: 'var(--red)' }}><Ic k="flag" />Red flag</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Notes-only popup for the contact quick-action Note icon — adds a note and lists the lead's
+ * notes without opening the full lead sheet in edit mode.
+ */
+export function LeadNotesModal({ leadId, onClose, onChanged }: { leadId: number; onClose: () => void; onChanged?: () => void }) {
+  const { can } = useAuth();
+  const [lead, setLead] = useState<any>(null);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    try { setLead(await api.get<any>(`/leads/${leadId}`)); } catch (e: any) { toast(e.message, true); }
+  };
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [leadId]);
+  const notes = ((lead?.activities ?? []) as Activity[]).filter((a) => a.type === 'note');
+  const save = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    try {
+      await api.post(`/leads/${leadId}/notes`, { note: text.trim() });
+      setText(''); toast('Note added');
+      await load(); onChanged?.();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim" style={{ zIndex: 300 }} onClick={onClose}>
+      <div className="add-modal" style={{ width: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div className="ah"><h3><Ic k="note" />Notes{lead?.full_name ? ` — ${lead.full_name}` : ''}</h3>
+          <button className="ax" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="abody">
+          {can('lead.update') && (
+            <div className="fld">
+              <label>Add note</label>
+              <textarea className="ainp" rows={3} autoFocus aria-label="Note" value={text}
+                onChange={(e) => setText(e.target.value)} placeholder="Type a note…"
+                onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(); }} />
+            </div>
+          )}
+          <div className="tl" style={{ maxHeight: 280, overflowY: 'auto' }}>
+            {!lead && <div className="empty-note">Loading…</div>}
+            {lead && notes.length === 0 && <div className="empty-note">No notes yet</div>}
+            {notes.map((a) => (
+              <div className="tl-item" key={a.id}>
+                <div className="tt" style={{ whiteSpace: 'pre-wrap' }}>{a.note}</div>
+                <div className="td">{a.actor_name || ''}</div>
+                <div className="tm">{fmtDT(a.occurred_at)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Close</button>
+          {can('lead.update') && <button className="btn primary" onClick={save} disabled={busy || !text.trim()}><Ic k="check" />Save note</button>}
         </div>
       </div>
     </div>

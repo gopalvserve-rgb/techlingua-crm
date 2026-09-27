@@ -72,7 +72,7 @@ export const PROVIDERS: Record<string, ProviderSpec> = {
       { key: 'verify_token', label: 'Verify token', type: 'password', required: true, generated: true,
         hint: 'Generated for you. Paste this into Meta when you add the Callback URL.' },
       { key: 'app_secret', label: 'App secret', type: 'password', required: true,
-        hint: 'Meta App Dashboard › Settings › Basic › App Secret. Used to verify X-Hub-Signature-256 — an unsigned payload is always rejected.' },
+        hint: 'Leave blank to use the App secret saved once in Settings › Channels › Meta app. Meta App Dashboard › Settings › Basic › App Secret. Used to verify X-Hub-Signature-256 — an unsigned payload is always rejected.' },
       { key: 'page_access_token', label: 'Page access token', type: 'password', required: true,
         hint: 'A long-lived Page token with leads_retrieval. Used to fetch the lead fields for a leadgen_id from the Graph API.' },
     ],

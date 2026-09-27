@@ -108,7 +108,7 @@ function CopyRow({ label, value, hint }: { label: string; value: string; hint?: 
 }
 
 /** Used only until the server answers with its own FB_SCOPES list. */
-const FB_FALLBACK_SCOPES = 'leads_retrieval,pages_show_list,pages_manage_metadata,pages_read_engagement,pages_manage_ads';
+const FB_FALLBACK_SCOPES = 'public_profile,pages_show_list,pages_manage_metadata,pages_read_engagement,pages_read_user_content,pages_manage_ads,leads_retrieval,ads_management,ads_read,business_management';
 
 /* ------------------------------------------------- Continue with Facebook --- */
 
@@ -129,6 +129,9 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
   // pages_manage_ads, which is what Form Mapping needs. Fetched on mount so the click
   // handler stays synchronous (Chrome blocks a popup opened after an await).
   const [scopes, setScopes] = useState(FB_FALLBACK_SCOPES);
+  // Facebook Login for Business configuration (Settings › Channels › Meta app). When set, the
+  // dialog shows Meta's Business portfolio + multi-Page picker instead of the classic login.
+  const [fbConfigId, setFbConfigId] = useState('');
 
   useEffect(() => {
     api.get<{ ready: boolean; missing: string[]; app_id: string }>('/settings/whatsapp/embedded-signup')
@@ -138,8 +141,8 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
 
   useEffect(() => {
     if (!channelId) return;
-    api.get<{ scopes?: string }>(`/channels/${channelId}/fb/connect`)
-      .then((r) => { if (r?.scopes) setScopes(r.scopes); })
+    api.get<{ scopes?: string; config_id?: string }>(`/channels/${channelId}/fb/connect`)
+      .then((r) => { if (r?.scopes) setScopes(r.scopes); setFbConfigId(r?.config_id || ''); })
       .catch(() => { /* keep the fallback list */ });
   }, [channelId]);
 
@@ -176,7 +179,11 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
         },
         // auth_type 'rerequest' forces the dialog to RENDER. Facebook otherwise reuses the
         // Page selection made the first time, so reconnecting returns the same short list.
-        { scope: scopes, response_type: 'code', override_default_response_type: true, auth_type: 'rerequest' },
+        // With a Login for Business config_id Meta takes the permissions from the configuration
+        // and shows the Business portfolio + Page selection (pick several).
+        fbConfigId
+          ? { config_id: fbConfigId, response_type: 'code', override_default_response_type: true }
+          : { scope: scopes, response_type: 'code', override_default_response_type: true, auth_type: 'rerequest' },
       );
     } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
   };

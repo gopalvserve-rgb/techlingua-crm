@@ -95,6 +95,8 @@ export interface ScreenCtxT {
   // unassigned, created_from/to, sla_breached, …) so a KPI card opens its list pre-filtered.
   go: (m: string, s: string, params?: Record<string, string | number | undefined>) => void;
   openLead: (id: number, mode?: 'view' | 'edit', tab?: 'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp') => void;
+  /** Notes-only popup (quick-action Note icon); falls back to the lead sheet's Notes tab. */
+  openNotes?: (id: number) => void;
   openAdd: (formKey: string) => void;
   refreshTick: number;
   bump: () => void;
@@ -211,7 +213,7 @@ function PrioSelect({ id, value, onChanged, disabled }: { id: number; value?: st
   );
 }
 
-function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: 'notes') => void): Cell[] {
+function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: 'notes') => void, openNotes?: (id: number) => void): Cell[] {
   const overdue = l.next_follow_up_at && new Date(l.next_follow_up_at) < new Date();
   return [
     { node: (
@@ -222,7 +224,7 @@ function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: '
           <div className="sub mono" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span>{l.phone}</span>
             <ContactQuickActions phone={l.phone} whatsapp={l.whatsapp_phone}
-              onNote={openLead ? () => openLead(Number(l.id), 'edit', 'notes') : undefined} />
+              onNote={openNotes ? () => openNotes(Number(l.id)) : openLead ? () => openLead(Number(l.id), 'edit', 'notes') : undefined} />
           </div>
         </div>
       </div>) },
@@ -379,7 +381,7 @@ function TeamStatusCard({ sp, scopeKey }: { sp: Record<string, string>; scopeKey
 }
 
 function DashOverview() {
-  const { openLead, refreshTick, go, bump } = useScreen();
+  const { openLead, openNotes, refreshTick, go, bump } = useScreen();
   const { me } = useAuth();
   // Global scope (top-bar selector) narrows the dashboard within the caller's RBAC scope.
   // The /dashboard endpoint ANDs these ids on top of the ScopeResolver, so they can only
@@ -545,7 +547,7 @@ function DashOverview() {
       )}
 
       <TableCard title={personal ? 'My recent leads' : 'Recent leads'} more="View pipeline" cols={LEAD_COLS}
-        rows={(recent.data?.rows ?? []).map((l) => leadRow(l, openLead))}
+        rows={(recent.data?.rows ?? []).map((l) => leadRow(l, openLead, openNotes))}
         empty="No leads yet — add your first lead or connect a source"
         onRowClick={(i) => openLead(Number(recent.data!.rows[i].id))} />
     </>
@@ -711,7 +713,7 @@ function MyTaskCard({ rows, more, title = 'My Tasks', empty, onOpenList }: { row
  * same scope (the API already scope-filters `/follow-ups?due=today`).
  */
 function FollowupRows({ rows, onChanged, empty }: { rows: any[]; onChanged: () => void; empty?: string }) {
-  const { openLead } = useScreen();
+  const { openLead, openNotes } = useScreen();
   const { can } = useAuth();
   const canEdit = can('followup.update');
   const [confirmDone, setConfirmDone] = useState<any | null>(null);
@@ -740,7 +742,7 @@ function FollowupRows({ rows, onChanged, empty }: { rows: any[]; onChanged: () =
               </div>
             </div>
             <ContactQuickActions phone={f.lead_phone} whatsapp={f.lead_whatsapp_phone}
-              onNote={() => openLead(f.lead_id, 'edit', 'notes')} />
+              onNote={() => (openNotes ? openNotes(f.lead_id) : openLead(f.lead_id, 'edit', 'notes'))} />
             <TempBadge temperature={f.temperature} score={f.score} />
             <span className="rt" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(f.scheduled_at)}</span>
           </div>
@@ -1119,7 +1121,7 @@ function AssessmentDashboardCards() {
 }
 
 function QuickContact() {
-  const { openLead, openAdd } = useScreen();
+  const { openLead, openNotes, openAdd } = useScreen();
   const ref = useRef_();
   const [scope, setScope] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number }>({});
   const [name, setName] = useState('');
@@ -1243,7 +1245,7 @@ function QuickContact() {
       </div>
       {results !== null && (
         <div style={{ marginTop: 18 }}>
-          <TableCard title="Matching contacts" cols={LEAD_COLS} rows={results.map((l) => leadRow(l, openLead))}
+          <TableCard title="Matching contacts" cols={LEAD_COLS} rows={results.map((l) => leadRow(l, openLead, openNotes))}
             empty="No matching contacts — Add Lead to create one"
             more={<a onClick={() => openAdd('dash.quickcontact')} style={{ cursor: 'pointer', color: 'var(--primary)' }}>+ Add Lead</a>}
             onRowClick={(i) => openLead(Number(results[i].id))} />
@@ -1417,7 +1419,7 @@ function readLeadNavFilters(search?: string) {
 }
 
 function LeadsAll() {
-  const { openLead, refreshTick, bump, search } = useScreen();
+  const { openLead, openNotes, refreshTick, bump, search } = useScreen();
   const { can } = useAuth();
   // GLOBAL SCOPE seeds the hierarchy filters as a baseline; an explicit URL filter (a KPI card
   // link) still wins, and the user can narrow further with the in-panel chips. The component
@@ -1711,7 +1713,7 @@ function LeadsAll() {
             allChecked: allLoadedSelected,
             onToggleAll: toggleAllLoaded,
           }}
-          rows={rows.map((l) => [...leadRow(l, openLead), rowActions({
+          rows={rows.map((l) => [...leadRow(l, openLead, openNotes), rowActions({
             onView: () => openLead(Number(l.id), 'view'),
             onEdit: canEditLead ? () => openLead(Number(l.id), 'edit') : undefined,
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,

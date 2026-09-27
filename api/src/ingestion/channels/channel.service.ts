@@ -76,6 +76,7 @@ export class ChannelService {
   }
 
   async list(scope: ResolvedScope) {
+    await this.refreshSharedMeta();
     const params: unknown[] = [];
     const where = this.scopeWhere(scope, params);
     const rows = await this.db.query<any>(
@@ -104,6 +105,7 @@ export class ChannelService {
   }
 
   async get(id: number, scope: ResolvedScope, userId: number) {
+    await this.refreshSharedMeta();
     await this.enforcer.assertRefInScope(scope, 'campaign', await this.campaignOf(id), userId);
     const params: unknown[] = [id];
     const rows = await this.db.query<any>(
@@ -264,7 +266,9 @@ export class ChannelService {
 
   /** Raw row incl. ciphertexts — internal use only, NEVER returned over HTTP. */
   async raw(id: number): Promise<ChannelRow | null> {
-    return this.db.one<any>(`SELECT * FROM capture_channel WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    const row = await this.db.one<any>(`SELECT * FROM capture_channel WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    if (row?.provider === 'meta') await this.refreshSharedMeta();
+    return row;
   }
 
   // ---- unscoped machine setters (OAuth callback + pull worker) --------------
@@ -347,7 +351,31 @@ export class ChannelService {
     );
     if (!row) return null;
     if (provider && row.provider !== provider) return null;
+    if (row.provider === 'meta') await this.refreshSharedMeta();
     return row;
+  }
+
+  /**
+   * The ONE Meta app's App secret (Settings › Channels › Meta app, provider 'meta_cloud';
+   * FB_APP_SECRET env as fallback). A Meta Lead Ads channel connected with "Continue with
+   * Facebook" never had its own App secret pasted, so it showed "Not configured — Needs: App
+   * secret" and its leadgen webhooks failed the signature check. It is the same app, so the
+   * shared secret stands in whenever the channel has none of its own. Cached briefly.
+   */
+  private sharedMeta = { secret: '', at: 0 };
+  private async refreshSharedMeta(): Promise<void> {
+    if (Date.now() - this.sharedMeta.at < 30_000) return;
+    let secret = '';
+    try {
+      const row = await this.db.one<any>(
+        `SELECT secrets FROM channel_config
+          WHERE deleted_at IS NULL AND is_active = TRUE AND provider = 'meta_cloud'
+          ORDER BY updated_at DESC LIMIT 1`,
+      );
+      const enc = row?.secrets?.app_secret;
+      if (typeof enc === 'string' && enc) secret = decryptSecret(enc) || '';
+    } catch { /* no shared Meta app — env fallback below */ }
+    this.sharedMeta = { secret: secret || process.env.FB_APP_SECRET || '', at: Date.now() };
   }
 
   /** Decrypt this channel's credentials — the ONLY place plaintext exists. */
@@ -357,6 +385,7 @@ export class ChannelService {
       const p = decryptSecret(v);
       if (p) out[k] = p;
     }
+    if (row.provider === 'meta' && !out.app_secret && this.sharedMeta.secret) out.app_secret = this.sharedMeta.secret;
     return out;
   }
 

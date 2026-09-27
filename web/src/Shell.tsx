@@ -8,7 +8,7 @@ import { scopedApp, isMobileApp, isRouteAllowed, findScreen } from './specs';
 import { Blocks } from './renderer';
 import { DYN, ScreenCtx } from './dyn';
 import { AddModal, CampaignModal, SPEC_FORMS, headerActions, resolveAdd, addLike } from './forms';
-import { LeadSheet } from './leadsheet';
+import { LeadSheet, LeadNotesModal } from './leadsheet';
 import { RoleModal } from './rolemodal';
 import { toast, useRef_, Toaster } from './refdata';
 import { NotificationBell } from './notifications';
@@ -203,6 +203,7 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
   const ref = useRef_();
   // dev/84 item 1 — carry the launch mode (view=read-only default, edit=editable).
   const [leadOpen, setLeadOpen] = useState<{ id: number; mode: 'view' | 'edit'; tab?: 'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp' } | null>(null);
+  const [notesLead, setNotesLead] = useState<number | null>(null);
   const [addKey, setAddKey] = useState<string | null>(null);
   const [campaignOpen, setCampaignOpen] = useState(false);
   const [roleOpen, setRoleOpen] = useState(false);
@@ -240,7 +241,7 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
 
   return (
     <ScreenCtx.Provider value={{
-      go, openLead: (id, mode, tab) => setLeadOpen({ id, mode: mode ?? 'view', tab }), openAdd, refreshTick: tick, bump: () => setTick((t) => t + 1),
+      go, openLead: (id, mode, tab) => setLeadOpen({ id, mode: mode ?? 'view', tab }), openNotes: (id) => setNotesLead(id), openAdd, refreshTick: tick, bump: () => setTick((t) => t + 1),
       search: loc.search,
     }}>
       <div className="view">
@@ -271,6 +272,7 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
         </div>
       </div>
       {leadOpen && <LeadSheet leadId={leadOpen.id} mode={leadOpen.mode} initialTab={leadOpen.tab} onClose={() => setLeadOpen(null)} onChanged={() => setTick((t) => t + 1)} />}
+      {notesLead != null && <LeadNotesModal leadId={notesLead} onClose={() => setNotesLead(null)} onChanged={() => setTick((t) => t + 1)} />}
       {addKey && <AddModal formKey={addKey} onClose={() => setAddKey(null)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}
       {campaignOpen && <CampaignModal onClose={() => setCampaignOpen(false)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}
       {roleOpen && <RoleModal onClose={() => setRoleOpen(false)} onSaved={() => { setTick((t) => t + 1); ref.reload(); }} />}

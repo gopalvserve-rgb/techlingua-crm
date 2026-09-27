@@ -175,7 +175,13 @@ const FB_GRAPH = 'https://graph.facebook.com/v21.0';
 // (GET /{page}/leadgen_forms -> "(#200) Requires pages_manage_ads permission").
 // `leads_retrieval` only covers fetching the ANSWERS of a lead we were told about,
 // which is why delivery worked while Form Mapping could not read anything.
-export const FB_SCOPES = ['leads_retrieval', 'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_ads'];
+// `business_management` is what makes Facebook's dialog show the Business portfolio step and
+// then the Page multi-select (and lets us read each portfolio's owned/client Pages). Same list
+// SmartCRM uses on the same Meta app, so every permission here is already approved there.
+export const FB_SCOPES = [
+  'public_profile', 'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement', 'pages_read_user_content',
+  'pages_manage_ads', 'leads_retrieval', 'ads_management', 'ads_read', 'business_management',
+];
 
 /**
  * Build the Facebook login-dialog URL. Pure.
@@ -189,11 +195,12 @@ export const FB_SCOPES = ['leads_retrieval', 'pages_show_list', 'pages_manage_me
  * press "Edit access" and widen the selection. Only Facebook can change that set; we can
  * only make sure it asks.
  */
-export function buildFbAuthUrl(appId: string, redirectUri: string, state: string): string {
-  const p = new URLSearchParams({
-    client_id: appId, redirect_uri: redirectUri, state,
-    response_type: 'code', scope: FB_SCOPES.join(','), auth_type: 'rerequest',
-  });
+export function buildFbAuthUrl(appId: string, redirectUri: string, state: string, configId?: string): string {
+  // With a Facebook Login for Business configuration, Meta renders its Business portfolio +
+  // Page multi-select and takes the permissions from the configuration (scope is ignored).
+  const p = new URLSearchParams(configId
+    ? { client_id: appId, redirect_uri: redirectUri, state, response_type: 'code', config_id: configId, override_default_response_type: 'true' }
+    : { client_id: appId, redirect_uri: redirectUri, state, response_type: 'code', scope: FB_SCOPES.join(','), auth_type: 'rerequest' });
   return `https://www.facebook.com/v21.0/dialog/oauth?${p.toString()}`;
 }
 

@@ -18,7 +18,7 @@ import { toast } from './refdata';
 import type { Channel } from './channels';
 
 export interface FbPage {
-  page_id: string; page_name: string; monitored: boolean; subscribed: boolean | null;
+  page_id: string; page_name: string; business_name?: string | null; monitored: boolean; subscribed: boolean | null;
   subscribed_at: string | null; checked_at: string | null; last_error: string | null;
   has_token: boolean; is_primary: boolean; leads: number; last_lead_at: string | null;
 }
@@ -179,6 +179,7 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
                         <td>
                           <span className="nm">{p.page_name || p.page_id}</span>
                           {p.is_primary && <span className="bdg b-indigo" style={{ marginLeft: 6 }} title="The Page this channel was first connected with">Primary</span>}
+                          {p.business_name && <div className="sub" style={{ fontSize: 11 }} title="Business portfolio">{p.business_name}</div>}
                           {!p.has_token && <div className="sub" style={{ fontSize: 11, color: 'var(--danger)' }}>No token — re-authorise</div>}
                         </td>
                         <td><span className="mono sub">{p.page_id}</span></td>
