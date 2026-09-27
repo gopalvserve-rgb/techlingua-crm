@@ -112,7 +112,10 @@ describe('Facebook Page OAuth connect', () => {
     const { decryptSecret } = require('../../common/crypto.util');
     expect(decryptSecret((cst.channels[0].secrets as any).page_access_token)).toBe('PAGETOK');
     expect((cst.channels[0].config as any).page_id).toBe('PAGE1');
-    expect(calls.some((u) => u.includes('subscribed_fields=leadgen'))).toBe(true);
+    // pick mode: nothing is subscribed yet — the browser goes back to Integrations, where the
+    // admin chooses Business portfolios + Pages and each chosen Page is subscribed then.
+    expect(calls.some((u) => u.includes('subscribed_fields=leadgen'))).toBe(false);
+    expect(out.redirectTo).toBe('/m/leads/capture?fb_pick=21');
     expect(cst.events.at(-1)).toMatchObject({ status: 'verified' });
   });
 });

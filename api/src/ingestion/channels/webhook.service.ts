@@ -39,6 +39,8 @@ export interface WebhookResult {
   body: unknown;
   event_id?: number | null;
   outcomes?: IngestOutcome[];
+  /** fb/callback only: send the browser back into the CRM instead of showing `body` */
+  redirectTo?: string;
 }
 
 export class WebhookRejected extends Error {
@@ -1080,15 +1082,21 @@ export class WebhookService {
       const userToken = String(userTok.access_token ?? '');
       if (!userToken) throw new Error('No access_token in Facebook response');
 
-      const out = await this.connectPagesWithUserToken(ch, userToken);
+      // pick mode: store every granted Page (none switched on); the CRM opens the Business
+      // portfolio + Page picker when the browser lands back on Integrations (redirectTo).
+      const out = await this.connectPagesWithUserToken(ch, userToken, true);
       return {
         http: 200,
+        redirectTo: `/m/leads/capture?fb_pick=${channelId}`,
         body: this.fbHtml(`Connected Page "${out.primary}".`
           + (out.others > 0 ? ` ${out.others} more Page(s) were granted — switch them on under Pages in the CRM.` : '')
           + ' You can close this tab and return to the CRM.', true),
       };
     } catch (e) {
-      return { http: 200, body: this.fbHtml(`Could not connect: ${(e as Error).message}`, false) };
+      return {
+        http: 200, body: this.fbHtml(`Could not connect: ${(e as Error).message}`, false),
+        redirectTo: `/m/leads/capture?fb_error=${encodeURIComponent(String((e as Error).message).replace(/access_token=[^&\s"']+/gi, 'access_token=***').slice(0, 300))}`,
+      };
     }
   }
 

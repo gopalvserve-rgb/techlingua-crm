@@ -131,6 +131,12 @@ const get = vi.fn(async (path: string) => {
   if (path === '/channels/4/credentials') return { id: 4, provider: 'google_sheet' };
   if (path === '/channels/3/credentials') return { id: 3, provider: 'website' };
   if (path === '/channels/99/credentials') return { id: 99, provider: 'custom', webhook_key: 'WH-PUSH-KEY-1' };
+  if (path === '/channels/1/fb/connect') return { url: 'https://www.facebook.com/v21.0/dialog/oauth?client_id=APP-123', scopes: 'pages_show_list' };
+  if (path === '/channels/1/fb/pages') return { connected: true, pages: [
+    { page_id: 'P1', page_name: 'School A', business_name: 'Tech Lingua', monitored: false, has_token: true },
+    { page_id: 'P2', page_name: 'School B', business_name: 'Tech Lingua', monitored: false, has_token: true },
+    { page_id: 'P3', page_name: 'Solo Page', business_name: null, monitored: false, has_token: true },
+  ] };
   if (path === '/settings/whatsapp/embedded-signup') {
     return SIGNUP_READY
       ? { ready: true, missing: [], app_id: 'APP-123' }
@@ -364,49 +370,39 @@ describe('Lead Capture Channels screen', () => {
     expect(screen.getByText(/Settings . Channels/)).toBeTruthy();
   });
 
-  it('DEF-INT-04 REGRESSION: the popup code is POSTED to the server, not thrown away', async () => {
-    // The button used to call FB.login, receive authResponse.code and only toast. The code
-    // was discarded, so the popup closed and NOTHING was ever stored — the admin saw a
-    // Facebook prompt and then nothing. The code must reach the server.
+  it('Continue with Facebook opens the Facebook full-page login in THIS tab (no JS SDK popup)', async () => {
+    // The JS SDK popup failed after sign-in (Facebook refuses the SDK on a domain it has not
+    // whitelisted) and nothing ever reached the server. The redirect login is what works.
     SIGNUP_READY = true;
-    (window as any).FB = { login: (cb: (r: any) => void) => cb({ authResponse: { code: 'SDK-CODE-1' } }) };
-    post.mockImplementationOnce((async () => ({ pages: 3, primary: 'School A', subscribed: false, others: 2, list: [
-      { page_id: 'P1', page_name: 'School A', business_name: 'Tech Lingua', monitored: false },
-      { page_id: 'P2', page_name: 'School B', business_name: 'Tech Lingua', monitored: false },
-      { page_id: 'P3', page_name: 'Solo Page', business_name: null, monitored: false },
-    ] })) as never);
+    const login = vi.fn();
+    (window as any).FB = { login };
+    const assign = vi.fn();
+    const realLocation = window.location;
+    Object.defineProperty(window, 'location', { configurable: true, writable: true, value: { ...realLocation, assign } });
+    try {
+      render(<Channels />);
+      await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
+      fireEvent.click(screen.getAllByText('Edit')[0]);              // channel 1 = the Meta channel
+      await waitFor(() => screen.getByTestId('continue-with-facebook'));
+      fireEvent.click(screen.getByTestId('continue-with-facebook'));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('https://www.facebook.com/v21.0/dialog/oauth?client_id=APP-123'));
+      expect(login).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, writable: true, value: realLocation });
+    }
+  });
 
+  it('back from Facebook (?fb_pick=1) the Business portfolio + Page picker opens and saves the ticked Pages', async () => {
+    window.history.replaceState(null, '', '/m/leads/capture?fb_pick=1');
     render(<Channels />);
-    await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByText('Edit')[0]);              // channel 1 = the Meta channel
-    await waitFor(() => screen.getByTestId('continue-with-facebook'));
-
-    fireEvent.click(screen.getByTestId('continue-with-facebook'));
-
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/channels/1/fb/sdk-connect', { code: 'SDK-CODE-1', pick: true }));
-    // …and the Business portfolio + Page picker opens in the same flow — no separate Connect Page.
     await waitFor(() => screen.getByTestId('fb-page-picker'));
+    expect(window.location.search).toBe('');                       // the param is consumed
     expect(screen.getAllByTestId('fb-picker-business')).toHaveLength(2);
     fireEvent.click(screen.getByLabelText('Business portfolio Tech Lingua'));   // ticks School A + B
     fireEvent.click(screen.getByTestId('fb-picker-save'));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/channels/1/fb/pages/P1/subscribe', {}));
     expect(post).toHaveBeenCalledWith('/channels/1/fb/pages/P2/subscribe', {});
     expect(post).not.toHaveBeenCalledWith('/channels/1/fb/pages/P3/subscribe', {});
-  });
-
-  it('a cancelled Facebook popup posts nothing and says so', async () => {
-    SIGNUP_READY = true;
-    (window as any).FB = { login: (cb: (r: any) => void) => cb({ status: 'unknown' }) };
-
-    render(<Channels />);
-    await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByText('Edit')[0]);
-    await waitFor(() => screen.getByTestId('continue-with-facebook'));
-
-    fireEvent.click(screen.getByTestId('continue-with-facebook'));
-
-    await waitFor(() => expect(toastFn).toHaveBeenCalledWith('Facebook sign-in was cancelled.', true));
-    expect(post).not.toHaveBeenCalledWith(expect.stringContaining('fb/sdk-connect'), expect.anything());
   });
 
   it('on a NEW (unsaved) channel the button asks you to save first instead of opening a dead popup', async () => {

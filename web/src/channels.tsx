@@ -157,35 +157,15 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
     if (!channelId) { toast('Save this channel first — then press Continue with Facebook.', true); return; }
     setBusy(true);
     try {
-      await ensureFbSdk(info!.app_id || '');
-      // FB Lead Ads OAuth entry — request Pages + leads_retrieval, exactly the smartcrm
-      // Facebook integration contract. Called synchronously inside the click handler so
-      // Chrome does not block the popup.
-      (window as unknown as { FB: { login: (cb: (r: any) => void, opts: any) => void } }).FB.login(
-        (resp: any) => {
-          const code = resp?.authResponse?.code;
-          if (!code) { toast('Facebook sign-in was cancelled.', true); return; }
-          // DEF-INT-04 stopped HERE and threw the code away — the popup closed and nothing
-          // was ever stored. Send it to the server, which exchanges it and keeps every Page.
-          setBusy(true);
-          // pick: store every granted Page, switch none on — the admin chooses the Business
-          // portfolios + Pages in the picker that opens next, all inside this one flow.
-          api.post<{ pages: number; list?: FbPickPage[] }>(
-            `/channels/${channelId}/fb/sdk-connect`, { code, pick: true },
-          )
-            .then((r) => { setPicker(r.list ?? []); onDone?.(); })
-            .catch((e) => toast((e as Error).message || 'Could not finish connecting to Facebook.', true))
-            .finally(() => setBusy(false));
-        },
-        // auth_type 'rerequest' forces the dialog to RENDER. Facebook otherwise reuses the
-        // Page selection made the first time, so reconnecting returns the same short list.
-        // With a Login for Business config_id Meta takes the permissions from the configuration
-        // and shows the Business portfolio + Page selection (pick several).
-        fbConfigId
-          ? { config_id: fbConfigId, response_type: 'code', override_default_response_type: true }
-          : { scope: scopes, response_type: 'code', override_default_response_type: true, auth_type: 'rerequest' },
-      );
-    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+      // Facebook's full-page login in THIS tab (not the JS SDK popup, which Facebook refuses
+      // unless the domain is whitelisted for the SDK). After login Facebook returns to
+      // /api/webhooks/fb/callback, which stores the Pages and sends the browser back to
+      // Integrations, where the Business portfolio + Page picker opens.
+      const r = await api.get<{ url: string | null; error?: string }>(`/channels/${channelId}/fb/connect`);
+      if (r.url) { window.location.assign(r.url); return; }
+      toast(r.error || 'Facebook app is not configured on the server.', true);
+    } catch (e) { toast((e as Error).message, true); }
+    setBusy(false);
   };
 
   return (
@@ -200,7 +180,7 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
       )}
       {ready ? (
         <span className="fhint">{channelId
-          ? 'Log in with Facebook — then choose your Business portfolios and tick the Pages whose leads should come here, right in the CRM. If a portfolio or Page is missing from the list, run it again and click "Edit previous settings" (or "Edit access") in the Facebook window to grant it.'
+          ? 'Opens Facebook in this tab. After you log in you come straight back here to choose your Business portfolios and tick the Pages whose leads should come in. If a portfolio or Page is missing, run it again and click "Edit previous settings" (or "Edit access") on the Facebook screen to grant it.'
           : 'Save this channel first (button below) — then press Continue with Facebook to log in and pull your Pages.'}</span>
       ) : (
         <span className="fhint">
@@ -363,21 +343,38 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
               <div className="fld">
                 <label>Target</label>
                 <div className="ainp" style={{ color: 'var(--text-dim)', background: 'var(--surface-3)' }}>
-                  {cur!.branch_name} › {cur!.vertical_name} › {cur!.campaign_name}
+                  {[cur!.branch_name || ref.branches.find((b) => b.id === target.branch)?.name,
+                    cur!.vertical_name || verticals.find((v) => v.id === target.vertical)?.name,
+                    cur!.campaign_name || campaigns.find((c) => c.id === target.campaign)?.name].filter(Boolean).join(' › ') || '—'}
                 </div>
               </div>
             )}
 
+            {spec.key === 'meta' && <FacebookConnect channelId={editing ? (cur?.id ?? null) : null} onDone={onSaved} />}
+
+            {/* Meta: with Continue with Facebook nothing below is needed — the Webhook URL,
+                Verify Token and hand-pasted tokens are the manual fallback, so they stay folded. */}
+            {spec.key === 'meta' && (
+              <details className="fld span2" data-testid="meta-manual-setup">
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Manual setup (advanced) — not needed when you use Continue with Facebook</summary>
+                <div className="form-grid" style={{ marginTop: 10 }}>
+                  {editing && url && <CopyRow label="Webhook URL" value={url} hint="Paste this into Meta as the Callback URL." />}
+                  {editing && creds.verify_token && (
+                    <CopyRow label="Verify token" value={creds.verify_token}
+                      hint="Paste this into Meta as the Verify Token, next to the Callback URL." />
+                  )}
+                  {spec.config.map((f) => field(f, false))}
+                  {spec.secrets.filter((f) => !f.generated).map((f) => field(f, true))}
+                </div>
+              </details>
+            )}
+
             {/* what to paste into Meta / Google / the website — only exists once saved */}
-            {editing && url && (
+            {spec.key !== 'meta' && editing && url && (
               <CopyRow label="Webhook URL" value={url}
                 hint={spec.key === 'website'
                   ? 'Your website posts its form JSON here.'
                   : `Paste this into ${spec.key === 'meta' ? 'Meta as the Callback URL' : 'Google Ads as the Webhook URL'}.`} />
-            )}
-            {editing && spec.key === 'meta' && creds.verify_token && (
-              <CopyRow label="Verify token" value={creds.verify_token}
-                hint="Paste this into Meta as the Verify Token, next to the Callback URL." />
             )}
             {editing && spec.key === 'google_ads' && creds.google_key && (
               <CopyRow label="Webhook key" value={creds.google_key}
@@ -390,12 +387,10 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
                 hint="Optional shared secret. Send it in the request header X-Webhook-Key (or ?key= in the URL, or a &quot;key&quot; field in the body). A payload with the WRONG key is rejected; a source that cannot send it still works because the URL itself is unguessable." />
             )}
 
-            {spec.key === 'meta' && <FacebookConnect channelId={editing ? (cur?.id ?? null) : null} onDone={onSaved} />}
-
-            {spec.config.map((f) => field(f, false))}
+            {spec.key !== 'meta' && spec.config.map((f) => field(f, false))}
             {/* `generated` secrets (Meta verify token, Google webhook key) are minted
                 server-side and shown above as a copy-row — never as an editable input. */}
-            {spec.secrets.filter((f) => !f.generated).map((f) => field(f, true))}
+            {spec.key !== 'meta' && spec.secrets.filter((f) => !f.generated).map((f) => field(f, true))}
           </div>
 
           {/* the copy-pasteable website snippet */}
@@ -473,6 +468,22 @@ export default function Channels() {
   const [fbPages, setFbPages] = useState<Channel | null>(null);
   const [fbMapping, setFbMapping] = useState<Channel | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  // Back from Facebook (?fb_pick=<channel id>): the Business portfolio + Page picker.
+  const [fbPick, setFbPick] = useState<{ id: number; pages: FbPickPage[] } | null>(null);
+
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const pickId = Number(sp.get('fb_pick'));
+    const fbErr = sp.get('fb_error');
+    if (!pickId && !fbErr) return;
+    sp.delete('fb_pick'); sp.delete('fb_error');
+    const qs = sp.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+    if (fbErr) { toast(`Facebook: ${fbErr}`, true); return; }
+    api.get<{ pages: FbPickPage[] }>(`/channels/${pickId}/fb/pages`)
+      .then((r) => setFbPick({ id: pickId, pages: (r.pages ?? []).filter((p: any) => p.has_token !== false) }))
+      .catch((e) => toast((e as Error).message, true));
+  }, []);
 
   const canRead = can('channel.read');
   const canManage = can('channel.manage');
@@ -518,8 +529,8 @@ export default function Channels() {
     setBusyId(c.id);
     try {
       const r = await api.get<{ url: string | null; error?: string }>(`/channels/${c.id}/fb/connect`);
-      if (r.url) window.open(r.url, '_blank', 'noopener');
-      else toast(r.error || 'Facebook app is not configured on the server.', true);
+      if (r.url) { window.location.assign(r.url); return; }
+      toast(r.error || 'Facebook app is not configured on the server.', true);
     } catch (e) {
       toast((e as Error).message, true);
     } finally { setBusyId(null); bump(); }
@@ -739,6 +750,10 @@ export default function Channels() {
       {open && (
         <ConfigureModal spec={open.spec} channel={open.channel}
           onClose={() => setOpen(null)} onSaved={bump} />
+      )}
+      {fbPick && (
+        <FbPagePicker channelId={fbPick.id} channelName={list.find((c) => c.id === fbPick.id)?.name}
+          pages={fbPick.pages} onClose={() => setFbPick(null)} onSaved={bump} />
       )}
       {fbPages && (
         <FbPagesModal channel={fbPages} canManage={canManage} onClose={() => setFbPages(null)}

@@ -185,6 +185,9 @@ export class WebhookController {
     const redirectUri = `${req.protocol}://${req.get('host')}/api/webhooks/fb/callback`;
     try {
       const out = await this.hooks.fbCallback(q, redirectUri);
+      // Back into the CRM (same tab) — Integrations then opens the Page picker / the error.
+      const to = (out as { redirectTo?: string }).redirectTo;
+      if (to) { res.redirect(302, to); return; }
       res.status(out.http).type('text/html').send(String(out.body ?? ''));
     } catch (e) {
       const r = e as WebhookRejected;

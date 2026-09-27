@@ -137,7 +137,7 @@ describe('Facebook OAuth callback — keeps EVERY granted Page', () => {
     return hooks.fbCallback({ code: 'THECODE', state: decodeURIComponent(state) }, 'https://x/cb');
   }
 
-  it('first connect: all 3 Pages stored with their own encrypted token; legacy fields = the first Page; only it is monitored + subscribed', async () => {
+  it('first connect: all 3 Pages stored with their own encrypted token; legacy fields = the first Page; none switched on until the admin picks', async () => {
     const ch = makeChannel({ id: 21, provider: 'meta', public_key: 'pubkeyM', secrets: { verify_token: 'v', app_secret: 'as' }, config: {} });
     const { hooks, cst } = makeWebhook([ch]);
     const g = graph(); hooks.http = g.http;
@@ -157,12 +157,12 @@ describe('Facebook OAuth callback — keeps EVERY granted Page', () => {
     expect(row.config.page_id).toBe('P1');
     expect(row.config.page_name).toBe('School A');
     // the list
-    expect(row.config.pages.map((p: any) => [p.page_id, p.monitored])).toEqual([['P1', true], ['P2', false], ['P3', false]]);
-    expect(row.config.pages[0].subscribed).toBe(true);
+    // the list — nothing monitored yet: the Business portfolio + Page picker opens next
+    expect(row.config.pages.map((p: any) => [p.page_id, p.monitored])).toEqual([['P1', false], ['P2', false], ['P3', false]]);
+    expect(out.redirectTo).toBe('/m/leads/capture?fb_pick=21');
     expect(JSON.stringify(row.config)).not.toContain('TOK');           // never a token in config
-    // exactly ONE subscribe call — the primary
-    expect(g.calls.filter((c) => c.url.includes('subscribed_fields=leadgen'))).toHaveLength(1);
-    expect(g.calls.find((c) => c.url.includes('subscribed_fields=leadgen'))!.url).toContain('/P1/');
+    // no subscribe call — each Page the admin ticks is subscribed from the picker
+    expect(g.calls.filter((c) => c.url.includes('subscribed_fields=leadgen'))).toHaveLength(0);
     expect(cst.events.at(-1)).toMatchObject({ status: 'verified' });
     expect(JSON.stringify(cst.events.at(-1).raw)).not.toContain('TOK');
   });
@@ -175,8 +175,8 @@ describe('Facebook OAuth callback — keeps EVERY granted Page', () => {
     const row = cst.channels[0];
     expect(row.config.page_id).toBe('P2');
     expect(decryptSecret(row.secrets.page_access_token)).toBe('TOK2');
-    expect(row.config.pages.find((p: any) => p.page_id === 'P2').monitored).toBe(true);
-    expect(row.config.pages.find((p: any) => p.page_id === 'P1').monitored).toBe(false);
+    // still nothing switched on until the admin picks
+    expect(row.config.pages.every((p: any) => p.monitored === false)).toBe(true);
   });
 
   it('re-authorising keeps each Page\'s monitored flag and refreshes the tokens', async () => {
