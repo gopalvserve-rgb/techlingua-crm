@@ -200,8 +200,11 @@ export function buildFbAuthUrl(appId: string, redirectUri: string, state: string
   // Page multi-select and takes the permissions from the configuration (scope is ignored).
   const p = new URLSearchParams(configId
     ? { client_id: appId, redirect_uri: redirectUri, state, response_type: 'code', config_id: configId, override_default_response_type: 'true' }
-    : { client_id: appId, redirect_uri: redirectUri, state, response_type: 'code', scope: FB_SCOPES.join(','), auth_type: 'rerequest' });
-  return `https://www.facebook.com/v21.0/dialog/oauth?${p.toString()}`;
+    : { client_id: appId, redirect_uri: redirectUri, state, response_type: 'code', auth_type: 'rerequest', scope: FB_SCOPES.join(',') });
+  // v19.0 — the exact dialog SmartCRM opens on the same Meta app (compared link-for-link);
+  // there Facebook asks for the Business portfolio first, then the Pages. The v21.0 dialog
+  // went straight to Pages. Graph API calls elsewhere stay on v21.0.
+  return `https://www.facebook.com/v19.0/dialog/oauth?${p.toString()}`;
 }
 
 /** Parse /me/accounts into a monitor-able page list. Pure. */

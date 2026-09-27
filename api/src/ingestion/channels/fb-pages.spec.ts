@@ -295,6 +295,8 @@ describe('OAuth scopes — what Facebook actually needs', () => {
     const out = await hooks.fbConnectUrl(41, 'https://x/cb');
     expect(out.scopes).toBe(FB_SCOPES.join(','));
     expect(decodeURIComponent(out.url!)).toContain(FB_SCOPES.join(','));
+    // same dialog version SmartCRM opens on this app (Business portfolio first, then Pages)
+    expect(out.url).toContain('https://www.facebook.com/v19.0/dialog/oauth?');
     delete process.env.FB_APP_ID;
   });
 });
