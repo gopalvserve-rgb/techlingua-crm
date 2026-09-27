@@ -1100,8 +1100,8 @@ export class WebhookService {
    * subscribes it to leadgen and logs the event.
    */
   private async connectPagesWithUserToken(
-    ch: any, userToken: string,
-  ): Promise<{ pages: number; primary: string; subscribed: boolean; others: number }> {
+    ch: any, userToken: string, pick = false,
+  ): Promise<{ pages: number; primary: string; subscribed: boolean; others: number; list: Array<{ page_id: string; page_name: string; business_name: string | null; monitored: boolean }> }> {
     const pages = await this.grantedPages(userToken);
     if (!pages.length) throw new Error('No Facebook Pages were returned — make sure you granted the app access to your Page.');
 
@@ -1125,11 +1125,25 @@ export class WebhookService {
       if (cur) { cur.page_name = p.page_name || cur.page_name; cur.business_name = p.business_name || cur.business_name || null; continue; }
       merged.push({
         page_id: p.page_id, page_name: p.page_name, business_name: p.business_name || null,
-        monitored: p.page_id === page.page_id,      // only the primary is monitored by default
+        // only the primary is monitored by default — none at all when the admin picks next
+        monitored: !pick && p.page_id === page.page_id,
         subscribed: null, subscribed_at: null, checked_at: null, last_error: null,
       });
     }
     const primary = merged.find((m) => m.page_id === page.page_id)!;
+    const listOut = () => merged.map((m) => ({ page_id: m.page_id, page_name: m.page_name, business_name: m.business_name ?? null, monitored: m.monitored }));
+    if (pick) {
+      // The admin chooses Business portfolios + Pages in the CRM picker right after this;
+      // each chosen Page is subscribed to leadgen then (FbPagesService.subscribe).
+      await this.channels.mergeConfig(ch.id, { page_id: page.page_id, page_name: page.page_name, pages: merged });
+      await this.channels.logEvent({
+        channel_id: ch.id, org_id: ch.org_id, provider: 'meta', public_key: ch.public_key, method: 'GET',
+        raw: { pages: pages.map((p) => ({ page_id: p.page_id, page_name: p.page_name, business_name: p.business_name ?? null })) },
+        status: 'verified',
+        reason: `Facebook login stored ${pages.length} Page(s) — waiting for the admin to choose which to monitor`,
+      });
+      return { pages: pages.length, primary: page.page_name, subscribed: false, others: pages.length - 1, list: listOut() };
+    }
     primary.monitored = true;
 
     let subscribed = false;
@@ -1154,7 +1168,7 @@ export class WebhookService {
       reason: `Facebook Page "${page.page_name}" connected` + (subscribed ? ' and subscribed to leadgen' : ' (token stored; subscribe to leadgen in Meta if leads do not arrive)')
         + (others > 0 ? ` · ${others} more Page(s) available in Page Monitor (not monitored until switched on)` : ''),
     });
-    return { pages: pages.length, primary: page.page_name, subscribed, others };
+    return { pages: pages.length, primary: page.page_name, subscribed, others, list: listOut() };
   }
 
   /**
@@ -1225,7 +1239,7 @@ export class WebhookService {
    * which is exactly what this flow hit in production. Everything after the exchange is
    * the shared path above, so the popup and the redirect store identical state.
    */
-  async fbSdkConnect(channelId: number, code: string): Promise<{ pages: number; primary: string; subscribed: boolean; others: number }> {
+  async fbSdkConnect(channelId: number, code: string, pick = false) {
     const ch = await this.channels.raw(channelId);
     if (!ch || ch.provider !== 'meta') throw new NotConfiguredException('This channel is not a Meta Lead Ads channel.');
     if (!code) throw new BadRequestException('Facebook did not return an authorisation code — press Continue with Facebook again.');
@@ -1256,7 +1270,7 @@ export class WebhookService {
     }
     const userToken = String(tok.access_token ?? '');
     if (!userToken) throw new BadRequestException('Facebook did not return an access token for that code.');
-    return this.connectPagesWithUserToken(ch, userToken);
+    return this.connectPagesWithUserToken(ch, userToken, pick);
   }
 
   private async fbGet(url: string): Promise<any> {

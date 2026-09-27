@@ -370,7 +370,11 @@ describe('Lead Capture Channels screen', () => {
     // Facebook prompt and then nothing. The code must reach the server.
     SIGNUP_READY = true;
     (window as any).FB = { login: (cb: (r: any) => void) => cb({ authResponse: { code: 'SDK-CODE-1' } }) };
-    post.mockImplementationOnce((async () => ({ pages: 3, primary: 'School A', subscribed: true, others: 2 })) as never);
+    post.mockImplementationOnce((async () => ({ pages: 3, primary: 'School A', subscribed: false, others: 2, list: [
+      { page_id: 'P1', page_name: 'School A', business_name: 'Tech Lingua', monitored: false },
+      { page_id: 'P2', page_name: 'School B', business_name: 'Tech Lingua', monitored: false },
+      { page_id: 'P3', page_name: 'Solo Page', business_name: null, monitored: false },
+    ] })) as never);
 
     render(<Channels />);
     await waitFor(() => expect(screen.getAllByText('Meta — Vikaspuri IELTS').length).toBeGreaterThan(0));
@@ -379,9 +383,15 @@ describe('Lead Capture Channels screen', () => {
 
     fireEvent.click(screen.getByTestId('continue-with-facebook'));
 
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/channels/1/fb/sdk-connect', { code: 'SDK-CODE-1' }));
-    await waitFor(() => expect(toastFn).toHaveBeenCalledWith(
-      expect.stringContaining('School A'), undefined));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/channels/1/fb/sdk-connect', { code: 'SDK-CODE-1', pick: true }));
+    // …and the Business portfolio + Page picker opens in the same flow — no separate Connect Page.
+    await waitFor(() => screen.getByTestId('fb-page-picker'));
+    expect(screen.getAllByTestId('fb-picker-business')).toHaveLength(2);
+    fireEvent.click(screen.getByLabelText('Business portfolio Tech Lingua'));   // ticks School A + B
+    fireEvent.click(screen.getByTestId('fb-picker-save'));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/channels/1/fb/pages/P1/subscribe', {}));
+    expect(post).toHaveBeenCalledWith('/channels/1/fb/pages/P2/subscribe', {});
+    expect(post).not.toHaveBeenCalledWith('/channels/1/fb/pages/P3/subscribe', {});
   });
 
   it('a cancelled Facebook popup posts nothing and says so', async () => {

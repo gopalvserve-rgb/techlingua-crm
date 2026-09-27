@@ -132,7 +132,9 @@ export class ChannelController {
     @CurrentScope() s: ResolvedScope, @CurrentUser() u: U,
   ) {
     await this.svc.get(id, s, u.id);                 // scope + existence
-    return this.hooks.fbSdkConnect(id, String(dto?.code ?? '').trim());
+    // pick=true: the data-source form shows its own Business portfolio + Page picker next,
+    // so store every granted Page but switch none on yet.
+    return this.hooks.fbSdkConnect(id, String(dto?.code ?? '').trim(), dto?.pick === true);
   }
 
   // ------------------------------------------------ Facebook Page Monitor ----

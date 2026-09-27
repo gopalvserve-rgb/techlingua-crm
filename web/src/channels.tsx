@@ -18,7 +18,7 @@ import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { ensureFbSdk } from './whatsappsignup';
-import { FbFormMappingModal, FbPagesModal } from './fbpages';
+import { FbFormMappingModal, FbPagesModal, FbPagePicker, FbPickPage } from './fbpages';
 
 export interface FieldSpec {
   key: string; label: string; type: 'text' | 'password' | 'textarea' | 'number' | 'bool' | 'list';
@@ -132,6 +132,8 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
   // Facebook Login for Business configuration (Settings › Channels › Meta app). When set, the
   // dialog shows Meta's Business portfolio + multi-Page picker instead of the classic login.
   const [fbConfigId, setFbConfigId] = useState('');
+  // After login: the Business portfolio + Page picker (null = closed).
+  const [picker, setPicker] = useState<FbPickPage[] | null>(null);
 
   useEffect(() => {
     api.get<{ ready: boolean; missing: string[]; app_id: string }>('/settings/whatsapp/embedded-signup')
@@ -166,14 +168,12 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
           // DEF-INT-04 stopped HERE and threw the code away — the popup closed and nothing
           // was ever stored. Send it to the server, which exchanges it and keeps every Page.
           setBusy(true);
-          api.post<{ pages: number; primary: string; subscribed: boolean; others: number }>(
-            `/channels/${channelId}/fb/sdk-connect`, { code },
+          // pick: store every granted Page, switch none on — the admin chooses the Business
+          // portfolios + Pages in the picker that opens next, all inside this one flow.
+          api.post<{ pages: number; list?: FbPickPage[] }>(
+            `/channels/${channelId}/fb/sdk-connect`, { code, pick: true },
           )
-            .then((r) => {
-              toast(`Connected Page “${r.primary}”${r.subscribed ? ' and subscribed to leadgen' : ''}`
-                + (r.others > 0 ? ` · ${r.others} more Page(s) waiting under Pages` : ''));
-              onDone?.();
-            })
+            .then((r) => { setPicker(r.list ?? []); onDone?.(); })
             .catch((e) => toast((e as Error).message || 'Could not finish connecting to Facebook.', true))
             .finally(() => setBusy(false));
         },
@@ -195,9 +195,12 @@ function FacebookConnect({ channelId, onDone }: { channelId: number | null; onDo
         disabled={busy} onClick={onClick}>
         <Ic k="bolt" />{busy ? 'Opening Facebook…' : 'Continue with Facebook'}
       </button>
+      {picker && channelId && (
+        <FbPagePicker channelId={channelId} pages={picker} onClose={() => setPicker(null)} onSaved={onDone} />
+      )}
       {ready ? (
         <span className="fhint">{channelId
-          ? 'Log in with Facebook. If it only says "Continue as …", click "Edit previous settings" (or "Edit access") first — that is where Facebook lets you pick the Business portfolios and tick several Pages. Every Page you grant is stored; switch the ones you want ON under Pages.'
+          ? 'Log in with Facebook — then choose your Business portfolios and tick the Pages whose leads should come here, right in the CRM. If a portfolio or Page is missing from the list, run it again and click "Edit previous settings" (or "Edit access") in the Facebook window to grant it.'
           : 'Save this channel first (button below) — then press Continue with Facebook to log in and pull your Pages.'}</span>
       ) : (
         <span className="fhint">

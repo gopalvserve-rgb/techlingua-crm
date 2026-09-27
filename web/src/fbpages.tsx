@@ -80,6 +80,7 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
   const [data, setData] = useState<FbPagesResp | null>(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState<string | null>(null);   // page id, 'refresh' or 'disconnect'
+  const [choosing, setChoosing] = useState(false);          // the Business portfolio + Page picker
 
   const load = () => {
     setErr('');
@@ -109,6 +110,14 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
   };
 
   const pages = data?.pages ?? [];
+
+  if (choosing) {
+    return (
+      <FbPagePicker channelId={channel.id} channelName={channel.name}
+        pages={pages.filter((p) => p.has_token)}
+        onClose={() => { setChoosing(false); load(); }} onSaved={onChanged} />
+    );
+  }
 
   return (
     <div className="add-scrim">
@@ -149,6 +158,12 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
                 {canManage && (
                   <button className="btn primary" onClick={onConnect} title="Log in with Facebook again — adds newly granted Pages and refreshes tokens">
                     <Ic k="link" />{pages.length ? 'Connect another / Re-authorise' : 'Connect Page'}
+                  </button>
+                )}
+                {canManage && pages.length > 0 && (
+                  <button className="btn" disabled={busy !== null} onClick={() => setChoosing(true)}
+                    title="Choose Business portfolios and tick several Pages at once" data-testid="fb-choose-pages">
+                    <Ic k="check" />Choose Pages
                   </button>
                 )}
                 {canManage && pages.length > 0 && (
@@ -423,6 +438,126 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
               {busy ? 'Saving…' : 'Save mapping'}<Ic k="check" />
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ======================================================= Portfolio + Page picker === */
+
+/** A Page as the picker needs it — from the connect response or GET /fb/pages. */
+export interface FbPickPage { page_id: string; page_name: string; business_name?: string | null; monitored: boolean }
+
+const NO_BUSINESS = 'Pages not in a Business portfolio';
+
+/**
+ * Right after "Continue with Facebook": choose the Business portfolios, then tick the Pages
+ * inside them whose Lead Ads should flow into this channel (several at once). Ticking a
+ * portfolio ticks all its Pages. Saving subscribes each chosen Page to leadgen and stops the
+ * ones that were unticked — the same subscribe/unsubscribe the Pages list switches use.
+ */
+export function FbPagePicker({ channelId, channelName, pages, onClose, onSaved }: {
+  channelId: number; channelName?: string; pages: FbPickPage[];
+  onClose: () => void; onSaved?: () => void;
+}) {
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(pages.filter((p) => p.monitored).map((p) => p.page_id)));
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const groups = useMemo(() => {
+    const m = new Map<string, FbPickPage[]>();
+    for (const p of pages) {
+      const k = (p.business_name || '').trim() || NO_BUSINESS;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(p);
+    }
+    return [...m.entries()].sort(([a], [b]) => (a === NO_BUSINESS ? 1 : b === NO_BUSINESS ? -1 : a.localeCompare(b)));
+  }, [pages]);
+
+  const needle = q.trim().toLowerCase();
+  const visible = (list: FbPickPage[]) => (needle
+    ? list.filter((p) => (p.page_name || '').toLowerCase().includes(needle) || p.page_id.includes(needle))
+    : list);
+  const setMany = (ids: string[], on: boolean) => setPicked((cur) => {
+    const n = new Set(cur); ids.forEach((id) => (on ? n.add(id) : n.delete(id))); return n;
+  });
+
+  const save = async () => {
+    const add = pages.filter((p) => picked.has(p.page_id) && !p.monitored);
+    const drop = pages.filter((p) => !picked.has(p.page_id) && p.monitored);
+    if (!add.length && !drop.length) { onClose(); return; }
+    const fails: string[] = [];
+    let done = 0;
+    for (const [p, action] of [...add.map((p) => [p, 'subscribe'] as const), ...drop.map((p) => [p, 'unsubscribe'] as const)]) {
+      setBusy(`${++done} of ${add.length + drop.length}`);
+      try { await api.post(`/channels/${channelId}/fb/pages/${p.page_id}/${action}`, {}); }
+      catch (e) { fails.push(`${p.page_name || p.page_id}: ${(e as Error).message}`); }
+    }
+    setBusy(null);
+    if (fails.length) toast(`Saved with ${fails.length} problem(s) — ${fails.slice(0, 2).join(' · ')}`, true);
+    else toast(`${picked.size} Page(s) now monitored${channelName ? ` on “${channelName}”` : ''}`);
+    onSaved?.();
+    onClose();
+  };
+
+  return (
+    <div className="add-scrim" style={{ zIndex: 320 }}>
+      <div className="add-modal" style={{ width: 720 }} data-testid="fb-page-picker">
+        <div className="ah">
+          <h3><Ic k="bolt" />Choose Business portfolios &amp; Pages</h3>
+          <button className="ax" onClick={onClose} aria-label="Close" disabled={busy !== null}><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          {pages.length === 0 ? (
+            <div className="empty-note">
+              Facebook returned no Pages for this login. Press Continue with Facebook again and, in the Facebook
+              window, click <b>Edit previous settings</b> / <b>Edit access</b> to grant the Business portfolios and Pages.
+            </div>
+          ) : (
+            <>
+              <div className="fhint" style={{ marginBottom: 8 }}>
+                Tick a <b>Business portfolio</b> to take all its Pages, or open it and tick individual Pages.
+                Leads from every ticked Page flow into this data source. {picked.size} of {pages.length} selected.
+              </div>
+              <input className="ainp" placeholder="Search Pages…" value={q} onChange={(e) => setQ(e.target.value)}
+                aria-label="Search Pages" autoComplete="off" style={{ marginBottom: 10 }} />
+              <div style={{ maxHeight: 420, overflowY: 'auto', display: 'grid', gap: 10 }}>
+                {groups.map(([biz, list]) => {
+                  const shown = visible(list);
+                  if (!shown.length) return null;
+                  const ids = list.map((p) => p.page_id);
+                  const n = ids.filter((id) => picked.has(id)).length;
+                  return (
+                    <div key={biz} className="card" style={{ margin: 0, padding: 10 }} data-testid="fb-picker-business">
+                      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 600, textTransform: 'none', cursor: 'pointer' }}>
+                        <input type="checkbox" aria-label={`Business portfolio ${biz}`} checked={n === ids.length}
+                          ref={(el) => { if (el) el.indeterminate = n > 0 && n < ids.length; }}
+                          onChange={(e) => setMany(ids, e.target.checked)} />
+                        <Ic k="branch" />{biz}
+                        <span className="sub" style={{ fontWeight: 400, marginLeft: 'auto' }}>{n}/{ids.length} Pages</span>
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 4, marginTop: 8, paddingLeft: 24 }}>
+                        {shown.map((p) => (
+                          <label key={p.page_id} style={{ display: 'flex', gap: 6, alignItems: 'center', textTransform: 'none', cursor: 'pointer' }}>
+                            <input type="checkbox" aria-label={`Page ${p.page_name || p.page_id}`} checked={picked.has(p.page_id)}
+                              onChange={(e) => setMany([p.page_id], e.target.checked)} />
+                            <span>{p.page_name || p.page_id}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose} disabled={busy !== null}>Cancel</button>
+          <button className="btn primary" onClick={save} disabled={busy !== null || pages.length === 0} data-testid="fb-picker-save">
+            <Ic k="check" />{busy ? `Saving ${busy}…` : `Save ${picked.size} Page(s)`}
+          </button>
         </div>
       </div>
     </div>
