@@ -507,10 +507,9 @@ const APP_FULL: ModuleItem[] = [
     { id: 'courseconfig', label: 'Course Configuration', spec: { dyn: 'courses',
       sub: 'Configure courses & fees. Approval step for fee changes.',
       actions: [['plus', 'New course', 'primary']] } },
-    // Admin › Masters hidden (2026-09-26, client request) — only the Lead Source master (Leads ›
-    // Lead Source Master) is used. MastersAdmin + the /masters API are kept; re-add to restore:
-    // { id: 'masters', label: 'Masters', spec: { dyn: 'mastersAdmin',
-    //   sub: 'Every dropdown master in one place — add, edit, view and activate/deactivate values (states, cities, sources, courses, Lead Status, tags & more).' } },
+    // Admin › Masters re-enabled 2026-09-30 at the client's request (it was hidden on 2026-09-26).
+    { id: 'masters', label: 'Masters', spec: { dyn: 'mastersAdmin',
+      sub: 'Every dropdown master in one place — add, edit, view and activate/deactivate values (states, cities, sources, courses, Lead Status, tags & more).' } },
     { id: 'workflow', label: 'Workflow Automation', spec: {
       sub: 'Admin-built rules (same engine as Automation Journeys). Who can build them.',
       blocks: [{ type: 'caps', title: 'Workflow automation', items: [
