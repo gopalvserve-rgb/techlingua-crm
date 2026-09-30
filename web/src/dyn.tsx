@@ -2200,12 +2200,15 @@ function Sources() {
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Source', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
+      <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Source', 'Branch', 'Vertical', 'Pipeline', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((so) => {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
           return [
             { node: <span className="nm">{so.name}</span> } as Cell,
+            String(so.branch_name ?? '—'),
+            String(so.vertical_name ?? '—'),
+            String(so.pipeline_name ?? '—'),
             String(so.campaign_name ?? '—'),
             { b: cap } as Cell,
             '—',
@@ -2227,6 +2230,9 @@ function Sources() {
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
+              ['Branch', view.branch_name ?? '—'],
+              ['Vertical', view.vertical_name ?? '—'],
+              ['Pipeline', view.pipeline_name ?? '—'],
               ['Campaign', view.campaign_name ?? '—'],
               ['Channel', <span className="mono">{view.channel ?? 'manual'}</span>],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
