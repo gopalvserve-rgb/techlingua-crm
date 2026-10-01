@@ -40,7 +40,13 @@ vi.mock('./api', () => ({ api: {
 
 const fld = (name: string) =>
   [...document.querySelectorAll('.add-modal .fld')].find((f) => f.querySelector('label')?.textContent?.trim().startsWith(name)) as HTMLElement;
-const sel = (name: string) => fld(name).querySelector('select') as HTMLSelectElement;
+// Oct 2026 — on ADD, Branch / Vertical are multi-select pickers (tick an option by its label).
+const pick = async (name: string, label: string) => {
+  const el = fld(name);
+  fireEvent.click(el.querySelector('.upick-ctl') as HTMLElement);
+  await waitFor(() => expect(el.querySelectorAll('.upick-row').length).toBeGreaterThan(0));
+  fireEvent.mouseDown([...el.querySelectorAll('.upick-row')].find((r) => r.querySelector('.upick-name')?.textContent === label) as HTMLElement);
+};
 const primary = () => document.querySelector('.add-modal .af .btn.primary') as HTMLElement;
 const tid = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
 
@@ -75,8 +81,8 @@ describe('Course form — Levels editor', () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'ZZTEST French' } });
     fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'ZZFR' } });
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
+    await pick('Branch', 'Vikaspuri');
+    await pick('Vertical', 'Vikaspuri → BCL');
     fireEvent.change(fld('Duration').querySelector('input')!, { target: { value: '6 Months' } });
     // three levels
     const levels = [['A1', '10000'], ['A2', '12000'], ['B1', '15000']];
@@ -94,12 +100,35 @@ describe('Course form — Levels editor', () => {
     expect(body.levels.map((l: any) => [l.code, l.fee])).toEqual([['A1', '10000'], ['A2', '12000'], ['B1', '15000']]);
   });
 
+  // Oct 2026 (client) — picking a level AUTO-FETCHES its fee + duration from the Level master.
+  it('picking a level auto-fills Fee and Duration from the Level master (still editable)', async () => {
+    (REF as any).courseLevels = [
+      { id: 'A1', name: 'A1', meta: { fee: 15000, duration: '3 Months' } },
+      { id: 'A2', name: 'A2', meta: {} },
+      { id: 'PTE-1', name: 'PTE-1', meta: { fee: 9000, vertical_ids: [3] } },   // scoped to the PTE vertical only
+    ];
+    render(<AddModal formKey="students.courses" onClose={() => {}} />);
+    await pick('Branch', 'Vikaspuri');
+    await pick('Vertical', 'Vikaspuri → BCL');
+    fireEvent.click(tid('level-add'));
+    // a level scoped to another vertical is not offered for this course
+    expect([...(tid('level-code-0') as HTMLSelectElement).options].map((o) => o.value)).toEqual(['', 'A1', 'A2']);
+    fireEvent.change(tid('level-code-0'), { target: { value: 'A1' } });
+    expect((tid('level-fee-0') as HTMLInputElement).value).toBe('15000');
+    expect((tid('level-duration-0') as HTMLInputElement).value).toBe('3 Months');
+    // still editable, and a master level with no fee leaves the typed value alone
+    fireEvent.change(tid('level-fee-0'), { target: { value: '14000' } });
+    fireEvent.change(tid('level-code-0'), { target: { value: 'A2' } });
+    expect((tid('level-fee-0') as HTMLInputElement).value).toBe('14000');
+    (REF as any).courseLevels = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map((c) => ({ id: c, name: c }));
+  });
+
   it('no levels → the course still saves; PUT sends an empty levels array (keeps Standard Fee)', async () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'ZZTEST Plain' } });
     fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'ZZPL' } });
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
+    await pick('Branch', 'Vikaspuri');
+    await pick('Vertical', 'Vikaspuri → BCL');
     fireEvent.change(fld('Standard Fee').querySelector('input')!, { target: { value: '20000' } });
     fireEvent.click(primary());
     await waitFor(() => expect(post).toHaveBeenCalled());

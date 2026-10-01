@@ -54,11 +54,46 @@ export function activityTitle(a: Activity, sourceName?: string): { tt: string; t
   }
 }
 
-export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onClose, onChanged }: { leadId: number; mode?: 'view' | 'edit'; initialTab?: 'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp'; onClose: () => void; onChanged?: () => void }) {
+type LeadTab = 'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp' | 'email';
+
+/**
+ * History › WhatsApp / Email (client, Oct 2026) — every message sent to this lead on one channel,
+ * read from the durable send log (GET /messages?lead_id=&channel=). Read-only; a user without
+ * message.read simply sees the empty state.
+ */
+function LeadMessagesTab({ leadId, channel }: { leadId: number; channel: 'whatsapp' | 'email' }) {
+  const [rows, setRows] = useState<any[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    setRows(null);
+    api.get<any[]>(`/messages?lead_id=${leadId}&channel=${channel}&limit=200`)
+      .then((r) => { if (live) setRows(r ?? []); })
+      .catch(() => { if (live) setRows([]); });
+    return () => { live = false; };
+  }, [leadId, channel]);
+  const label = channel === 'email' ? 'email' : 'WhatsApp message';
+  if (rows === null) return <div className="empty-note">Loading…</div>;
+  if (!rows.length) return <div className="empty-note">No {label}s sent to this lead yet</div>;
+  return (
+    <div className="tl" data-testid={`lead-${channel}-log`}>
+      {rows.map((m) => (
+        <div className="tl-item" key={m.id}>
+          <div className="tt"><Ic k={channel === 'email' ? 'mail' : 'wa'} w={2} /> {m.subject || m.template_name || (channel === 'email' ? 'Email' : 'WhatsApp message')}
+            {' '}<span className={`bdg ${m.status === 'failed' ? 'b-rose' : ['delivered', 'read', 'sent'].includes(m.status) ? 'b-green' : 'b-gray'}`}>{m.status}</span></div>
+          {m.body && <div className="td" style={{ whiteSpace: 'pre-wrap' }}>{String(m.body).replace(/<[^>]+>/g, ' ').trim().slice(0, 400)}</div>}
+          <div className="td">{[m.to_addr, m.user_name ? `by ${m.user_name}` : null, m.error].filter(Boolean).join(' · ')}</div>
+          <div className="tm">{fmtDT(m.sent_at || m.created_at)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onClose, onChanged }: { leadId: number; mode?: 'view' | 'edit'; initialTab?: LeadTab; onClose: () => void; onChanged?: () => void }) {
   const { can } = useAuth();
   const ref = useRef_();
   const [lead, setLead] = useState<any>(null);
-  const [tab, setTab] = useState<'activity' | 'notes' | 'redflag' | 'calls' | 'whatsapp'>(initialTab ?? 'activity');
+  const [tab, setTab] = useState<LeadTab>(initialTab ?? 'activity');
   // dev/84 item 1 — the lead sheet opens READ-ONLY (view) or editable (edit). View shows
   // every field display-only with no Save; an Edit button flips to edit mode (lead.update).
   const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
@@ -480,11 +515,19 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
               </div>
             );
           })()}
+          {/* client Oct 2026 — the lead DETAILS are their own section and END here with Close / Edit
+              (Save in edit mode); History follows as a separate section below. */}
+          <div className="sheet-sec" data-testid="lead-details-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 0 }}>
+            <button className="btn ghost" onClick={onClose}>Close</button>
+            {/* dev/84 item 1 — no Save in view mode; an Edit button flips to editable. */}
+            {!editing && canEditLead && <button className="btn primary" onClick={() => setMode('edit')}><Ic k="pencil" />Edit</button>}
+            {editing && <button className="btn primary" onClick={saveEdits} disabled={busy || !canUpdate}>{checkS}Save changes</button>}
+          </div>
           <DuplicatePanel leadId={lead.id} onChanged={() => { load(); onChanged?.(); }} />
-          <div className="sheet-sec">
+          <div className="sheet-sec" data-testid="lead-history" style={{ borderTop: '1px solid var(--border, #e5e7eb)', paddingTop: 16 }}>
             <h5>History</h5>
             <div className="seltabs">
-              {([['activity', 'Activity'], ['notes', 'Notes'], ['redflag', 'Red Flag'], ['calls', 'Calls'], ['whatsapp', 'WhatsApp']] as const).map(([t, lbl]) => (
+              {([['activity', 'Activity'], ['notes', 'Notes'], ['redflag', 'Red Flag'], ['calls', 'Calls'], ['whatsapp', 'WhatsApp'], ['email', 'Email']] as const).map(([t, lbl]) => (
                 <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
                   {t === 'redflag' && lead.is_red_flagged ? <span style={{ color: 'var(--red)', marginRight: 4 }}>●</span> : null}{lbl}
                 </button>
@@ -556,7 +599,8 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
             )}
             {tab === 'calls' && (
               <>
-                <h4 style={{ margin: '0 0 10px' }}>Call notes</h4>
+                {/* client Oct 2026 — EVERY call disposition logged on this lead is recorded here. */}
+                <h4 style={{ margin: '0 0 10px' }}>Call disposition log</h4>
                 <div className="tl" style={{ marginBottom: 18 }}>
                   {callNotes.length === 0 && <div className="empty-note">No call dispositions logged yet</div>}
                   {callNotes.map((a) => (
@@ -571,14 +615,9 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                 <LeadCallsTab leadId={Number(lead.id)} phone={lead.phone} />
               </>
             )}
-            {tab === 'whatsapp' && <div className="empty-note">WhatsApp message history appears here once WhatsApp is connected in Settings › Channels.</div>}
+            {tab === 'whatsapp' && <LeadMessagesTab leadId={Number(lead.id)} channel="whatsapp" />}
+            {tab === 'email' && <LeadMessagesTab leadId={Number(lead.id)} channel="email" />}
           </div>
-        </div>
-        <div className="sheet-foot">
-          <button className="btn ghost" onClick={onClose}>Close</button>
-          {/* dev/84 item 1 — no Save in view mode; an Edit button flips to editable. */}
-          {!editing && canEditLead && <button className="btn primary" onClick={() => setMode('edit')}><Ic k="pencil" />Edit</button>}
-          {editing && <button className="btn primary" onClick={saveEdits} disabled={busy || !canUpdate}>{checkS}Save changes</button>}
         </div>
       </div>
       {masterAdd && (

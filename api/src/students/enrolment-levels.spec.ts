@@ -71,7 +71,7 @@ describe('convert with levels — ONE enrolment, Total = Σ, Net = Total − dis
     expect(ins.params[11]).toBe(4950000);  // net = 55,000 − 10% = ₹49,500
     expect(ins.params[20]).toBe('overall'); // discount_scope
     // one line-item per level
-    expect(count(issued, /INSERT INTO enrolment_level/)).toBe(4);
+    expect(count(issued, /INSERT INTO enrolment_level \(/)).toBe(4);
     expect(out[0].total_fee_minor).toBe(5500000);
     expect(out[0].net_fee_minor).toBe(4950000);
     expect(out[0].levels).toHaveLength(4);
@@ -94,7 +94,7 @@ describe('convert with levels — ONE enrolment, Total = Σ, Net = Total − dis
     await svc.createConvertEnrolments(7, 31, LEAD, rows, { id: 5 });
     const ins = find(issued, /INSERT INTO enrolment \(/)!;
     expect(ins.params[9]).toBe(3000000);   // meta.fee 30,000 -> paise
-    expect(count(issued, /INSERT INTO enrolment_level/)).toBe(0);
+    expect(count(issued, /INSERT INTO enrolment_level \(/)).toBe(0);
   });
 });
 
@@ -144,7 +144,13 @@ describe('add-level UPGRADE — same enrolment, Total/Net up, plan reconciled, n
     // NO second enrolment
     expect(has(issued, /INSERT INTO enrolment \(/)).toBe(false);
     // a new level line-item was inserted
-    expect(has(issued, /INSERT INTO enrolment_level/)).toBe(true);
+    expect(has(issued, /INSERT INTO enrolment_level \(/)).toBe(true);
+    // ...and the level trail records WHEN/HOW/WHO: one 'added' row for A2 by the acting user (migration 121)
+    const hist = find(issued, /INSERT INTO enrolment_level_history/)!;
+    expect(hist.params[1]).toBe(900);       // enrolment_id
+    expect(hist.params[2]).toBe('added');   // action
+    expect(hist.params[3]).toBe('A2');      // level code
+    expect(hist.params[9]).toBe(5);         // actor_id
     // the enrolment row's totals grew (Total = 10k + 12k = 22k, Net = 22k, discount none)
     const upd = find(issued, /UPDATE enrolment SET fee_minor/)!;
     expect(upd.params[1]).toBe(2200000); // new total

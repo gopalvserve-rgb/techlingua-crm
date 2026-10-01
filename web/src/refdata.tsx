@@ -107,7 +107,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('pipeline.read'), () => api.get<Named[]>('/stages'), []),
         // Course catalogs (client feedback #13) — Course Type / Level / Delivery Mode dropdowns.
         safe(can('master.read'), async () => (await api.get<any[]>('/courses/type-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
-        safe(can('master.read'), async () => (await api.get<any[]>('/courses/level-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
+        safe(can('master.read'), async () => (await api.get<any[]>('/courses/level-catalog')).map((r) => ({ id: r.code, name: r.label, meta: r.meta ?? {} })), []),
         safe(can('master.read'), async () => (await api.get<any[]>('/courses/delivery-catalog')).map((r) => ({ id: r.code, name: r.label })), []),
         // Campaign Type master (dev/131, task #213 item 4) — the campaign form's Campaign Type select.
         safe(can('master.read'), () => api.get<Named[]>('/masters/campaign_type'), []),

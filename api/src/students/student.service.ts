@@ -286,6 +286,39 @@ export class StudentService {
     }
   }
 
+  /**
+   * LEVEL HISTORY (migration 121) — append one trail row per level event on an enrolment, so the
+   * View enrolment screen can show when and how each level came onto it. Same client `c`.
+   */
+  private async recordLevelHistory(
+    c: any, orgId: number, enrolmentId: number, action: 'enrolled' | 'added' | 'updated' | 'removed',
+    levels: Array<{ code: string; label?: string | null; fee_minor?: number; discount_minor?: number; exam_fee_minor?: number }>,
+    actorId: number | null, note: string | null = null,
+  ) {
+    for (const l of levels) {
+      await c.query(
+        `INSERT INTO enrolment_level_history (org_id, enrolment_id, action, code, label, fee_minor, discount_minor, exam_fee_minor, note, actor_id)
+         VALUES ($1::bigint,$2::bigint,$3::varchar,$4::varchar,$5,$6::bigint,$7::bigint,$8::bigint,$9,$10::bigint)`,
+        [orgId, enrolmentId, action, l.code, l.label ?? null, Number(l.fee_minor ?? 0), Number(l.discount_minor ?? 0),
+          Number(l.exam_fee_minor ?? 0), note, actorId]);
+    }
+  }
+
+  /** The level trail of ONE enrolment, oldest first (GET /students/:id/enrolments/:eid/level-history). */
+  async enrolmentLevelHistory(enrolmentId: number, scope: ResolvedScope, expectStudentId?: number) {
+    const enr = await this.enrolmentInScope(enrolmentId, scope);
+    if (expectStudentId != null && Number(enr.linked_student_id) !== Number(expectStudentId)) {
+      throw new NotFoundException('Enrolment not found for this student.');
+    }
+    return this.db.query<any>(
+      `SELECT h.id, h.action, h.code, h.label, h.fee_minor, h.discount_minor, h.exam_fee_minor,
+              h.note, h.actor_id, u.name AS actor_name, h.created_at
+         FROM enrolment_level_history h
+         LEFT JOIN "user" u ON u.id = h.actor_id
+        WHERE h.enrolment_id = $1::bigint
+        ORDER BY h.created_at, h.id`, [enrolmentId]);
+  }
+
   /** The level line-items of a set of enrolments, grouped by enrolment_id (for reads). */
   private async levelsByEnrolment(enrolmentIds: number[]): Promise<Map<number, any[]>> {
     const map = new Map<number, any[]>();
@@ -1837,7 +1870,10 @@ export class StudentService {
             r.feeMinor, r.discount_type, r.discount_value, r.disc, r.discountScope,
             r.appStatus, r.discRequested, r.capMinor, r.requestedBy, r.approvedBy, r.examMinor ?? 0, r.courseType ?? null]);
         const eid = Number(ins.rows[0].id);
-        if (r.levels.length) await this.insertEnrolmentLevels(c, orgId, eid, r.levels);
+        if (r.levels.length) {
+          await this.insertEnrolmentLevels(c, orgId, eid, r.levels);
+          await this.recordLevelHistory(c, orgId, eid, 'enrolled', r.levels, me.id, 'Enrolled on conversion');
+        }
         await c.query(
           `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
                from_status, to_status, reason, effective_date, outstanding_minor, changed_by)
@@ -2408,7 +2444,10 @@ export class StudentService {
           fee, discountType, discountValue, disc, discountScope,
           dd.status, discRequested, dd.capMinor, dd.requestedBy, dd.approvedBy, examMinor]);
       const eid = Number(r.rows[0].id);
-      if (levels.length) await this.insertEnrolmentLevels(c, orgId, eid, levels);
+      if (levels.length) {
+        await this.insertEnrolmentLevels(c, orgId, eid, levels);
+        await this.recordLevelHistory(c, orgId, eid, 'enrolled', levels, me.id, 'Enrolled');
+      }
       await c.query(
         `INSERT INTO enrolment_status_history (org_id, branch_id, vertical_id, enrolment_id, student_id, course_id,
              from_status, to_status, reason, effective_date, outstanding_minor, changed_by)
@@ -2573,8 +2612,24 @@ export class StudentService {
       // Re-sync the level line-items to the edited set (add/remove + per-level discount) — the
       // enrolment_level.discount_minor keeps the REQUESTED per-level breakdown.
       if (resolvedLevels) {
+        // Level history (migration 121): diff the stored set against the edited one BEFORE the
+        // re-sync, so the trail says which level was added / removed / re-priced on this edit.
+        const before = await c.query(
+          `SELECT code, label, fee_minor, discount_minor, exam_fee_minor FROM enrolment_level WHERE enrolment_id = $1::bigint`,
+          [enrolmentId]);
+        const old = new Map<string, any>(((before?.rows ?? []) as any[]).map((r) => [String(r.code).toLowerCase(), r]));
+        const kept = new Set(resolvedLevels.map((l) => l.code.toLowerCase()));
         await c.query(`DELETE FROM enrolment_level WHERE enrolment_id = $1::bigint`, [enrolmentId]);
         await this.insertEnrolmentLevels(c, orgId, enrolmentId, resolvedLevels);
+        await this.recordLevelHistory(c, orgId, enrolmentId, 'added',
+          resolvedLevels.filter((l) => !old.has(l.code.toLowerCase())), me.id, 'Added on Edit enrolment');
+        await this.recordLevelHistory(c, orgId, enrolmentId, 'updated',
+          resolvedLevels.filter((l) => {
+            const o = old.get(l.code.toLowerCase());
+            return !!o && (Number(o.fee_minor ?? 0) !== Number(l.fee_minor ?? 0) || Number(o.discount_minor ?? 0) !== Number(l.discount_minor ?? 0));
+          }), me.id, 'Fee / discount changed on Edit enrolment');
+        await this.recordLevelHistory(c, orgId, enrolmentId, 'removed',
+          [...old.entries()].filter(([k]) => !kept.has(k)).map(([, r]) => r), me.id, 'Removed on Edit enrolment');
       }
       // OBS-1 — the net moved (e.g. a discount edit): rebuild any UNPAID plan schedule so Due
       // (Σ outstanding) always equals Net − Paid. A plan with money applied keeps its schedule.
@@ -2682,6 +2737,7 @@ export class StudentService {
     const newExamFee = Math.max(0, Number(enr.exam_fee_minor ?? 0)) + sumLevelExamFees(newLevels);
     await this.db.tx(async (c) => {
       await this.insertEnrolmentLevels(c, orgId, enrolmentId, newLevels);
+      await this.recordLevelHistory(c, orgId, enrolmentId, 'added', newLevels, me.id, 'Added with Add level (upgrade)');
       await c.query(
         `UPDATE enrolment SET fee_minor = $2::bigint, gross_fee_minor = $2::bigint,
                 discount_minor = $3::bigint, discount_amount_minor = $3::bigint, net_fee_minor = $4::bigint,

@@ -83,7 +83,15 @@ export class MastersService {
       const vals = [...new Set((arr ?? []).map((x) => String(x).trim()).filter(Boolean))];
       if (!vals.length) return;
       const ph = vals.map((v) => { params.push(v); return `$${params.length}`; });
-      where.push(`m.meta->>'${key}' IN (${ph.join(',')})`);
+      // Level master (Oct 2026): Branch / Vertical are MULTI-select there, stored as meta.<key>s
+      // (branch_ids / vertical_ids). Match either the single value or any element of the array.
+      const multi = key === 'branch_id' || key === 'vertical_id';
+      where.push(multi
+        ? `(m.meta->>'${key}' IN (${ph.join(',')}) OR EXISTS (
+             SELECT 1 FROM jsonb_array_elements_text(
+               CASE WHEN jsonb_typeof(m.meta->'${key}s') = 'array' THEN m.meta->'${key}s' ELSE '[]'::jsonb END) x
+              WHERE x IN (${ph.join(',')})))`
+        : `m.meta->>'${key}' IN (${ph.join(',')})`);
     };
     metaIn('branch_id', filter?.branchIds);
     metaIn('vertical_id', filter?.verticalIds);

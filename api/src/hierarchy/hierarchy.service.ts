@@ -714,6 +714,9 @@ export class HierarchyService {
     start_date?: string | null; end_date?: string | null;
     // UAT-R2 #23 — campaign managers (management/visibility only, NOT the agent pool)
     manager_user_ids?: number[];
+    // Oct 2026 — the Lead Sources (Source master ids) this campaign captures from, picked on the
+    // Create Campaign form so an integration's "Lead Source" (required after Campaign) has options.
+    source_master_ids?: number[];
   }, actorId: number, scope: ResolvedScope) {
     if (!dto?.pipeline_id || !dto?.name) throw new BadRequestException('pipeline_id and name are required');
     // NeoDove configs are validated strictly on create AND update (QA DEF-2).
@@ -746,7 +749,33 @@ export class HierarchyService {
     // #23 — managers are a SEPARATE set from the distribution agent pool; a manager
     // is never added to distribution_config, so a manager receives no auto-assigned leads.
     const managerIds = await this.replaceManagers(Number(created.id), dto.manager_user_ids, actorId, scope);
-    return { ...created, manager_user_ids: managerIds, paused_agent_user_ids: [] };
+    const sources = await this.attachCampaignSources(Number(created.id), dto.source_master_ids, actorId);
+    return { ...created, manager_user_ids: managerIds, paused_agent_user_ids: [], sources };
+  }
+
+  /**
+   * Oct 2026 — attach Lead Sources to a campaign from the Create/Edit Campaign form. Each picked
+   * Source-master value (m_source) becomes a campaign-scoped `source` row (the thing every lead /
+   * integration "Lead Source" dropdown lists after a Campaign is chosen). ADD-ONLY and idempotent:
+   * a master value the campaign already has is skipped, and nothing is ever removed here — sources
+   * carry leads, so removal stays on the Lead Source Master screen.
+   */
+  private async attachCampaignSources(campaignId: number, ids: number[] | undefined, actorId: number) {
+    const list = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!list.length) return [];
+    const masters = await this.db.query<{ id: string; name: string }>(
+      `SELECT id, name FROM m_source WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL`, [list]);
+    const bad = list.filter((id) => !masters.some((m) => Number(m.id) === id));
+    if (bad.length) throw new BadRequestException(`source_master_ids references unknown lead source id(s): ${bad.join(', ')}`);
+    const existing = await this.db.query<{ master_source_id: string | null }>(
+      `SELECT master_source_id FROM source WHERE campaign_id = $1 AND deleted_at IS NULL`, [campaignId]);
+    const have = new Set(existing.map((r) => Number(r.master_source_id)));
+    const created: unknown[] = [];
+    for (const m of masters) {
+      if (have.has(Number(m.id))) continue;
+      created.push(await this.createSource({ campaign_id: campaignId, name: m.name, master_source_id: Number(m.id) }, actorId));
+    }
+    return created;
   }
 
   async updateCampaign(id: number, dto: Record<string, unknown>, actorId: number, scope: ResolvedScope) {
@@ -773,6 +802,8 @@ export class HierarchyService {
     const managerProvided = dto.manager_user_ids !== undefined;
     let managerIds: number[] | undefined;
     if (managerProvided) managerIds = await this.replaceManagers(id, dto.manager_user_ids as number[], actorId, scope);
+    // Oct 2026 — Lead Sources picked on the Edit Campaign form (add-only; not a campaign column).
+    if (dto.source_master_ids !== undefined) await this.attachCampaignSources(id, dto.source_master_ids as number[], actorId);
     const COLS = ['name', 'utm', 'cost', 'priority', 'distribution_config', 'duplicacy_config',
       'campaign_type', 'marketing_channel', 'start_date', 'end_date', 'is_active'];
     if (!COLS.some((k) => dto[k] !== undefined)) {

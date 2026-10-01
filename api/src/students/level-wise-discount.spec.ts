@@ -29,7 +29,7 @@ const count = (issued: any[], re: RegExp) => all(issued, re).length;
 const has = (issued: any[], re: RegExp) => issued.some((i) => re.test(i.sql));
 /** the enrolment_level INSERT for a level code -> its discount_minor (param 6). */
 const levelDisc = (issued: any[], code: string) =>
-  all(issued, /INSERT INTO enrolment_level/).find((i) => String(i.params[3]).toLowerCase() === code.toLowerCase())?.params[6];
+  all(issued, /INSERT INTO enrolment_level \(/).find((i) => String(i.params[3]).toLowerCase() === code.toLowerCase())?.params[6];
 
 const rbac = (authorised: boolean) => ({
   loadUserGrants: async () => ({ rolePermissions: authorised ? [{ permissionKey: 'discount.approve' }] : [{ permissionKey: 'student.update' }] }),
@@ -80,7 +80,7 @@ describe('dev/110 convert — per-level discount (₹ and %) -> per-level nets +
     expect(ins.params[20]).toBe('level');   // discount_scope
     expect(ins.params[21]).toBe('none');    // no cap -> nothing pending
     // per-level breakdown persisted on enrolment_level.discount_minor
-    expect(count(issued, /INSERT INTO enrolment_level/)).toBe(3);
+    expect(count(issued, /INSERT INTO enrolment_level \(/)).toBe(3);
     expect(levelDisc(issued, 'A1')).toBe(100000);
     expect(levelDisc(issued, 'A2')).toBe(120000);
     expect(levelDisc(issued, 'B1')).toBe(0);
@@ -206,7 +206,7 @@ describe('dev/110 edit — updating a level discount re-syncs the line-items + r
     expect(upd.params[14]).toBe('level');  // discount_scope
     // the level line-items are re-synced (delete-all then re-insert the edited set)
     expect(has(issued, /DELETE FROM enrolment_level WHERE enrolment_id/)).toBe(true);
-    expect(count(issued, /INSERT INTO enrolment_level/)).toBe(2);
+    expect(count(issued, /INSERT INTO enrolment_level \(/)).toBe(2);
     expect(levelDisc(issued, 'A1')).toBe(200000);
     // Due = Net − Paid (nothing collected)
     expect(out.net_fee_minor).toBe(1900000);

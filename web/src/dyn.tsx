@@ -6112,7 +6112,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           onDone={() => { setEnrolEditFor(null); reloadEnrol(); loadProfile(); }} />
       )}
       {enrolViewFor && (
-        <ViewEnrolmentModal enrolment={enrolViewFor} onClose={() => setEnrolViewFor(null)} />
+        <ViewEnrolmentModal enrolment={enrolViewFor} studentId={Number(full.id)} onClose={() => setEnrolViewFor(null)} />
       )}
       {enrolXferFor && (
         <TransferEnrolmentCourseModal student={full} enrolment={enrolXferFor}
@@ -6596,9 +6596,14 @@ function perLevelDiscMinor(feeMinor: number, type: LevelDiscType, rawValue: stri
  * A student can take the next level a year later at a DIFFERENT discount, so discounts are tracked
  * per level. Renders nothing for a course with no levels (the classic single-Standard-Fee path).
  */
-export function EnrolLevelPicker({ courseId, disabled, onChange, seed }:
-  { courseId: string; disabled?: boolean; onChange: (p: LevelSelection) => void; seed?: LevelSeed }) {
-  const [levels, setLevels] = useState<any[]>([]);
+export function EnrolLevelPicker({ courseId, disabled, onChange, seed, onlySeeded }:
+  { courseId: string; disabled?: boolean; onChange: (p: LevelSelection) => void; seed?: LevelSeed;
+    /** Edit enrolment (client, Oct 2026): list ONLY the levels already assigned to the enrolment
+     *  (the seed) — not the course's upcoming levels. A new level goes through "Add level". */
+    onlySeeded?: boolean }) {
+  const [allLevels, setLevels] = useState<any[]>([]);
+  const seedCodes = new Set((seed?.levels ?? []).map((l) => String(l.code).toLowerCase()));
+  const levels = onlySeeded && seed ? allLevels.filter((l) => seedCodes.has(String(l.code).toLowerCase())) : allLevels;
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [scope, setScope] = useState<'overall' | 'level'>('overall');
   const [disc, setDisc] = useState<Record<string, string>>({});
@@ -6621,7 +6626,7 @@ export function EnrolLevelPicker({ courseId, disabled, onChange, seed }:
       if (Number(sl.discount_minor || 0) > 0) dv[code] = String(Number(sl.discount_minor) / 100);
     }
     setSel(s); setDisc(dv); setDiscType(dt); setScope(seed.scope === 'level' ? 'level' : 'overall');
-  }, [levels, seed, courseId]);
+  }, [allLevels, seed, courseId]);   // eslint-disable-line react-hooks/exhaustive-deps
   const chosen = levels.filter((l) => sel[String(l.code)]);
   const totalMinor = chosen.reduce((s, l) => s + Number(l.fee_minor || 0), 0);
   const perDiscMinor = (l: any) => perLevelDiscMinor(Number(l.fee_minor || 0), discType[String(l.code)] || 'amount', disc[String(l.code)] || '');
@@ -6633,11 +6638,13 @@ export function EnrolLevelPicker({ courseId, disabled, onChange, seed }:
       levels: chosen.map((l) => ({ course_level_id: Number(l.id), code: String(l.code), fee_minor: Number(l.fee_minor || 0),
         ...(scope === 'level' ? { discount_type: (discType[String(l.code)] || 'amount'), discount_value: Number(disc[String(l.code)] || 0), discount_minor: perDiscMinor(l) } : {}) })),
     });
-  }, [levels, sel, scope, disc, discType]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allLevels, sel, scope, disc, discType]);   // eslint-disable-line react-hooks/exhaustive-deps
   if (!courseId || !levels.length) return null;
   return (
     <div className="fld" style={{ gridColumn: '1 / -1' }}>
-      <label>Levels <span className="star">*</span> <span className="sub" style={{ fontWeight: 400 }}>— select one or more; the fee auto-sums</span></label>
+      <label>Levels <span className="star">*</span> <span className="sub" style={{ fontWeight: 400 }}>{onlySeeded
+        ? '— the levels assigned to this enrolment; use Add level for a new one'
+        : '— select one or more; the fee auto-sums'}</span></label>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', background: 'var(--surface-2,#f8fafc)', borderRadius: 8 }} data-testid="enrol-levels">
         {levels.map((l) => {
           const code = String(l.code); const fee = Number(l.fee_minor || 0);
@@ -7040,8 +7047,18 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
  * fee, discount, net, plan, status and dates. No inputs, no save — pure display, built from the
  * enrolment row the Course Enrollment list already has (same shape used by the Edit modal).
  */
-export function ViewEnrolmentModal({ enrolment: e, onClose }: { enrolment: any; onClose: () => void }) {
+export function ViewEnrolmentModal({ enrolment: e, studentId, onClose }: { enrolment: any; studentId?: number; onClose: () => void }) {
   const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
+  // LEVEL HISTORY (client, Oct 2026) — a separate trail of when and how each level came onto this
+  // SAME enrolment: enrolled with it, added later (Add level / upgrade), re-priced or removed.
+  const sid = studentId ?? e.linked_student_id ?? e.student_id;
+  const hist = useFetch<any[]>(sid && e.id ? `/students/${sid}/enrolments/${e.id}/level-history` : null, [sid, e.id]);
+  const HOW: Record<string, { label: string; cls: string }> = {
+    enrolled: { label: 'Enrolled with this level', cls: 'b-indigo' },
+    added: { label: 'Level added', cls: 'b-green' },
+    updated: { label: 'Fee / discount changed', cls: 'b-amber' },
+    removed: { label: 'Level removed', cls: 'b-rose' },
+  };
   const dt = (v: any) => fmtDateTimeIST(v);
   const disc = Number(e.discount_amount_minor ?? e.discount_minor ?? 0);
   const discLabel = disc > 0
@@ -7074,6 +7091,32 @@ export function ViewEnrolmentModal({ enrolment: e, onClose }: { enrolment: any; 
           ['LMS Access', <span className="sub">{String(e.effective_lms_access ?? '').toUpperCase() || '—'}</span>],
         ]} />
       </div>
+      {sid ? (
+        <div style={{ marginTop: 14 }} data-testid="enrol-level-history">
+          <div className="sechead" style={{ marginBottom: 6 }}>Level history</div>
+          <div className="sub" style={{ marginBottom: 6 }}>When and how each level was added to this enrolment.</div>
+          {hist.loading ? <div className="empty-note">Loading…</div>
+            : !(hist.data ?? []).length ? <div className="empty-note">No level history — this enrolment has no levels.</div>
+            : (
+              <table className="minitbl" style={{ width: '100%' }}>
+                <thead><tr><th>Date &amp; time</th><th>Level</th><th>How</th><th style={{ textAlign: 'right' }}>Fee</th><th style={{ textAlign: 'right' }}>Discount</th><th>By</th></tr></thead>
+                <tbody>{(hist.data ?? []).map((h: any) => {
+                  const how = HOW[String(h.action)] ?? { label: String(h.action), cls: 'b-gray' };
+                  return (
+                    <tr key={h.id} data-testid={`enrol-level-history-${h.id}`}>
+                      <td>{dt(h.created_at)}</td>
+                      <td><b>{h.code}</b>{h.label && h.label !== h.code ? <span className="sub"> {h.label}</span> : null}</td>
+                      <td><span className={`bdg ${how.cls}`}>{how.label}</span>{h.note ? <div className="sub" style={{ fontSize: 11 }}>{h.note}</div> : null}</td>
+                      <td style={{ textAlign: 'right' }}>{money(h.fee_minor)}</td>
+                      <td style={{ textAlign: 'right' }}>{Number(h.discount_minor ?? 0) > 0 ? `− ${money(h.discount_minor)}` : '—'}</td>
+                      <td>{h.actor_name ?? '—'}</td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            )}
+        </div>
+      ) : null}
     </DetailModal>
   );
 }
@@ -7186,7 +7229,10 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
         {/* LEVELS (dev/110) — a level-course enrolment shows its Level line-items with an editable
             per-level discount + add/remove; the fee then auto-sums from the levels. Seeded from the
             saved levels; only shown while the course is unchanged (a course change resets levels). */}
-        {hasLevels && <EnrolLevelPicker courseId={courseId} disabled={busy} onChange={onLevels} seed={levelSeed} />}
+        {/* client Oct 2026 — only the levels ASSIGNED to this enrolment are editable here (an
+            enrolment on French level 2 shows level 2 only, not all six); upcoming levels are
+            added through the separate "Add level" action, which records its own history. */}
+        {hasLevels && <EnrolLevelPicker courseId={courseId} disabled={busy} onChange={onLevels} seed={levelSeed} onlySeeded />}
         <FeeConfigFields cfg={cfg} disabled={busy}
           showFee={!hasLevels} hideDiscount={hasLevels && levelScope === 'level'}
           capCtx={{ branch_id: enrolment.branch_id ?? null, vertical_id: enrolment.vertical_id ?? null, course_id: Number(courseId) || (enrolment.course_id ?? null) }} />

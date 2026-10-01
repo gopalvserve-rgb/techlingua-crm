@@ -31,7 +31,9 @@ export class CoursesService {
     // course_level.code / m_course.meta->>'level'), active values only, and now reflects whatever
     // the client has added/edited/deactivated in Administration > Masters.
     return this.db.query(
-      `SELECT name AS code, name AS label, sort_order AS ordering
+      // `meta` carries the level master's Branch / Vertical / Course scope + Fee + Duration, so the
+      // course form can auto-fill a picked level's fee and duration (client, Oct 2026).
+      `SELECT name AS code, name AS label, sort_order AS ordering, meta
          FROM m_level WHERE deleted_at IS NULL AND is_active
         ORDER BY sort_order, name`,
     );

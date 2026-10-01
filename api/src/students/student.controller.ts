@@ -160,6 +160,13 @@ export class StudentController {
     return this.svc.addEnrolmentLevel(eid, dto, me, scope, id);
   }
 
+  /** The per-enrolment LEVEL trail — when and how each level came onto this enrolment (migration 121). */
+  @Get(':id/enrolments/:eid/level-history')
+  @RequirePermission('student.read')
+  enrolmentLevelHistory(@Param('id', ParseIntPipe) id: number, @Param('eid', ParseIntPipe) eid: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.enrolmentLevelHistory(eid, scope, id);
+  }
+
   /** 27aug Batch C items 4 & 5 — ASSIGN a batch to ONE of the student's enrolments (per-course).
    *  batch_id null unassigns. No hard block on an incomplete admission step (returns a warning). */
   @Post(':id/enrolments/:eid/assign-batch')

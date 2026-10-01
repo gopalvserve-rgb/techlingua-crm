@@ -9,7 +9,7 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { UserPicker } from './userpicker';
-import { AddMasterModal } from './mastermodal';
+import { AddMasterModal, levelScopeIds } from './mastermodal';
 import { PhoneInput } from './phonefield';
 import { toast, useRef_, Named, RefData, selectableUsers } from './refdata';
 import { findScreen } from './specs';
@@ -47,6 +47,9 @@ export interface FormField {
 }
 export const F = (label: string, type?: string, req?: 0 | 1 | boolean, opts?: string[] | 0 | null, hint?: string, src?: FormField['src'], self?: 0 | 1 | boolean, def?: string): FormField =>
   ({ label, type, req: !!req, opts: opts || null, hint: hint || '', src, self: !!self, def });
+
+/** Course form (Oct 2026) — the multi-select Branch / Vertical pickers shown when a course is created. */
+const isBvMulti = (f: FormField) => f.type === 'branchmulti' || f.type === 'verticalmulti';
 
 /** Label used for the current user inside Task-module user dropdowns. */
 export const SELF_LABEL = 'Myself';
@@ -260,7 +263,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // client can narrow a course to a specific pipeline/campaign; leaving them blank keeps the course
   // at Branch → Vertical exactly as before.
   'students.courses': { title: 'Add Course', fields: [
-    F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
+    // Oct 2026 (client) — Branch and Vertical are MULTI-select when a course is CREATED: the same
+    // course is created once under every picked Branch › Vertical (each copy still belongs to ONE
+    // Branch → ONE Vertical in meta.branch_id / meta.vertical_id, so every course filter is unchanged).
+    // On Edit they are the usual single cascading selects of that one course.
+    F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'branchmulti', 1, 0, 'master · multi-select', 'branches'), F('Vertical', 'verticalmulti', 1, 0, 'filtered by Branch · multi-select', 'verticals'),
     // Course LEVELS (enrollment re-model, batch 1) — a course can have MANY levels (A1, A2, …), each
     // with its OWN fee. "+ Add level" adds rows; empty falls back to the single Standard Fee below.
     // Replaces the old single "Course Level" descriptor. Persisted via PUT /courses/:id/levels.
@@ -637,17 +644,43 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
   },
 };
 SAVERS['students.courses'] = async (vals, ids) => {
+  const name = need(vals['Course Name'], 'Course name is required');
+  const code = need(vals['Course Code'], 'Course code is required');
+  // Branch / Vertical are multi-select on Add: vals.Branch = "1,2", vals.Vertical = "7:1,9:2"
+  // (vertical:branch pairs). A single Branch/Vertical id (ids.*) is still honoured.
+  const branchIds = parseIdCsv(vals['Branch']);
+  const pairs = parseVertCsv(vals['Vertical']).filter((p) => Number.isFinite(p.b) && p.b > 0);
+  const targets = pairs.length ? pairs.map((p) => ({ branch_id: p.b, vertical_id: p.v }))
+    : (ids['Branch'] != null && ids['Vertical'] != null ? [{ branch_id: Number(ids['Branch']), vertical_id: Number(ids['Vertical']) }] : []);
+  if (!branchIds.length && ids['Branch'] == null) need(undefined, 'Pick a Branch');
+  if (!targets.length) need(undefined, 'Pick a Vertical (filtered by the Branch)');
+  if (branchIds.some((b) => !targets.some((t) => t.branch_id === b))) need(undefined, 'Pick at least one Vertical under every selected Branch');
+  const levels = levelsPayload(vals['Levels']);
+  let first: Named | undefined;
+  for (const t of targets) {
+    const row = await saveCourseUnder(vals, String(name), String(code), t, levels);
+    first = first ?? row;
+  }
+  const where = targets.length > 1 ? ` under ${targets.length} verticals` : '';
+  return {
+    msg: levels.length ? `Course "${first!.name}" added${where} with ${levels.length} level${levels.length > 1 ? 's' : ''}`
+      : (targets.length > 1 ? `Course "${first!.name}" added${where}` : `Course "${first!.name}" added to the master`),
+    row: first,
+  };
+};
+/** Create ONE course under one Branch › Vertical (+ its levels). */
+async function saveCourseUnder(vals: Vals, name: string, code: string, t: { branch_id: number; vertical_id: number }, levels: ReturnType<typeof levelsPayload>): Promise<Named> {
   const row = await api.post<Named>('/masters/course', {
-    name: need(vals['Course Name'], 'Course name is required'),
-    code: need(vals['Course Code'], 'Course code is required'),
+    name,
+    code,
     meta: {
       mode: vals['Training Mode'] || undefined,
       duration: vals['Duration'] || undefined,
       fee: vals['Standard Fee'] || undefined,
       // EXAM FEE (dev/140 item 3) — single exam fee for a course WITHOUT levels; added on top, never discounted.
       exam_fee: vals['Standard Exam Fee'] || undefined,
-      branch_id: need(ids['Branch'], 'Pick a Branch'),
-      vertical_id: need(ids['Vertical'], 'Pick a Vertical (filtered by the Branch)'),
+      branch_id: t.branch_id,
+      vertical_id: t.vertical_id,
       // dev/100 (client): Campaign/Pipeline are CRM-only — not sent from the ERP course form.
       eligibility: vals['Eligibility Criteria'] || undefined,
       // Course descriptors (client feedback #13) — stored in meta like fee/vertical_id. The single
@@ -660,10 +693,9 @@ SAVERS['students.courses'] = async (vals, ids) => {
   });
   // Course LEVELS (enrollment re-model, batch 1) — persist the per-level fees to the course_level
   // table. A course with no levels rows keeps its single Standard Fee (meta.fee) — nothing to sync.
-  const levels = levelsPayload(vals['Levels']);
   if (row?.id) { try { await api.put(`/courses/${row.id}/levels`, { levels }); } catch { /* levels re-savable from Edit */ } }
-  return { msg: levels.length ? `Course "${row.name}" added with ${levels.length} level${levels.length > 1 ? 's' : ''}` : `Course "${row.name}" added to the master`, row };
-};
+  return row;
+}
 SAVERS['admin.courseconfig'] = SAVERS['students.courses'];
 SAVERS['dash.quickcontact'] = SAVERS['leads.all'];
 SAVERS['leads.pipeline'] = SAVERS['leads.all'];
@@ -1106,11 +1138,25 @@ export function levelsPayload(v?: string): Array<{ code: string; label?: string;
   }));
 }
 
-function LevelsField({ value, courseId, onChange }: {
+function LevelsField({ value, courseId, branchIds = [], verticalIds = [], onChange }: {
   value: string; courseId?: number; onChange: (json: string) => void;
+  /** the course's Branch(es) / Vertical(s) — narrows the picker to the levels scoped to them. */
+  branchIds?: number[]; verticalIds?: number[];
 }) {
   const ref = useRef_();
-  const levelOpts = (ref.courseLevels?.length ? ref.courseLevels : COURSE_LEVELS.map((c) => ({ id: c, name: c })));
+  const allLevels: Named[] = (ref.courseLevels?.length ? ref.courseLevels : COURSE_LEVELS.map((c) => ({ id: c as any, name: c })));
+  // Oct 2026 — the Level master sits under Branch › Vertical › Course (each multi-select, empty =
+  // all). Offer only the levels whose scope covers this course's Branch / Vertical (and, on Edit,
+  // this course); an unscoped level is offered everywhere.
+  const inScope = (o: Named) => {
+    const m = (o as any).meta as Record<string, unknown> | undefined;
+    const b = levelScopeIds(m, 'branch'), v = levelScopeIds(m, 'vertical'), c = levelScopeIds(m, 'course');
+    if (b.length && branchIds.length && !b.some((x) => branchIds.includes(x))) return false;
+    if (v.length && verticalIds.length && !v.some((x) => verticalIds.includes(x))) return false;
+    if (c.length && courseId && !c.includes(Number(courseId))) return false;
+    return true;
+  };
+  const levelOpts = allLevels.filter(inScope);
   const [rows, setRows] = useState<LevelRow[]>(() => parseLevelRows(value));
   const [loaded, setLoaded] = useState(!courseId);
   // Edit — fetch the course's stored levels once, so the editor reopens fully populated.
@@ -1135,8 +1181,18 @@ function LevelsField({ value, courseId, onChange }: {
   }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
   const commit = (next: LevelRow[]) => { setRows(next); onChange(JSON.stringify(next)); };
   const add = () => commit([...rows, { code: '', fee: '' }]);
-  const setCode = (i: number, code: string) => commit(rows.map((r, j) => (j === i ? { ...r, code } : r)));
+  // Oct 2026 (client) — picking a level AUTO-FETCHES its Fee and Duration from the Level master
+  // (m_level.meta.fee / meta.duration). Both stay editable for this course; a level with no
+  // fee / duration in the master leaves what is already typed in the row.
+  const setCode = (i: number, code: string) => commit(rows.map((r, j) => {
+    if (j !== i) return r;
+    const m = (allLevels.find((o) => String(o.name) === code) as any)?.meta ?? {};
+    const hasFee = m.fee != null && String(m.fee).trim() !== '';
+    const hasDur = m.duration != null && String(m.duration).trim() !== '';
+    return { ...r, code, fee: hasFee ? String(m.fee) : r.fee, duration: hasDur ? String(m.duration) : r.duration };
+  }));
   const setFee = (i: number, fee: string) => commit(rows.map((r, j) => (j === i ? { ...r, fee } : r)));
+  const setDuration = (i: number, duration: string) => commit(rows.map((r, j) => (j === i ? { ...r, duration } : r)));
   const setExam = (i: number, exam: string) => commit(rows.map((r, j) => (j === i ? { ...r, exam } : r)));
   const remove = (i: number) => commit(rows.filter((_, j) => j !== i));
   return (
@@ -1150,21 +1206,26 @@ function LevelsField({ value, courseId, onChange }: {
       {rows.length === 0 && (
         <div className="empty-note" style={{ padding: '6px 2px', textAlign: 'left' }}>
           No levels — click <b>＋ Add level</b> to add levels (e.g. A1, A2, …), each with its own fee.
+          Fee and duration are fetched from the Level master when you pick a level.
           Leave empty to use the single <b>Standard Fee</b> below.
         </div>
       )}
       {rows.map((r, i) => (
         <div className="sc-row" key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className="sc-row-ord">{i + 1}</span>
-          <select className="ainp" data-testid={`level-code-${i}`} value={r.code} style={{ flex: '1 1 40%' }}
+          <select className="ainp" data-testid={`level-code-${i}`} value={r.code} style={{ flex: '1 1 28%', minWidth: 0 }}
             onChange={(e) => setCode(i, e.target.value)}>
             <option value="">Level…</option>
             {levelOpts.map((o: any) => <option key={String(o.id)} value={String(o.name)}>{o.name}</option>)}
+            {/* a level already on the course stays selectable even if its master scope no longer matches */}
+            {r.code && !levelOpts.some((o: any) => String(o.name) === r.code) ? <option value={r.code}>{r.code}</option> : null}
           </select>
-          <input className="ainp" type="number" min="0" placeholder="Fee (₹)" data-testid={`level-fee-${i}`}
-            value={r.fee} style={{ flex: '1 1 30%' }} onChange={(e) => setFee(i, e.target.value)} />
+          <input className="ainp" type="number" min="0" placeholder="Fee (₹)" title="Level fee — auto-fetched from the Level master, editable" data-testid={`level-fee-${i}`}
+            value={r.fee} style={{ flex: '1 1 22%', minWidth: 0 }} onChange={(e) => setFee(i, e.target.value)} />
           <input className="ainp" type="number" min="0" placeholder="Exam fee (₹)" title="Exam fee — added on top, never discounted" data-testid={`level-exam-${i}`}
-            value={r.exam ?? ''} style={{ flex: '1 1 30%' }} onChange={(e) => setExam(i, e.target.value)} />
+            value={r.exam ?? ''} style={{ flex: '1 1 22%', minWidth: 0 }} onChange={(e) => setExam(i, e.target.value)} />
+          <input className="ainp" type="text" placeholder="Duration" title="Level duration — auto-fetched from the Level master, editable" data-testid={`level-duration-${i}`}
+            value={r.duration ?? ''} style={{ flex: '1 1 28%', minWidth: 0 }} onChange={(e) => setDuration(i, e.target.value)} />
           <button type="button" className="sc-row-btn danger" title="Remove level"
             data-testid={`level-remove-${i}`} onClick={() => remove(i)}><Ic k="x" w={2.6} /></button>
         </div>
@@ -1268,7 +1329,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
 
   /** Is `label` a real parent <select> on THIS form? (Not an 'auto' display field.) */
   const cascadeParent = (label: string) =>
-    spec.fields.some((x) => x.label === label && !!x.src && (x.type === 'select' || x.type === 'multiselect'));
+    spec.fields.some((x) => x.label === label && !!x.src && (x.type === 'select' || x.type === 'multiselect' || (!!edit && isBvMulti(x))));
 
   /** UAT-R3b #16 — a Course field is GATED only on forms that carry BOTH a real Branch AND a
    *  real Vertical <select> (Add Lead, Quick Add, Walk-in, Referral). Forms whose Branch/Vertical
@@ -1388,8 +1449,39 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
   };
 
   const input = (f: FormField) => {
-    const t = f.type || 'text';
+    // Course form (Oct 2026): Branch / Vertical are multi-select pickers on ADD; on EDIT a course
+    // is one Branch → one Vertical, so they fall back to the ordinary cascading select.
+    const t = isBvMulti(f) && edit ? 'select' : (f.type || 'text');
     const v = vals[f.label] ?? '';
+    if (t === 'branchmulti') {
+      const opts = ((ref as any).branches as Named[] ?? []).map((b) => ({ id: Number(b.id), name: b.name }));
+      return (
+        <div data-testid="course-branches">
+          <UserPicker options={opts} value={parseIdCsv(v)} hideBranch placeholder="Select branch(es)…"
+            onChange={(arr) => setVals((x) => {
+              const kept = parseVertCsv(x['Vertical']).filter((z) => arr.includes(z.b)); // drop verticals of un-ticked branches
+              return { ...x, [f.label]: arr.join(','), Vertical: kept.map((z) => `${z.v}:${z.b}`).join(',') };
+            })} />
+        </div>
+      );
+    }
+    if (t === 'verticalmulti') {
+      const bids = parseIdCsv(vals['Branch']);
+      const all = (ref as any).verticals as Named[] ?? [];
+      const branchName = new Map(((ref as any).branches as Named[] ?? []).map((b) => [Number(b.id), b.name]));
+      const opts = all.filter((vt) => bids.includes(Number((vt as any).branch_id))).map((vt) => {
+        const bn = (vt as any).branch_name || branchName.get(Number((vt as any).branch_id));
+        return { id: Number(vt.id), name: bn ? `${bn} → ${vt.name}` : vt.name };
+      });
+      const vb = new Map(all.map((vt) => [Number(vt.id), Number((vt as any).branch_id)]));
+      return (
+        <div data-testid="course-verticals">
+          <UserPicker options={opts} value={parseVertCsv(v).map((z) => z.v)} disabled={!bids.length} hideBranch
+            placeholder={bids.length ? 'Select vertical(s)…' : 'Select Branch first…'}
+            onChange={(arr) => setVals((x) => ({ ...x, [f.label]: arr.map((vid) => `${vid}:${vb.get(Number(vid)) ?? ''}`).join(',') }))} />
+        </div>
+      );
+    }
     if (edit?.lock?.includes(f.label)) {
       return (
         <div className="ainp" style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--text-dim)', background: 'var(--surface-3)' }}
@@ -1578,12 +1670,14 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     // Course Levels — repeatable per-level fee editor (enrollment re-model, batch 1).
     if (t === 'levels') return (
       <LevelsField value={v} courseId={edit?.levelsCourseId}
+        branchIds={ids['Branch'] != null ? [Number(ids['Branch'])] : parseIdCsv(vals['Branch'])}
+        verticalIds={ids['Vertical'] != null ? [Number(ids['Vertical'])] : parseVertCsv(vals['Vertical']).map((z) => z.v)}
         onChange={(json) => setField(f.label, json)} />
     );
     return <input className="ainp" type="text" value={v} onChange={(e) => setField(f.label, e.target.value)} />;
   };
 
-  const isMaster = (f: FormField) => (f.type === 'select' || f.type === 'multiselect') &&
+  const isMaster = (f: FormField) => (f.type === 'select' || f.type === 'multiselect' || isBvMulti(f)) &&
     (!!f.mopts || /master/i.test(f.hint || '') || /\b(course|vertical|pipeline|campaign|branch|source|stage|status|tag|batch|payment plan|payment terms|qualification|budget|designation|department|training mode)\b/i.test(f.label));
 
   /** ＋ Master → inline add modal. Rule: opens the same form as the master's own
@@ -1696,7 +1790,18 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
           // appear in this dropdown and be selected WITHOUT a page refresh. Inject the new
           // row into the live options (extras) and auto-select it, exactly like ＋ Master.
           setExtras((x) => ({ ...x, [subForm.field]: [...(x[subForm.field] ?? []), row] }));
-          setField(subForm.field, row.name, Number(row.id));
+          const sf = spec.fields.find((x) => x.label === subForm.field);
+          if (sf && isBvMulti(sf) && !edit) {
+            // Add Course multi-pickers: TICK the new Branch / Vertical instead of replacing the selection.
+            setVals((x) => {
+              const bid = sf.type === 'branchmulti' ? Number(row.id) : Number((row as any).branch_id);
+              const bids = parseIdCsv(x['Branch']);
+              if (bid && !bids.includes(bid)) bids.push(bid);
+              const verts = parseVertCsv(x['Vertical']);
+              if (sf.type === 'verticalmulti' && !verts.some((z) => z.v === Number(row.id))) verts.push({ v: Number(row.id), b: bid });
+              return { ...x, Branch: bids.join(','), Vertical: verts.map((z) => `${z.v}:${z.b}`).join(',') };
+            });
+          } else setField(subForm.field, row.name, Number(row.id));
           ref.reload();
         }} />}
       {accessAdd && <AddModal formKey={accessAdd.form} onClose={() => setAccessAdd(null)}
@@ -1791,6 +1896,15 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
   const _initScope = (initial?.duplicacy_config as any)?.check_scope ?? 'this_campaign';
   const [dupScope, setDupScope] = useState<string>(_initScope === 'this_pipeline' ? 'this_campaign' : _initScope);
   const [dupAction, setDupAction] = useState<string>((initial?.duplicacy_config as any)?.on_duplicate ?? 'ignore');
+  // Oct 2026 (client) — LEAD SOURCES of the campaign, picked right here. An integration asks for a
+  // Lead Source after the Campaign, and that list is the campaign's own `source` rows — which
+  // could only be created on a separate screen, so a new campaign had none to pick. Each ticked
+  // Source-master value becomes a source under this campaign on save (add-only on edit).
+  const attachedSources = initial
+    ? ref.sources.filter((s) => Number((s as any).campaign_id) === Number(initial.id))
+    : [];
+  const [srcIds, setSrcIds] = useState<number[]>(() =>
+    [...new Set(attachedSources.map((s) => Number((s as any).master_source_id)).filter((n) => n > 0))]);
   const [busy, setBusy] = useState(false);
   const { can } = useAuth();
   // UAT (Aug 2026) — ＋ quick-add for the campaign's masters. The rich CampaignModal did not
@@ -1904,6 +2018,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
           cost: vals['cost'] ? Number(vals['cost']) : 0,
           priority, distribution_config, duplicacy_config, manager_user_ids: managers, ...formFields,
+          source_master_ids: srcIds,
         });
         toast('Campaign updated');
       } else {
@@ -1913,9 +2028,12 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
           utm: vals['utm'] ? { utm_campaign: vals['utm'] } : {},
           cost: vals['cost'] ? Number(vals['cost']) : 0,
           priority, distribution_config, duplicacy_config, manager_user_ids: managers, ...formFields,
+          source_master_ids: srcIds,
         });
-        toast('Campaign created');
+        toast(srcIds.length ? `Campaign created with ${srcIds.length} lead source${srcIds.length > 1 ? 's' : ''}` : 'Campaign created');
       }
+      // the campaign's new sources must show in every Lead Source dropdown without a page refresh
+      if (srcIds.length) ref.reload();
       onSaved?.(); onClose();
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
@@ -1963,6 +2081,15 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
                 {(ref.campaignTypes ?? []).map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
                 {vals['type'] && !(ref.campaignTypes ?? []).some((t) => t.name === vals['type']) ? <option value={vals['type']}>{vals['type']}</option> : null}
               </select></div>
+            <div className="fld" data-testid="campaign-sources"><label>Lead Source<span className="fhint">multi-select · needed to connect an integration</span>
+              <MasterQuickAdd type="source" onAdded={(row) => setSrcIds((x) => (x.includes(Number(row.id)) ? x : [...x, Number(row.id)]))} /></label>
+              <UserPicker options={(ref.masterSources ?? []).map((m) => ({ id: Number(m.id), name: m.name }))} value={srcIds} hideBranch
+                placeholder="Select lead source(s)…"
+                // add-only on edit: a source already under this campaign carries leads, so it stays ticked
+                onChange={(arr) => setSrcIds([...new Set([...attachedSources.map((s) => Number((s as any).master_source_id)).filter((n) => n > 0), ...arr])])} />
+              {initial && attachedSources.length > 0
+                ? <div className="fhint" style={{ display: 'block', marginTop: 4 }}>Already under this campaign: {attachedSources.map((s) => s.name).join(', ')}. Remove a source from the Lead Source Master.</div>
+                : null}</div>
             <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? '', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
             <div className="fld"><label>Start Date <span className="star">*</span></label><input className="ainp" type="date" value={vals['start'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, start: e.target.value }))} /></div>
             <div className="fld"><label>End Date</label><input className="ainp" type="date" value={vals['end'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, end: e.target.value }))} /></div>

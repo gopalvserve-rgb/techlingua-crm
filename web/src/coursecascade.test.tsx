@@ -9,10 +9,13 @@
  *   2. Vertical is filtered to the chosen Branch's verticals only.
  *   3. Changing the Branch RESETS a now-invalid Vertical (no stale child id can submit).
  *   4. branch_id + vertical_id both persist, and prefill + cascade on Edit.
+ *
+ * Oct 2026 (client) — on ADD, Branch and Vertical are MULTI-select pickers: the course is created
+ * once under every picked Branch › Vertical. On EDIT they stay the single cascading selects.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { AddModal, SAVERS, EditSpec } from './forms';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { AddModal, EditSpec } from './forms';
 
 vi.mock('./auth', () => ({ useAuth: () => ({ can: () => true, me: { user: { id: 1, name: 'Super Admin' } } }) }));
 
@@ -47,60 +50,99 @@ vi.mock('./api', () => ({ api: { get: vi.fn().mockResolvedValue([]), post: (...a
 
 const fld = (name: string) =>
   [...document.querySelectorAll('.add-modal .fld')].find((f) => f.querySelector('label')?.textContent?.trim().startsWith(name)) as HTMLElement;
+/** Edit mode only — the single cascading <select>s. */
 const sel = (name: string) => fld(name).querySelector('select') as HTMLSelectElement;
 const vertOpts = () => [...sel('Vertical').options].filter((o) => o.value).map((o) => o.value);
 // dev/100 (client): the ERP course form carries NO Campaign/Pipeline (CRM-only concepts).
 const hasField = (name: string) => Boolean(fld(name));
+
+/** Add mode — open a multi-select picker and return its option rows. */
+const pickRows = async (name: string) => {
+  const el = fld(name);
+  fireEvent.click(el.querySelector('.upick-ctl') as HTMLElement);
+  await waitFor(() => expect(el.querySelectorAll('.upick-row').length).toBeGreaterThan(0));
+  return [...el.querySelectorAll('.upick-row')] as HTMLElement[];
+};
+/** Add mode — tick one option (by its label) in a multi-select picker. */
+const pick = async (name: string, label: string) => {
+  const row = (await pickRows(name)).find((r) => r.querySelector('.upick-name')?.textContent === label);
+  expect(row, `${name} option "${label}"`).toBeTruthy();
+  fireEvent.mouseDown(row!);
+};
+const chips = (name: string) => [...fld(name).querySelectorAll('.upick-chip')].map((x) => x.textContent?.trim());
+const save = () => fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLElement);
 
 beforeEach(() => { cleanup(); post.mockClear(); patch.mockClear(); });
 
 describe('Course configuration — Branch › Vertical cascade', () => {
   it('Vertical is disabled and empty until a Branch is picked', () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
-    expect(sel('Vertical').disabled).toBe(true);
-    expect(vertOpts()).toEqual([]);
+    expect(fld('Vertical').querySelector('.upick.dis')).toBeTruthy();
+    expect(chips('Vertical')).toEqual([]);
   });
 
-  it('Vertical lists only the chosen Branch\'s verticals', () => {
+  it('Vertical lists only the chosen Branch\'s verticals', async () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    expect(sel('Vertical').disabled).toBe(false);
-    expect(vertOpts()).toEqual(['1', '2']);          // branch 9 only, not PTE (branch 10)
-    cleanup();
-    render(<AddModal formKey="students.courses" onClose={() => {}} />);
-    fireEvent.change(sel('Branch'), { target: { value: '10' } });
-    expect(vertOpts()).toEqual(['3']);
+    await pick('Branch', 'Vikaspuri');
+    expect(fld('Vertical').querySelector('.upick.dis')).toBeFalsy();
+    const names = (await pickRows('Vertical')).map((r) => r.querySelector('.upick-name')?.textContent);
+    expect(names).toEqual(['Vikaspuri → BCL', 'Vikaspuri → IELTS Prep']);   // branch 9 only, not PTE (branch 10)
   });
 
-  it('changing the Branch resets a now-invalid Vertical', () => {
+  it('un-ticking a Branch drops its now-invalid Verticals', async () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '2' } });
-    expect(sel('Vertical').value).toBe('2');
-    fireEvent.change(sel('Branch'), { target: { value: '10' } });   // switch branch
-    expect(sel('Vertical').value).toBe('');                          // stale vertical cleared
-    expect(vertOpts()).toEqual(['3']);
+    await pick('Branch', 'Vikaspuri');
+    await pick('Vertical', 'Vikaspuri → IELTS Prep');
+    expect(chips('Vertical')).toHaveLength(1);
+    fireEvent.click(fld('Branch').querySelector('.upick-chip button') as HTMLElement);   // remove the branch
+    expect(chips('Vertical')).toEqual([]);                                               // stale vertical cleared
   });
 
   it('saves branch_id + vertical_id on the course master', async () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'Java' } });
     fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'JV' } });
-    fireEvent.change(sel('Branch'), { target: { value: '10' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '3' } });
-    fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLElement);
+    await pick('Branch', 'Janakpuri');
+    await pick('Vertical', 'Janakpuri → PTE');
+    save();
     await waitFor(() => expect(post).toHaveBeenCalled());
     const body = post.mock.calls[0][1] as any;
     expect(body.meta.branch_id).toBe(10);
     expect(body.meta.vertical_id).toBe(3);
   });
 
+  it('MULTI-select: one course is created under EVERY picked Branch › Vertical', async () => {
+    render(<AddModal formKey="students.courses" onClose={() => {}} />);
+    fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'French' } });
+    fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'FR' } });
+    await pick('Branch', 'Vikaspuri');
+    await pick('Branch', 'Janakpuri');
+    await pick('Vertical', 'Vikaspuri → BCL');
+    await pick('Vertical', 'Janakpuri → PTE');
+    save();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    const made = post.mock.calls.map((x) => [(x[1] as any).name, (x[1] as any).meta.branch_id, (x[1] as any).meta.vertical_id]);
+    expect(made).toEqual([['French', 9, 1], ['French', 10, 3]]);
+  });
+
   it('will NOT save with a Branch but no Vertical (the model requires both)', async () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'Java' } });
     fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'JV' } });
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLElement);
+    await pick('Branch', 'Vikaspuri');
+    save();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('will NOT save when one of the picked Branches has no Vertical', async () => {
+    render(<AddModal formKey="students.courses" onClose={() => {}} />);
+    fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'Java' } });
+    fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'JV' } });
+    await pick('Branch', 'Vikaspuri');
+    await pick('Branch', 'Janakpuri');
+    await pick('Vertical', 'Janakpuri → PTE');          // Vikaspuri is left without a vertical
+    save();
     await new Promise((r) => setTimeout(r, 30));
     expect(post).not.toHaveBeenCalled();
   });
@@ -122,7 +164,7 @@ describe('Course configuration — Branch › Vertical cascade', () => {
     expect(sel('Vertical').value).toBe('');
     expect(vertOpts()).toEqual(['1', '2']);
     fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLElement);
+    save();
     await waitFor(() => expect(patch).toHaveBeenCalled());
     const body = patch.mock.calls[0][1] as any;
     expect(body.meta.branch_id).toBe(9);
@@ -143,9 +185,9 @@ describe('Course configuration — Branch › Vertical cascade', () => {
     render(<AddModal formKey="students.courses" onClose={() => {}} />);
     fireEvent.change(fld('Course Name').querySelector('input')!, { target: { value: 'French' } });
     fireEvent.change(fld('Course Code').querySelector('input')!, { target: { value: 'FR' } });
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '2' } });
-    fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLElement);
+    await pick('Branch', 'Vikaspuri');
+    await pick('Vertical', 'Vikaspuri → IELTS Prep');
+    save();
     await waitFor(() => expect(post).toHaveBeenCalled());
     const body = post.mock.calls[0][1] as any;
     expect(body.meta.branch_id).toBe(9);
