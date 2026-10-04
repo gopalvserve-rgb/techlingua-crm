@@ -3653,7 +3653,7 @@ const MATRIX_ROWS: Array<[string, string[]]> = [
   ['Finance', ['finance']],
   ['Students', ['student']],
   ['Reports', ['report']],
-  ['Administration', ['user', 'role', 'branch', 'vertical', 'pipeline', 'settings']],
+  ['Administration', ['user', 'role', 'branch', 'vertical', 'pipeline', 'settings', 'master']],
 ];
 const MATRIX_ROLES = ['Super Admin', 'Branch Manager', 'Counsellor', 'Accountant', 'Trainer'];
 
@@ -4317,11 +4317,17 @@ function ErrorLogs() {
    "edit option for Course master AND all masters"). One screen manages every
    generic master list (add / edit / view / activate-deactivate). */
 
+/** Master types not managed on Administration › Masters (they have their own screen). */
+const MASTERS_ADMIN_HIDDEN = new Set(['source']);
+
 function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {}) {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
-  const types = useFetch<Array<{ type: string; label: string; parent: string | null }>>('/masters', []);
+  const typesQ = useFetch<Array<{ type: string; label: string; parent: string | null }>>('/masters', []);
+  // client Oct 2026 — Sources are managed ONLY in Leads › Lead Source Master, so the Source master
+  // is not offered here (no add / edit / delete of sources from this screen).
+  const types = { ...typesQ, data: typesQ.data?.filter((t) => !MASTERS_ADMIN_HIDDEN.has(t.type)) };
   const [type, setType] = useState(initialType);
   const [inc, setInc] = useState(false);
   const list = useFetch<any[]>(`/masters/${type}${inc ? '?all=1' : ''}`, [refreshTick]);

@@ -35,8 +35,7 @@ export class RolesService {
         `SELECT id, key, module, action FROM permission ORDER BY module, action`,
       )
       .then((perms) => ({
-        // hidden modules (Masters, Oct 2026) are enforced but not offered in the editor
-        catalog: PERMISSION_CATALOG.filter((m) => !m.hidden),
+        catalog: PERMISSION_CATALOG,
         permissions: perms,
       }));
   }
@@ -132,12 +131,6 @@ export class RolesService {
       );
     }
 
-    // Oct 2026 — 'Masters' is no longer in the editor, but every dropdown reads /masters with
-    // master.read. A role saved WITHOUT any master grant (a new role) gets read access so its
-    // forms keep working; a role that already had master grants sends them back unchanged.
-    if (!entries.some((e) => String(e.permission_key).startsWith('master.'))) {
-      entries = [...entries, { permission_key: 'master.read', record_scope: 'all' } as MatrixEntry];
-    }
     return this.db.tx(async (c) => {
       await c.query(`DELETE FROM role_permission WHERE role_id = $1`, [roleId]);
       for (const e of entries) {

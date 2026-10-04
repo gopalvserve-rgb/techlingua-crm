@@ -507,9 +507,10 @@ const APP_FULL: ModuleItem[] = [
     { id: 'courseconfig', label: 'Course Configuration', spec: { dyn: 'courses',
       sub: 'Configure courses & fees. Approval step for fee changes.',
       actions: [['plus', 'New course', 'primary']] } },
-    // Admin › Masters REMOVED 2026-10-05 (client): Leads › Lead Source Master is the master screen
-    // they use. Dropdown values are still added inline with ＋ Master on each form; the /masters API
-    // and its (hidden) permission stay because every dropdown reads them.
+    // Admin › Masters re-enabled 2026-09-30 at the client's request (it was hidden on 2026-09-26).
+    // 2026-10-05 (client): Sources are no longer managed here — Leads › Lead Source Master owns them.
+    { id: 'masters', label: 'Masters', spec: { dyn: 'mastersAdmin',
+      sub: 'Every dropdown master in one place — add, edit, view and activate/deactivate values (states, cities, courses, levels, Lead Status, tags & more). Lead Sources are managed under Leads › Lead Source Master.' } },
     { id: 'workflow', label: 'Workflow Automation', spec: {
       sub: 'Admin-built rules (same engine as Automation Journeys). Who can build them.',
       blocks: [{ type: 'caps', title: 'Workflow automation', items: [
