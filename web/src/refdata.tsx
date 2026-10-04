@@ -143,7 +143,8 @@ export function Toaster() {
   useEffect(() => {
     pushToast = (t) => {
       setItems((xs) => [...xs, t]);
-      setTimeout(() => setItems((xs) => xs.filter((x) => x.id !== t.id)), 2600);
+      // client Oct 2026 — error messages stay 5 s everywhere (success notes keep 2.6 s)
+      setTimeout(() => setItems((xs) => xs.filter((x) => x.id !== t.id)), t.err ? 5000 : 2600);
     };
     return () => { pushToast = () => undefined; };
   }, []);

@@ -213,6 +213,42 @@ export class SoftDeleteService {
     return { ok: true, restored: true, entity: def.key, id: Number(rows[0].id), name: rows[0].name };
   }
 
+  /**
+   * PERMANENT DELETE (client, Oct 2026) — remove a row that is ALREADY in Deleted Items from the
+   * database for good. Only soft-deleted rows qualify (a live row must be deleted first, so this
+   * can never skip the impact preview). Child rows the schema marks ON DELETE CASCADE (e.g. a
+   * lead's timeline) go with it; a row still referenced by a record that must survive (an
+   * enrolment, a payment, an invoice…) is REFUSED with a 409 naming that record type, and stays in
+   * Deleted Items. Audit-logged (with the name, since the row itself is gone).
+   */
+  async purge(entity: string, id: number, actorId: number) {
+    const def = this.def(entity);
+    const row = await this.db.one<{ id: string; name: string; deleted_at: string | null }>(
+      `SELECT id, ${def.nameExpr} AS name, deleted_at FROM ${def.table} WHERE id = $1`, [id]);
+    if (!row || row.deleted_at == null) {
+      throw new NotFoundException(`${def.label} not found in Deleted Items — only deleted items can be permanently deleted`);
+    }
+    try {
+      await this.db.tx(async (c) => {
+        await c.query(`DELETE FROM ${def.table} WHERE id = $1 AND deleted_at IS NOT NULL`, [id]);
+      });
+    } catch (e: any) {
+      if (e?.code === '23503') {
+        const used = /from table "([^"]+)"/.exec(String(e?.detail ?? ''))?.[1];
+        throw new ConflictException(
+          `"${row.name}" cannot be permanently deleted — it is still used by ${used ? `"${used.replace(/_/g, ' ')}" records` : 'other records'}. `
+          + 'It stays in Deleted Items (already hidden everywhere); you can still restore it.');
+      }
+      throw e;
+    }
+    await this.db.query(
+      `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+       VALUES ((SELECT id FROM organisation ORDER BY id LIMIT 1), $1, $2, $3, 'delete', $4, $5)`,
+      // audit_log.action is an enumerated CHECK — a purge is a 'delete' with after.permanent = true
+      [actorId, def.key, id, JSON.stringify({ name: row.name, deleted_at: row.deleted_at }), JSON.stringify({ permanent: true })]);
+    return { ok: true, purged: true, entity: def.key, id, name: row.name };
+  }
+
   /** Entity tabs for the Deleted Items screen. */
   entities() {
     return Object.values(DELETE_REGISTRY).map((d) => ({ key: d.key, label: d.label }));

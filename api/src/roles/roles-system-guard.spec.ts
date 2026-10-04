@@ -37,8 +37,15 @@ describe('RolesService.setMatrix — system-role lock (OBS-01)', () => {
   it('custom role -> matrix replaced atomically', async () => {
     const db = makeDb({ id: '20', is_system: false });
     const svc = new RolesService(db as any);
-    await expect(svc.setMatrix(20, ENTRIES)).resolves.toEqual({ role_id: 20, granted: 1 });
+    // + master.read, auto-granted because 'Masters' is no longer in the editor (Oct 2026)
+    await expect(svc.setMatrix(20, ENTRIES)).resolves.toEqual({ role_id: 20, granted: 2 });
     expect(db.tx).toHaveBeenCalled();
+  });
+
+  it('a role that already carries master grants keeps exactly them (no extra master.read)', async () => {
+    const svc = new RolesService(makeDb({ id: '20', is_system: false }) as any);
+    await expect(svc.setMatrix(20, [...ENTRIES, { permission_key: 'master.create', record_scope: 'all' } as any]))
+      .resolves.toEqual({ role_id: 20, granted: ENTRIES.length + 1 });
   });
 
   it('deleted / unknown role -> 404', async () => {

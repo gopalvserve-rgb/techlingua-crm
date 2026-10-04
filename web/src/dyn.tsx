@@ -3653,7 +3653,7 @@ const MATRIX_ROWS: Array<[string, string[]]> = [
   ['Finance', ['finance']],
   ['Students', ['student']],
   ['Reports', ['report']],
-  ['Administration', ['user', 'role', 'branch', 'vertical', 'pipeline', 'settings', 'master']],
+  ['Administration', ['user', 'role', 'branch', 'vertical', 'pipeline', 'settings']],
 ];
 const MATRIX_ROLES = ['Super Admin', 'Branch Manager', 'Counsellor', 'Accountant', 'Trainer'];
 
@@ -4429,6 +4429,7 @@ function DeletedItems() {
     allowed ? `/deleted-items?entity=${encodeURIComponent(entity)}` : null, [entity, tick, refreshTick]);
   const rows = list.data?.rows ?? [];
   const [confirmRow, setConfirmRow] = useState<any | null>(null);
+  const [purgeRow, setPurgeRow] = useState<any | null>(null);
   const [impactRow, setImpactRow] = useState<any | null>(null);
   const [impact, setImpact] = useState<ImpactReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -4459,6 +4460,18 @@ function DeletedItems() {
       toast(e.message, true);
     } finally { setBusy(false); }
   };
+  // PERMANENT DELETE (client, Oct 2026) — removes the item for good. A 409 (still used by a record
+  // that must survive, e.g. an enrolment or payment) is shown verbatim and the item stays here.
+  const purge = async (row: any) => {
+    setBusy(true);
+    try {
+      await api.del(`/deleted-items/${encodeURIComponent(entity)}/${Number(row.id)}`);
+      toast(`${label} "${row.name}" permanently deleted`);
+      setPurgeRow(null); setTick((t) => t + 1); bump();
+    } catch (e: any) {
+      toast(e.message, true); setPurgeRow(null);
+    } finally { setBusy(false); }
+  };
 
   if (!allowed) {
     return <div className="notice"><Ic k="shield" /><div>Deleted Items needs the <b>Deleted Items · manage</b> permission (Super Admin / Org Admin).</div></div>;
@@ -4481,7 +4494,10 @@ function DeletedItems() {
           r.deleted_by_name ?? '—',
           rowActions({
             onView: () => setImpactRow(r),
-            extra: [{ k: 'restore', title: 'Restore', onClick: () => setConfirmRow(r) }],
+            extra: [
+              { k: 'restore', title: 'Restore', onClick: () => setConfirmRow(r) },
+              { k: 'trash', title: 'Delete permanently', onClick: () => setPurgeRow(r) },
+            ],
           }),
         ])}
         empty={`No deleted ${label.toLowerCase()}s — everything is live`} />
@@ -4501,6 +4517,11 @@ function DeletedItems() {
         <ConfirmModal title={`Restore ${label.toLowerCase()}`} confirmLabel="Restore" busy={busy}
           body={<>Restore {label.toLowerCase()} <b>{confirmRow.name}</b>? It returns to lists, dropdowns and reports immediately. If a parent in its path is still deleted, the restore is refused until the parent is restored first.</>}
           onConfirm={() => restore(confirmRow)} onClose={() => setConfirmRow(null)} />
+      )}
+      {purgeRow && (
+        <ConfirmModal title={`Delete ${label.toLowerCase()} permanently`} confirmLabel="Delete permanently" busy={busy}
+          body={<>Permanently delete {label.toLowerCase()} <b>{purgeRow.name}</b>? It is removed from the database for good and <b>cannot be restored</b>. If it is still used by another record (for example an enrolment or a payment), it is kept here and you are told why.</>}
+          onConfirm={() => purge(purgeRow)} onClose={() => setPurgeRow(null)} />
       )}
     </>
   );

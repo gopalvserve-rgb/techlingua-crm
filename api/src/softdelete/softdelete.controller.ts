@@ -165,6 +165,12 @@ export class SoftDeleteController {
   @Get('deleted-items/entities') @RequirePermission('deleted.manage')
   entities() { return this.sd.entities(); }
 
+  /** PERMANENT delete of an item already in Deleted Items (client, Oct 2026). 409 if still referenced. */
+  @Delete('deleted-items/:entity/:id') @RequirePermission('deleted.manage')
+  purge(@Param('entity') entity: string, @Param('id', ParseIntPipe) id: number, @CurrentUser() u: U) {
+    return this.sd.purge(entity, id, u.id);
+  }
+
   @Get('deleted-items') @RequirePermission('deleted.manage')
   deletedItems(@Query('entity') entity?: string, @Query('limit') limit?: string) {
     return this.sd.deletedItems(entity || 'branch', limit ? Number(limit) : undefined);

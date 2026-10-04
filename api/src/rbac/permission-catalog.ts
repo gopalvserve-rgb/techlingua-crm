@@ -8,6 +8,8 @@ export interface PermissionModule {
   module: string;
   label: string;
   actions: string[];
+  /** Not offered in the Roles permission editor (still a real, enforced permission). */
+  hidden?: boolean;
 }
 
 export const PERMISSION_CATALOG: PermissionModule[] = [
@@ -26,7 +28,12 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'pipeline', label: 'Pipelines & Stages', actions: ['read', 'create', 'update', 'deactivate', 'delete'] },
   { module: 'campaign', label: 'Campaigns', actions: ['read', 'create', 'update', 'deactivate', 'delete'] },
   { module: 'source', label: 'Sources', actions: ['read', 'create', 'update', 'deactivate', 'delete'] },
-  { module: 'master', label: 'Masters', actions: ['read', 'create', 'update', 'deactivate', 'delete'] },
+  // Oct 2026 (client) — the Administration › Masters MODULE is removed (Leads › Lead Source Master
+  // is the screen they use), so 'Masters' is no longer offered in the Roles editor. The permission
+  // itself stays: every dropdown (courses, statuses, levels, …) and the inline ＋ Master quick-add
+  // read the /masters API with it. Existing grants are kept; a new role gets master.read
+  // automatically (RolesService.setMatrix) so its dropdowns are never empty.
+  { module: 'master', label: 'Masters', actions: ['read', 'create', 'update', 'deactivate', 'delete'], hidden: true },
   { module: 'custom_field', label: 'Custom Fields', actions: ['read', 'create', 'update', 'deactivate', 'delete'] },
   { module: 'audit', label: 'Audit Logs', actions: ['read', 'export'] },
   { module: 'errorlog', label: 'Error Logs', actions: ['read', 'manage'] },
