@@ -152,6 +152,11 @@ export class SoftDeleteController {
   usersBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('user', b?.ids, u.id, s); }
 
   // Masters (state, city, m_* incl. courses). Type in the path -> registry key `master:<type>`.
+  @Post('teams/bulk-delete/impact') @RequirePermission('team.delete')
+  teamsBulkImpact(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkImpact('team', b?.ids, u.id, s); }
+  @Post('teams/bulk-delete') @RequirePermission('team.delete')
+  teamsBulkDelete(@Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) { return this.sd.bulkRemove('team', b?.ids, u.id, s); }
+
   @Post('masters/:type/bulk-delete/impact') @RequirePermission('master.delete')
   masterBulkImpact(@Param('type') type: string, @Body() b: BulkBody, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
     return this.sd.bulkImpact(`master:${type}`, b?.ids, u.id, s);

@@ -16,6 +16,9 @@ import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { fmtINR, minorToInput } from './money';
+import { rowActions, DetailModal, KV } from './rowactions';
+import { useDelete } from './deletemodal';
+import { BulkBar, useBulkDelete, useTableSelect } from './listtools';
 
 type Named = { id: number | string; name: string; status?: string };
 
@@ -510,27 +513,68 @@ function Teams() {
   const { can } = useAuth();
   const teams = useFetch<any[]>('/teams', []);
   const [edit, setEdit] = useState<any | null>(null);
+  const [view, setView] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
-  const canManage = can('team.create') || can('team.update');
+  const rows = teams.data ?? [];
+  // client Oct 2026 — row checkboxes + bulk delete, and View / Edit / Delete per team (soft delete:
+  // the team goes to Administration › Deleted Items and can be restored from there).
+  const sel = useTableSelect(rows.map((t: any) => Number(t.id)));
+  const del = useDelete('Team', '/teams', () => teams.reload());
+  const bulk = useBulkDelete('Team', '/teams/bulk-delete/impact', '/teams/bulk-delete', () => { teams.reload(); sel.clear(); });
+  const canDelete = can('team.delete');
   return (
     <>
-      <TableCard title="Teams" icon="users"
+      <BulkBar count={sel.count} entityLabel="Team" onClear={sel.clear} onDelete={() => bulk.openBulk(sel.selected)} />
+      <TableCard title="Teams" icon="users" select={canDelete ? sel.tableSelect : undefined}
         more={can('team.create') ? <button className="btn primary" onClick={() => setAdding(true)} data-testid="team-add"><Ic k="plus" />New team</button> : null}
-        cols={['Team', 'Branch', 'Vertical', 'Leader', 'Members', canManage ? 'Actions' : '']}
+        cols={['Team', 'Branch', 'Vertical', 'Leader', 'Members', 'Actions']}
         empty="No teams yet — create one and add counsellors as members."
-        rows={(teams.data ?? []).map((t: any): Cell[] => [
-          <b>{t.name}</b>,
+        rows={rows.map((t: any): Cell[] => [
+          { node: <b data-testid={`team-name-${t.id}`}>{t.name || '—'}</b> },
           t.branch_name ?? '—',
           t.vertical_name ?? '—',
           t.leader_name ?? '—',
-          <span className="b-indigo" style={{ padding: '1px 8px', borderRadius: 999 }} data-testid={`team-members-${t.id}`}>{t.member_count ?? 0}</span>,
-          canManage ? { node: <button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEdit(t)} data-testid={`team-edit-${t.id}`}><Ic k="pencil" />Edit</button> } as Cell : '—',
+          { node: <span className="bdg b-indigo" data-testid={`team-members-${t.id}`}>{t.member_count ?? 0}</span> },
+          rowActions({
+            onView: () => setView(t),
+            onEdit: can('team.update') ? () => setEdit(t) : undefined,
+            onDelete: canDelete ? () => del.openDelete(Number(t.id), t.name) : undefined,
+          }),
         ])} />
+      {bulk.bulkModal}
+      {del.deleteModal}
+      {view && <TeamView team={view} onClose={() => setView(null)}
+        onEdit={can('team.update') ? () => { setEdit(view); setView(null); } : undefined} />}
       {(adding || edit) && (
         <TeamModal team={edit} onClose={() => { setAdding(false); setEdit(null); }}
           onSaved={() => { setAdding(false); setEdit(null); teams.reload(); }} />
       )}
     </>
+  );
+}
+
+/** Read-only team details: path, leader and every member. */
+function TeamView({ team, onClose, onEdit }: { team: any; onClose: () => void; onEdit?: () => void }) {
+  const detail = useFetch<any>(`/teams/${team.id}`, [team.id]);
+  const members: any[] = detail.data?.members ?? [];
+  return (
+    <DetailModal title={`Team — ${team.name}`} icon="users" onClose={onClose}
+      footer={onEdit ? <button className="btn primary" onClick={onEdit}><Ic k="pencil" />Edit team</button> : undefined}>
+      <KV rows={[
+        ['Team', <b>{team.name}</b>],
+        ['Branch', team.branch_name ?? '—'],
+        ['Vertical', team.vertical_name ?? '—'],
+        ['Leader', team.leader_name ?? '—'],
+        ['Members', String(detail.data ? members.length : (team.member_count ?? 0))],
+      ]} />
+      <div className="sechead" style={{ marginTop: 12 }}>Members</div>
+      {detail.loading ? <div className="empty-note">Loading…</div>
+        : members.length ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} data-testid="team-view-members">
+            {members.map((m: any) => <span key={m.id} className="bdg b-gray">{m.name}</span>)}
+          </div>
+        ) : <div className="empty-note">No members yet.</div>}
+    </DetailModal>
   );
 }
 

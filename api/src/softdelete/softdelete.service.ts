@@ -25,6 +25,11 @@ export interface ImpactReport {
 
 const SAMPLE_LIMIT = 5;
 
+/** Which capture_channel column points at each purgeable hierarchy entity (whitelisted SQL). */
+const PURGE_CHANNEL_COLUMN: Record<string, string> = {
+  source: 'source_id', campaign: 'campaign_id', pipeline: 'pipeline_id', vertical: 'vertical_id', branch: 'branch_id',
+};
+
 /** Pure guard: which delete requests are refused outright (unit-tested). */
 export function deleteGuardError(entity: string, opts: {
   targetId: number; actorId: number; isSystemRole?: boolean; isSuperAdminUser?: boolean;
@@ -228,8 +233,22 @@ export class SoftDeleteService {
     if (!row || row.deleted_at == null) {
       throw new NotFoundException(`${def.label} not found in Deleted Items — only deleted items can be permanently deleted`);
     }
+    // Integrations (capture_channel) carry the full path and point at the source / campaign / …
+    // they feed. A LIVE integration blocks the purge by name (deleting it here would silently stop
+    // lead capture); an integration that is itself already deleted is removed along with the item.
+    const ccCol = PURGE_CHANNEL_COLUMN[def.key];
+    if (ccCol) {
+      const live = await this.db.query<{ name: string }>(
+        `SELECT name FROM capture_channel WHERE ${ccCol} = $1 AND deleted_at IS NULL ORDER BY id`, [id]);
+      if (live.length) {
+        throw new ConflictException(
+          `"${row.name}" cannot be permanently deleted — ${live.length} live integration${live.length > 1 ? 's' : ''} still use${live.length > 1 ? '' : 's'} it: `
+          + `${live.map((l) => `"${l.name}"`).join(', ')}. Point ${live.length > 1 ? 'them' : 'it'} to another ${def.label.toLowerCase()} or delete ${live.length > 1 ? 'them' : 'it'} in Marketing & Lead Management › Integrations, then try again.`);
+      }
+    }
     try {
       await this.db.tx(async (c) => {
+        if (ccCol) await c.query(`DELETE FROM capture_channel WHERE ${ccCol} = $1 AND deleted_at IS NOT NULL`, [id]);
         await c.query(`DELETE FROM ${def.table} WHERE id = $1 AND deleted_at IS NOT NULL`, [id]);
       });
     } catch (e: any) {

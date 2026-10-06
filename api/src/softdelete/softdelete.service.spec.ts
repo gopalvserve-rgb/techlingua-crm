@@ -235,3 +235,44 @@ describe('SoftDeleteService.bulkRemove + bulkImpact (generic)', () => {
     expect(rep.total_associations).toBe(32); // 4 dependents x 4 each x 2 in-scope
   });
 });
+
+describe('SoftDeleteService.purge (permanent delete, Oct 2026)', () => {
+  const withTx = (db: any, issued: string[], fail?: any) => Object.assign(db, {
+    tx: jest.fn(async (fn: any) => fn({ query: async (sql: string) => { issued.push(sql); if (fail && sql.startsWith('DELETE FROM source')) throw fail; return { rows: [] }; } })),
+  });
+
+  it('only an item already in Deleted Items can be purged (live row -> 404)', async () => {
+    const db = withTx(makeDb({ onOne: () => ({ id: '5', name: 'Web', deleted_at: null }) }), []);
+    await expect(new SoftDeleteService(db as any, {} as any).purge('source', 5, 1)).rejects.toBeInstanceOf(NotFoundException);
+    expect(db.tx).not.toHaveBeenCalled();
+  });
+
+  it('a LIVE integration blocks the purge and is named in the message', async () => {
+    const db = withTx(makeDb({
+      onOne: () => ({ id: '59', name: 'Website', deleted_at: '2026-09-30' }),
+      onQuery: (sql) => (sql.includes('FROM capture_channel') ? [{ name: 'BCL Facebook' }, { name: 'Insta Facbook' }] : []),
+    }), []);
+    const err = await new SoftDeleteService(db as any, {} as any).purge('source', 59, 1).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.message).toMatch(/"BCL Facebook", "Insta Facbook"/);
+    expect(db.tx).not.toHaveBeenCalled();
+  });
+
+  it('already-deleted integrations go with it, then the row is hard-deleted and audited', async () => {
+    const issued: string[] = [];
+    const db = withTx(makeDb({ onOne: () => ({ id: '65', name: 'Instagram', deleted_at: '2026-09-30' }) }), issued);
+    const out = await new SoftDeleteService(db as any, {} as any).purge('source', 65, 7);
+    expect(out).toMatchObject({ ok: true, purged: true, id: 65, name: 'Instagram' });
+    expect(issued[0]).toMatch(/DELETE FROM capture_channel WHERE source_id = \$1 AND deleted_at IS NOT NULL/);
+    expect(issued[1]).toMatch(/DELETE FROM source WHERE id = \$1 AND deleted_at IS NOT NULL/);
+    expect(db.calls.some((c: { sql: string }) => c.sql.includes('INSERT INTO audit_log'))).toBe(true);
+  });
+
+  it('a record that must survive (FK 23503) -> 409 naming its table', async () => {
+    const fk = Object.assign(new Error('fk'), { code: '23503', detail: 'Key (id)=(65) is still referenced from table "walk_in".' });
+    const db = withTx(makeDb({ onOne: () => ({ id: '65', name: 'Instagram', deleted_at: '2026-09-30' }) }), [], fk);
+    const err = await new SoftDeleteService(db as any, {} as any).purge('source', 65, 7).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.message).toMatch(/"walk in" records/);
+  });
+});
