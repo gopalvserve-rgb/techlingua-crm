@@ -5,6 +5,7 @@ import { DatabaseService } from '../database/database.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
 import { ResolvedScope } from '../rbac/rbac.types';
 import { DeletableDef, DELETE_REGISTRY, registryEntry } from './delete-registry';
+import { PurgeBlocked, PurgeRunner } from './purge.util';
 
 /**
  * Soft delete / impact / restore engine (client request — every module).
@@ -25,10 +26,6 @@ export interface ImpactReport {
 
 const SAMPLE_LIMIT = 5;
 
-/** Which capture_channel column points at each purgeable hierarchy entity (whitelisted SQL). */
-const PURGE_CHANNEL_COLUMN: Record<string, string> = {
-  source: 'source_id', campaign: 'campaign_id', pipeline: 'pipeline_id', vertical: 'vertical_id', branch: 'branch_id',
-};
 
 /** Pure guard: which delete requests are refused outright (unit-tested). */
 export function deleteGuardError(entity: string, opts: {
@@ -218,40 +215,58 @@ export class SoftDeleteService {
     return { ok: true, restored: true, entity: def.key, id: Number(rows[0].id), name: rows[0].name };
   }
 
-  /**
-   * PERMANENT DELETE (client, Oct 2026) — remove a row that is ALREADY in Deleted Items from the
-   * database for good. Only soft-deleted rows qualify (a live row must be deleted first, so this
-   * can never skip the impact preview). Child rows the schema marks ON DELETE CASCADE (e.g. a
-   * lead's timeline) go with it; a row still referenced by a record that must survive (an
-   * enrolment, a payment, an invoice…) is REFUSED with a 409 naming that record type, and stays in
-   * Deleted Items. Audit-logged (with the name, since the row itself is gone).
-   */
-  async purge(entity: string, id: number, actorId: number) {
+  /** The soft-deleted row a purge acts on (404 for a live or missing row). */
+  private async purgeTarget(entity: string, id: number) {
     const def = this.def(entity);
     const row = await this.db.one<{ id: string; name: string; deleted_at: string | null }>(
       `SELECT id, ${def.nameExpr} AS name, deleted_at FROM ${def.table} WHERE id = $1`, [id]);
     if (!row || row.deleted_at == null) {
       throw new NotFoundException(`${def.label} not found in Deleted Items — only deleted items can be permanently deleted`);
     }
-    // Integrations (capture_channel) carry the full path and point at the source / campaign / …
-    // they feed. A LIVE integration blocks the purge by name (deleting it here would silently stop
-    // lead capture); an integration that is itself already deleted is removed along with the item.
-    const ccCol = PURGE_CHANNEL_COLUMN[def.key];
-    if (ccCol) {
-      const live = await this.db.query<{ name: string }>(
-        `SELECT name FROM capture_channel WHERE ${ccCol} = $1 AND deleted_at IS NULL ORDER BY id`, [id]);
-      if (live.length) {
-        throw new ConflictException(
-          `"${row.name}" cannot be permanently deleted — ${live.length} live integration${live.length > 1 ? 's' : ''} still use${live.length > 1 ? '' : 's'} it: `
-          + `${live.map((l) => `"${l.name}"`).join(', ')}. Point ${live.length > 1 ? 'them' : 'it'} to another ${def.label.toLowerCase()} or delete ${live.length > 1 ? 'them' : 'it'} in Marketing & Lead Management › Integrations, then try again.`);
-      }
-    }
+    return { def, row };
+  }
+
+  /**
+   * What a permanent delete WOULD remove — the same walk as purge(), inside a transaction that is
+   * always rolled back. Drives the confirmation dialog ("also removes: 2 vertical, 14 lead, …").
+   */
+  async purgePreview(entity: string, id: number) {
+    const { def, row } = await this.purgeTarget(entity, id);
+    const ROLLBACK = new Error('purge-preview-rollback');
+    let also = ''; let blocked: string[] | null = null;
     try {
       await this.db.tx(async (c) => {
-        if (ccCol) await c.query(`DELETE FROM capture_channel WHERE ${ccCol} = $1 AND deleted_at IS NOT NULL`, [id]);
-        await c.query(`DELETE FROM ${def.table} WHERE id = $1 AND deleted_at IS NOT NULL`, [id]);
+        const runner = new PurgeRunner(c);
+        try { await runner.purge(def.table, id); } catch (e) { if (e instanceof PurgeBlocked) blocked = e.blockers; else throw e; }
+        also = runner.removedSummary();
+        throw ROLLBACK;
+      });
+    } catch (e) { if (e !== ROLLBACK) throw e; }
+    return { entity: def.key, id, name: row.name, also_removed: also || null, blocked };
+  }
+
+  /**
+   * PERMANENT DELETE (client, Oct 2026) — remove a row that is ALREADY in Deleted Items from the
+   * database for good, TOGETHER WITH EVERYTHING LINKED TO IT (client: "if any data is linked with
+   * these, delete them all"). Only soft-deleted rows qualify, so a live row can never be purged
+   * directly. The walk is PurgeRunner (purge.util.ts); purgePreview shows its result first.
+   * Audit-logged with the name and what else went, since the rows themselves are gone.
+   */
+  async purge(entity: string, id: number, actorId: number) {
+    const { def, row } = await this.purgeTarget(entity, id);
+    let also = '';
+    try {
+      await this.db.tx(async (c) => {
+        const runner = new PurgeRunner(c);
+        await runner.purge(def.table, id);
+        also = runner.removedSummary();
       });
     } catch (e: any) {
+      if (e instanceof PurgeBlocked) {
+        throw new ConflictException(
+          `"${row.name}" cannot be permanently deleted — it is linked to ${e.blockers.join(', ')}, which are never removed automatically. `
+          + 'It stays in Deleted Items (hidden everywhere); you can still restore it.');
+      }
       if (e?.code === '23503') {
         const used = /from table "([^"]+)"/.exec(String(e?.detail ?? ''))?.[1];
         throw new ConflictException(
@@ -264,8 +279,8 @@ export class SoftDeleteService {
       `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
        VALUES ((SELECT id FROM organisation ORDER BY id LIMIT 1), $1, $2, $3, 'delete', $4, $5)`,
       // audit_log.action is an enumerated CHECK — a purge is a 'delete' with after.permanent = true
-      [actorId, def.key, id, JSON.stringify({ name: row.name, deleted_at: row.deleted_at }), JSON.stringify({ permanent: true })]);
-    return { ok: true, purged: true, entity: def.key, id, name: row.name };
+      [actorId, def.key, id, JSON.stringify({ name: row.name, deleted_at: row.deleted_at }), JSON.stringify({ permanent: true, also_removed: also || null })]);
+    return { ok: true, purged: true, entity: def.key, id, name: row.name, also_removed: also || null };
   }
 
   /** Entity tabs for the Deleted Items screen. */

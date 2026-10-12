@@ -4436,6 +4436,15 @@ function DeletedItems() {
   const rows = list.data?.rows ?? [];
   const [confirmRow, setConfirmRow] = useState<any | null>(null);
   const [purgeRow, setPurgeRow] = useState<any | null>(null);
+  // what the permanent delete would also remove (rolled-back dry run on the server)
+  const [purgePrev, setPurgePrev] = useState<{ also_removed: string | null; blocked: string[] | null } | null>(null);
+  useEffect(() => {
+    if (!purgeRow) { setPurgePrev(null); return; }
+    setPurgePrev(null);
+    api.get<any>(`/deleted-items/${encodeURIComponent(entity)}/${Number(purgeRow.id)}/purge-preview`)
+      .then(setPurgePrev).catch(() => setPurgePrev({ also_removed: null, blocked: null }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [purgeRow]);
   const [impactRow, setImpactRow] = useState<any | null>(null);
   const [impact, setImpact] = useState<ImpactReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -4471,8 +4480,8 @@ function DeletedItems() {
   const purge = async (row: any) => {
     setBusy(true);
     try {
-      await api.del(`/deleted-items/${encodeURIComponent(entity)}/${Number(row.id)}`);
-      toast(`${label} "${row.name}" permanently deleted`);
+      const res = await api.del<any>(`/deleted-items/${encodeURIComponent(entity)}/${Number(row.id)}`);
+      toast(`${label} "${row.name}" permanently deleted${res?.also_removed ? ` (also removed: ${res.also_removed})` : ''}`);
       setPurgeRow(null); setTick((t) => t + 1); bump();
     } catch (e: any) {
       toast(e.message, true); setPurgeRow(null);
@@ -4525,8 +4534,16 @@ function DeletedItems() {
           onConfirm={() => restore(confirmRow)} onClose={() => setConfirmRow(null)} />
       )}
       {purgeRow && (
-        <ConfirmModal title={`Delete ${label.toLowerCase()} permanently`} confirmLabel="Delete permanently" busy={busy}
-          body={<>Permanently delete {label.toLowerCase()} <b>{purgeRow.name}</b>? It is removed from the database for good and <b>cannot be restored</b>. If it is still used by another record (for example an enrolment or a payment), it is kept here and you are told why.</>}
+        <ConfirmModal title={`Delete ${label.toLowerCase()} permanently`} confirmLabel="Delete permanently" busy={busy || !purgePrev || !!purgePrev.blocked}
+          body={<>
+            Permanently delete {label.toLowerCase()} <b>{purgeRow.name}</b> <b>and everything linked to it</b>? It is removed from the database for good and <b>cannot be restored</b>.
+            <div style={{ marginTop: 10 }} data-testid="purge-preview">
+              {!purgePrev ? <span className="sub">Checking what is linked…</span>
+                : purgePrev.blocked ? <span style={{ color: 'var(--danger)' }}>Cannot be deleted — linked to {purgePrev.blocked.join(', ')}.</span>
+                : purgePrev.also_removed ? <>This will <b>also permanently delete</b>: <b style={{ color: 'var(--danger)' }}>{purgePrev.also_removed}</b>.</>
+                : <span className="sub">Nothing else is linked to it.</span>}
+            </div>
+          </>}
           onConfirm={() => purge(purgeRow)} onClose={() => setPurgeRow(null)} />
       )}
     </>
