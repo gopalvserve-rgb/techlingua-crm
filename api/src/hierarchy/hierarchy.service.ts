@@ -444,6 +444,10 @@ export class HierarchyService {
     );
     if (!v) throw new NotFoundException('vertical not found');
     const seed = HierarchyService.buildStageSeed(dto.stages);
+    // Stage Type master (migration 123): the NAMED type shown on each stage, aligned with the seed.
+    const custom = Array.isArray(dto.stages) ? (dto.stages as any[]).filter((s) => String(s?.name ?? '').trim()) : [];
+    const typeNames = seed.map(([, type], i) =>
+      HierarchyService.stageTypeName(custom.length === seed.length ? custom[i]?.stage_type_name : null, type));
     return this.db.tx(async (c) => {
       const p = await c.query(
         `INSERT INTO pipeline (org_id, branch_id, vertical_id, name, code, owner_user_id, is_active, created_by)
@@ -454,10 +458,11 @@ export class HierarchyService {
       let sort = 0;
       for (const [name, type, isDefault] of seed) {
         await c.query(
-          `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [p.rows[0].id, name, sort++, type, isDefault, actorId],
+          `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, created_by, stage_type_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [p.rows[0].id, name, sort, type, isDefault, actorId, typeNames[sort]],
         );
+        sort++;
       }
       return p.rows[0];
     });
@@ -521,7 +526,7 @@ export class HierarchyService {
       branch: 'p.branch_id', vertical: 'p.vertical_id', pipeline: 'p.id',
     }, params);
     return this.db.query(
-      `SELECT st.id, st.name, st.pipeline_id, st.stage_type, st.sort_order, p.name AS pipeline_name
+      `SELECT st.id, st.name, st.pipeline_id, st.stage_type, st.stage_type_name, st.sort_order, p.name AS pipeline_name
          FROM pipeline_stage st JOIN pipeline p ON p.id = st.pipeline_id
         WHERE ${where} AND p.deleted_at IS NULL AND p.is_active AND st.is_active IS NOT FALSE
         ORDER BY p.name, st.sort_order`, params);
@@ -531,6 +536,14 @@ export class HierarchyService {
     return this.db.query(
       `SELECT * FROM pipeline_stage WHERE pipeline_id = $1 ORDER BY sort_order`, [pipelineId],
     );
+  }
+
+  /** The NAMED stage type shown on a stage (Stage Type master, migration 123). Falls back to the
+   *  behaviour's own label (Open / Won / Lost) when no named type was picked. */
+  static stageTypeName(raw: unknown, type: string): string {
+    const n = raw == null ? '' : String(raw).trim();
+    if (n.length > 120) throw new BadRequestException('a stage type name must be 120 characters or fewer');
+    return n || type.charAt(0).toUpperCase() + type.slice(1);
   }
 
   /** Stage tags (configurator chips: Cold / Warm / Hot / free text).
@@ -563,13 +576,14 @@ export class HierarchyService {
    */
   async createStage(
     pipelineId: number,
-    dto: { name: string; stage_type?: string; sort_order?: number; is_default?: boolean; tags?: unknown; after_stage_id?: number | null },
+    dto: { name: string; stage_type?: string; stage_type_name?: string | null; sort_order?: number; is_default?: boolean; tags?: unknown; after_stage_id?: number | null },
     actorId: number,
   ) {
     if (!dto?.name) throw new BadRequestException('name is required');
     const type = dto.stage_type ?? 'open';
     if (!['open', 'won', 'lost'].includes(type)) throw new BadRequestException('stage_type must be open|won|lost');
     const tags = HierarchyService.normalizeTags(dto.tags);
+    const typeName = HierarchyService.stageTypeName(dto.stage_type_name, type);
 
     if (dto.after_stage_id !== undefined) {
       let newSort = 0;
@@ -594,9 +608,9 @@ export class HierarchyService {
           );
         }
         const ins = await c.query(
-          `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, tags, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-          [pipelineId, dto.name.trim(), newSort, type, dto.is_default ?? false, JSON.stringify(tags), actorId],
+          `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, tags, created_by, stage_type_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+          [pipelineId, dto.name.trim(), newSort, type, dto.is_default ?? false, JSON.stringify(tags), actorId, typeName],
         );
         return ins.rows[0];
       });
@@ -609,10 +623,10 @@ export class HierarchyService {
       );
     }
     const rows = await this.db.query(
-      `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, tags, created_by)
-       VALUES ($1,$2,COALESCE($3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM pipeline_stage WHERE pipeline_id=$1)),$4,$5,$6,$7)
+      `INSERT INTO pipeline_stage (pipeline_id, name, sort_order, stage_type, is_default, tags, created_by, stage_type_name)
+       VALUES ($1,$2,COALESCE($3,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM pipeline_stage WHERE pipeline_id=$1)),$4,$5,$6,$7,$8)
        RETURNING *`,
-      [pipelineId, dto.name.trim(), dto.sort_order ?? null, type, dto.is_default ?? false, JSON.stringify(tags), actorId],
+      [pipelineId, dto.name.trim(), dto.sort_order ?? null, type, dto.is_default ?? false, JSON.stringify(tags), actorId, typeName],
     );
     return rows[0];
   }
@@ -622,6 +636,10 @@ export class HierarchyService {
       throw new BadRequestException('stage_type must be open|won|lost');
     }
     if (dto.tags !== undefined) dto = { ...dto, tags: HierarchyService.normalizeTags(dto.tags) };
+    // Stage Type master: a changed behaviour without a named type shows that behaviour's label.
+    if (dto.stage_type_name !== undefined || dto.stage_type !== undefined) {
+      dto = { ...dto, stage_type_name: HierarchyService.stageTypeName(dto.stage_type_name, String(dto.stage_type ?? 'open')) };
+    }
     if (dto.is_default === true) {
       // a pipeline keeps exactly one default landing stage
       const st = await this.db.one<{ pipeline_id: string }>(`SELECT pipeline_id FROM pipeline_stage WHERE id = $1`, [id]);
@@ -631,7 +649,7 @@ export class HierarchyService {
         [Number(st.pipeline_id), id],
       );
     }
-    return this.genericUpdate('pipeline_stage', id, dto, ['name', 'sort_order', 'stage_type', 'is_default', 'tags', 'is_active']);
+    return this.genericUpdate('pipeline_stage', id, dto, ['name', 'sort_order', 'stage_type', 'stage_type_name', 'is_default', 'tags', 'is_active']);
   }
 
   /**

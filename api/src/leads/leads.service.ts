@@ -419,7 +419,7 @@ export class LeadsService {
     if (!lead) throw new NotFoundException('lead not found');
     // stages of the lead's pipeline (for the stage stepper) — no extra permission needed
     const stages = await this.db.query(
-      `SELECT id, name, sort_order, stage_type, is_default
+      `SELECT id, name, sort_order, stage_type, stage_type_name, is_default
          FROM pipeline_stage WHERE pipeline_id = $1 AND is_active ORDER BY sort_order`,
       [(lead as Record<string, unknown>).pipeline_id],
     );

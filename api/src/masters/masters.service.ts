@@ -39,6 +39,9 @@ export const MASTER_TYPES: Record<string, { table: string; label: string; singul
   // self-manageable master (distinct from the older generic `disposition`), read by the Start
   // Calling disposition form + the lead "Log disposition" control; sets lead.last_call_disposition_id.
   call_disposition: { table: 'm_call_disposition', label: 'Call Dispositions', singular: 'Call Disposition' },
+  // Stage Type master (migration 123, client Oct 2026) — named pipeline-stage types, each one
+  // BEHAVING AS open / won / lost (meta.behaviour). Picked in the pipeline stage editor.
+  stage_type: { table: 'm_stage_type', label: 'Stage Types', singular: 'Stage Type' },
 };
 
 export interface MasterDto {

@@ -40,6 +40,8 @@ export interface RefData {
   courseTypes: Named[];
   courseLevels: Named[];
   campaignTypes: Named[];
+  /** Stage Type master (client, Oct 2026) — named pipeline-stage types, meta.behaviour = open|won|lost. */
+  stageTypes?: Named[];
   deliveryModes: Named[];
   /** DEF-2 — Branch City/State are real masters, so the Branch form can select them. */
   states: Named[];
@@ -85,7 +87,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
       const [branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, budgets,
         trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
-        courseTypes, courseLevels, deliveryModes, campaignTypes, callDispositions] = await Promise.all([
+        courseTypes, courseLevels, deliveryModes, campaignTypes, callDispositions, stageTypes] = await Promise.all([
         safe(can('branch.read'), () => api.get<Named[]>('/branches'), []),
         safe(can('vertical.read'), () => api.get<Named[]>('/verticals'), []),
         safe(can('pipeline.read'), () => api.get<Named[]>('/pipelines'), []),
@@ -113,13 +115,15 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), () => api.get<Named[]>('/masters/campaign_type'), []),
         // Call Disposition master (dev/139) — Start Calling + the lead "Log disposition" control.
         safe(can('master.read'), () => api.get<Named[]>('/masters/call_disposition'), []),
+        // Stage Type master (client, Oct 2026) — the pipeline stage editors' Stage Type select.
+        safe(can('master.read'), () => api.get<Named[]>('/masters/stage_type'), []),
       ]);
       if (dead) return;
       setData({
         branches, verticals, pipelines, campaigns, sources, masterSources, users,
         statuses, courses, followupTypes, dispositions, callDispositions, budgets,
         trainings, visitPurposes, walkinStatuses, states, cities, ticketCategories, stages,
-        courseTypes, courseLevels, deliveryModes, campaignTypes,
+        courseTypes, courseLevels, deliveryModes, campaignTypes, stageTypes,
         loaded: true, reload: () => setTick((t) => t + 1),
       });
     })();

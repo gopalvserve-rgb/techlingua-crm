@@ -26,6 +26,7 @@ async function openPdfAuthed(path: string) {
 import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload, TASK_ENTITY_OPTS, TASK_ENTITY_KEY, TASK_STATUS_KEY, TASK_STATUS_LABEL } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
+import { StageTypeSelect, stageTypeClass, stageTypeLabel } from './stagetypes';
 import { RoleModal } from './rolemodal';
 import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, RowMenu, RowMenuItem, Section, fmtFull, rowActions, toggleCell,
@@ -2587,20 +2588,20 @@ function Verticals() {
   );
 }
 
-const STAGE_TYPES: Array<[string, string]> = [['open', 'Open'], ['won', 'Won'], ['lost', 'Lost']];
-const stageTypeBadge = (t: string): Cell =>
-  ({ b: [STAGE_TYPES.find(([k]) => k === t)?.[1] ?? t, t === 'won' ? 'b-green' : t === 'lost' ? 'b-rose' : 'b-cyan'] });
+// client Oct 2026 — the stage's NAMED type from the Stage Type master (coloured by its behaviour)
+const stageTypeBadge = (st: any): Cell => ({ b: [stageTypeLabel(st), stageTypeClass(st.stage_type)] });
 
 function StageEditModal({ stage, onClose, onSaved }: { stage: any; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(stage.name ?? '');
   const [type, setType] = useState(stage.stage_type ?? 'open');
+  const [typeName, setTypeName] = useState<string>(stage.stage_type_name ?? '');
   const [active, setActive] = useState(stage.is_active !== false);
   const [busy, setBusy] = useState(false);
   const save = async () => {
     if (!name.trim()) return toast('Stage name is required', true);
     setBusy(true);
     try {
-      await api.patch(`/stages/${stage.id}`, { name: name.trim(), stage_type: type, is_active: active });
+      await api.patch(`/stages/${stage.id}`, { name: name.trim(), stage_type: type, stage_type_name: typeName || null, is_active: active });
       toast(`Stage "${name.trim()}" updated`);
       onSaved(); onClose();
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
@@ -2614,9 +2615,7 @@ function StageEditModal({ stage, onClose, onSaved }: { stage: any; onClose: () =
             <div className="fld"><label>Stage Name <span className="star">*</span></label>
               <input className="ainp" autoFocus value={name} onChange={(e) => setName(e.target.value)} /></div>
             <div className="fld"><label>Stage Type</label>
-              <select className="ainp" value={type} onChange={(e) => setType(e.target.value)}>
-                {STAGE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select></div>
+              <StageTypeSelect name={typeName} behaviour={type} onChange={(nm, beh) => { setTypeName(nm); setType(beh); }} /></div>
             <div className="fld"><label>Status</label>
               <select className="ainp" value={active ? 'Active' : 'Inactive'} onChange={(e) => setActive(e.target.value === 'Active')}>
                 <option>Active</option><option>Inactive</option>
@@ -2662,7 +2661,7 @@ function PipelineView({ pipeline, onClose, onChanged, onConfigure }: {
             const cells: Cell[] = [
               { mono: String(i + 1), dim: true },
               { node: <span className="nm">{st.name}</span> },
-              stageTypeBadge(st.stage_type),
+              stageTypeBadge(st),
               statusBadge(st.is_active !== false),
             ];
             if (canEdit) cells.push(rowActions({ onEdit: () => setEditStage(st) }));
@@ -2770,7 +2769,7 @@ function Pipelines() {
               'Pipeline Owner': edit.owner_name ?? '',
               // UAT-R2 #9 — the live stages prefill the editor (add / edit / reorder / delete persist on save).
               'Pipeline Stages': JSON.stringify((edit._stages ?? []).map((st: any) => ({
-                id: Number(st.id), name: st.name, stage_type: st.stage_type,
+                id: Number(st.id), name: st.name, stage_type: st.stage_type, stage_type_name: st.stage_type_name ?? undefined,
                 is_default: st.is_default === true, is_active: st.is_active !== false,
               }))),
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
@@ -2794,7 +2793,7 @@ function Pipelines() {
                 is_active: vals['Status'] !== 'Inactive',
               });
               const original: StageRow[] = (edit._stages ?? []).map((st: any) => ({
-                id: Number(st.id), name: st.name, stage_type: st.stage_type,
+                id: Number(st.id), name: st.name, stage_type: st.stage_type, stage_type_name: st.stage_type_name ?? undefined,
                 is_default: st.is_default === true, is_active: st.is_active !== false,
               }));
               return reconcilePipelineStages(Number(edit.id), original, parseStageRows(vals['Pipeline Stages']));

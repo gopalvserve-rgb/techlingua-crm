@@ -583,6 +583,7 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .sc-stage .mk.won{color:var(--success);background:var(--success-soft)}
 .sc-stage .mk.lost{color:var(--danger);background:var(--danger-soft)}
 .sc-stage .mk.inact{color:var(--text-muted);background:var(--surface-3)}
+.sc-stage .mk.open{color:var(--info, #0e7490);background:var(--info-soft, #e0f2fe)}
 .sc-conn{position:relative;display:flex;align-items:center;justify-content:center;height:40px;flex:none}
 .sc-conn::before{content:"";position:absolute;left:50%;top:0;bottom:7px;width:2px;transform:translateX(-50%);background:var(--border-strong)}
 .sc-conn::after{content:"";position:absolute;left:50%;bottom:0;transform:translateX(-50%);

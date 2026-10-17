@@ -20,8 +20,8 @@ import { Ic } from './icons';
 import { toast, useFetch, useRef_ } from './refdata';
 import { AddModal, need } from './forms';
 import { ConfirmModal } from './rowactions';
+import { StageTypeSelect, stageTypeLabel } from './stagetypes';
 
-const STAGE_TYPES: Array<[string, string]> = [['open', 'Open'], ['won', 'Won'], ['lost', 'Lost']];
 
 type Sel = { mode: 'edit'; id: number } | { mode: 'add'; after: number | null };
 
@@ -47,6 +47,7 @@ export function StageConfigurator({ pipeline, onBack, afterChange }: {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [type, setType] = useState('open');
+  const [typeName, setTypeName] = useState('');   // Stage Type master name (client, Oct 2026)
   const [isDefault, setIsDefault] = useState(false);
   const [active, setActive] = useState(true);
   const [accOpen, setAccOpen] = useState(false);
@@ -73,20 +74,22 @@ export function StageConfigurator({ pipeline, onBack, afterChange }: {
       setName(selStage.name ?? '');
       setTags(Array.isArray(selStage.tags) ? selStage.tags.map(String) : []);
       setType(selStage.stage_type ?? 'open');
+      setTypeName(selStage.stage_type_name ?? '');
       setIsDefault(selStage.is_default === true);
       setActive(selStage.is_active !== false);
     } else if (sel?.mode === 'add') {
-      setName(''); setTags([]); setType('open'); setIsDefault(false); setActive(true);
+      setName(''); setTags([]); setType('open'); setTypeName(''); setIsDefault(false); setActive(true);
     }
     setTagInput('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selKey, selStage?.updated_at]);
 
   const dirty = sel?.mode === 'add'
-    ? name.trim().length > 0 || tags.length > 0 || type !== 'open' || isDefault
+    ? name.trim().length > 0 || tags.length > 0 || type !== 'open' || !!typeName || isDefault
     : !!selStage && (
       name !== (selStage.name ?? '')
       || type !== (selStage.stage_type ?? 'open')
+      || typeName !== (selStage.stage_type_name ?? '')
       || isDefault !== (selStage.is_default === true)
       || active !== (selStage.is_active !== false)
       || JSON.stringify(tags) !== JSON.stringify(Array.isArray(selStage.tags) ? selStage.tags.map(String) : [])
@@ -101,13 +104,13 @@ export function StageConfigurator({ pipeline, onBack, afterChange }: {
     try {
       if (sel.mode === 'add') {
         const created = await api.post<any>(`/pipelines/${pid}/stages`, {
-          name: name.trim(), tags, stage_type: type, is_default: isDefault, after_stage_id: sel.after,
+          name: name.trim(), tags, stage_type: type, stage_type_name: typeName || null, is_default: isDefault, after_stage_id: sel.after,
         });
         toast(`Stage "${created.name}" added`);
         setSel({ mode: 'edit', id: Number(created.id) });
       } else {
         await api.patch(`/stages/${sel.id}`, {
-          name: name.trim(), tags, stage_type: type, is_default: isDefault, is_active: active,
+          name: name.trim(), tags, stage_type: type, stage_type_name: typeName || null, is_default: isDefault, is_active: active,
         });
         toast(`Stage "${name.trim()}" updated`);
       }
@@ -184,13 +187,12 @@ export function StageConfigurator({ pipeline, onBack, afterChange }: {
         className={`sc-stage${isSel ? ' sel' : ''}${s.is_active === false ? ' off' : ''}`}
         onClick={() => setSel({ mode: 'edit', id: Number(s.id) })}>
         <span className="nm">{s.name}</span>
-        {(s.is_default || s.stage_type !== 'open' || s.is_active === false) && (
-          <span className="marks">
-            {s.is_default ? <i className="mk def">Default</i> : null}
-            {s.stage_type === 'won' ? <i className="mk won">Won</i> : s.stage_type === 'lost' ? <i className="mk lost">Lost</i> : null}
-            {s.is_active === false ? <i className="mk inact">Inactive</i> : null}
-          </span>
-        )}
+        {/* client Oct 2026 — EVERY stage shows its type after its name (Open / Won / Lost / custom). */}
+        <span className="marks">
+          {s.is_default ? <i className="mk def">Default</i> : null}
+          <i className={`mk ${s.stage_type === 'won' ? 'won' : s.stage_type === 'lost' ? 'lost' : 'open'}`} data-testid="stage-type-mark">{stageTypeLabel(s)}</i>
+          {s.is_active === false ? <i className="mk inact">Inactive</i> : null}
+        </span>
       </button>,
     );
     const isLast = i === rows.length - 1;
@@ -316,9 +318,8 @@ export function StageConfigurator({ pipeline, onBack, afterChange }: {
                 <div className="sc-accbody">
                   <div className="fld">
                     <label>Stage Type</label>
-                    <select className="ainp" value={type} disabled={!canEdit} onChange={(e) => setType(e.target.value)}>
-                      {STAGE_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                    </select>
+                    <StageTypeSelect name={typeName} behaviour={type} disabled={!canEdit}
+                      onChange={(nm, beh) => { setTypeName(nm); setType(beh); }} />
                   </div>
                   <label className="sc-check">
                     <input type="checkbox" checked={isDefault} disabled={!canEdit}

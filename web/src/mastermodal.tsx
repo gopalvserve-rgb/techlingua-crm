@@ -17,6 +17,7 @@ export const MASTER_LABELS: Record<string, string> = {
   tag: 'Tag', followup_type: 'Follow-up Type', disposition: 'Disposition',
   training: 'Training Mode', visit_purpose: 'Purpose of Visit', walkin_status: 'Walk-in Status',
   ticket_category: 'Ticket Category', course_type: 'Course Type', level: 'Level', campaign_type: 'Campaign Type',
+  stage_type: 'Stage Type',
 };
 
 /** A Level master row's Branch / Vertical / Course scope as an id list. Reads the multi-select
@@ -54,6 +55,10 @@ export function AddMasterModal({ type, onClose, onCreated, initial }: {
   // meta.branch_id / meta.vertical_id, so persisting them here makes the Level master branch/vertical-scoped.
   const isLevel = type === 'level';
   const lmeta = ((initial as any)?.meta ?? {}) as Record<string, unknown>;
+  // Stage Type master (client, Oct 2026): every named stage type BEHAVES AS Open / Won / Lost,
+  // which drives conversion counts and won/lost reports. Stored in meta.behaviour.
+  const isStageType = type === 'stage_type';
+  const [behaviour, setBehaviour] = useState<string>(String(lmeta.behaviour ?? 'open'));
   const [branches, setBranches] = useState<Named[]>([]);
   const [verticals, setVerticals] = useState<Named[]>([]);
   // Oct 2026 (client) — a Level sits under Branch › Vertical › Course, and Branch / Vertical / Course
@@ -116,6 +121,7 @@ export function AddMasterModal({ type, onClose, onCreated, initial }: {
         code: code.trim() || undefined,
         parent_id: parentType ? parentId : undefined,
       };
+      if (isStageType) body.meta = { ...lmeta, behaviour };
       if (isLevel) {
         body.meta = {
           ...lmeta,
@@ -194,6 +200,16 @@ export function AddMasterModal({ type, onClose, onCreated, initial }: {
                     onChange={(e) => setLDuration(e.target.value)} />
                 </div>
               </>
+            )}
+            {isStageType && (
+              <div className="fld">
+                <label>Behaves as <span className="star">*</span><span className="fhint">counts in reports as</span></label>
+                <select className="ainp" data-testid="stage-type-behaviour" value={behaviour} onChange={(e) => setBehaviour(e.target.value)}>
+                  <option value="open">Open — lead still in progress</option>
+                  <option value="won">Won — lead converted</option>
+                  <option value="lost">Lost — lead closed, not converted</option>
+                </select>
+              </div>
             )}
             {parentType && (
               <div className="fld">

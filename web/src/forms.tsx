@@ -10,6 +10,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { UserPicker } from './userpicker';
 import { AddMasterModal, levelScopeIds } from './mastermodal';
+import { StageTypeSelect } from './stagetypes';
 import { PhoneInput } from './phonefield';
 import { toast, useRef_, Named, RefData, selectableUsers } from './refdata';
 import { findScreen } from './specs';
@@ -606,7 +607,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
     // empty editor falls back to the default stage set (backend HierarchyService.buildStageSeed).
     const stages = parseStageRows(vals['Pipeline Stages'])
       .filter((s) => s.name.trim())
-      .map((s) => ({ name: s.name.trim(), stage_type: s.stage_type, is_default: !!s.is_default }));
+      .map((s) => ({ name: s.name.trim(), stage_type: s.stage_type, stage_type_name: s.stage_type_name ?? null, is_default: !!s.is_default }));
     const row = await api.post<Named>('/pipelines', {
       vertical_id: need(ids['Vertical'], 'Pick a vertical'),
       name: need(vals['Pipeline Name'], 'Pipeline name is required'),
@@ -978,7 +979,7 @@ export interface EditSpec {
  * reorder / delete stage rows, one default landing stage, serialised  *
  * into the field's value as JSON so the saver can persist it.         *
  * ------------------------------------------------------------------ */
-export type StageRow = { id?: number; name: string; stage_type: string; is_default?: boolean; is_active?: boolean };
+export type StageRow = { id?: number; name: string; stage_type: string; stage_type_name?: string; is_default?: boolean; is_active?: boolean };
 
 export function parseStageRows(v: unknown): StageRow[] {
   if (typeof v !== 'string' || !v.trim()) return [];
@@ -991,6 +992,7 @@ export function parseStageRows(v: unknown): StageRow[] {
         id: x.id != null ? Number(x.id) : undefined,
         name: String(x.name),
         stage_type: ['open', 'won', 'lost'].includes(x.stage_type) ? x.stage_type : 'open',
+        stage_type_name: x.stage_type_name != null && String(x.stage_type_name).trim() ? String(x.stage_type_name) : undefined,
         is_default: x.is_default === true,
         is_active: x.is_active !== false,
       }));
@@ -1011,12 +1013,12 @@ export async function reconcilePipelineStages(
   for (const r of rows) {
     if (r.id == null) {
       const created = await api.post<{ id: number }>(`/pipelines/${pipelineId}/stages`, {
-        name: r.name.trim(), stage_type: r.stage_type, is_default: false,
+        name: r.name.trim(), stage_type: r.stage_type, stage_type_name: r.stage_type_name ?? null, is_default: false,
       });
       r.id = Number(created.id);
     } else {
       await api.patch(`/stages/${r.id}`, {
-        name: r.name.trim(), stage_type: r.stage_type, is_active: r.is_active !== false,
+        name: r.name.trim(), stage_type: r.stage_type, stage_type_name: r.stage_type_name ?? null, is_active: r.is_active !== false,
       });
     }
   }
@@ -1047,7 +1049,8 @@ function StageTableField({ value, disabled, onChange }: {
   const commit = (next: StageRow[]) => { setRows(next); onChange(JSON.stringify(next)); };
   const add = () => commit([...rows, { name: '', stage_type: 'open', is_default: rows.length === 0, is_active: true }]);
   const setName = (i: number, name: string) => commit(rows.map((r, j) => (j === i ? { ...r, name } : r)));
-  const setType = (i: number, stage_type: string) => commit(rows.map((r, j) => (j === i ? { ...r, stage_type } : r)));
+  const setType = (i: number, stage_type_name: string, stage_type: string) =>
+    commit(rows.map((r, j) => (j === i ? { ...r, stage_type, stage_type_name } : r)));
   const setDefault = (i: number) => commit(rows.map((r, j) => ({ ...r, is_default: j === i })));
   const remove = (i: number) => {
     const next = rows.filter((_, j) => j !== i);
@@ -1071,10 +1074,10 @@ function StageTableField({ value, disabled, onChange }: {
           <span className="sc-row-ord">{i + 1}</span>
           <input className="ainp" placeholder="Stage name (e.g. Contacted)" value={r.name} disabled={disabled}
             onChange={(e) => setName(i, e.target.value)} />
-          <select className="ainp sc-row-type" value={r.stage_type} disabled={disabled}
-            onChange={(e) => setType(i, e.target.value)}>
-            <option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option>
-          </select>
+          {/* client Oct 2026 — Stage Type from the Stage Type master (＋ Master adds more); the
+              type's behaviour (Open / Won / Lost) is stored alongside it. */}
+          <StageTypeSelect className="ainp sc-row-type" name={r.stage_type_name} behaviour={r.stage_type} disabled={disabled}
+            withAdd={i === rows.length - 1} onChange={(nm, beh) => setType(i, nm, beh)} />
           <label className="sc-row-def" title="Default landing stage — new leads start here">
             <input type="radio" name="stage-default-row" checked={!!r.is_default} disabled={disabled}
               onChange={() => setDefault(i)} />Default
