@@ -16,6 +16,7 @@ import { assembleAdmissionJourney } from '../enrolments/admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from '../enrolments/discount.util';
 import { DiscountScope, MasterLevel, ResolvedLevel, resolveLevels, sumLevelDiscounts, sumLevelFees, sumLevelExamFees } from '../enrolments/level.util';
 import { Frequency, PlanType, generateSchedule } from '../paymentplans/schedule.util';
+import { recordPlanHistory } from '../paymentplans/plan.service';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { DiscountMasterService } from '../finance/discount-master.service';
 import { DiscountApprovalStatus } from '../enrolments/enrolment.service';
@@ -280,9 +281,10 @@ export class StudentService {
   private async insertEnrolmentLevels(c: any, orgId: number, enrolmentId: number, levels: ResolvedLevel[]) {
     for (const l of levels) {
       await c.query(
-        `INSERT INTO enrolment_level (org_id, enrolment_id, course_level_id, code, label, fee_minor, discount_minor, exam_fee_minor, ordering)
-         VALUES ($1::bigint,$2::bigint,$3::bigint,$4::varchar,$5,$6::bigint,$7::bigint,$8::bigint,$9::int)`,
-        [orgId, enrolmentId, l.course_level_id, l.code, l.label, l.fee_minor, l.discount_minor, l.exam_fee_minor ?? 0, l.ordering]);
+        `INSERT INTO enrolment_level (org_id, enrolment_id, course_level_id, code, label, fee_minor, discount_minor, exam_fee_minor, ordering, discount_type, discount_value)
+         VALUES ($1::bigint,$2::bigint,$3::bigint,$4::varchar,$5,$6::bigint,$7::bigint,$8::bigint,$9::int,$10::varchar,$11::numeric)`,
+        [orgId, enrolmentId, l.course_level_id, l.code, l.label, l.fee_minor, l.discount_minor, l.exam_fee_minor ?? 0, l.ordering,
+          l.discount_type ?? 'amount', l.discount_value ?? null]);
     }
   }
 
@@ -292,15 +294,16 @@ export class StudentService {
    */
   private async recordLevelHistory(
     c: any, orgId: number, enrolmentId: number, action: 'enrolled' | 'added' | 'updated' | 'removed',
-    levels: Array<{ code: string; label?: string | null; fee_minor?: number; discount_minor?: number; exam_fee_minor?: number }>,
+    levels: Array<{ code: string; label?: string | null; fee_minor?: number; discount_minor?: number; exam_fee_minor?: number; discount_type?: string | null; discount_value?: number | string | null }>,
     actorId: number | null, note: string | null = null,
   ) {
     for (const l of levels) {
       await c.query(
-        `INSERT INTO enrolment_level_history (org_id, enrolment_id, action, code, label, fee_minor, discount_minor, exam_fee_minor, note, actor_id)
-         VALUES ($1::bigint,$2::bigint,$3::varchar,$4::varchar,$5,$6::bigint,$7::bigint,$8::bigint,$9,$10::bigint)`,
+        `INSERT INTO enrolment_level_history (org_id, enrolment_id, action, code, label, fee_minor, discount_minor, exam_fee_minor, note, actor_id, discount_type, discount_value)
+         VALUES ($1::bigint,$2::bigint,$3::varchar,$4::varchar,$5,$6::bigint,$7::bigint,$8::bigint,$9,$10::bigint,$11::varchar,$12::numeric)`,
         [orgId, enrolmentId, action, l.code, l.label ?? null, Number(l.fee_minor ?? 0), Number(l.discount_minor ?? 0),
-          Number(l.exam_fee_minor ?? 0), note, actorId]);
+          Number(l.exam_fee_minor ?? 0), note, actorId, l.discount_type === 'percent' ? 'percent' : 'amount',
+          l.discount_value != null && String(l.discount_value).trim() !== '' ? Number(l.discount_value) : null]);
     }
   }
 
@@ -312,7 +315,7 @@ export class StudentService {
     }
     return this.db.query<any>(
       `SELECT h.id, h.action, h.code, h.label, h.fee_minor, h.discount_minor, h.exam_fee_minor,
-              h.note, h.actor_id, u.name AS actor_name, h.created_at
+              h.discount_type, h.discount_value, h.note, h.actor_id, u.name AS actor_name, h.created_at
          FROM enrolment_level_history h
          LEFT JOIN "user" u ON u.id = h.actor_id
         WHERE h.enrolment_id = $1::bigint
@@ -324,7 +327,7 @@ export class StudentService {
     const map = new Map<number, any[]>();
     if (!enrolmentIds.length) return map;
     const rows = await this.db.query<any>(
-      `SELECT enrolment_id, course_level_id, code, label, fee_minor, discount_minor, ordering
+      `SELECT enrolment_id, course_level_id, code, label, fee_minor, discount_minor, ordering, discount_type, discount_value
          FROM enrolment_level WHERE enrolment_id = ANY($1::bigint[]) ORDER BY enrolment_id, ordering, id`,
       [enrolmentIds]);
     for (const r of rows) {
@@ -2615,7 +2618,7 @@ export class StudentService {
         // Level history (migration 121): diff the stored set against the edited one BEFORE the
         // re-sync, so the trail says which level was added / removed / re-priced on this edit.
         const before = await c.query(
-          `SELECT code, label, fee_minor, discount_minor, exam_fee_minor FROM enrolment_level WHERE enrolment_id = $1::bigint`,
+          `SELECT code, label, fee_minor, discount_minor, exam_fee_minor, discount_type, discount_value FROM enrolment_level WHERE enrolment_id = $1::bigint`,
           [enrolmentId]);
         const old = new Map<string, any>(((before?.rows ?? []) as any[]).map((r) => [String(r.code).toLowerCase(), r]));
         const kept = new Set(resolvedLevels.map((l) => l.code.toLowerCase()));
@@ -2901,6 +2904,10 @@ export class StudentService {
                               THEN 'completed' ELSE 'active' END,
               updated_at = now()
         WHERE pp.id = $1::bigint`, [planId]);
+    // client 3 Sep — every change to the payment terms is a version in the plan history; the
+    // fee can then be laid out again with "Re-setup plan" (paid installments stay as they are).
+    await recordPlanHistory(c, enrolmentId, planId, 'level_added', null,
+      `Level added: ${(deltaMinor / 100).toFixed(2)} added to the last open installment`);
   }
 
   /** CHANGE a SINGLE enrolment's status — mirrors the student status endpoint. Per-status

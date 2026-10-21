@@ -44,6 +44,21 @@ export class PlanController {
     });
   }
 
+  /** Every version of an enrolment's payment terms (client 3 Sep — "history of payment terms"). */
+  @Get('history')
+  @RequirePermission('payment_plan.read')
+  history(@Query('enrolment_id') enrolmentId: string, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.history(Number(enrolmentId), scope);
+  }
+
+  /** RE-SETUP the fee plan: paid installments are kept as paid rows; only the unpaid balance is
+   *  re-scheduled on the new terms. The previous plan is kept as history. */
+  @Post(':id/resetup')
+  @RequirePermission('payment_plan.create')
+  resetup(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.resetup(id, dto, me, scope);
+  }
+
   @Get(':id')
   @RequirePermission('payment_plan.read')
   get(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {

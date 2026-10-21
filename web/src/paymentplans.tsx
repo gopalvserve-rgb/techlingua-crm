@@ -19,6 +19,8 @@ import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 import { CollectModal } from './sprint5';
 import { RowMenu, RowMenuItem } from './rowactions';
+import { AuditHistoryModal, FeeCards, FeeLedgerModal, paymentStatusCell } from './enrolmentfees';
+import { DateRange } from './daterange';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 async function openPdf(path: string) {
@@ -54,7 +56,7 @@ async function latestReceipt(enrolmentId: number): Promise<any | null> {
  * ENROLMENTS, so receipt-based actions resolve the latest receipt first (a clean toast when
  * none exists yet); Generate/Cancel Invoice work at the enrolment level. Degrades cleanly.
  */
-function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged: () => void }): Array<RowMenuItem | false> {
+function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged: () => void; onLedger: () => void; onAudit: () => void }): Array<RowMenuItem | false> {
   const eid = Number(r.enrolment_id);
   const needReceipt = async (): Promise<any | null> => {
     const rec = await latestReceipt(eid);
@@ -107,13 +109,10 @@ function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged:
       await api.post(`/invoices/${inv.id}/cancel`, { reason }); toast('Invoice cancelled (voided).'); opts.onChanged();
     } catch (e: any) { toast(e.message, true); }
   };
-  const del = async () => {
-    const rec = await needReceipt(); if (!rec) return;
-    if (!window.confirm(`Delete latest receipt ${rec.receipt_no} for ${fmtINR(rec.amount_minor)}? This is a correction, not a refund.`)) return;
-    try { await api.del(`/fees/receipts/${rec.id}`); toast('Receipt deleted.'); opts.onChanged(); }
-    catch (e: any) { toast(e.message, true); }
-  };
   return [
+    { label: 'Fee ledger', icon: 'rupee', onClick: opts.onLedger },
+    { label: 'Audit history', icon: 'clock', onClick: opts.onAudit },
+    'divider' as const,
     { label: 'Preview receipt', icon: 'eye', onClick: () => void preview() },
     { label: 'Generate invoice', icon: 'finance', onClick: () => void genInvoice() },
     { label: 'Download PDF', icon: 'doc', onClick: () => void (async () => { const rec = await needReceipt(); if (rec) openPdf(`/fees/receipts/${rec.id}/pdf`); })() },
@@ -124,7 +123,8 @@ function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged:
     'divider' as const,
     opts.can('fee.collect') ? { label: 'Send for approval', icon: 'send', onClick: () => void sendApproval() } : false,
     { label: 'Cancel invoice', icon: 'ban', danger: true, onClick: () => void cancelInvoice() },
-    opts.can('fee.delete') ? { label: 'Delete receipt', icon: 'trash', danger: true, onClick: () => void del() } : false,
+    // client 4 Sep — a posted payment is never deleted; it is REVERSED (reason + approval) in the ledger
+    opts.can('fee.collect') ? { label: 'Reverse payment', icon: 'ban', danger: true, onClick: opts.onLedger } : false,
   ];
 }
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
@@ -444,6 +444,9 @@ export function FeeDuesScreen() {
   const [planFor, setPlanFor] = useState<number | null>(null);       // Fee setup → create a payment plan
   const [planEditFor, setPlanEditFor] = useState<number | null>(null); // Edit → the plan schedule
   const [collectFor, setCollectFor] = useState<number | null>(null);   // Collect fee → the collect modal
+  const [ledgerFor, setLedgerFor] = useState<any>(null);               // Fee ledger / Reverse payment (4 Sep)
+  const [auditFor, setAuditFor] = useState<any>(null);                 // Payment-terms + level history
+  const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const after = () => setTick((t) => t + 1);
 
   const remind = async (r: any) => {
@@ -505,6 +508,9 @@ export function FeeDuesScreen() {
       {can('payment_plan.update') && (
         <div className="page-actions"><button className="btn" onClick={() => setCfg(true)}><Ic k="bell" />Reminder settings</button></div>
       )}
+      {/* client 4 Sep — collection cards for the SELECTED period (default this month) */}
+      <div className="filters" style={{ marginBottom: 8 }}><DateRange value={range} onChange={setRange} idPrefix="dues-dr" /></div>
+      <FeeCards range={range} tick={tick} />
       <Kpis items={[
         { lab: 'Total outstanding', val: s ? fmtINR(s.outstanding_minor) : '—', ic: 'rupee' },
         { lab: 'Defaulters (>30d)', val: String(s?.defaulters ?? 0), ic: 'flag' },
@@ -541,7 +547,7 @@ export function FeeDuesScreen() {
           ageing: (BUCKET_BADGE[r.bucket]?.[0]) ?? r.bucket, days_overdue: r.overdue_days,
           student: r.student_name, trainer: r.trainer_name || '', owner: r.owner_name || '', source: r.source,
         })))} onRefresh={after} />}
-        cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Enrolment Date', 'Next Due Date', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Balance', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
+        cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Enrolment Date', 'Next Due Date', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Balance', 'Payment Status', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
         empty="No outstanding dues — every active enrolment is paid up."
         rows={rows.map((r): Cell[] => [
           { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div> : <div className="sub">Installment {r.seq_no}</div>}</div> },
@@ -568,7 +574,8 @@ export function FeeDuesScreen() {
               const bal = Number(r.balance_minor ?? r.outstanding_minor);
               const paid = Number(r.enrolment_paid_minor ?? r.paid_minor ?? 0);
               return <span><b className="mono">{fmtINR(bal)}</b>{paid > 0 ? <div className="sub">paid {fmtINR(paid)}</div> : null}</span>;
-            })() },
+            })(), sort: Number(r.balance_minor ?? r.outstanding_minor ?? 0) },
+          paymentStatusCell(duesPaymentStatus(r)),
           { node: <span className="bdg b-gray">{r.course_status_label || r.course_status || '—'}</span> },
           { b: BUCKET_BADGE[r.bucket] ?? [r.bucket, 'b-gray'] },
           Number(r.overdue_days) > 0 ? String(r.overdue_days) : '—',
@@ -583,7 +590,8 @@ export function FeeDuesScreen() {
                   ['bell', 'Send fee reminder', () => void remind(r)],
                   ...(can('fee.collect') ? [['rupee', 'Collect fee', () => setCollectFor(Number(r.enrolment_id))] as [string, string, () => void]] : []),
                 ]} />
-                <RowMenu label="Receipt & invoice actions" items={duesActionItems(r, { can, onChanged: after })} />
+                <RowMenu label="Receipt & invoice actions" items={duesActionItems(r, { can, onChanged: after,
+                  onLedger: () => setLedgerFor(duesEnrolment(r)), onAudit: () => setAuditFor(duesEnrolment(r)) })} />
               </span>
             ),
           },
@@ -592,8 +600,29 @@ export function FeeDuesScreen() {
       {planFor != null && <EnrolmentFeeSetupModal enrolmentId={planFor} onClose={() => setPlanFor(null)} onSaved={() => { setPlanFor(null); after(); }} />}
       {planEditFor != null && <PlanDetailModal id={planEditFor} onClose={() => setPlanEditFor(null)} onChanged={after} />}
       {collectFor != null && <CollectModal enrolmentId={collectFor} onClose={() => setCollectFor(null)} onSaved={() => { setCollectFor(null); after(); }} />}
+      {ledgerFor && <FeeLedgerModal enrolment={ledgerFor} onClose={() => setLedgerFor(null)} onChanged={after} />}
+      {auditFor && <AuditHistoryModal enrolment={auditFor} onClose={() => setAuditFor(null)} />}
     </>
   );
+}
+
+/** A dues row → the enrolment shape the shared fee ledger / audit modals read. */
+function duesEnrolment(r: any) {
+  return {
+    id: Number(r.enrolment_id), enrolment_no: r.enrolment_no, lead_name: r.student_name,
+    net_fee_minor: Number(r.net_fee_minor ?? r.amount_minor ?? 0), exam_fee_minor: Number(r.exam_fee_minor ?? 0),
+    balance_minor: Number(r.balance_minor ?? r.outstanding_minor ?? 0), paid_minor: Number(r.enrolment_paid_minor ?? 0),
+    student_profile_id: r.student_id ?? r.student_profile_id ?? null,
+  };
+}
+/** Paid · Partial · Unpaid · Overdue · Due Soon for a dues row (client 4 Sep). */
+function duesPaymentStatus(r: any): string {
+  const bal = Number(r.balance_minor ?? r.outstanding_minor ?? 0);
+  if (bal <= 0) return 'Paid';
+  if (Number(r.overdue_days) > 0) return 'Overdue';
+  const due = r.due_date ? new Date(String(r.due_date)).getTime() : NaN;
+  if (Number.isFinite(due) && due - Date.now() <= 7 * 86400000) return 'Due Soon';
+  return Number(r.enrolment_paid_minor ?? 0) > 0 ? 'Partial' : 'Unpaid';
 }
 
 /* ==================================================================== */

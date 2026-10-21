@@ -69,7 +69,8 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'enrolment', label: 'Enrolments (Sale Closure)', actions: ['read', 'create', 'update', 'delete', 'approve'] },
   // 'collect' = take money at the desk. 'delete' = void a receipt, which is an admin act
   // (it is a money record, not a typo in a note). Refunds are Phase 3 and are neither.
-  { module: 'fee', label: 'Fee Collection (lite)', actions: ['read', 'collect', 'delete'] },
+  // 'reverse' (client 4 Sep, migration 124) — approve / perform a payment reversal (finance).
+  { module: 'fee', label: 'Fee Collection (lite)', actions: ['read', 'collect', 'delete', 'reverse'] },
   { module: 'target', label: 'Monthly Targets', actions: ['read', 'manage'] },
   { module: 'performance', label: 'Counsellor Performance', actions: ['read'] },
   // Sprint 6 — Workspace. 'post' covers writing a message, a note, and deleting YOUR OWN

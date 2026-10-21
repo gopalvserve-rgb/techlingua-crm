@@ -80,6 +80,7 @@ import { PlacementsScreen, PlacementsTab } from './placements';
 import { CatalogScreen, InventoryScreen, AssetsScreen, VendorsScreen, ProcurementScreen } from './operations';
 import { InvoicesScreen, FinanceDashboard } from './invoices';
 import { PaymentPlansScreen, FeeDuesScreen, PlanDetailModal } from './paymentplans';
+import { EnrolmentActions, paymentStatusCell } from './enrolmentfees';
 import { PaymentsScreen } from './payments';
 import { RefundsScreen } from './refunds';
 import { RevenueScreen, CollectionReportsScreen } from './revenue';
@@ -4951,6 +4952,20 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const up = (k: string, v: any) => setF((s: any) => ({ ...s, [k]: v }));
+  // F7 (client 4 Sep) — Edit student shows the course the student is actually enrolled in: when the
+  // profile itself has no course, prefill Branch › Vertical › Course from the LATEST enrolment.
+  useEffect(() => {
+    if (!isEdit || initial?.course_id) return;
+    let dead = false;
+    api.get<any>(`/students/${initial.id}/enrolments`).then((r) => {
+      const list: any[] = (r?.enrolments ?? []).filter((e: any) => e.course_id && e.status !== 'cancelled');
+      const latest = list.sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))[0];
+      if (!dead && latest) setF((s: any) => (s.course_id ? s : {
+        ...s, branch_id: String(latest.branch_id ?? s.branch_id), vertical_id: String(latest.vertical_id ?? s.vertical_id), course_id: String(latest.course_id),
+      }));
+    }).catch(() => undefined);
+    return () => { dead = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Custom fields (client, Aug 2026) — admin-defined student fields (entity='student') render
   // here and persist into student.custom_fields, mirroring the lead Add form. Saved values are
@@ -5304,7 +5319,7 @@ function SiblingsSection({ studentId, branchId, verticalId, canEdit }: { student
 // The 11 client-requested columns lead the set (Roll Number · Enrolment Number · Branch · Vertical ·
 // Course · Level · Total Fee · Net Fee · Fee Plan · Due Fee · Status), matching the Fee Management
 // dues list; a few list-specific extras (Batch, Enrolled, LMS, Amount, Mode, Received, Actions) follow.
-const ENROL_COL_LABELS = ['Roll Number', 'Enrolment Number', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Batch', 'Enrolled', 'LMS', 'Actions'];
+const ENROL_COL_LABELS = ['Roll Number', 'Enrolment Number', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Payment Status', 'Status', 'Batch', 'Enrolled', 'LMS', 'Actions'];
 const RECEIPT_COL_LABELS = ['Receipt', 'Roll Number', 'Enrolment No', 'Branch', 'Vertical', 'Course', 'Level', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Status', 'Amount', 'Mode', 'Received', 'Date', 'Actions'];
 
 export function StudentDetailModal({ student, onClose, onChanged, onEdit, initialTab }: { student: any; onClose: () => void; onChanged: () => void; onEdit?: (s: any) => void; initialTab?: string }) {
@@ -5499,6 +5514,9 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
               {canEdit && <button className="btn" onClick={() => setShowStatus(true)} data-testid="stu-change-status"><Ic k="flag" />Change status</button>}
               {canEdit && <button className="btn" onClick={() => setShowTransfer(true)}><Ic k="swap" />Transfer student</button>}
               {onEdit && <button className="btn" onClick={() => { onEdit(full); onClose(); }}><Ic k="pencil" />Edit full profile</button>}
+              {/* S2 (client 3 Sep) — quick actions */}
+              {can('fee.collect') && <button className="btn primary" onClick={() => setTab('fees')} data-testid="stu-quick-collect"><Ic k="rupee" />Collect payment</button>}
+              {canEdit && <button className="btn" onClick={() => { setTab('enrollments'); setAddEnrol(true); }} data-testid="stu-quick-enrol"><Ic k="plus" />Enroll in course</button>}
             </div>
           </div>
           <div className="fbp-avatar" aria-hidden={false} title={full.full_name}>
@@ -5511,6 +5529,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
           {chip('Fees Paid', money(fees?.summary?.collected_minor), 'ok')}
           {chip('Outstanding', money(fees?.summary?.balance_minor), Number(fees?.summary?.balance_minor ?? 0) > 0 ? 'warn' : '')}
           {chip('Current Batch', ac?.current_batch?.name ?? full.batch_name ?? 'Not assigned')}
+          {chip('Active Courses', String(activeCourses.length))}
         </div>
         <div className="fbp-body">
           <nav className="fbp-rail" aria-label="Student sections">
@@ -5851,13 +5870,15 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                     <span className="mono" data-testid={`enrol-enrolno-${e.id}`}>{e.enrolment_no ?? '—'}</span>,
                     e.branch_name ?? '—',
                     e.vertical_name ?? '—',
-                    <><b className="nm">{e.course_name ?? '—'}</b><div className="sub" data-testid={`enrol-path-${e.id}`}>{e.path || [e.branch_name, e.vertical_name, e.course_name].filter(Boolean).join(' › ')}</div></>,
+                    // S7 (client 4 Sep) — the course only; Branch and Vertical have their own columns.
+                    <b className="nm">{e.course_name ?? '—'}</b>,
                     e.level_summary ? <b data-testid={`enrol-levels-${e.id}`}>{e.level_summary}</b> : <span className="sub" data-testid={`enrol-levels-${e.id}`}>—</span>,
                     <><b>{money(e.total_fee_minor ?? e.gross_fee_minor ?? e.fee_minor)}</b>{disc > 0 && <div className="sub" style={{ fontSize: 10 }}>− {money(disc)}{e.discount_type === 'percent' ? ` (${Number(e.discount_value)}%)` : ''}</div>}</>,
                     <b>{money(e.net_fee_minor)}</b>,
                     e.payment_plan ?? '—',
                     // dev/100 (client): Balance / Due Fee = net fee - fees paid (from the API's outstanding_minor).
                     <><b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }} data-testid={`enrol-balance-${e.id}`}>{money(e.outstanding_minor ?? 0)}</b>{Number(e.paid_minor ?? 0) > 0 && <div className="sub" style={{ fontSize: 10 }}>paid {money(e.paid_minor)}</div>}</>,
+                    renderCell(paymentStatusCell(Number(e.outstanding_minor ?? 0) <= 0 ? 'Paid' : Number(e.paid_minor ?? 0) > 0 ? 'Partial' : 'Unpaid')),
                     <>{renderCell(studentStatusCell(e.course_status))}{e.status === 'cancelled' && e.course_status !== 'cancelled' ? <div className="sub" style={{ fontSize: 10 }}>revenue excl.</div> : null}</>,
                     e.batch_name ?? '—',
                     e.start_date ? dt(e.start_date) : dt(e.created_at),
@@ -5872,6 +5893,9 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                       {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolStatusFor(e)} data-testid={`enrol-status-${e.id}`}><Ic k="flag" />Status</button></>}
                       {canEdit && <>{' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolXferFor(e)} data-testid={`enrol-xfer-${e.id}`}><Ic k="swap" />Transfer course</button></>}
                       {' '}<button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setEnrolHistFor(e)}><Ic k="list" />History</button>
+                      {/* client 4 Sep — the same fee actions as every enrolment list (ledger, reverse, invoice, …) */}
+                      {' '}<EnrolmentActions e={{ ...e, student_profile_id: full.id, lead_name: full.full_name, balance_minor: e.outstanding_minor }}
+                        onChanged={() => { enrolData.reload?.(); onChanged(); }} />
                     </span>,
                   ];
                   return <tr key={e.id} data-testid={`enrol-row-${e.id}`}>{enrolCols.visibleIdx.map((ci) => <td key={ci}>{cells[ci]}</td>)}</tr>;
@@ -6622,7 +6646,7 @@ export interface LevelSelection {
 }
 /** Optional seed so the SAME picker reopens a saved enrolment (Edit) with its levels pre-selected
  *  and their per-level discount pre-filled. */
-export interface LevelSeed { courseId: string | number; scope: 'overall' | 'level'; levels: Array<{ code: string; discount_minor?: number }>; }
+export interface LevelSeed { courseId: string | number; scope: 'overall' | 'level'; levels: Array<{ code: string; discount_minor?: number; discount_type?: string | null; discount_value?: number | string | null }>; }
 
 /** Per-level discount amount (paise) from a type + natural value, clamped to the level fee. */
 function perLevelDiscMinor(feeMinor: number, type: LevelDiscType, rawValue: string | number): number {
@@ -6665,8 +6689,10 @@ export function EnrolLevelPicker({ courseId, disabled, onChange, seed, onlySeede
     seededFor.current = String(courseId);
     const s: Record<string, boolean> = {}; const dv: Record<string, string> = {}; const dt: Record<string, LevelDiscType> = {};
     for (const sl of seed.levels) {
-      const code = String(sl.code); s[code] = true; dt[code] = 'amount';
-      if (Number(sl.discount_minor || 0) > 0) dv[code] = String(Number(sl.discount_minor) / 100);
+      const code = String(sl.code); s[code] = true;
+      // a level discounted by % reopens as % (client 3 Sep) — the rest as ₹
+      if (sl.discount_type === 'percent' && Number(sl.discount_value || 0) > 0) { dt[code] = 'percent'; dv[code] = String(Number(sl.discount_value)); }
+      else { dt[code] = 'amount'; if (Number(sl.discount_minor || 0) > 0) dv[code] = String(Number(sl.discount_minor) / 100); }
     }
     setSel(s); setDisc(dv); setDiscType(dt); setScope(seed.scope === 'level' ? 'level' : 'overall');
   }, [allLevels, seed, courseId]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -7142,7 +7168,7 @@ export function ViewEnrolmentModal({ enrolment: e, studentId, onClose }: { enrol
             : !(hist.data ?? []).length ? <div className="empty-note">No level history — this enrolment has no levels.</div>
             : (
               <table className="minitbl" style={{ width: '100%' }}>
-                <thead><tr><th>Date &amp; time</th><th>Level</th><th>How</th><th style={{ textAlign: 'right' }}>Fee</th><th style={{ textAlign: 'right' }}>Discount</th><th>By</th></tr></thead>
+                <thead><tr><th>Date &amp; time</th><th>Level</th><th>How</th><th style={{ textAlign: 'right' }}>Fee</th><th>Discount type</th><th style={{ textAlign: 'right' }}>Discount</th><th>By</th></tr></thead>
                 <tbody>{(hist.data ?? []).map((h: any) => {
                   const how = HOW[String(h.action)] ?? { label: String(h.action), cls: 'b-gray' };
                   return (
@@ -7151,6 +7177,9 @@ export function ViewEnrolmentModal({ enrolment: e, studentId, onClose }: { enrol
                       <td><b>{h.code}</b>{h.label && h.label !== h.code ? <span className="sub"> {h.label}</span> : null}</td>
                       <td><span className={`bdg ${how.cls}`}>{how.label}</span>{h.note ? <div className="sub" style={{ fontSize: 11 }}>{h.note}</div> : null}</td>
                       <td style={{ textAlign: 'right' }}>{money(h.fee_minor)}</td>
+                      <td data-testid={`enrol-level-history-dtype-${h.id}`}>{Number(h.discount_minor ?? 0) > 0
+                        ? (h.discount_type === 'percent' ? <span className="bdg b-indigo">Percentage {Number(h.discount_value ?? 0)}%</span> : <span className="bdg b-cyan">Amount ₹</span>)
+                        : '—'}</td>
                       <td style={{ textAlign: 'right' }}>{Number(h.discount_minor ?? 0) > 0 ? `− ${money(h.discount_minor)}` : '—'}</td>
                       <td>{h.actor_name ?? '—'}</td>
                     </tr>
@@ -7195,7 +7224,8 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
   const hasLevels = ((enrolment.levels ?? []).length > 0) && String(courseId) === String(enrolment.course_id ?? '');
   const levelSeed: LevelSeed | undefined = (enrolment.levels ?? []).length > 0
     ? { courseId: enrolment.course_id, scope: String(enrolment.discount_scope ?? 'overall') === 'level' ? 'level' : 'overall',
-        levels: (enrolment.levels ?? []).map((l: any) => ({ code: String(l.code), discount_minor: Number(l.discount_minor ?? 0) })) }
+        levels: (enrolment.levels ?? []).map((l: any) => ({ code: String(l.code), discount_minor: Number(l.discount_minor ?? 0),
+          discount_type: l.discount_type, discount_value: l.discount_value })) }
     : undefined;
   const onLevels = (p: LevelSelection) => {
     setLvl(p);

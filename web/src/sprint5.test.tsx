@@ -46,7 +46,7 @@ const ENROLMENTS = [{
   first_payment_minor: 2_000_000, created_at: '2026-07-16T10:00:00Z', lead_id: 31, quotation_id: 1,
   course_id: 21, lead_name: 'Priya Sharma', lead_phone: '+919810000011', course_name: 'IELTS',
   branch_name: 'Vikaspuri', vertical_name: 'BCL', counsellor_name: 'Asha Rao', quote_no: 'QT-2026/0001',
-  paid_minor: 2_000_000, balance_minor: 2_050_000,
+  paid_minor: 2_000_000, balance_minor: 2_050_000, payment_status: 'Partial',
 }];
 const RECEIPTS = [{
   id: 71, receipt_no: 'RCP-2026/0001', amount_minor: 2_000_000, mode: 'upi', reference: 'UTR9876543210',
@@ -74,6 +74,8 @@ const getRoute = (path: string): Promise<unknown> => {
   if (path.startsWith('/enrolments/meta')) return Promise.resolve({ payment_plans: [{ key: 'full', label: 'Full payment' }, { key: 'emi_3', label: '3 installments' }], approvals: { enabled: false, steps: [] } });
   if (path.startsWith('/enrolments/approval-policy')) return Promise.resolve({ enabled: false, steps: [] });
   if (path.startsWith('/enrolments/approvals')) return Promise.resolve([]);
+  if (path.startsWith('/enrolments/fee-cards')) return Promise.resolve({ enrolments_in_range: 1, fees_booked_minor: 4_050_000, collected_minor: 2_000_000, outstanding_minor: 2_050_000, overdue_minor: 0, due_today_minor: 0, collection_rate_pct: 100, avg_discount_minor: 450_000, avg_discount_pct: 10, pending_approval: 1 });
+  if (/^\/leads\/\d+$/.test(path)) return Promise.resolve({ id: 31, full_name: 'Priya Sharma', branch_id: 9, vertical_id: 1 });
   if (path.startsWith('/enrolments')) return E(ENROLMENTS, []);
   if (path.startsWith('/fees/summary')) return E({ mtd_minor: 2_000_000, today_minor: 2_000_000, receipts: 1, outstanding_minor: 2_050_000, by_mode: [{ mode: 'upi', label: 'UPI', total_minor: 2_000_000, n: 1 }] }, { mtd_minor: 0, today_minor: 0, receipts: 0, outstanding_minor: 0, by_mode: [] });
   if (path.startsWith('/fees/meta')) return Promise.resolve({ modes: [{ key: 'cash', label: 'Cash' }, { key: 'upi', label: 'UPI' }], online: { gateway_capture: false, phase: 3, note: 'Phase 3' } });
@@ -267,13 +269,33 @@ describe('SendQuoteModal — the not-configured path is VISIBLE', () => {
 });
 
 describe('Sale Closure', () => {
-  it('renders the enrolment list with net fee, collected and balance as separate columns', async () => {
+  it('renders the enrolment list with net fee, paid and balance as separate columns (client 4 Sep)', async () => {
     render(<SaleClosure />);
     expect(await screen.findByText('ENR-2026/0001')).toBeTruthy();
-    expect(screen.getByText('₹40,500.00')).toBeTruthy();     // net fee
-    expect(screen.getByText('₹20,000.00')).toBeTruthy();     // collected
-    expect(screen.getByText('₹20,500.00')).toBeTruthy();     // balance
-    expect(screen.getByText('3 EMI')).toBeTruthy();
+    expect(screen.getAllByText('₹40,500.00').length).toBeGreaterThan(0);     // net fee
+    expect(screen.getAllByText('₹20,000.00').length).toBeGreaterThan(0);     // paid
+    expect(screen.getAllByText('₹20,500.00').length).toBeGreaterThan(0);     // balance
+    // "3 Installments", never "3 EMI" — an EMI suggests a loan with interest
+    expect(screen.getByText('3 Installments')).toBeTruthy();
+    expect(screen.queryByText('3 EMI')).toBeNull();
+    // Payment status and Enrolment status are separate columns; Student (not Lead), Paid (not Collected)
+    expect(screen.getByRole('columnheader', { name: 'Payment Status' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Enrolment Status' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Student' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Paid' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Next Due' })).toBeTruthy();
+    // balance pending → the primary action is Collect Payment
+    expect(screen.getByText('Collect Payment')).toBeTruthy();
+  });
+
+  it('the cards follow the selected period and include collection figures (client 4 Sep)', async () => {
+    render(<SaleClosure />);
+    expect(await screen.findByText(/Amount Collected/)).toBeTruthy();
+    expect(screen.getByText('Outstanding Balance')).toBeTruthy();
+    expect(screen.getByText('Overdue Amount')).toBeTruthy();
+    expect(screen.getByText('Payments Due Today')).toBeTruthy();
+    expect(screen.getByText('Collection Rate')).toBeTruthy();
+    expect(screen.getByText('Pending approval')).toBeTruthy();
   });
 
   it('tells the client plainly that approvals are OFF, and where to switch them on', async () => {
@@ -289,35 +311,45 @@ describe('Sale Closure', () => {
   });
 });
 
-describe('EnrolmentModal', () => {
-  it('DERIVES the net fee — it is never typed', async () => {
-    render(<EnrolmentModal onClose={() => undefined} />);
-    fireEvent.change(await screen.findByLabelText(/Total fee/), { target: { value: '45000' } });
-    fireEvent.change(screen.getByLabelText(/^Discount/), { target: { value: '5000' } });
-    const net = screen.getByLabelText('Net fee') as HTMLInputElement;
-    expect(net.value).toBe('₹40,000.00');
-    expect(net.disabled).toBe(true);
+describe('EnrolmentModal — Sale Closure form (client 4 Sep)', () => {
+  const PREFILL = { lead_id: 31, lead_name: 'Priya Sharma' };
+
+  it('follows the lead\'s Branch › Vertical (read-only)', async () => {
+    render(<EnrolmentModal prefill={PREFILL} onClose={() => undefined} />);
+    await waitFor(() => expect((screen.getByLabelText('Branch') as HTMLInputElement).value).toBe('Vikaspuri'));
+    expect((screen.getByLabelText('Vertical') as HTMLInputElement).value).toBe('BCL');
+    expect((screen.getByLabelText('Branch') as HTMLInputElement).disabled).toBe(true);
   });
 
-  it('a course fills its fee from the Course master, and stays editable', async () => {
-    render(<EnrolmentModal onClose={() => undefined} />);
-    fireEvent.change(await screen.findByLabelText('Course'), { target: { value: '21' } });
-    await waitFor(() => expect((screen.getByLabelText(/Total fee/) as HTMLInputElement).value).toBe('45000'));
-    fireEvent.change(screen.getByLabelText(/Total fee/), { target: { value: '42000' } });
-    expect((screen.getByLabelText(/Total fee/) as HTMLInputElement).value).toBe('42000');
+  it('DERIVES the net fee — a course fills the fee, a % discount is applied, net is never typed', async () => {
+    render(<EnrolmentModal prefill={PREFILL} onClose={() => undefined} />);
+    await waitFor(() => expect((screen.getByTestId('closure-course') as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(screen.getByTestId('closure-course'), { target: { value: '21' } });
+    await waitFor(() => expect(screen.getByTestId('enrol-gross').textContent).toBe('₹45,000.00'));
+    fireEvent.change(screen.getByTestId('enrol-disc-type'), { target: { value: 'percent' } });
+    fireEvent.change(screen.getByTestId('enrol-disc-value'), { target: { value: '10' } });
+    expect(screen.getByTestId('enrol-net').textContent).toBe('₹40,500.00');
   });
 
-  it('a negative net is floored at zero rather than shown as -₹5,000', async () => {
-    render(<EnrolmentModal onClose={() => undefined} />);
-    fireEvent.change(await screen.findByLabelText(/Total fee/), { target: { value: '1000' } });
-    fireEvent.change(screen.getByLabelText(/^Discount/), { target: { value: '5000' } });
-    expect((screen.getByLabelText('Net fee') as HTMLInputElement).value).toBe('₹0.00');
+  it('creates the enrolment WITH its instalment plan (payment plan is functional)', async () => {
+    post.mockResolvedValueOnce({ id: 88, enrolment_no: 'ENR-2026/0002', status: 'active', plan_id: 5 });
+    render(<EnrolmentModal prefill={PREFILL} onClose={() => undefined} />);
+    await waitFor(() => expect((screen.getByTestId('closure-course') as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(screen.getByTestId('closure-course'), { target: { value: '21' } });
+    fireEvent.change(screen.getByTestId('enrol-plan'), { target: { value: 'installment' } });
+    fireEvent.change(screen.getByTestId('enrol-count'), { target: { value: '3' } });
+    fireEvent.click(screen.getByTestId('closure-save'));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    const [path, body] = post.mock.calls[post.mock.calls.length - 1] as [string, any];
+    expect(path).toBe('/enrolments');
+    expect(body.course_id).toBe(21);
+    expect(body.fee_minor).toBe(4_500_000);
+    expect(body.plan_setup).toMatchObject({ plan_type: 'installment', num_installments: 3 });
   });
 
-  it('a converted enrolment says that tax is NOT carried across', async () => {
+  it('a converted enrolment names its quotation', async () => {
     render(<EnrolmentModal prefill={{ quote_no: 'QT-2026/0001', quotation_id: 1, lead_id: 31, fee_minor: 4_500_000, discount_minor: 450_000 }} onClose={() => undefined} />);
-    expect(await screen.findByText(/Tax is not carried across/)).toBeTruthy();
-    expect((screen.getByLabelText(/Total fee/) as HTMLInputElement).value).toBe('45000');
+    expect(await screen.findByText(/Converted from quotation/)).toBeTruthy();
   });
 });
 

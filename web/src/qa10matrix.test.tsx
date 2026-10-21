@@ -798,7 +798,8 @@ const bespokeCases: Case[] = [
     name: 'Enrolment / Sale Closure — Add',
     render: () => render(<EnrolmentModal onClose={() => undefined} />),
     allow: {
-      'Net fee': 'display-only — DERIVED as Total fee less Discount, and re-derived server-side. A net the user could type is a net that can disagree with its own fee and discount, which is the kind of thing an accountant finds in April.',
+      Branch: 'display-only — the enrolment sits in the LEAD\'s branch (client 4 Sep "follow the branch>vertical"); the server reads it from the lead, a typed branch could disagree with it.',
+      Vertical: 'display-only — the enrolment sits in the LEAD\'s vertical; the server reads it from the lead.',
     },
     path: /^\/enrolments$/,
   },

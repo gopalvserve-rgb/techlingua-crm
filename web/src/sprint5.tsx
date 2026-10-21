@@ -26,7 +26,8 @@ import {
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
 import { DateRange, fmtDateTimeIST, presetRange } from './daterange';
 import { RowMenu, RowMenuItem } from './rowactions';
-import { FilterMulti } from './dyn';
+import { EnrolLevelPicker, FeeConfigFields, FilterMulti, LevelSelection, feePlanBody, useFeeConfig } from './dyn';
+import { EnrolmentActions, FeeCards, PAYMENT_STATUSES, ReversePaymentModal, enrolmentCells, enrolmentColumns } from './enrolmentfees';
 import { useScope } from './scope';
 
 /* ==================================================================== */
@@ -90,9 +91,25 @@ export function receiptActionItems(r: any, opts: {
   can: (p: string) => boolean;
   onPreview?: () => void;
   onEditPayment?: () => void;
-  onDelete?: () => void;
+  /** client 4 Sep — a posted payment is REVERSED (reason + approval), never deleted */
+  onReverse?: () => void;
   onChanged?: () => void;
 }): Array<RowMenuItem | false> {
+  if (r.reversal_status === 'reversed') {
+    return [{ label: 'Download PDF', icon: 'doc', onClick: () => openPdf(`/fees/receipts/${r.id}/pdf`) }];
+  }
+  const decideReversal = async (approve: boolean) => {
+    try {
+      if (approve) await api.post(`/fees/receipts/${r.id}/reverse/approve`, {});
+      else {
+        const remarks = window.prompt('Why is this reversal rejected?') ?? '';
+        if (!remarks.trim()) return;
+        await api.post(`/fees/receipts/${r.id}/reverse/reject`, { remarks });
+      }
+      toast(approve ? `Payment ${r.receipt_no} reversed.` : 'Reversal request rejected — the payment stands.');
+      opts.onChanged?.();
+    } catch (e: any) { toast(e.message, true); }
+  };
   const genInvoice = async () => {
     try {
       const res = await api.post<any>('/invoices/generate', { receipt_id: r.id });
@@ -162,8 +179,10 @@ export function receiptActionItems(r: any, opts: {
     !pending && opts.can('fee.collect') ? { label: 'Send for approval', icon: 'send', onClick: () => void sendApproval() } : false,
     hasInvoice ? { label: 'Cancel invoice', icon: 'ban', danger: true, onClick: () => void cancelInvoice() } : false,
     'divider' as const,
-    opts.onEditPayment && opts.can('fee.collect') ? { label: 'Edit payment', icon: 'pencil', onClick: opts.onEditPayment } : false,
-    opts.onDelete && opts.can('fee.delete') ? { label: 'Delete', icon: 'trash', danger: true, onClick: opts.onDelete } : false,
+    opts.onEditPayment && opts.can('fee.collect') ? { label: 'Edit reference / note', icon: 'pencil', onClick: opts.onEditPayment } : false,
+    r.reversal_status === 'requested' && opts.can('fee.reverse') ? { label: 'Approve reversal', icon: 'check', onClick: () => void decideReversal(true) } : false,
+    r.reversal_status === 'requested' && opts.can('fee.reverse') ? { label: 'Reject reversal', icon: 'x', onClick: () => void decideReversal(false) } : false,
+    r.reversal_status !== 'requested' && opts.onReverse && opts.can('fee.collect') ? { label: 'Reverse payment', icon: 'ban', danger: true, onClick: opts.onReverse } : false,
   ];
 }
 
@@ -838,7 +857,162 @@ export function Quotations() {
  * `Net fee` is DERIVED and read-only — the client never types a net that could disagree
  * with its own fee and discount, and the API recomputes it regardless.
  */
-export function EnrolmentModal({ initial, prefill, onClose, onSaved }: {
+export function EnrolmentModal(props: {
+  initial?: any; prefill?: any; onClose: () => void; onSaved?: () => void;
+}) {
+  // A NEW sale closes on the level + fee-plan form (client 3 Sep, F1); Edit keeps the money form.
+  return props.initial?.id ? <EnrolmentEditModal {...props} /> : <SaleClosureModal {...props} />;
+}
+
+/**
+ * SALE CLOSURE (client 3 Sep, F1 / F1.1 / F1.2). Lead → its Branch › Vertical (read-only, the
+ * enrolment always sits where the lead does) → Course of that vertical → one or MORE levels
+ * (fee auto-sums) → discount on the overall total (₹ / %) or per level (₹ / % each) → instalment
+ * plan (Full / Installments / Custom + down payment, schedule preview). The plan is created with
+ * the enrolment; when approvals are on it is held and built the moment the enrolment is approved.
+ */
+function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClose: () => void; onSaved?: () => void }) {
+  const ref = useRef_();
+  const meta = useFetch<any>('/enrolments/meta');
+  const approvals = meta.data?.approvals;
+  const [lead, setLead] = useState<number | undefined>(prefill?.lead_id);
+  const [leadLabel, setLeadLabel] = useState<string>(prefill?.lead_name ?? '');
+  const [leadRow, setLeadRow] = useState<any>(null);
+  const [courseId, setCourseId] = useState<string>(String(prefill?.course_id ?? ''));
+  const [counsellor, setCounsellor] = useState<string>(String(prefill?.counsellor_id ?? ''));
+  const [remarks, setRemarks] = useState('');
+  const [lvl, setLvl] = useState<LevelSelection | null>(null);
+  const cfg = useFeeConfig(prefill?.fee_minor != null ? { fee: String(Number(prefill.fee_minor) / 100) } : undefined);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!lead) { setLeadRow(null); return; }
+    api.get<any>(`/leads/${lead}`).then((r) => setLeadRow(r?.lead ?? r)).catch(() => setLeadRow(null));
+  }, [lead]);
+  const branchName = leadRow ? (ref.branches.find((b: any) => Number(b.id) === Number(leadRow.branch_id))?.name ?? leadRow.branch_name ?? '—') : '';
+  const verticalName = leadRow ? (ref.verticals.find((v: any) => Number(v.id) === Number(leadRow.vertical_id))?.name ?? leadRow.vertical_name ?? '—') : '';
+  const courses = (ref.courses as any[]).filter((c: any) => !leadRow?.vertical_id || !(c.meta as any)?.vertical_id
+    || String((c.meta as any).vertical_id) === String(leadRow.vertical_id)
+    || ((c.meta as any)?.vertical_ids ?? []).map(String).includes(String(leadRow.vertical_id)));
+
+  const pickCourse = (id: string) => {
+    setCourseId(id);
+    const c = (ref.courses as any[]).find((x) => String(x.id) === id);
+    cfg.setFee(c ? String((c.meta as any)?.fee ?? '') : '');
+  };
+  const onLevels = (p: LevelSelection) => {
+    setLvl(p);
+    if (p.hasLevels) {
+      cfg.setFee(String((p.scope === 'level' ? p.netMinor : p.totalMinor) / 100));
+      if (p.scope === 'level') cfg.setDiscType('none');
+    }
+  };
+
+  const save = async () => {
+    setErr('');
+    if (!lead) { setErr('Choose the lead being enrolled.'); return; }
+    if (!courseId) { setErr('Choose a course.'); return; }
+    if (lvl?.hasLevels && !lvl.levels.length) { setErr('Select at least one level of this course.'); return; }
+    if (cfg.plan !== 'full' && !cfg.sched.balances) { setErr(cfg.sched.error || 'The instalments must total the net fee.'); return; }
+    setBusy(true);
+    try {
+      const plan = feePlanBody(cfg, 0) as any;
+      delete plan.enrolment_id;
+      const levelWise = lvl?.hasLevels && lvl.scope === 'level';
+      const res = await api.post<any>('/enrolments', {
+        lead_id: lead,
+        quotation_id: prefill?.quotation_id ?? undefined,
+        course_id: Number(courseId),
+        fee_minor: lvl?.hasLevels ? lvl.totalMinor : cfg.grossMinor,
+        discount_type: levelWise ? undefined : cfg.discType, discount_value: levelWise ? undefined : cfg.dv,
+        ...(lvl?.hasLevels ? { levels: lvl.levels, discount_scope: lvl.scope } : {}),
+        payment_plan: cfg.planIntent, first_payment_minor: cfg.plan === 'full' ? 0 : cfg.downMinor,
+        start_date: cfg.start || null,
+        counsellor_id: counsellor ? Number(counsellor) : null,
+        remarks: remarks || null,
+        plan_setup: plan,
+      });
+      if (res?.plan_error) toast(`${res.enrolment_no} enrolled; instalment plan not created — ${res.plan_error}`, true);
+      else toast(res?.status === 'pending_approval'
+        ? `${res.enrolment_no} submitted for approval — the instalment plan is created once it is approved`
+        : `Enrolled — ${res?.enrolment_no ?? ''}${res?.plan_id ? ' · instalment plan created' : ''}`);
+      onSaved?.(); onClose();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ maxWidth: 860 }}>
+        <div className="ah">
+          <h3><Ic k="check" />Close the sale — new enrolment</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          {prefill?.quote_no && (
+            <div className="notice" style={{ marginBottom: 12 }}>
+              <Ic k="doc" /><div>Converted from quotation <b>{prefill.quote_no}</b>.</div>
+            </div>
+          )}
+          {approvals?.enabled && (
+            <div className="notice" style={{ marginBottom: 12 }} data-testid="closure-approval-note">
+              <Ic k="clock" />
+              <div>
+                Approvals are ON. This enrolment goes to the approval queue
+                ({approvals.steps.map((s: any) => s.label).join(' · ')}). The instalment plan below is
+                saved with it and created automatically once it is approved.
+              </div>
+            </div>
+          )}
+          <div className="form-grid">
+            <div className="fld span2">
+              <label htmlFor="sc-lead">Lead <span className="star">*</span></label>
+              <LeadLookup inputId="sc-lead" value={leadLabel} onPick={(id, label) => { setLead(id); setLeadLabel(label); setCourseId(''); cfg.setFee(''); }} />
+            </div>
+            <div className="fld">
+              <label htmlFor="sc-branch">Branch</label>
+              <input id="sc-branch" className="ainp" value={branchName} readOnly disabled placeholder="From the lead" data-testid="closure-branch" />
+            </div>
+            <div className="fld">
+              <label htmlFor="sc-vertical">Vertical</label>
+              <input id="sc-vertical" className="ainp" value={verticalName} readOnly disabled placeholder="From the lead" data-testid="closure-vertical" />
+            </div>
+            <div className="fld">
+              <label htmlFor="sc-course">Course <span className="star">*</span></label>
+              <select id="sc-course" className="ainp" value={courseId} onChange={(e) => pickCourse(e.target.value)} disabled={!lead} data-testid="closure-course">
+                <option value="">{lead ? '— Choose course —' : '— Choose the lead first —'}</option>
+                {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="sc-counsellor">Counsellor</label>
+              <select id="sc-counsellor" className="ainp" value={counsellor} onChange={(e) => setCounsellor(e.target.value)}>
+                <option value="">Lead owner</option>
+                {ref.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <EnrolLevelPicker courseId={courseId} disabled={busy} onChange={onLevels} />
+            <FeeConfigFields cfg={cfg} disabled={busy || !courseId} showFee={!lvl?.hasLevels} hideDiscount={!!(lvl?.hasLevels && lvl.scope === 'level')}
+              capCtx={leadRow ? { branch_id: Number(leadRow.branch_id) || null, vertical_id: Number(leadRow.vertical_id) || null, course_id: Number(courseId) || null } : undefined} />
+            <div className="fld span2">
+              <label htmlFor="sc-remarks">Remarks</label>
+              <textarea id="sc-remarks" className="ainp" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+            </div>
+          </div>
+          {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
+        </div>
+        <div className="af">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={busy} onClick={save} data-testid="closure-save">
+            <Ic k="check" />{busy ? 'Saving…' : approvals?.enabled ? 'Submit for approval' : 'Enrol & create plan'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
   initial?: any; prefill?: any; onClose: () => void; onSaved?: () => void;
 }) {
   const ref = useRef_();
@@ -1033,14 +1207,22 @@ export function SaleClosure() {
   const rangeKey = `${range.from ?? ''}~${range.to ?? ''}`;
   const { data, reload } = useFetch<any[]>('/enrolments' + (eq.toString() ? `?${eq}` : ''), [rangeKey]);
   const summary = useFetch<any>('/enrolments/summary');
+  const [tick, setTick] = useState(0);
+  const [fPay, setFPay] = useState<string[]>([]);
+  const [fStatus, setFStatus] = useState<string[]>([]);
+  const [q, setQ] = useState('');
   const queue = useFetch<any[]>(can('enrolment.approve') ? '/enrolments/approvals?status=pending' : null);
   const policy = useFetch<any>('/enrolments/approval-policy');
   const [modal, setModal] = useState(false);
   const [edit, setEdit] = useState<any>(null);
-  const rows = data ?? [];
+  const ql = q.trim().toLowerCase();
+  const rows = (data ?? []).filter((e) =>
+    (!fPay.length || fPay.includes(String(e.payment_status))) &&
+    (!fStatus.length || fStatus.includes(String(e.status))) &&
+    (!ql || [e.enrolment_no, e.lead_name, e.lead_phone, e.student_id, e.course_name].some((v) => String(v ?? '').toLowerCase().includes(ql))));
   const s = summary.data;
 
-  const bump = () => { reload(); summary.reload(); queue.reload(); };
+  const bump = () => { reload(); summary.reload(); queue.reload(); setTick((t) => t + 1); };
 
   const decide = async (id: number, approve: boolean) => {
     try {
@@ -1056,16 +1238,23 @@ export function SaleClosure() {
           <button className="btn primary" onClick={() => setModal(true)}><Ic k="plus" />New enrolment</button>
         </div>
       )}
-      <Kpis items={[
-        { lab: 'Enrolments (MTD)', val: String(s?.mtd_count ?? 0), ic: 'check' },
-        { lab: 'Fees Booked (MTD)', val: s ? fmtINR(s.mtd_revenue_minor) : '—', ic: 'rupee' },
-        { lab: 'Avg discount', val: s ? `${s.avg_discount_pct}%` : '—', ic: 'perf' },
-        { lab: 'Pending approval', val: String(s?.pending_approval ?? 0), ic: 'clock' },
-      ]} />
-
       <div className="filters" style={{ marginBottom: 12 }}>
+        <label className="fchip" style={{ minWidth: 180 }}><Ic k="search" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search enrolment / student / phone"
+            style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit', width: '100%' }} /></label>
+        <FilterMulti label="Payment status" icon="rupee" value={fPay as any} options={PAYMENT_STATUSES.map((p) => ({ id: p, name: p })) as any} onChange={setFPay as any} />
+        <FilterMulti label="Enrolment status" icon="shield" value={fStatus as any}
+          options={[['active', 'Active'], ['pending_approval', 'Pending approval'], ['completed', 'Completed'], ['cancelled', 'Cancelled'], ['rejected', 'Rejected']].map(([id, name]) => ({ id, name })) as any}
+          onChange={setFStatus as any} />
         <DateRange value={range} onChange={setRange} idPrefix="enrol-dr" />
       </div>
+
+      {/* client 4 Sep — the cards follow the selected date range (default: this month) */}
+      <FeeCards range={range} tick={tick} onPending={() => {
+        // clickable Pending approval (client 4 Sep): jump to the queue, or filter the list to it
+        const q = document.getElementById('enr-approval-queue');
+        if (q) q.scrollIntoView({ behavior: 'smooth' }); else setFStatus(['pending_approval']);
+      }} />
 
       {policy.data && !policy.data.enabled ? (
         <PhaseNote>
@@ -1075,9 +1264,9 @@ export function SaleClosure() {
       ) : null}
 
       {can('enrolment.approve') && (queue.data ?? []).length > 0 && (
-        <TableCard
+        <div id="enr-approval-queue"><TableCard
           title="Awaiting your approval" icon="clock"
-          cols={['Enrolment', 'Lead', 'Course', 'Net fee', 'Step', 'Requested by', '']}
+          cols={['Enrolment', 'Student', 'Course', 'Net fee', 'Step', 'Requested by', '']}
           rows={(queue.data ?? []).map((a): Cell[] => [
             { mono: a.enrolment_no }, a.lead_name, a.course_name ?? '—',
             { mono: fmtINR(a.net_fee_minor) }, a.step_label, a.requested_by_name ?? '—',
@@ -1088,24 +1277,18 @@ export function SaleClosure() {
               ]} />,
             },
           ])}
-        />
+        /></div>
       )}
 
       <TableCard
-        title="Enrolments" icon="students"
-        cols={['Enrolment #', 'Lead', 'Course', 'Net fee', 'Collected', 'Balance', 'Plan', 'Status', '']}
+        title="Enrolments" icon="students" listKey="sale-closure"
+        cols={enrolmentColumns({ showOwner: true })}
         empty="No enrolments yet — close a sale from a lead, or convert an accepted quotation."
-        rows={rows.map((e): Cell[] => [
-          { node: <div><b className="mono">{e.enrolment_no}</b>{e.quote_no ? <div className="sub mono">{e.quote_no}</div> : null}</div> },
-          { node: <div><b>{e.lead_name}</b><div className="sub mono">{e.lead_phone}</div></div> },
-          e.course_name ?? '—',
-          { mono: fmtINR(e.net_fee_minor) },
-          { mono: fmtINR(e.paid_minor) },
-          { mono: fmtINR(e.balance_minor), dim: Number(e.balance_minor) === 0 },
-          e.payment_plan === 'full' ? 'Full' : e.payment_plan === 'emi_3' ? '3 EMI' : e.payment_plan === 'emi_6' ? '6 EMI' : 'Custom',
-          badge(e.status),
-          { node: can('enrolment.update') ? <RowBtns items={[['pencil', 'Edit', () => setEdit(e)]]} /> : '' },
-        ])}
+        rows={rows.map((e): Cell[] => enrolmentCells(e, {
+          showOwner: true,
+          actions: <EnrolmentActions e={e} onChanged={bump}
+            extra={[can('enrolment.update') && e.status !== 'cancelled' && e.status !== 'rejected' && { label: 'Edit enrolment', icon: 'pencil', onClick: () => setEdit(e) }]} />,
+        }))}
       />
       {modal && <EnrolmentModal onClose={() => setModal(false)} onSaved={bump} />}
       {edit && <EnrolmentModal initial={edit} onClose={() => setEdit(null)} onSaved={bump} />}
@@ -1581,6 +1764,7 @@ export function FeeCollection() {
   if (range.to) fq.set('to', range.to);
   if (fBranches.length) fq.set('branch_ids', fBranches.join(','));
   if (fVerticals.length) fq.set('vertical_ids', fVerticals.join(','));
+  fq.set('include_reversed', '1');   // reversed payments stay on record, struck through (4 Sep)
   const rangeKey = `${fq.toString()}`;
   const { data, reload } = useFetch<any[]>('/fees/receipts' + (fq.toString() ? `?${fq}` : ''), [rangeKey]);
   const sQs = new URLSearchParams();
@@ -1592,13 +1776,8 @@ export function FeeCollection() {
   const s = summary.data;
   const [viewRec, setViewRec] = useState<any | null>(null);
   const [editRec, setEditRec] = useState<any | null>(null);
+  const [revRec, setRevRec] = useState<any | null>(null);
   const bump = () => { reload(); summary.reload(); };
-
-  const del = async (r: any) => {
-    if (!confirm(`Delete receipt ${r.receipt_no} for ${fmtINR(r.amount_minor)}? This is a correction, not a refund.`)) return;
-    try { await api.del(`/fees/receipts/${r.id}`); toast('Receipt deleted'); bump(); }
-    catch (e) { toast((e as Error).message); }
-  };
 
   const total = (s?.by_mode ?? []).reduce((a: number, m: any) => a + m.total_minor, 0);
 
@@ -1635,17 +1814,22 @@ export function FeeCollection() {
         empty="No payments recorded yet" />
       <TableCard
         title="Fee Receipt Records" icon="rupee"
-        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Mode', 'Reference', 'Received', 'Date', 'Branch', 'Vertical', 'Course', 'Actions']}
+        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Payment Mode', 'Reference', 'Received Date', 'Total Outstanding', 'Status', 'Branch', 'Vertical', 'Course', 'Actions']}
         empty="No payments recorded yet"
-        rows={rows.map((r): Cell[] => [
-          { node: <b className="mono">{r.receipt_no}</b> },
+        rows={rows.map((r): Cell[] => {
+          const reversed = r.reversal_status === 'reversed';
+          const strike = reversed ? { textDecoration: 'line-through', opacity: 0.6 } : undefined;
+          return [
+          { node: <b className="mono" style={strike}>{r.receipt_no}</b>, sort: r.receipt_no },
           r.lead_name,
           { mono: r.enrolment_no },
-          { mono: fmtINR(r.amount_minor) },
+          { node: <span className="mono" style={strike}>{fmtINR(r.amount_minor)}</span>, sort: Number(r.amount_minor) },
           { b: [r.mode.toUpperCase(), 'b-indigo'] },
           r.reference ? { mono: r.reference } : '—',
-          dt(r.received_at),
-          dt(r.received_at), // item #2 — receipt/payment Date column
+          { node: <span className="mono">{dt(r.received_at)}</span>, sort: r.received_at },
+          // S8 (client 4 Sep) — what the student still owes on this enrolment today
+          r.balance_minor != null ? { mono: fmtINR(Number(r.balance_minor)) } : '—',
+          reversed ? { b: ['Reversed', 'b-rose'] } : r.reversal_status === 'requested' ? { b: ['Reversal requested', 'b-amber'] } : { b: ['Posted', 'b-green'] },
           r.branch_name || '—',
           r.vertical_name || '—',
           r.course_name || '—',
@@ -1658,14 +1842,16 @@ export function FeeCollection() {
                   can,
                   onPreview: () => setViewRec(r),
                   onEditPayment: () => setEditRec(r),
-                  onDelete: () => void del(r),
+                  onReverse: () => setRevRec(r),
                   onChanged: bump,
                 })} />
               </span>
             ),
           },
-        ])}
+          ];
+        })}
       />
+      {revRec && <ReversePaymentModal receipt={revRec} onClose={() => setRevRec(null)} onDone={bump} />}
       {modal && <CollectModal onClose={() => setModal(false)} onSaved={bump} />}
       {viewRec && <ReceiptViewModal r={viewRec} onClose={() => setViewRec(null)} />}
       {editRec && <EditPaymentModal r={editRec} onClose={() => setEditRec(null)} onSaved={bump} />}
@@ -1697,7 +1883,7 @@ export function EditPaymentModal({ r, onClose, onSaved }: { r: any; onClose: () 
         amount,
         mode,
         reference: reference || null,
-        received_at: receivedAt ? new Date(`${receivedAt}T${new Date().toISOString().slice(11, 19)}Z`).toISOString() : undefined,
+        // the posted date is fixed (client 4 Sep) — shown, never re-sent
         note: note || null,
       });
       toast(`Receipt ${res.receipt_no} updated — ${res.fully_paid ? 'paid in full' : `${fmtINR(res.balance_minor)} outstanding`}`);
@@ -1713,16 +1899,16 @@ export function EditPaymentModal({ r, onClose, onSaved }: { r: any; onClose: () 
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
         </div>
         <div className="abody">
-          <div className="notice" style={{ marginBottom: 10 }}><Ic k="shield" /><div>Correcting a receipt re-computes the fee allocation and balance, and is written to the audit log (old → new). This is a correction, not a refund.</div></div>
+          <div className="notice" style={{ marginBottom: 10 }}><Ic k="shield" /><div>Only the reference and note of a posted payment can be corrected (written to the audit log). To change the amount, mode or date, reverse the payment with a reason and record it again.</div></div>
           <div className="form-grid">
             <div className="fld">
               <label htmlFor="e-amount">Amount (₹) <span className="star">*</span></label>
-              <input id="e-amount" className="ainp" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
-              <div className="fhint">More than the outstanding (excluding this receipt) is refused.</div>
+              <input id="e-amount" className="ainp" value={amount} readOnly disabled onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+              <div className="fhint">A posted amount, mode or date cannot be changed — use <b>Reverse payment</b> and record it again.</div>
             </div>
             <div className="fld">
               <label htmlFor="e-mode">Mode <span className="star">*</span></label>
-              <select id="e-mode" className="ainp" value={mode} onChange={(e) => setMode(e.target.value)}>
+              <select id="e-mode" className="ainp" value={mode} disabled onChange={(e) => setMode(e.target.value)}>
                 {(meta.data?.modes ?? [
                   { key: 'cash', label: 'Cash' }, { key: 'upi', label: 'UPI' }, { key: 'card', label: 'Card' },
                   { key: 'cheque', label: 'Cheque' }, { key: 'online', label: 'Online transfer' },
@@ -1736,7 +1922,7 @@ export function EditPaymentModal({ r, onClose, onSaved }: { r: any; onClose: () 
             </div>
             <div className="fld">
               <label htmlFor="e-date">Received on</label>
-              <input id="e-date" className="ainp" type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} />
+              <input id="e-date" className="ainp" type="date" value={receivedAt} readOnly disabled onChange={(e) => setReceivedAt(e.target.value)} />
             </div>
             <div className="fld span2">
               <label htmlFor="e-note">Note</label>

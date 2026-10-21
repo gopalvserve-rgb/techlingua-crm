@@ -33,6 +33,14 @@ export class EnrolmentController {
   }
 
   /** The form's option lists + whether approvals are on, in one call. */
+  /** Fee cards for the selected date range (client 4 Sep) — Collected, Outstanding, Overdue,
+   *  Due Today, Collection Rate, average discount. ?from&to (default this month), ?origin. */
+  @Get('fee-cards')
+  @RequirePermission('enrolment.read')
+  feeCards(@CurrentScope() scope: ResolvedScope, @Query() q: any) {
+    return this.svc.feeCards(scope, { from: q?.from, to: q?.to, origin: q?.origin });
+  }
+
   @Get('meta')
   @RequirePermission('enrolment.read')
   async meta() {

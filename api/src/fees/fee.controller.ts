@@ -26,6 +26,7 @@ export class FeeController {
       mode: q?.mode, enrolment_id: q?.enrolment_id ? Number(q.enrolment_id) : undefined,
       q: q?.q, from: q?.from, to: q?.to, limit: q?.limit ? Number(q.limit) : undefined,
       branch_ids: many(q?.branch_ids ?? q?.branch_id), vertical_ids: many(q?.vertical_ids ?? q?.vertical_id),
+      include_reversed: q?.include_reversed === '1' || q?.include_reversed === 'true',
     });
   }
 
@@ -86,6 +87,28 @@ export class FeeController {
   @RequirePermission('fee.delete')
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     return this.svc.remove(id, me, scope);
+  }
+
+  /* ---- REVERSE PAYMENT (client 4 Sep): request → approve / reject. A posted payment is never
+   *      edited or deleted; a finance approver (fee.reverse) reverses it, with a reason. ---- */
+
+  /** Request a reversal (anyone who collects fees). A caller holding fee.reverse reverses at once. */
+  @Post('receipts/:id/reverse')
+  @RequirePermission('fee.collect')
+  async reverse(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.requestReversal(id, dto, me, scope, await this.svc.userCan(me.id, 'fee.reverse'));
+  }
+
+  @Post('receipts/:id/reverse/approve')
+  @RequirePermission('fee.reverse')
+  approveReversal(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.approveReversal(id, me, scope);
+  }
+
+  @Post('receipts/:id/reverse/reject')
+  @RequirePermission('fee.reverse')
+  rejectReversal(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.rejectReversal(id, dto, me, scope);
   }
 
   /* ---- receipt actions (dev/116): Email / WhatsApp / Send-for-approval / Approve / Reject ---- */

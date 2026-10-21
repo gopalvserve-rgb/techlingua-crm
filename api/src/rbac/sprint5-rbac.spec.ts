@@ -73,7 +73,9 @@ describe('Sprint-5 RBAC coverage', () => {
     // which is exactly how Sprint 1's `settings.*` sat dead until Sprint 4 noticed.
     const { readFileSync } = require('fs');
     const { join } = require('path');
-    const sql = readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '029_sprint5.sql'), 'utf8');
+    // fee.reverse (client 4 Sep) is granted by migration 124, alongside 029's Sprint-5 set.
+    const sql = readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '029_sprint5.sql'), 'utf8')
+      + readFileSync(join(__dirname, '..', '..', 'db', 'migrations', '124_fee_plan_history_reversal.sql'), 'utf8');
     const sprint5Modules = ['quotation', 'enrolment', 'fee', 'target', 'performance'];
     const keys = PERMISSION_CATALOG
       .filter((m) => sprint5Modules.includes(m.module))

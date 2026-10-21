@@ -7,7 +7,7 @@ import { formatINR, rupeesToMinor } from '../common/money.util';
 import { Letterhead, receiptPdf } from '../pdf/documents';
 import { DocTemplateService } from '../doctemplates/doc-template.service';
 import { paidAsAtMinor } from './as-at';
-import { assertDateRange } from '../common/date.util';
+import { assertDateRange, toDateString } from '../common/date.util';
 import { PlanService } from '../paymentplans/plan.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { PdfAssetService } from '../storage/pdf-asset.service';
@@ -94,9 +94,11 @@ export class FeeService {
 
   /* ------------------------------------------------------------------ reads */
 
-  async list(scope: ResolvedScope, f: { mode?: string; enrolment_id?: number; q?: string; from?: string; to?: string; limit?: number; branch_ids?: number[]; vertical_ids?: number[] } = {}) {
+  async list(scope: ResolvedScope, f: { mode?: string; enrolment_id?: number; q?: string; from?: string; to?: string; limit?: number; branch_ids?: number[]; vertical_ids?: number[]; include_reversed?: boolean } = {}) {
     const params: unknown[] = [];
-    const where = [`fr.deleted_at IS NULL`, this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params)];
+    // client 4 Sep — reversed receipts stay on record; listed (marked) only when asked for.
+    const where = [f.include_reversed ? `(fr.deleted_at IS NULL OR fr.reversal_status = 'reversed')` : `fr.deleted_at IS NULL`,
+      this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params)];
     if (f.branch_ids?.length) { params.push(f.branch_ids); where.push(`fr.branch_id = ANY($${params.length}::bigint[])`); }
     if (f.vertical_ids?.length) { params.push(f.vertical_ids); where.push(`fr.vertical_id = ANY($${params.length}::bigint[])`); }
     if (f.mode) { params.push(f.mode); where.push(`fr.mode = $${params.length}::varchar`); }
@@ -105,19 +107,24 @@ export class FeeService {
     const _dr = assertDateRange(f.from, f.to);
     if (_dr.from) { params.push(_dr.from); where.push(`fr.received_at >= $${params.length}::timestamptz`); }
     if (_dr.to) { params.push(_dr.to); where.push(`fr.received_at < ($${params.length}::date + 1)`); }
-    if (f.q) { params.push(`%${f.q}%`); where.push(`(fr.receipt_no ILIKE $${params.length} OR l.full_name ILIKE $${params.length} OR fr.reference ILIKE $${params.length})`); }
+    if (f.q) { params.push(`%${f.q}%`); where.push(`(fr.receipt_no ILIKE $${params.length} OR l.full_name ILIKE $${params.length} OR sp.full_name ILIKE $${params.length} OR fr.reference ILIKE $${params.length})`); }
     params.push(Math.min(Number(f.limit ?? 200), 500));
 
     return this.db.query<any>(
       `SELECT fr.id, fr.receipt_no, fr.amount_minor, fr.mode, fr.reference, fr.received_at, fr.note,
+              fr.reversal_status, fr.reversal_reason, fr.reversed_at, fr.reversal_requested_at,
               fr.enrolment_id, e.enrolment_no, e.net_fee_minor,
-              l.full_name AS lead_name, c.name AS course_name,
+              -- S8 (client 4 Sep): the enrolment's total outstanding today, next to each receipt
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)
+                 - COALESCE((SELECT sum(x.amount_minor) FROM fee_receipt x WHERE x.enrolment_id = e.id AND x.deleted_at IS NULL), 0)) AS balance_minor,
+              COALESCE(l.full_name, sp.full_name) AS lead_name, c.name AS course_name,
               b.name AS branch_name, v.name AS vertical_name, u.name AS received_by_name,
               ca.workflow_status AS approval_status,
               inv.id AS invoice_id, inv.invoice_no, inv.status AS invoice_status
          FROM fee_receipt fr
          JOIN enrolment e ON e.id = fr.enrolment_id
-         JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN student sp ON sp.id = e.student_profile_id
          JOIN branch b ON b.id = fr.branch_id
          JOIN vertical v ON v.id = fr.vertical_id
          LEFT JOIN m_course c ON c.id = e.course_id
@@ -207,14 +214,15 @@ export class FeeService {
     const w = this.resolver.buildScopeWhere(scope, RECEIPT_SCOPE_COLS, params);
     const r = await this.db.one<any>(
       `SELECT fr.*, e.enrolment_no, e.net_fee_minor, e.lead_id,
-              l.full_name AS student_name, l.phone AS student_phone, l.email AS student_email,
+              COALESCE(l.full_name, sp.full_name) AS student_name, COALESCE(l.phone, sp.phone) AS student_phone, COALESCE(l.email, sp.email) AS student_email,
               c.name AS course_name, u.name AS received_by_name,
               b.name AS branch_name, b.address AS branch_address, b.contact_number AS branch_phone,
               b.email AS branch_email, v.name AS vertical_name,
               o.name AS org_name, o.gst_no AS org_gst
          FROM fee_receipt fr
          JOIN enrolment e ON e.id = fr.enrolment_id
-         JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN student sp ON sp.id = e.student_profile_id
          JOIN branch b ON b.id = fr.branch_id
          JOIN vertical v ON v.id = fr.vertical_id
          JOIN organisation o ON o.id = fr.org_id
@@ -431,6 +439,19 @@ export class FeeService {
     if (existing.gateway || existing.gateway_payment_id) {
       throw new BadRequestException('A gateway-captured (Razorpay) payment cannot be edited by hand.');
     }
+    // client 4 Sep — "After any payment is posted, staff should not directly edit or delete it.
+    // Use Reverse Payment with a reason and approval." The MONEY facts (amount, mode, date) are
+    // fixed once posted; only the reference and note can still be corrected here.
+    {
+      const wantAmt = dto?.amount_minor != null ? Math.trunc(Number(dto.amount_minor))
+        : (dto?.amount != null && String(dto.amount).trim() !== '' ? Math.round(Number(dto.amount) * 100) : Number(existing.amount_minor));
+      const wantMode = dto?.mode != null ? String(dto.mode) : existing.mode;
+      const wantDay = dto?.received_at ? (toDateString(dto.received_at) ?? null) : null;
+      const haveDay = new Date(existing.received_at).toISOString().slice(0, 10);
+      if (wantAmt !== Number(existing.amount_minor) || wantMode !== existing.mode || (wantDay && wantDay !== haveDay)) {
+        throw new BadRequestException('A posted payment\'s amount, mode or date cannot be edited. Use "Reverse payment" with a reason, then record the correct payment.');
+      }
+    }
 
     let amount_minor: number;
     try {
@@ -519,21 +540,90 @@ export class FeeService {
    * "the clerk typed the wrong figure".
    */
   async remove(id: number, me: { id: number }, scope: ResolvedScope) {
+    // client 4 Sep — a POSTED payment is never deleted; it is REVERSED with a reason (and an
+    // approval when the requester is not a finance approver), so the audit trail stays whole.
+    void me; void scope;
+    throw new BadRequestException('A posted payment cannot be deleted. Use "Reverse payment" with a reason — the receipt stays on record, marked reversed.');
+  }
+
+  /** Does the user hold `key` through any active role assignment? (finance approver check) */
+  async userCan(userId: number, key: string): Promise<boolean> {
+    const r = await this.db.one(
+      `SELECT 1 AS ok FROM user_assignment ua
+         JOIN role_permission rp ON rp.role_id = ua.role_id
+         JOIN permission p ON p.id = rp.permission_id
+        WHERE ua.user_id = $1::bigint AND ua.is_active AND p.key = $2 LIMIT 1`, [userId, key]);
+    return !!r;
+  }
+
+  /**
+   * REVERSE PAYMENT (client 4 Sep). Step 1 — anyone who collects fees can REQUEST a reversal with
+   * a reason; the receipt keeps counting as money until a finance approver acts. A caller who
+   * holds `fee.reverse` reverses it outright (controller passes `canApprove`).
+   */
+  async requestReversal(id: number, dto: any, me: { id: number }, scope: ResolvedScope, canApprove: boolean) {
+    const r = await this.get(id, scope);                 // scope-enforced 404
+    const reason = String(dto?.reason ?? '').trim();
+    if (reason.length < 3) throw new BadRequestException('Give a reason for reversing this payment.');
+    if (r.gateway || r.gateway_payment_id) throw new BadRequestException('An online (Razorpay) payment is reversed by a refund, not by hand.');
+    if (r.reversal_status === 'requested' && !canApprove) throw new BadRequestException('A reversal is already waiting for approval on this receipt.');
+    if (canApprove) return this.reverseNow(id, r, reason, me);
+    await this.db.query(
+      `UPDATE fee_receipt SET reversal_status = 'requested', reversal_reason = $2, reversal_requested_by = $3::bigint,
+              reversal_requested_at = now() WHERE id = $1::bigint`, [id, reason.slice(0, 1000), me.id]);
+    await this.db.query(
+      `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+       VALUES ($1, $2, 'fee_receipt', $3::bigint, 'update', $4, $5)`,
+      [await this.orgId(), me.id, id, JSON.stringify({ reversal_status: r.reversal_status ?? null }), JSON.stringify({ reversal_status: 'requested', reason })]);
+    return { id, receipt_no: r.receipt_no, reversal_status: 'requested', message: 'Reversal requested — a finance approver will review it.' };
+  }
+
+  /** Step 2 — a finance approver (`fee.reverse`) approves a requested reversal. */
+  async approveReversal(id: number, me: { id: number }, scope: ResolvedScope) {
     const r = await this.get(id, scope);
+    if (r.reversal_status !== 'requested') throw new BadRequestException('There is no reversal request on this receipt.');
+    return this.reverseNow(id, r, r.reversal_reason ?? 'Approved reversal', me);
+  }
+
+  /** A finance approver declines a requested reversal; the payment stands. */
+  async rejectReversal(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
+    const r = await this.get(id, scope);
+    if (r.reversal_status !== 'requested') throw new BadRequestException('There is no reversal request on this receipt.');
+    await this.db.query(`UPDATE fee_receipt SET reversal_status = 'rejected' WHERE id = $1::bigint`, [id]);
+    await this.db.query(
+      `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+       VALUES ($1, $2, 'fee_receipt', $3::bigint, 'update', $4, $5)`,
+      [await this.orgId(), me.id, id, JSON.stringify({ reversal_status: 'requested' }), JSON.stringify({ reversal_status: 'rejected', remarks: dto?.remarks ?? null })]);
+    return { id, reversal_status: 'rejected' };
+  }
+
+  /** The reversal itself: the receipt stops counting as money (deleted_at, so every paid total
+   *  and the installment allocations unwind exactly as before), but keeps its row and number,
+   *  marked reversed with who / when / why. Audited and noted on the lead. */
+  private async reverseNow(id: number, r: any, reason: string, me: { id: number }) {
     await this.db.tx(async (c) => {
-      await c.query(`UPDATE fee_receipt SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint`, [id, me.id]);
-      // Phase 3: unwind this receipt's installment allocations so the schedule reflects
-      // the (now soft-deleted) receipt — paid_minor drops back, statuses recompute.
+      await c.query(
+        `UPDATE fee_receipt SET deleted_at = now(), deleted_by = $2::bigint, reversal_status = 'reversed',
+                reversal_reason = $3, reversed_by = $2::bigint, reversed_at = now(),
+                reversal_requested_by = COALESCE(reversal_requested_by, $2::bigint),
+                reversal_requested_at = COALESCE(reversal_requested_at, now())
+          WHERE id = $1::bigint`, [id, me.id, reason.slice(0, 1000)]);
       if (this.plans) await this.plans.reverseReceipt(c, id);
       await c.query(
-        `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
-         SELECT l.id, l.org_id, l.branch_id, 'note', $2, $3::bigint
-           FROM lead l WHERE l.id = $1::bigint`,
-        [r.lead_id, `Receipt ${r.receipt_no} (${formatINR(Number(r.amount_minor))}) deleted`, me.id],
-      );
+        `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+         VALUES ($1, $2, 'fee_receipt', $3::bigint, 'update', $4, $5)`,
+        [Number(r.org_id), me.id, id, JSON.stringify({ amount_minor: Number(r.amount_minor), mode: r.mode, reversal_status: r.reversal_status ?? null }),
+          JSON.stringify({ reversal_status: 'reversed', reason })]);
+      if (r.lead_id) {
+        await c.query(
+          `INSERT INTO lead_activity (lead_id, org_id, branch_id, type, note, actor_id)
+           SELECT l.id, l.org_id, l.branch_id, 'note', $2, $3::bigint FROM lead l WHERE l.id = $1::bigint`,
+          [r.lead_id, `Payment reversed: receipt ${r.receipt_no} (${formatINR(Number(r.amount_minor))}) — ${reason}`, me.id]);
+      }
     });
-    return { id, ok: true };
+    return { id, receipt_no: r.receipt_no, reversal_status: 'reversed' };
   }
+
   /* ------------------------------------------------------ receipt actions (dev/116) */
 
   /**

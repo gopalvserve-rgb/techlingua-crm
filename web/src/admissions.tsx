@@ -20,9 +20,10 @@ import { MasterQuickAdd } from './forms';
 import { rowActions, ConfirmModal, DetailModal, Section, KV } from './rowactions';
 import { DateRange } from './daterange';
 import { useScope } from './scope';
-import { FilterMulti, ViewEnrolmentModal } from './dyn';
+import { FilterMulti } from './dyn';
 import { DOC_ACCEPT, DOC_MAX_FILES, SINGLE_DOCS, docError, fileToDoc, DocumentList } from './documents';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { EnrolmentActions, FeeCards, PAYMENT_STATUSES, enrolmentCells, enrolmentColumns, enrolmentCsvRow } from './enrolmentfees';
 
 const STATUS_CELL = (s: string): Cell =>
   ({ b: [s === 'approved' ? 'Approved' : s === 'rejected' ? 'Rejected' : 'Pending',
@@ -131,7 +132,14 @@ function AdmissionDetail({ id, onClose, onChanged, rd }: { id: number; onClose: 
 
   const approve = async () => {
     setBusy(true);
-    try { const r = await api.post<any>(`/admissions/${id}/approve`, {}); toast(`Approved — student ${r.student_no} created`); onChanged(); onClose(); }
+    try {
+      const r = await api.post<any>(`/admissions/${id}/approve`, {});
+      // client 3 Sep (S4): approving also enrols the student in the applied course
+      if (r.enrolment_no) toast(`Approved — student ${r.student_no} created and enrolled (${r.enrolment_no})`);
+      else if (r.enrolment_error) toast(`Approved — student ${r.student_no} created; enrolment not created: ${r.enrolment_error}`, true);
+      else toast(`Approved — student ${r.student_no} created (no course on the application — enrol from the student profile)`);
+      onChanged(); onClose();
+    }
     catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
   const doReject = async () => {
@@ -234,10 +242,6 @@ function AdmissionEdit({ a, rd, onClose, onSaved }: { a: any; rd: any; onClose: 
 
 /* ---- public form links manager ---- */
 /* ---- Enrolments tab (Direct Enrolments + Master Directory) ------------------ */
-const ENR_STATUS_CELL = (st: string): Cell => {
-  const map: Record<string, string> = { active: 'b-green', pending_approval: 'b-amber', cancelled: 'b-gray', rejected: 'b-red', completed: 'b-indigo' };
-  return { b: [String(st ?? '—').replace(/_/g, ' '), map[String(st)] ?? 'b-gray'] };
-};
 
 function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?: boolean }) {
   const ref = useRef_();
@@ -252,7 +256,7 @@ function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?:
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [q, setQ] = useState('');
   const [tick, setTick] = useState(0);
-  const [view, setView] = useState<any | null>(null);
+  const [fPay, setFPay] = useState<string[]>([]);
   const qs = new URLSearchParams();
   if (origin) qs.set('origin', origin);
   if (fStatus) qs.set('status', fStatus);
@@ -269,15 +273,18 @@ function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?:
     (!fB.length || fB.includes(Number(e.branch_id))) &&
     (!fV.length || fV.includes(Number(e.vertical_id))) &&
     (!fC.length || fC.includes(Number(e.course_id))) &&
-    (!fOwner.length || fOwner.includes(Number(e.counsellor_id))));
-  const fmtDate = (v?: string) => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
-  const cols = ['Enrolment', 'Student', 'Branch', 'Vertical', 'Course', 'Trainer', 'Owner', ...(showOrigin ? ['Origin'] : []), 'Status', 'Enrolled on', 'Actions'];
+    (!fOwner.length || fOwner.includes(Number(e.counsellor_id))) &&
+    (!fPay.length || fPay.includes(String(e.payment_status))));
+  // client 4 Sep — the same enrolment columns, colours and actions as Sale Closure / Fee Management
+  const cols = enrolmentColumns({ showBranch: true, showOwner: true, showOrigin });
   return (
     <>
+      <FeeCards range={range} origin={origin} tick={tick} />
       <ScopeFilters rd={ref} fB={fB} setFB={setFB} fV={fV} setFV={setFV} fC={fC} setFC={setFC}
         extra={<>
           <FilterMulti label="Trainer" icon="users" value={fTrainer} options={(trainersQ.data ?? []) as any} onChange={setFTrainer} />
           <FilterMulti label="Owner" icon="users" value={fOwner} options={selectableUsers(ref.users) as any} onChange={setFOwner} />
+          <FilterMulti label="Payment status" icon="rupee" value={fPay as any} options={PAYMENT_STATUSES.map((p) => ({ id: p, name: p })) as any} onChange={setFPay as any} />
           <label className="fchip"><Ic k="shield" />
             <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }}>
               <option value="">All statuses</option><option value="active">Active</option><option value="pending_approval">Pending approval</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option>
@@ -288,26 +295,15 @@ function EnrolmentsTab({ origin, showOrigin }: { origin?: 'direct'; showOrigin?:
         </>} />
       <TableCard fill title={showOrigin ? 'Master Directory — all enrolments' : 'Direct Enrolments'} icon="students" listKey={showOrigin ? 'adm-master' : 'adm-direct'}
         more={<ListActions onExport={() => downloadObjectsCsv(showOrigin ? 'master-directory.csv' : 'direct-enrolments.csv', rows.map((e: any) => ({
-          enrolment_no: e.enrolment_no, student: e.lead_name, branch: e.branch_name, vertical: e.vertical_name, course: e.course_name,
-          trainer: e.trainer_name || '', owner: e.counsellor_name || '',
-          origin: e.from_admission ? 'Online application' : 'Direct enrolment', status: e.status, enrolled_on: e.created_at,
+          ...enrolmentCsvRow(e), trainer: e.trainer_name || '',
+          origin: e.from_admission ? 'Online application' : 'Direct enrolment',
         })))} onRefresh={after} />}
         cols={cols}
         empty={showOrigin ? 'No enrolments yet.' : 'No direct enrolments yet — convert a lead or enrol from Student Management.'}
-        rows={rows.map((e: any) => [
-          { node: <div><b className="nm mono">{e.enrolment_no}</b>{e.course_type ? <div className="sub">{e.course_type}</div> : null}</div> } as Cell,
-          e.lead_name ?? '—',
-          e.branch_name ?? '—',
-          e.vertical_name ?? '—',
-          e.course_name ?? '—',
-          e.trainer_name ?? '—',
-          e.counsellor_name ?? '—',
-          ...(showOrigin ? [{ b: e.from_admission ? ['Online application', 'b-indigo'] : ['Direct enrolment', 'b-gray'] } as Cell] : []),
-          ENR_STATUS_CELL(e.status),
-          fmtDate(e.created_at),
-          rowActions({ extra: [{ k: 'eye', title: 'View enrolment', onClick: () => setView(e) }] }),
-        ])} />
-      {view && <ViewEnrolmentModal enrolment={view} onClose={() => setView(null)} />}
+        rows={rows.map((e: any) => enrolmentCells(e, {
+          showBranch: true, showOwner: true, showOrigin,
+          actions: <EnrolmentActions e={e} onChanged={after} />,
+        }))} />
     </>
   );
 }

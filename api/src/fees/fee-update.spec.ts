@@ -1,25 +1,29 @@
 import { FeeService } from './fee.service';
 
 /**
- * EDIT PAYMENT (dev/115). Correcting a recorded receipt must:
- *   · reverse this receipt's installment allocation, then re-apply the new amount (so the
- *     schedule + balance stay exact);
- *   · refuse a new amount beyond the outstanding EXCLUDING this receipt (the over-collection
- *     guard still holds after the edit);
- *   · write an audit_log old→new row inside the same transaction.
+ * POSTED PAYMENTS (client 4 Sep 2026): "After any payment is posted, staff should not directly
+ * edit or delete it. Use Reverse Payment with a reason and approval so the audit history remains
+ * accurate." This pins:
+ *   · the amount / mode / date of a posted receipt cannot be edited (reference / note still can);
+ *   · a receipt cannot be deleted;
+ *   · a reversal needs a reason; a non-approver's reversal is only a REQUEST (money still counts);
+ *   · an approver's reversal (or approval of a request) unwinds the allocation, marks the receipt
+ *     reversed and writes an audit_log row — inside one transaction.
  * Driven through a scripted db double + a plans stub, no database.
  */
 
 interface Receipt {
-  id: number; receipt_no: string; enrolment_id: number; lead_id: number;
+  id: number; org_id: number; receipt_no: string; enrolment_id: number; lead_id: number;
   amount_minor: number; mode: string; reference: string | null; received_at: string; note: string | null;
-  net_fee_minor: number; gateway: string | null; gateway_payment_id: string | null;
+  net_fee_minor: number; gateway: string | null; gateway_payment_id: string | null; reversal_status?: string | null;
+  reversal_reason?: string | null;
 }
 
 function svcFor(receipt: Receipt, enrolmentPaidMinor: number) {
   const audits: Array<{ sql: string; params: any[] }> = [];
   const plansCalls: string[] = [];
   const updates: Array<{ sql: string; params: any[] }> = [];
+  const direct: Array<{ sql: string; params: any[] }> = [];
 
   const db = {
     one: async (sql: string) => {
@@ -27,7 +31,7 @@ function svcFor(receipt: Receipt, enrolmentPaidMinor: number) {
       if (/FROM fee_receipt fr/.test(sql)) return { ...receipt };
       return null;
     },
-    query: async () => [], // siblings lookup in get() — empty is fine (paid_as_at not used here)
+    query: async (sql: string, params: any[] = []) => { direct.push({ sql, params }); return []; },
     tx: async (fn: any) => fn({
       query: async (sql: string, params: any[] = []) => {
         if (/FOR UPDATE/.test(sql)) {
@@ -49,76 +53,76 @@ function svcFor(receipt: Receipt, enrolmentPaidMinor: number) {
     },
   };
   const svc = new FeeService(db as never, resolver as never, numbering as never, plans as never);
-  return { svc, audits, plansCalls, updates };
+  return { svc, audits, plansCalls, updates, direct };
 }
 
 const REC = (): Receipt => ({
-  id: 77, receipt_no: 'RCP-2026/0001', enrolment_id: 5, lead_id: 31,
+  id: 77, org_id: 1, receipt_no: 'RCP-2026/0001', enrolment_id: 5, lead_id: 31,
   amount_minor: 100000, mode: 'cash', reference: null, received_at: '2026-08-01T06:00:00.000Z', note: null,
   net_fee_minor: 500000, gateway: null, gateway_payment_id: null,
 });
 
-describe('update — reverse + re-apply + audit', () => {
-  it('re-states the receipt, re-runs allocation and returns the new balance', async () => {
-    const { svc, plansCalls, updates } = svcFor(REC(), 100000); // only this ₹1,000 receipt on the enrolment
-    const out = await svc.update(77, { amount: '3000', mode: 'cash' }, { id: 9 }, {} as never);
-    expect(out.amount_minor).toBe(300000);
-    expect(out.paid_minor).toBe(300000);              // paidWithout(0) + new(300000)
-    expect(out.balance_minor).toBe(200000);           // net 500000 − 300000
-    // reverse ran BEFORE the re-apply, and the re-apply used the NEW amount
-    expect(plansCalls[0]).toBe('reverse');
-    expect(plansCalls).toContain('apply:300000:none');
-    expect(updates).toHaveLength(1);                  // the fee_receipt restate
-  });
-
-  it('writes an audit_log entry with before → after', async () => {
-    const { svc, audits } = svcFor(REC(), 100000);
-    await svc.update(77, { amount: '2500', mode: 'upi', reference: 'UTR-9' }, { id: 9 }, {} as never);
-    expect(audits).toHaveLength(1);
-    expect(/'fee_receipt'/.test(audits[0].sql)).toBe(true);
-    expect(/'update'/.test(audits[0].sql)).toBe(true);
-    const before = JSON.parse(audits[0].params[3]);
-    const after = JSON.parse(audits[0].params[4]);
-    expect(before.amount_minor).toBe(100000);
-    expect(after.amount_minor).toBe(250000);
-    expect(after.mode).toBe('upi');
-    expect(after.reference).toBe('UTR-9');
-  });
-
-  it('targets a chosen installment when installment_id is supplied', async () => {
-    const { svc, plansCalls } = svcFor(REC(), 100000);
-    await svc.update(77, { amount: '1000', mode: 'cash', installment_id: 42 }, { id: 9 }, {} as never);
-    expect(plansCalls).toContain('apply:100000:42');
-  });
-});
-
-describe('update — the over-collection guard survives the edit', () => {
-  it('refuses raising a receipt beyond the outstanding EXCLUDING itself', async () => {
-    // net 500000, enrolment already paid 500000 (400000 elsewhere + this 100000). Raising this
-    // receipt to 200000 would total 600000 → refused; room is only 100000.
-    const { svc } = svcFor(REC(), 500000);
-    await expect(svc.update(77, { amount: '2000', mode: 'cash' }, { id: 9 }, {} as never))
-      .rejects.toThrow(/more than the outstanding balance/);
-  });
-
-  it('ACCEPTS raising it exactly to the available room (boundary inclusive)', async () => {
-    const { svc } = svcFor(REC(), 500000);            // room = 100000 (this receipt reversed out)
-    const out = await svc.update(77, { amount: '1000', mode: 'cash' }, { id: 9 }, {} as never);
-    expect(out.amount_minor).toBe(100000);
-    expect(out.balance_minor).toBe(0);
-    expect(out.fully_paid).toBe(true);
-  });
-
-  it('demands a reference when the corrected mode is cheque / UPI / online', async () => {
+describe('a posted payment cannot be edited or deleted (client 4 Sep)', () => {
+  it('refuses changing the AMOUNT', async () => {
     const { svc } = svcFor(REC(), 100000);
-    await expect(svc.update(77, { amount: '1000', mode: 'cheque' }, { id: 9 }, {} as never))
-      .rejects.toThrow(/needs a reference/);
+    await expect(svc.update(77, { amount: '3000', mode: 'cash' }, { id: 9 }, {} as never)).rejects.toThrow(/Reverse payment/);
   });
-
+  it('refuses changing the MODE', async () => {
+    const { svc } = svcFor(REC(), 100000);
+    await expect(svc.update(77, { amount: '1000', mode: 'upi', reference: 'UTR-9' }, { id: 9 }, {} as never)).rejects.toThrow(/Reverse payment/);
+  });
+  it('refuses changing the DATE', async () => {
+    const { svc } = svcFor(REC(), 100000);
+    await expect(svc.update(77, { amount: '1000', mode: 'cash', received_at: '2026-07-01' }, { id: 9 }, {} as never)).rejects.toThrow(/Reverse payment/);
+  });
+  it('still allows correcting the note / reference, with an audit row', async () => {
+    const { svc, audits } = svcFor(REC(), 100000);
+    const out = await svc.update(77, { amount: '1000', mode: 'cash', note: 'paid by father' }, { id: 9 }, {} as never);
+    expect(out.amount_minor).toBe(100000);
+    expect(audits).toHaveLength(1);
+  });
+  it('refuses a delete', async () => {
+    const { svc } = svcFor(REC(), 100000);
+    await expect(svc.remove(77, { id: 9 }, {} as never)).rejects.toThrow(/Reverse payment/);
+  });
   it('refuses a gateway-captured receipt', async () => {
     const rec = { ...REC(), gateway: 'razorpay', gateway_payment_id: 'pay_x' };
     const { svc } = svcFor(rec, 100000);
-    await expect(svc.update(77, { amount: '1000', mode: 'cash' }, { id: 9 }, {} as never))
-      .rejects.toThrow(/gateway-captured/);
+    await expect(svc.update(77, { amount: '1000', mode: 'cash' }, { id: 9 }, {} as never)).rejects.toThrow(/gateway-captured/);
+  });
+});
+
+describe('Reverse payment — reason + approval (client 4 Sep)', () => {
+  it('needs a reason', async () => {
+    const { svc } = svcFor(REC(), 100000);
+    await expect(svc.requestReversal(77, { reason: '' }, { id: 9 }, {} as never, false)).rejects.toThrow(/reason/);
+  });
+  it('a cashier only REQUESTS it — no allocation is unwound, the money still counts', async () => {
+    const { svc, plansCalls, direct } = svcFor(REC(), 100000);
+    const out = await svc.requestReversal(77, { reason: 'wrong student' }, { id: 9 }, {} as never, false);
+    expect(out.reversal_status).toBe('requested');
+    expect(plansCalls).toEqual([]);
+    expect(direct.some((d) => /reversal_status = 'requested'/.test(d.sql))).toBe(true);
+  });
+  it('a finance approver reverses at once: allocation unwound, receipt marked, audit written', async () => {
+    const { svc, plansCalls, updates, audits } = svcFor(REC(), 100000);
+    const out = await svc.requestReversal(77, { reason: 'duplicate entry' }, { id: 2 }, {} as never, true);
+    expect(out.reversal_status).toBe('reversed');
+    expect(plansCalls).toEqual(['reverse']);
+    expect(updates[0].sql).toMatch(/reversal_status = 'reversed'/);
+    expect(updates[0].sql).toMatch(/deleted_at = now\(\)/);
+    expect(audits).toHaveLength(1);
+  });
+  it('approving a pending request performs the reversal', async () => {
+    const { svc, plansCalls } = svcFor({ ...REC(), reversal_status: 'requested', reversal_reason: 'wrong amount' }, 100000);
+    const out = await svc.approveReversal(77, { id: 2 }, {} as never);
+    expect(out.reversal_status).toBe('reversed');
+    expect(plansCalls).toEqual(['reverse']);
+  });
+  it('rejecting a request leaves the payment standing', async () => {
+    const { svc, plansCalls } = svcFor({ ...REC(), reversal_status: 'requested' }, 100000);
+    const out = await svc.rejectReversal(77, { remarks: 'not an error' }, { id: 2 }, {} as never);
+    expect(out.reversal_status).toBe('rejected');
+    expect(plansCalls).toEqual([]);
   });
 });

@@ -49,6 +49,9 @@ export interface ResolvedLevel {
   /** Per-level EXAM fee snapshot (paise). Excluded from discount+instalment; added to Total. */
   exam_fee_minor: number;
   ordering: number;
+  /** How the per-level discount was given (client 3 Sep): 'percent' (discount_value = %) or 'amount' (₹). */
+  discount_type?: 'amount' | 'percent';
+  discount_value?: number | null;
 }
 
 function intMinor(v: unknown): number | null {
@@ -93,6 +96,7 @@ export function resolveLevels(master: MasterLevel[], input: unknown, scope: Disc
     // `amount` → rupees, `percent` → a % of THIS level's fee; else fall back to a raw
     // discount_minor (paise). The server always computes the paise amount — a client net is never trusted.
     let discMinor = 0;
+    let discType: 'amount' | 'percent' | undefined; let discValue: number | null = null;
     if (scope === 'level') {
       const dt = String(r.discount_type ?? '').trim().toLowerCase();
       if (dt === 'percent') {
@@ -100,9 +104,11 @@ export function resolveLevels(master: MasterLevel[], input: unknown, scope: Disc
         if (!Number.isFinite(pct) || pct < 0) pct = 0;
         if (pct > 100) throw new Error(`Level "${m.code}": a percentage discount cannot exceed 100%`);
         discMinor = applyPct(feeMinor, pct);
+        if (pct > 0) { discType = 'percent'; discValue = pct; }
       } else if (dt === 'amount') {
         const rupees = Number(r.discount_value ?? 0);
         discMinor = Number.isFinite(rupees) && rupees > 0 ? Math.round(rupees * 100) : 0;
+        if (discMinor > 0) { discType = 'amount'; discValue = rupees; }
       } else {
         discMinor = intMinor(r.discount_minor) ?? 0;
       }
@@ -122,6 +128,7 @@ export function resolveLevels(master: MasterLevel[], input: unknown, scope: Disc
       discount_minor: discMinor,
       exam_fee_minor: examMinor,
       ordering: i,
+      ...(discType ? { discount_type: discType, discount_value: discValue } : {}),
     });
   });
   return out;

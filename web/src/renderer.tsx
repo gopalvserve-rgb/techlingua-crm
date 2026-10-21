@@ -5,7 +5,27 @@ import { Ic, checkS } from './icons';
 import { useColumnVisibility, ColumnsButton } from './colprefs';
 
 /* A table/list cell: plain string, badge {b:[text,klass]}, mono {mono}, or raw node */
-export type Cell = string | number | { b: [string, string] } | { mono: string; dim?: boolean } | { node: ReactNode };
+export type Cell = string | number | { b: [string, string] } | { mono: string; dim?: boolean } | { node: ReactNode; sort?: string | number };
+
+/**
+ * SORT KEY of a cell (client 3 Sep, S3 — "sorting on every column"). Text sorts as text; money,
+ * counts and dates written as text sort by value; a custom node sorts by its `sort` when given.
+ */
+export function cellSortKey(c: Cell): string | number {
+  if (c == null) return '';
+  let s: string;
+  if (typeof c === 'number') return c;
+  if (typeof c === 'string') s = c;
+  else if ('b' in c) s = c.b[0];
+  else if ('mono' in c) s = c.mono;
+  else if (c.sort != null) return c.sort;
+  else return '';
+  const t = s.trim();
+  if (/^-?\s*₹?\s*-?[\d,]+(\.\d+)?\s*%?$/.test(t)) return Number(t.replace(/[₹,%\s]/g, ''));
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t;
+  const d = /^\d{1,2} [A-Za-z]{3},? \d{4}/.test(t) ? Date.parse(t.replace(',', '')) : NaN;
+  return Number.isFinite(d) ? d : t.toLowerCase();
+}
 
 export function renderCell(c: Cell, i?: number): ReactNode {
   if (c == null) return '—';
@@ -132,6 +152,23 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
     : null;
   const span = shownCols.length + (sel ? 1 : 0) + (showSerial ? 1 : 0);
   const scrollCls = (sticky || fill) ? 'tbl-scroll' : 'scroll-x';
+  // COLUMN SORT (S3): click a header to sort ascending, again for descending, a third time to
+  // restore the server order. Row callbacks keep receiving the ORIGINAL row index.
+  const [sortBy, setSortBy] = useState<{ col: number; dir: 1 | -1 } | null>(null);
+  const order = useMemo(() => {
+    const idx = rows.map((_, i) => i);
+    if (!sortBy) return idx;
+    const key = (ri: number) => cellSortKey(rows[ri]?.[sortBy.col] as Cell);
+    return idx.sort((a, b) => {
+      const ka = key(a); const kb = key(b);
+      if (ka === kb) return a - b;
+      if (ka === '' || ka == null) return 1;
+      if (kb === '' || kb == null) return -1;
+      if (typeof ka === 'number' && typeof kb === 'number') return (ka - kb) * sortBy.dir;
+      return String(ka).localeCompare(String(kb), 'en', { numeric: true }) * sortBy.dir;
+    });
+  }, [rows, sortBy]);
+  const clickSort = (col: number) => setSortBy((s) => (!s || s.col !== col ? { col, dir: 1 } : s.dir === 1 ? { col, dir: -1 } : null));
   return (
     <div className={`card${fill ? ' tbl-fill' : ''}`}>
       {(title || colsBtn) && (
@@ -150,24 +187,39 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
               </th>
             )}
             {showSerial && <th style={{ width: 44 }}>#</th>}
-            {shownCols.map((c, i) => <th key={i}>{c}</th>)}
+            {shownIdx.map((ci, i) => {
+              const c = shownCols[i];
+              const sortable = !!c && c.trim() !== '' && rows.length > 1;
+              const on = sortBy?.col === ci;
+              return (
+                <th key={i} onClick={sortable ? () => clickSort(ci) : undefined}
+                  style={sortable ? { cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' } : undefined}
+                  aria-sort={on ? (sortBy!.dir === 1 ? 'ascending' : 'descending') : undefined}
+                  title={sortable ? `Sort by ${c}` : undefined}>
+                  {c}{sortable ? <span aria-hidden="true" style={{ opacity: on ? 1 : 0.3, marginLeft: 4, fontSize: 10 }}>{on ? (sortBy!.dir === 1 ? '▲' : '▼') : '↕'}</span> : null}
+                </th>
+              );
+            })}
           </tr></thead>
           <tbody>
             {rows.length === 0 ? (
               <tr><td className="empty" colSpan={span}>{empty || 'No records yet'}</td></tr>
-            ) : rows.map((r, ri) => (
+            ) : order.map((ri, pos) => {
+              const r = rows[ri];
+              return (
               <tr key={ri} className={rowClass?.(ri) || undefined} onClick={onRowClick ? () => onRowClick(ri) : undefined}
                 style={onRowClick ? { cursor: 'pointer' } : undefined}>
                 {sel && (
                   <td style={{ width: 34 }} onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" aria-label={`Select row ${ri + 1}`}
+                    <input type="checkbox" aria-label={`Select row ${pos + 1}`}
                       checked={sel.checked(ri)} onChange={() => sel.onToggle(ri)} />
                   </td>
                 )}
-                {showSerial && <td className="mono" style={{ color: 'var(--muted)' }}>{ri + 1}</td>}
+                {showSerial && <td className="mono" style={{ color: 'var(--muted)' }}>{pos + 1}</td>}
                 {shownIdx.map((ci) => <td key={ci}>{renderCell(r[ci])}</td>)}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

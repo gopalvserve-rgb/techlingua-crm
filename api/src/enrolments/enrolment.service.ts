@@ -12,6 +12,7 @@ import { RbacDataService } from '../rbac/rbac-data.service';
 import { PlanService } from '../paymentplans/plan.service';
 import { stageOrdinal } from './admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from './discount.util';
+import { DiscountScope, MasterLevel, ResolvedLevel, resolveLevels, sumLevelDiscounts, sumLevelExamFees, sumLevelFees } from './level.util';
 
 /**
  * OVER-CAP DISCOUNT APPROVAL (dev/103) — the applied discount vs the requested discount.
@@ -168,7 +169,18 @@ export class EnrolmentService {
               COALESCE(p.paid_minor, 0) AS paid_minor,
               COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor,
               (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) AS total_payable_minor,
-              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(p.paid_minor, 0) AS balance_minor
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(p.paid_minor, 0) AS balance_minor,
+              -- client 3/4 Sep: list columns — levels, discount entry, student ID, next due, payment status
+              COALESCE(e.gross_fee_minor, e.fee_minor) AS gross_fee_minor, e.discount_type, e.discount_value,
+              e.discount_scope, e.course_status, e.discount_approval_status,
+              COALESCE(sp.customer_no, sp.student_no) AS student_id,
+              lv.level_summary, lv.level_count, nd.next_due_date, nd.next_due_minor, nd.overdue_minor,
+              p.last_paid_at, p.last_mode,
+              CASE WHEN (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) - COALESCE(p.paid_minor, 0) <= 0 THEN 'Paid'
+                   WHEN COALESCE(nd.overdue_minor, 0) > 0 THEN 'Overdue'
+                   WHEN nd.next_due_date IS NOT NULL AND nd.next_due_date <= CURRENT_DATE + 7 THEN 'Due Soon'
+                   WHEN COALESCE(p.paid_minor, 0) > 0 THEN 'Partial'
+                   ELSE 'Unpaid' END AS payment_status
          FROM enrolment e
          LEFT JOIN lead l ON l.id = e.lead_id
          LEFT JOIN student sp ON sp.id = e.student_profile_id
@@ -177,10 +189,27 @@ export class EnrolmentService {
          LEFT JOIN m_course c ON c.id = e.course_id
          LEFT JOIN "user" u ON u.id = e.counsellor_id
          LEFT JOIN quotation q ON q.id = e.quotation_id
+         LEFT JOIN LATERAL (
+           SELECT string_agg(COALESCE(NULLIF(el.label, ''), el.code), ', ' ORDER BY el.ordering, el.id) AS level_summary,
+                  count(*) AS level_count
+             FROM enrolment_level el WHERE el.enrolment_id = e.id
+         ) lv ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT min(i.due_date) FILTER (WHERE i.amount_minor > i.paid_minor) AS next_due_date,
+                  (SELECT i2.amount_minor - i2.paid_minor FROM installment i2
+                     JOIN payment_plan pp2 ON pp2.id = i2.plan_id AND pp2.deleted_at IS NULL AND pp2.status <> 'superseded'
+                    WHERE pp2.enrolment_id = e.id AND i2.amount_minor > i2.paid_minor
+                    ORDER BY i2.due_date, i2.seq_no LIMIT 1) AS next_due_minor,
+                  COALESCE(sum(i.amount_minor - i.paid_minor) FILTER (WHERE i.amount_minor > i.paid_minor AND i.due_date < CURRENT_DATE), 0) AS overdue_minor
+             FROM installment i
+             JOIN payment_plan pp ON pp.id = i.plan_id AND pp.deleted_at IS NULL AND pp.status <> 'superseded'
+            WHERE pp.enrolment_id = e.id
+         ) nd ON TRUE
          LEFT JOIN batch bt ON bt.id = e.batch_id
          LEFT JOIN "user" tr ON tr.id = bt.trainer_id
          LEFT JOIN LATERAL (
-           SELECT COALESCE(sum(fr.amount_minor), 0) AS paid_minor
+           SELECT COALESCE(sum(fr.amount_minor), 0) AS paid_minor, max(fr.received_at) AS last_paid_at,
+                  (array_agg(fr.mode ORDER BY fr.received_at DESC))[1] AS last_mode
              FROM fee_receipt fr WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL
          ) p ON TRUE
         WHERE ${where.join(' AND ')}
@@ -188,6 +217,75 @@ export class EnrolmentService {
         LIMIT $${params.length}`,
       params,
     );
+  }
+
+  /**
+   * FEE CARDS for a chosen period (client 4 Sep: "cards should follow the selected date range,
+   * not always month-to-date"). Collected / receipts by received date in the range; outstanding,
+   * overdue and due-today are as of now on the enrolments in scope; discount averages over the
+   * enrolments created in the range. Without a range the period is this calendar month.
+   */
+  async feeCards(scope: ResolvedScope, f: { from?: string; to?: string; origin?: string } = {}) {
+    const params: unknown[] = [];
+    const w = this.resolver.buildScopeWhere(scope, ENROLMENT_SCOPE_COLS, params);
+    const _dr = assertDateRange(f.from, f.to);
+    params.push(_dr.from ?? null); const pFrom = params.length;
+    params.push(_dr.to ?? null); const pTo = params.length;
+    const ADM = `EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL)`;
+    const originW = f.origin === 'online' ? ADM : f.origin === 'direct' ? `NOT ${ADM}` : 'TRUE';
+    const inRange = (col: string) => `${col} >= COALESCE($${pFrom}::date, date_trunc('month', now())::date)
+                                      AND ${col} < COALESCE($${pTo}::date, now()::date) + 1`;
+    const r = await this.db.one<any>(
+      `WITH en AS (
+         SELECT e.* FROM enrolment e
+          WHERE e.deleted_at IS NULL AND e.status NOT IN ('cancelled', 'rejected') AND ${w} AND ${originW}
+       ), paid AS (
+         SELECT fr.enrolment_id, sum(fr.amount_minor) AS paid_minor,
+                COALESCE(sum(fr.amount_minor) FILTER (WHERE ${inRange('fr.received_at')}), 0) AS paid_in_range
+           FROM fee_receipt fr WHERE fr.deleted_at IS NULL AND fr.enrolment_id IN (SELECT id FROM en)
+          GROUP BY fr.enrolment_id
+       ), inst AS (
+         SELECT pp.enrolment_id,
+                COALESCE(sum(i.amount_minor - i.paid_minor) FILTER (WHERE i.amount_minor > i.paid_minor AND i.due_date < CURRENT_DATE), 0) AS overdue_minor,
+                COALESCE(sum(i.amount_minor - i.paid_minor) FILTER (WHERE i.amount_minor > i.paid_minor AND i.due_date = CURRENT_DATE), 0) AS due_today_minor,
+                COALESCE(sum(i.amount_minor) FILTER (WHERE ${inRange('i.due_date')}), 0) AS due_in_range_minor
+           FROM installment i
+           JOIN payment_plan pp ON pp.id = i.plan_id AND pp.deleted_at IS NULL AND pp.status <> 'superseded'
+          WHERE pp.enrolment_id IN (SELECT id FROM en)
+          GROUP BY pp.enrolment_id
+       )
+       SELECT COALESCE(sum(p.paid_in_range), 0) AS collected_minor,
+              COALESCE(sum(GREATEST(en.net_fee_minor + COALESCE(en.exam_fee_minor, 0) - COALESCE(p.paid_minor, 0), 0)), 0) AS outstanding_minor,
+              COALESCE(sum(dues.overdue_minor), 0) AS overdue_minor,
+              COALESCE(sum(dues.due_today_minor), 0) AS due_today_minor,
+              COALESCE(sum(dues.due_in_range_minor), 0) AS due_in_range_minor,
+              count(*) FILTER (WHERE ${inRange('en.created_at')}) AS enrolments_in_range,
+              COALESCE(sum(en.net_fee_minor) FILTER (WHERE ${inRange('en.created_at')} AND en.status = 'active'), 0) AS fees_booked_minor,
+              count(*) FILTER (WHERE en.status = 'pending_approval') AS pending_approval,
+              COALESCE(sum(en.discount_minor) FILTER (WHERE ${inRange('en.created_at')} AND en.discount_minor > 0), 0) AS discount_total_minor,
+              count(*) FILTER (WHERE ${inRange('en.created_at')} AND en.discount_minor > 0) AS discounted_count,
+              COALESCE(round(avg(CASE WHEN en.fee_minor > 0 AND en.discount_minor > 0 AND ${inRange('en.created_at')}
+                                      THEN en.discount_minor::numeric * 100 / en.fee_minor END), 1), 0) AS avg_discount_pct
+         FROM en LEFT JOIN paid p ON p.enrolment_id = en.id LEFT JOIN inst dues ON dues.enrolment_id = en.id`,
+      params,
+    );
+    const collected = Number(r?.collected_minor ?? 0);
+    const dueInRange = Number(r?.due_in_range_minor ?? 0);
+    const discounted = Number(r?.discounted_count ?? 0);
+    return {
+      from: _dr.from ?? null, to: _dr.to ?? null,
+      collected_minor: collected,
+      outstanding_minor: Number(r?.outstanding_minor ?? 0),
+      overdue_minor: Number(r?.overdue_minor ?? 0),
+      due_today_minor: Number(r?.due_today_minor ?? 0),
+      // collected in the period ÷ instalments falling due in the period (capped at 100%)
+      collection_rate_pct: dueInRange > 0 ? Math.min(100, Math.round((collected * 1000) / dueInRange) / 10) : (collected > 0 ? 100 : 0),
+      enrolments_in_range: Number(r?.enrolments_in_range ?? 0),
+      fees_booked_minor: Number(r?.fees_booked_minor ?? 0),
+      pending_approval: Number(r?.pending_approval ?? 0),
+      avg_discount_minor: discounted ? Math.round(Number(r?.discount_total_minor ?? 0) / discounted) : 0,
+      avg_discount_pct: Number(r?.avg_discount_pct ?? 0),
+    };
   }
 
   async summary(scope: ResolvedScope) {
@@ -273,7 +371,10 @@ export class EnrolmentService {
     if (!leadId) throw new BadRequestException('Choose the lead being enrolled.');
 
     const lead = await this.leadInScope(leadId, scope);
-    const money = this.normaliseMoney(dto);
+    // SALE CLOSURE LEVELS (client 3 Sep, F1): one or more levels of the course, the total fee
+    // = Σ level fees, the discount on the overall total (₹ or %) or per level (₹ or % each).
+    const lv = await this.resolveSaleLevels(dto);
+    const money = this.normaliseMoney(lv ? lv.moneyDto : dto);
     const courseIdForCap = dto?.course_id ? Number(dto.course_id) : null;
     // OVER-CAP APPROVAL (dev/103) — the requested discount is `money.discount_amount_minor`.
     // The Discount Master cap decides whether it applies in full or is held at the cap with
@@ -343,6 +444,25 @@ export class EnrolmentService {
             dd.status === 'approved' ? me.id : null, money.exam_fee_minor, courseType],
         );
         id = Number(r.rows[0].id);
+        if (lv) {
+          await c.query(`UPDATE enrolment SET discount_scope = $2::varchar WHERE id = $1::bigint`, [id, lv.scope]);
+          for (const l of lv.levels) {
+            await c.query(
+              `INSERT INTO enrolment_level (org_id, enrolment_id, course_level_id, code, label, fee_minor, discount_minor, exam_fee_minor, ordering, discount_type, discount_value)
+               VALUES ($1::bigint,$2::bigint,$3::bigint,$4::varchar,$5,$6::bigint,$7::bigint,$8::bigint,$9::int,$10::varchar,$11::numeric)`,
+              [orgId, id, l.course_level_id, l.code, l.label, l.fee_minor, l.discount_minor, l.exam_fee_minor ?? 0, l.ordering,
+                l.discount_type ?? 'amount', l.discount_value ?? null]);
+            await c.query(
+              `INSERT INTO enrolment_level_history (org_id, enrolment_id, action, code, label, fee_minor, discount_minor, exam_fee_minor, note, actor_id, discount_type, discount_value)
+               VALUES ($1::bigint,$2::bigint,'enrolled',$3::varchar,$4,$5::bigint,$6::bigint,$7::bigint,'Enrolled at sale closure',$8::bigint,$9::varchar,$10::numeric)`,
+              [orgId, id, l.code, l.label, l.fee_minor, l.discount_minor, l.exam_fee_minor ?? 0, me.id,
+                l.discount_type ?? 'amount', l.discount_value ?? null]);
+          }
+        }
+        // the fee plan set up at the desk waits on the enrolment until it is approved
+        if (dto?.plan_setup && steps.length) {
+          await c.query(`UPDATE enrolment SET plan_setup = $2::jsonb WHERE id = $1::bigint`, [id, JSON.stringify(dto.plan_setup)]);
+        }
       } catch (e) {
         // uq_enrolment_lead — a lead enrols ONCE. This is the double-click, and it is a
         // 409 with a sentence a human understands, not a raw constraint name.
@@ -375,8 +495,18 @@ export class EnrolmentService {
     if (steps.length) {
       await this.approvals.notifyApprovers(out.id, out.enrolment_no, Number(lead.branch_id), leadId, steps);
     }
+    // INSTALMENT PLAN AT SALE CLOSURE (client 3 Sep): an active enrolment gets its schedule now.
+    let planId: number | null = null;
+    let planError: string | null = null;
+    if (dto?.plan_setup && !steps.length && this.plans) {
+      try {
+        const p: any = await this.plans.create({ ...dto.plan_setup, enrolment_id: out.id }, me, scope);
+        planId = p?.id != null ? Number(p.id) : null;
+      } catch (e) { planError = (e as Error).message; }
+    }
     return {
       ...out, status, pending_steps: steps.map((s) => s.label),
+      plan_id: planId, plan_error: planError, plan_pending_approval: !!(dto?.plan_setup && steps.length),
       discount_approval_status: dd.status,
       discount_over_cap: dd.status === 'pending',
       discount_cap_minor: dd.capMinor,
@@ -398,7 +528,7 @@ export class EnrolmentService {
     // completely unrelated customer as Enrolled. The lead is now selected explicitly,
     // aliased, and its columns are named — see winLead()'s signature.
     const e = await this.db.one<any>(
-      `SELECT e.id, e.enrolment_no, e.status, e.lead_id,
+      `SELECT e.id, e.enrolment_no, e.status, e.lead_id, e.plan_setup,
               l.id AS l_id, l.pipeline_id AS l_pipeline_id, l.stage_id AS l_stage_id, l.full_name
          FROM enrolment e
          JOIN lead l ON l.id = e.lead_id
@@ -428,6 +558,14 @@ export class EnrolmentService {
       await this.winLead(c, lead, actorId, e.enrolment_no);
       await this.activity(c, Number(e.lead_id), actorId, `Enrolment ${e.enrolment_no} approved — active`);
     });
+    // the fee plan set up at sale closure is built now that the enrolment is active
+    if (e.plan_setup && this.plans) {
+      const ALL: ResolvedScope = { permissionKey: 'payment_plan.create', allowed: true, all: true, filters: [], allowedFields: null, deniedFields: [] };
+      try {
+        await this.plans.create({ ...e.plan_setup, enrolment_id: enrolmentId }, { id: actorId }, ALL);
+        await this.db.query(`UPDATE enrolment SET plan_setup = NULL WHERE id = $1::bigint`, [enrolmentId]);
+      } catch { /* the plan can still be set up by hand from Fee Management */ }
+    }
     return { id: enrolmentId, status: 'active' };
   }
 
@@ -703,6 +841,37 @@ export class EnrolmentService {
   }
 
   /** DEF-S16-02's sibling: identical shape, one call away from the identical bug. */
+  /**
+   * SALE CLOSURE LEVELS (client 3 Sep, F1). Resolves `dto.levels` against the course's level
+   * master into line-items and rewrites the money the rest of create() normalises: Total fee =
+   * Σ level fees, exam fee = Σ level exam fees, discount = the overall discount on the total, or
+   * the Σ of the per-level discounts when `discount_scope` = 'level'. Null when no levels were sent.
+   */
+  private async resolveSaleLevels(dto: any): Promise<null | { levels: ResolvedLevel[]; scope: DiscountScope; moneyDto: any }> {
+    if (!Array.isArray(dto?.levels) || !dto.levels.length || !dto?.course_id) return null;
+    const courseId = Number(dto.course_id);
+    const rows = await this.db.query<any>(
+      `SELECT id, code, label, fee_minor, exam_fee_minor FROM course_level
+        WHERE course_id = $1::bigint AND is_active ORDER BY ordering, id`, [courseId]);
+    if (!rows.length) throw new BadRequestException('This course has no levels configured — enrol it on its Standard Fee instead.');
+    const master: MasterLevel[] = rows.map((r) => ({ id: Number(r.id), code: String(r.code), label: r.label ?? null,
+      fee_minor: Number(r.fee_minor ?? 0), exam_fee_minor: Number(r.exam_fee_minor ?? 0) }));
+    const std = await this.db.one<any>(`SELECT meta->>'fee' AS fee FROM m_course WHERE id = $1::bigint`, [courseId]);
+    const stdMinor = Number(std?.fee ?? 0) > 0 ? Math.round(Number(std.fee) * 100) : 0;
+    const scope: DiscountScope = String(dto?.discount_scope ?? '').trim().toLowerCase() === 'level' ? 'level' : 'overall';
+    let levels: ResolvedLevel[];
+    try { levels = resolveLevels(master, dto.levels, scope, stdMinor); }
+    catch (e) { throw new BadRequestException((e as Error).message); }
+    const total = sumLevelFees(levels);
+    const moneyDto = { ...dto, fee: undefined, fee_minor: total, exam_fee: undefined, exam_fee_minor: sumLevelExamFees(levels) };
+    if (scope === 'level') {
+      const disc = sumLevelDiscounts(levels);
+      if (disc > total) throw new BadRequestException('The level discounts cannot exceed the total fee.');
+      Object.assign(moneyDto, { discount_type: disc > 0 ? 'amount' : 'none', discount_value: undefined, discount: undefined, discount_minor: disc });
+    }
+    return { levels, scope, moneyDto };
+  }
+
   private date(v: unknown): string | null {
     return requireDateString(v, () => {
       throw new BadRequestException('The start date must be a date.');

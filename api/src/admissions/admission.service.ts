@@ -310,7 +310,24 @@ export class AdmissionService {
     await this.db.query(
       `UPDATE student_document SET student_id=$2::bigint WHERE admission_id=$1::bigint AND student_id IS NULL AND deleted_at IS NULL`,
       [id, student.id]);
-    return { id, approved: true, admission_no: admissionNo, student_id: student.id, student_no: student.student_no };
+    // ONLINE APPLICATION → ENROLMENT (client 3 Sep, S4): approving an application for a course
+    // also enrols the student in it on the course's Standard Fee, so the approved applicant shows
+    // under Admissions & Enrolment and in Fee Management straight away (levels / discount / fee
+    // plan are then set from Edit enrolment). A failure here never undoes the approval.
+    let enrolment: any = null;
+    let enrolmentError: string | null = null;
+    if (a.course_id) {
+      try {
+        const std = await this.db.one<any>(`SELECT meta->>'fee' AS fee FROM m_course WHERE id = $1::bigint`, [a.course_id]);
+        const feeMinor = Number(std?.fee ?? 0) > 0 ? Math.round(Number(std.fee) * 100) : 0;
+        enrolment = await this.students.addEnrolment(Number(student.id), {
+          course_id: a.course_id, branch_id: a.branch_id, vertical_id: a.vertical_id,
+          fee_minor: feeMinor, start_date: studentDto.admission_date, remarks: `Online application ${admissionNo}`,
+        }, me, scope);
+      } catch (e) { enrolmentError = (e as Error).message; }
+    }
+    return { id, approved: true, admission_no: admissionNo, student_id: student.id, student_no: student.student_no,
+      enrolment_id: enrolment?.id ?? null, enrolment_no: enrolment?.enrolment_no ?? null, enrolment_error: enrolmentError };
   }
 
   async reject(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
