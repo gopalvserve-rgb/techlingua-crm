@@ -345,7 +345,7 @@ export class StudentService {
   /* ------------------------------------------------------------------ reads */
 
   async list(scope: ResolvedScope, f: {
-    branch_id?: string; vertical_id?: string; course_id?: string; owner_id?: string;
+    branch_id?: string; vertical_id?: string; course_id?: string; owner_id?: string; trainer_id?: string;
     status?: string; q?: string; from?: string; to?: string; limit?: number;
   } = {}) {
     const params: unknown[] = [];
@@ -360,6 +360,18 @@ export class StudentService {
     multi('s.vertical_id', f.vertical_id);
     multi('s.course_id', f.course_id);
     multi('s.owner_id', f.owner_id);
+    // TRAINER filter (client 3 Sep, point 5) — the trainer of the student's own batch or of any of
+    // the student's enrolment batches.
+    {
+      const tids = String(f.trainer_id ?? '').split(',').map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (tids.length) {
+        params.push(tids);
+        const p = params.length;
+        where.push(`(EXISTS (SELECT 1 FROM batch tb WHERE tb.id = s.batch_id AND tb.trainer_id = ANY($${p}::bigint[]))
+                     OR EXISTS (SELECT 1 FROM enrolment te JOIN batch tb2 ON tb2.id = te.batch_id
+                                 WHERE te.student_profile_id = s.id AND te.deleted_at IS NULL AND tb2.trainer_id = ANY($${p}::bigint[])))`);
+      }
+    }
     // Multi-select STATUS filter (lifecycle codes, comma-joined). Genuinely narrows the list.
     const statusCodes = String(f.status ?? '').split(',').map((x) => x.trim()).filter(Boolean);
     if (statusCodes.length) { params.push(statusCodes); where.push(`s.status = ANY($${params.length}::varchar[])`); }

@@ -4803,6 +4803,8 @@ function StudentsList() {
   const [fVerticals, setFVerticals] = useState<number[]>(s0.verticals);
   const [fCourses, setFCourses] = useState<number[]>(s0.courses);
   const [fOwners, setFOwners] = useState<number[]>(s0.owners);
+  const [fTrainers, setFTrainers] = useState<number[]>([]);   // client 3 Sep (point 5)
+  const trainersQ = useFetch<any[]>('/users?role=Trainer', []);
   const [fStatuses, setFStatuses] = useState<string[]>(s0.statuses);
   const [q, setQ] = useState<string>(s0.q);
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
@@ -4821,6 +4823,7 @@ function StudentsList() {
   if (fVerticals.length) params.set('vertical_id', fVerticals.join(','));
   if (fCourses.length) params.set('course_id', fCourses.join(','));
   if (fOwners.length) params.set('owner_id', fOwners.join(','));
+  if (fTrainers.length) params.set('trainer_id', fTrainers.join(','));
   if (fStatuses.length) params.set('status', fStatuses.join(','));
   if (q.trim()) params.set('q', q.trim());
   if (range.from) params.set('from', range.from);
@@ -4860,6 +4863,7 @@ function StudentsList() {
         <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts} onChange={setFVerticals} />
         <FilterMulti label="Course" icon="book" value={fCourses} options={cOpts} onChange={setFCourses} />
         <FilterMulti label="Owner" icon="users" value={fOwners} options={selectableUsers(ref.users)} onChange={setFOwners} />
+        <FilterMulti label="Trainer" icon="users" value={fTrainers} options={(trainersQ.data ?? []) as any} onChange={setFTrainers} />
         <StatusMultiFilter value={fStatuses} onChange={setFStatuses} />
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / ID…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <DateRange value={range} onChange={setRange} idPrefix="stu-list-dr" style={{ marginLeft: 'auto' }} />
