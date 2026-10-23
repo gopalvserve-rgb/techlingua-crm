@@ -1423,6 +1423,26 @@ function readLeadNavFilters(search?: string) {
   };
 }
 
+/** Leads filter: ONE option per Lead Source — the org-wide row and its per-campaign copies share
+ *  a canonical master id (else the name), so "JustDial" is listed once, not once per campaign. */
+const srcKey = (s: any) => (Number(s.master_source_id) > 0 ? `m${s.master_source_id}` : `n${String(s.name).trim().toLowerCase()}`);
+function groupedSourceOptions(sources: any[], campaigns: number[]): Array<{ id: number; name: string }> {
+  const groups = new Map<string, { id: number; name: string }>();
+  for (const so of sources) {
+    if (campaigns.length && so.campaign_id != null && !campaigns.includes(Number(so.campaign_id))) continue;
+    const k = srcKey(so); const g = groups.get(k);
+    if (!g || Number(so.id) < g.id) groups.set(k, { id: Number(so.id), name: String(so.name) });
+  }
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+/** The picked options → every source id of the same Lead Source (leads carry the campaign copy). */
+function expandSourceIds(sources: any[], picked: number[]): number[] {
+  if (!picked.length) return picked;
+  const keys = new Set(sources.filter((so) => picked.includes(Number(so.id))).map(srcKey));
+  const ids = sources.filter((so) => keys.has(srcKey(so))).map((so) => Number(so.id));
+  return [...new Set([...picked, ...ids])];
+}
+
 function LeadsAll() {
   const { openLead, openNotes, refreshTick, bump, search } = useScreen();
   const { can } = useAuth();
@@ -1484,7 +1504,7 @@ function LeadsAll() {
   setCsv('vertical_ids', f.verticals);
   setCsv('pipeline_ids', f.pipelines);
   setCsv('campaign_ids', f.campaigns);
-  setCsv('source_ids', f.sources);
+  setCsv('source_ids', expandSourceIds(ref.sources, f.sources));
   setCsv('status_ids', f.statuses);
   setCsv('stage_ids', f.stages);
   setCsv('owner_ids', f.owners);
@@ -1569,7 +1589,7 @@ function LeadsAll() {
   const vOpts = ref.verticals.filter((v) => !f.branches.length || f.branches.includes(Number(v.branch_id)));
   const pOpts = ref.pipelines.filter((pp) => !f.verticals.length || f.verticals.includes(Number(pp.vertical_id)));
   const cOpts = ref.campaigns.filter((c) => !f.pipelines.length || f.pipelines.includes(Number(c.pipeline_id)));
-  const sOpts = ref.sources.filter((so) => !f.campaigns.length || f.campaigns.includes(Number(so.campaign_id)));
+  const sOpts = groupedSourceOptions(ref.sources, f.campaigns);
   // Stage (client, Aug 2026): a lead's stage belongs to a pipeline, so offer only the stages
   // of the selected Pipeline(s) (all stages when no pipeline is picked). Same-named stages
   // across pipelines are disambiguated with the pipeline name when >1 pipeline is in view.
@@ -1583,7 +1603,7 @@ function LeadsAll() {
     nf.pipelines = nf.pipelines.filter((id) => pOk.has(id));
     const cOk = new Set(ref.campaigns.filter((c) => !nf.pipelines.length || nf.pipelines.includes(Number(c.pipeline_id))).map((c) => Number(c.id)));
     nf.campaigns = nf.campaigns.filter((id) => cOk.has(id));
-    const sOk = new Set(ref.sources.filter((so) => !nf.campaigns.length || nf.campaigns.includes(Number(so.campaign_id))).map((so) => Number(so.id)));
+    const sOk = new Set(groupedSourceOptions(ref.sources, nf.campaigns).map((so) => so.id));
     nf.sources = nf.sources.filter((id) => sOk.has(id));
     const stOk = new Set(((ref.stages ?? []) as any[]).filter((st) => !nf.pipelines.length || nf.pipelines.includes(Number(st.pipeline_id))).map((st) => Number(st.id)));
     nf.stages = nf.stages.filter((id) => stOk.has(id));

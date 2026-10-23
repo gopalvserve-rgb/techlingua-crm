@@ -252,7 +252,7 @@ export class CalendarService {
       configured: missing.length === 0 && !!provider,
       missing,
       note: missing.length
-        ? 'Google / Outlook calendar sync is built and waiting on credentials. The in-app calendar works fully without it.'
+        ? 'Optional: connect Google or Outlook to mirror these events. The in-app calendar works fully without it.'
         : 'Ready to sync.',
     };
   }

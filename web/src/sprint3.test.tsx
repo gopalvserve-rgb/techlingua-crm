@@ -329,7 +329,7 @@ const CAL_NOT_CONFIGURED = {
   sync: {
     provider: null, configured: false,
     missing: ['Calendar provider (Google or Outlook)', 'OAuth client id + secret'],
-    note: 'Google / Outlook calendar sync is built and waiting on credentials. The in-app calendar works fully without it.',
+    note: 'Optional: connect Google or Outlook to mirror these events. The in-app calendar works fully without it.',
   },
 };
 

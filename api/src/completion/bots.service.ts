@@ -210,7 +210,10 @@ export class BotsService implements OnModuleInit {
   /** "Try it": what the bot WOULD answer to `text` — nothing is sent or logged. */
   async simulate(text: string, firstMessage = false) {
     const s = await this.getSettings();
-    return this.decide(String(text ?? ''), s.whatsbot, s.aibot, { first: firstMessage, awayRecently: false, dryRun: true });
+    // rules are tested even while the bot is switched OFF, so they can be tried before going live
+    const out = await this.decide(String(text ?? ''), { ...s.whatsbot, enabled: true }, s.aibot,
+      { first: firstMessage, awayRecently: false, dryRun: true });
+    return { ...out, bot_off: !s.whatsbot.enabled };
   }
 
   // -------------------------------------------------------------- engine

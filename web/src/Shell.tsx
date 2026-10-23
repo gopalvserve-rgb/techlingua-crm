@@ -238,6 +238,11 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
   // DEF-05 — the live query string. URL-driven filter screens (Today's Follow-ups, Leads) re-seed
   // from it when a top-bar shortcut / card link re-navigates here while the screen is already open.
   const loc = useLocation();
+  // `?lead=<id>` (a notification click, a call-log link) opens that lead's sheet
+  useEffect(() => {
+    const id = Number(new URLSearchParams(loc.search).get('lead'));
+    if (id > 0) setLeadOpen({ id, mode: 'view' });
+  }, [loc.search]);
 
   return (
     <ScreenCtx.Provider value={{

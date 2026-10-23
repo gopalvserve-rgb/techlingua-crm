@@ -93,7 +93,7 @@ const APP_FULL: ModuleItem[] = [
     { id: 'quickstats', label: 'Quick Stats', spec: { dyn: 'quickStats',
       sub: 'Key numbers at a glance for any range — today, week, month, or a custom date range.' } },
     { id: 'calendar', label: 'Calendar', spec: { dyn: 'calendar',
-      sub: 'Follow-ups, demos and meetings on one calendar. Google/Outlook sync is built and waiting on credentials.' } },
+      sub: 'Follow-ups, demos and meetings on one calendar. Optional two-way sync with Google / Outlook.' } },
     { id: 'walkins', label: 'Walk-ins', spec: { dyn: 'walkIns',
       sub: 'Capture branch visitors and convert directly into assigned leads — the counsellor owns the lead on add.',
       actions: [['plus', 'Add walk-in', 'primary']] } },

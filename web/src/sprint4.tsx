@@ -16,7 +16,6 @@ import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { ApprovalPolicyCard, NumberingCard } from './sprint5';
 import { ensureFbSdk, launchEmbeddedSignup } from './whatsappsignup';
-import { sourceLabel } from './forms';
 import { UserPicker } from './userpicker';
 
 /* ============================== types =============================== */
@@ -550,17 +549,25 @@ export function JourneyModal({ initial, onClose, onSaved }: {
             </div>
             <div className="fld">
               <label htmlFor="j-sources">Lead Source</label>
-              <select id="j-sources" className="ainp" value={Array.isArray(cond.source_ids) && cond.source_ids.length ? String(cond.source_ids[0]) : ''}
-                onChange={(e) => {
-                  // an org-wide source also matches every campaign's copy of it (Oct 2026)
-                  const pick: any = ref.sources.find((s) => String(s.id) === e.target.value);
-                  const same = pick && pick.campaign_id == null && pick.master_source_id != null
-                    ? ref.sources.filter((s: any) => Number(s.master_source_id) === Number(pick.master_source_id)).map((s) => Number(s.id)) : [];
-                  setCond({ ...cond, source_ids: pick ? [Number(pick.id), ...same.filter((x) => x !== Number(pick.id))] : [] });
-                }}>
-                <option value="">Any source</option>
-                {ref.sources.map((s) => <option key={s.id} value={s.id}>{sourceLabel(s)}</option>)}
-              </select>
+              {(() => {
+                // ONE option per Lead Source; picking it matches the org-wide row AND every campaign's copy
+                const key = (s: any) => (s.master_source_id != null ? `m${s.master_source_id}` : `n${String(s.name).trim().toLowerCase()}`);
+                const reps = new Map<string, any>();
+                for (const s of ref.sources as any[]) { const k = key(s); const r = reps.get(k); if (!r || (r.campaign_id != null && s.campaign_id == null)) reps.set(k, s); }
+                const first = Array.isArray(cond.source_ids) && cond.source_ids.length
+                  ? (ref.sources as any[]).find((s) => Number(s.id) === Number((cond.source_ids as any[])[0])) : null;
+                return (
+                  <select id="j-sources" className="ainp" value={first ? String(reps.get(key(first))?.id ?? first.id) : ''}
+                    onChange={(e) => {
+                      const pick: any = (ref.sources as any[]).find((s) => String(s.id) === e.target.value);
+                      const ids = pick ? (ref.sources as any[]).filter((s) => key(s) === key(pick)).map((s) => Number(s.id)) : [];
+                      setCond({ ...cond, source_ids: pick ? [Number(pick.id), ...ids.filter((x) => x !== Number(pick.id))] : [] });
+                    }}>
+                    <option value="">Any source</option>
+                    {[...reps.values()].map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                );
+              })()}
             </div>
             <div className="fld">
               <label htmlFor="j-band">Score band</label>

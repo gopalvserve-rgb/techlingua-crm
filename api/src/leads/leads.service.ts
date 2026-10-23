@@ -507,7 +507,10 @@ export class LeadsService {
     await this.sla.safe(() => this.sla.onLeadCreated(Number(lead.id)), 'sla.onLeadCreated');
     await this.scoring.safeRescore(Number(lead.id));
     // dev/132 ITEM C — pop a bell/toast that a new lead landed (to its counsellor, else the creator).
-    try {
+    // A lead given to SOMEONE ELSE is already notified by the shared ingestion (afterIngest) —
+    // only the own-lead / unassigned cases are notified here, so nobody gets the bell twice.
+    const assignedToOther = lead.owner_id && String(lead.owner_id) !== String(lead.created_by ?? actorId);
+    if (!assignedToOther) try {
       const notifyUser = lead.owner_id ? Number(lead.owner_id) : actorId;
       await this.notifier?.notify({
         userId: notifyUser, type: lead.owner_id ? 'assignment' : 'system', severity: 'info',

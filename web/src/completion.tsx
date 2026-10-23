@@ -125,6 +125,8 @@ export function WhatsBot() {
             <div className="notice" style={{ width: '100%' }}><Ic k="wa" /><div>
               {tryOut.reply ? <><b>{tryOut.kind === 'keyword' ? 'Keyword rule' : tryOut.kind === 'ai' ? 'AI Bot' : tryOut.kind === 'handover' ? 'Hand-over' : tryOut.kind === 'away' ? 'Away reply' : 'Welcome'}:</b> {tryOut.reply}</>
                 : <>No automatic reply{tryOut.error ? ` — ${tryOut.error}` : ' — the message waits for a counsellor in Live Chat.'}</>}
+              {tryOut.bot_off && tryOut.reply && tryOut.kind !== 'ai' && tryOut.kind !== 'handover' && (
+                <div className="dim" style={{ marginTop: 4 }}>WhatsBot is OFF — tick "Bot answers inbound WhatsApp messages" and save to send this reply for real.</div>)}
             </div></div>
           )}
         </div>
