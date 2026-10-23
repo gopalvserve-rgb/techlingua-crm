@@ -14,6 +14,7 @@ import { toast, useRef_, Toaster } from './refdata';
 import { NotificationBell } from './notifications';
 import { ScopeSelector, useScope } from './scope';
 import { isoDay } from './daterange';
+import { askConfirm } from './askdialog';
 
 
 function Logo() {
@@ -338,7 +339,7 @@ function UserMenu({ me, roleName, theme, setTheme, logout }: {
             </a>
           )}
           <button className="um-item danger" role="menuitem"
-            onClick={() => { if (confirm('Sign out?')) logout(); }}>
+            onClick={async () => { if (await askConfirm('Sign out?')) logout(); }}>
             <Ic k="logout" /> Sign out
           </button>
         </div>

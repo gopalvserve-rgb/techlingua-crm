@@ -18,6 +18,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
+import { askConfirm } from './askdialog';
 
 interface ApiKey {
   id: number; name: string; key_masked: string; key_prefix: string;
@@ -169,7 +170,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
     } catch (e) { toast((e as Error).message, true); } finally { setBusyId(null); bump(); }
   };
   const revoke = async (k: ApiKey) => {
-    if (!confirm(`Revoke “${k.name}”? Any integration using it stops working immediately and it cannot be re-enabled.`)) return;
+    if (!await askConfirm(`Revoke “${k.name}”? Any integration using it stops working immediately and it cannot be re-enabled.`)) return;
     setBusyId(k.id);
     try { await api.del(`/api-keys/${k.id}`); toast('Key revoked'); }
     catch (e) { toast((e as Error).message, true); } finally { setBusyId(null); bump(); }

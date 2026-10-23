@@ -22,6 +22,7 @@ import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { FilterMulti, EnumMulti } from './dyn';
 import { ListActions, downloadObjectsCsv } from './listtools';
 import { AddModal } from './forms';
+import { askConfirm } from './askdialog';
 
 const dt = (v: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const basisBadge = (b: string): Cell =>
@@ -106,7 +107,7 @@ function RulesTab({ courses }: { courses: Array<{ id: number; name: string }> })
     catch (e) { toast((e as Error).message, true); }
   };
   const del = async (r: any) => {
-    if (!window.confirm(`Delete this cross-sell rule (${r.source_course_name} → ${r.target_course_name})?`)) return;
+    if (!await askConfirm(`Delete this cross-sell rule (${r.source_course_name} → ${r.target_course_name})?`)) return;
     try { await api.del(`/cross-sell/rules/${r.id}`); toast('Rule deleted'); reload(); }
     catch (e) { toast((e as Error).message, true); }
   };

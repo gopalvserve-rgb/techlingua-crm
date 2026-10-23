@@ -18,6 +18,7 @@ import { useScope } from './scope';
 import { FilterMulti } from './dyn';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { askConfirm } from './askdialog';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
@@ -68,7 +69,7 @@ export function PaymentsScreen() {
 
   const del = async (r: any) => {
     if (r.status === 'paid') { toast('A captured payment cannot be deleted — refund it in the next batch.', true); return; }
-    if (!confirm(`Void the ${fmtINR(r.amount_minor)} payment link for ${r.enrolment_no}?`)) return;
+    if (!await askConfirm(`Void the ${fmtINR(r.amount_minor)} payment link for ${r.enrolment_no}?`)) return;
     try { await api.del(`/payments/${r.id}`); toast('Payment voided'); after(); } catch (e) { toast((e as Error).message, true); }
   };
   const copy = (url: string) => { navigator.clipboard?.writeText(url).then(() => toast('Payment link copied')).catch(() => undefined); };

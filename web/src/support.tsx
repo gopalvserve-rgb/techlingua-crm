@@ -18,6 +18,7 @@ import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { FilterMulti, EnumMulti } from './dyn';
 import { ListActions, downloadObjectsCsv } from './listtools';
 import { AddModal, EditSpec, need } from './forms';
+import { askConfirm } from './askdialog';
 
 const PRIORITY_ORDER = ['low', 'medium', 'high', 'urgent'] as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -145,7 +146,7 @@ function TicketDetail({ id, onClose, onChanged }: { id: number; onClose: () => v
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
         </div>
         <div className="abody">
-          <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+          <div className="kpi-strip">
             {([['Status', statusBadge(t.status)], ['Priority', priorityBadge(t.priority)],
                ['SLA', slaCell(t)], ['Category', t.category ?? '—']] as Array<[string, Cell | string]>)
               .map(([lab, val]) => (
@@ -269,7 +270,7 @@ export function SupportTickets() {
   const bump = () => { reload(); summary.reload(); };
 
   const del = async (t: any) => {
-    if (!window.confirm(`Delete ticket ${t.ticket_no}? It moves to Deleted Items and can be restored.`)) return;
+    if (!await askConfirm(`Delete ticket ${t.ticket_no}? It moves to Deleted Items and can be restored.`)) return;
     try { await api.del(`/support-tickets/${t.id}`); toast('Ticket deleted'); bump(); }
     catch (e) { toast((e as Error).message, true); }
   };

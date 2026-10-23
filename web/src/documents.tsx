@@ -9,6 +9,7 @@ import { useRef, useState } from 'react';
 import { Ic } from './icons';
 import { getToken, api } from './api';
 import { toast, useFetch } from './refdata';
+import { askConfirm } from './askdialog';
 
 /* --------- education + KYC: client-side guard + helpers -------- */
 export const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png';
@@ -139,7 +140,7 @@ export function StudentDocuments({ studentId, canManage }: { studentId: number; 
     } catch (ex) { toast((ex as Error).message || 'Upload failed', true); } finally { setBusy(false); }
   };
   const del = async (doc: any) => {
-    if (!window.confirm(`Delete "${doc.file_name}"? This cannot be undone.`)) return;
+    if (!await askConfirm(`Delete "${doc.file_name}"? This cannot be undone.`)) return;
     try { await api.del(`${base}/documents/${doc.id}`); toast('Document deleted'); reload(); }
     catch (ex) { toast((ex as Error).message || 'Delete failed', true); }
   };

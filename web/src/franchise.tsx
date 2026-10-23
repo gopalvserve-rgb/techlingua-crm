@@ -17,6 +17,7 @@ import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { DateRange, DateRangeValue } from './daterange';
 import { fmtINR, minorToInput } from './money';
 import { downloadMatrixCsv } from './listtools';
+import { askConfirm, askText } from './askdialog';
 
 type Named = { id: number | string; name: string };
 
@@ -47,7 +48,7 @@ export function FranchisesScreen() {
   const rows = data ?? [];
 
   const del = async (f: any) => {
-    if (!confirm(`Delete the franchise "${f.name}"?`)) return;
+    if (!await askConfirm(`Delete the franchise "${f.name}"?`)) return;
     try { await api.del(`/franchises/${f.id}`); toast('Franchise deleted'); reload(); }
     catch (e) { toast((e as Error).message); }
   };
@@ -232,7 +233,7 @@ export function RoyaltyPlansScreen() {
   const rows = data ?? [];
 
   const del = async (p: any) => {
-    if (!confirm(`Delete the royalty plan "${p.name}"?`)) return;
+    if (!await askConfirm(`Delete the royalty plan "${p.name}"?`)) return;
     try { await api.del(`/royalty-plans/${p.id}`); toast('Plan deleted'); reload(); }
     catch (e) { toast((e as Error).message); }
   };
@@ -603,7 +604,7 @@ function RoyaltyInvoiceView({ id, onClose, onChanged }: { id: number; onClose: (
   const [pay, setPay] = useState(false);
   const inv = data;
   const delPayment = async (pid: number) => {
-    if (!confirm('Delete this payment?')) return;
+    if (!await askConfirm('Delete this payment?')) return;
     try { await api.del(`/royalty-invoices/${id}/payments/${pid}`); toast('Payment deleted'); reload(); onChanged?.(); }
     catch (e) { toast((e as Error).message); }
   };
@@ -741,8 +742,8 @@ export function RoyaltyInvoicesScreen() {
   const [pay, setPay] = useState<any>(null);
 
   const issue = async (r: any) => { try { await api.post(`/royalty-invoices/${r.id}/status`, { status: 'issued' }); toast('Invoice issued'); reload(); } catch (e) { toast((e as Error).message); } };
-  const cancel = async (r: any) => { if (!confirm(`Cancel invoice ${r.invoice_no}?`)) return; try { await api.post(`/royalty-invoices/${r.id}/status`, { status: 'cancelled' }); toast('Invoice cancelled'); reload(); } catch (e) { toast((e as Error).message); } };
-  const del = async (r: any) => { if (!confirm(`Delete invoice ${r.invoice_no}?`)) return; try { await api.del(`/royalty-invoices/${r.id}`); toast('Invoice deleted'); reload(); } catch (e) { toast((e as Error).message); } };
+  const cancel = async (r: any) => { if (!await askConfirm(`Cancel invoice ${r.invoice_no}?`)) return; try { await api.post(`/royalty-invoices/${r.id}/status`, { status: 'cancelled' }); toast('Invoice cancelled'); reload(); } catch (e) { toast((e as Error).message); } };
+  const del = async (r: any) => { if (!await askConfirm(`Delete invoice ${r.invoice_no}?`)) return; try { await api.del(`/royalty-invoices/${r.id}`); toast('Invoice deleted'); reload(); } catch (e) { toast((e as Error).message); } };
 
   return (
     <>
@@ -918,7 +919,7 @@ export function AgreementsScreen() {
   const [modal, setModal] = useState(false);
   const [edit, setEdit] = useState<any>(null);
 
-  const del = async (a: any) => { if (!confirm('Delete this agreement?')) return; try { await api.del(`/franchise-agreements/${a.id}`); toast('Agreement deleted'); reload(); } catch (e) { toast((e as Error).message); } };
+  const del = async (a: any) => { if (!await askConfirm('Delete this agreement?')) return; try { await api.del(`/franchise-agreements/${a.id}`); toast('Agreement deleted'); reload(); } catch (e) { toast((e as Error).message); } };
   const openDoc = async (a: any) => { try { const d = await api.get<any>(`/franchise-agreements/${a.id}`); if (d.document_url) window.open(d.document_url, '_blank', 'noopener'); else toast('No document attached', true); } catch (e) { toast((e as Error).message, true); } };
 
   return (
@@ -972,7 +973,7 @@ export function FranchiseOnboardingScreen() {
 
   const toggle = async (s: any) => { try { await api.post(`/franchises/${chosen}/onboarding/${s.id}/toggle`, { done: !s.done }); reload(); } catch (e) { toast((e as Error).message); } };
   const addStep = async () => { const t = newStep.trim(); if (!t) return; try { await api.post(`/franchises/${chosen}/onboarding/steps`, { title: t }); setNewStep(''); reload(); } catch (e) { toast((e as Error).message); } };
-  const rmStep = async (s: any) => { if (!confirm('Remove this step?')) return; try { await api.del(`/franchises/${chosen}/onboarding/steps/${s.id}`); reload(); } catch (e) { toast((e as Error).message); } };
+  const rmStep = async (s: any) => { if (!await askConfirm('Remove this step?')) return; try { await api.del(`/franchises/${chosen}/onboarding/steps/${s.id}`); reload(); } catch (e) { toast((e as Error).message); } };
 
   return (
     <>
@@ -1028,7 +1029,7 @@ export function TerritoryScreen() {
   const [note, setNote] = useState('');
 
   const add = async () => { const v = value.trim(); if (!v) return; try { await api.post(`/franchises/${chosen}/territory`, { kind, value: v, note }); setValue(''); setNote(''); reload(); } catch (e) { toast((e as Error).message); } };
-  const del = async (t: any) => { if (!confirm('Remove this territory?')) return; try { await api.del(`/franchises/${chosen}/territory/${t.id}`); reload(); } catch (e) { toast((e as Error).message); } };
+  const del = async (t: any) => { if (!await askConfirm('Remove this territory?')) return; try { await api.del(`/franchises/${chosen}/territory/${t.id}`); reload(); } catch (e) { toast((e as Error).message); } };
 
   return (
     <>
@@ -1222,7 +1223,7 @@ export function FranchiseTargetsScreen() {
   const [add, setAdd] = useState(false);
   const [perf, setPerf] = useState<number | null>(null);
   const rows = data ?? [];
-  const del = async (id: number) => { if (!confirm('Delete this target?')) return; try { await api.del(`/franchise-targets/${id}`); toast('Target deleted'); reload(); board.reload(); } catch (e) { toast((e as Error).message, true); } };
+  const del = async (id: number) => { if (!await askConfirm('Delete this target?')) return; try { await api.del(`/franchise-targets/${id}`); toast('Target deleted'); reload(); board.reload(); } catch (e) { toast((e as Error).message, true); } };
   return (
     <>
       <div className="filters" style={{ marginBottom: 12 }}>
@@ -1299,10 +1300,10 @@ export function FranchiseComplianceScreen() {
     } catch (e) { toast((e as Error).message, true); }
   };
   const addItem = async () => {
-    const title = prompt('New compliance item title:'); if (!title) return;
+    const title = await askText('New compliance item title:'); if (!title) return;
     try { await api.post(`/franchises/${chosen}/compliance/items`, { title }); reload(); } catch (e) { toast((e as Error).message, true); }
   };
-  const del = async (itemId: number) => { if (!confirm('Remove this item?')) return; try { await api.del(`/franchises/${chosen}/compliance/items/${itemId}`); reload(); } catch (e) { toast((e as Error).message, true); } };
+  const del = async (itemId: number) => { if (!await askConfirm('Remove this item?')) return; try { await api.del(`/franchises/${chosen}/compliance/items/${itemId}`); reload(); } catch (e) { toast((e as Error).message, true); } };
 
   return (
     <>

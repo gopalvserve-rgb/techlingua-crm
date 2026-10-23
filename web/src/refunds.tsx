@@ -17,6 +17,7 @@ import { FilterMulti } from './dyn';
 import { DateRange, DateRangeValue } from './daterange';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { askConfirm, askText } from './askdialog';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
@@ -81,21 +82,21 @@ export function RefundsScreen() {
   const { openBulk, bulkModal } = useBulkDelete('Refund', '/refunds/bulk-delete/impact', '/refunds/bulk-delete', () => { after(); clear(); }, 'ids');
 
   const approve = async (r: any) => {
-    const note = prompt(`Approve the ${fmtINR(r.amount_minor)} refund for ${r.enrolment_no}? Optional note:`, '');
+    const note = await askText(`Approve the ${fmtINR(r.amount_minor)} refund for ${r.enrolment_no}? Optional note:`, '');
     if (note === null) return;
     const path = r.requires_high && can('refund.approve_high') ? 'approve-high' : 'approve';
     try { await api.post(`/refunds/${r.id}/${path}`, { note: note || undefined }); toast('Refund approved — voucher generated'); after(); }
     catch (e) { toast((e as Error).message, true); }
   };
   const reject = async (r: any) => {
-    const note = prompt(`Reject this refund? Reason:`, '');
+    const note = await askText(`Reject this refund? Reason:`, '');
     if (note === null) return;
     try { await api.post(`/refunds/${r.id}/reject`, { note: note || undefined }); toast('Refund rejected'); after(); }
     catch (e) { toast((e as Error).message, true); }
   };
   const del = async (r: any) => {
     if (r.status === 'approved') { toast('An approved refund cannot be deleted.', true); return; }
-    if (!confirm(`Delete this ${fmtINR(r.amount_minor)} refund request?`)) return;
+    if (!await askConfirm(`Delete this ${fmtINR(r.amount_minor)} refund request?`)) return;
     try { await api.del(`/refunds/${r.id}`); toast('Refund request deleted'); after(); } catch (e) { toast((e as Error).message, true); }
   };
 

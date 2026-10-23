@@ -20,6 +20,7 @@ import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { ensureFbSdk } from './whatsappsignup';
 import { FbFormMappingModal, FbPagesModal, FbPagePicker, FbPickPage } from './fbpages';
+import { askConfirm } from './askdialog';
 
 export interface FieldSpec {
   key: string; label: string; type: 'text' | 'password' | 'textarea' | 'number' | 'bool' | 'list';
@@ -548,7 +549,7 @@ export default function Channels() {
 
   // ⋮ Re-Connect — rotate the public URL + generated key (re-auth / refresh).
   const reconnect = async (c: Channel) => {
-    if (!confirm(`Re-Connect “${c.name}”?\n\nThis rotates its webhook URL and key. Update the source (Meta / marketplace / your site) with the NEW URL — the old one stops working.`)) return;
+    if (!await askConfirm(`Re-Connect “${c.name}”?\n\nThis rotates its webhook URL and key. Update the source (Meta / marketplace / your site) with the NEW URL — the old one stops working.`)) return;
     setBusyId(c.id);
     try { await api.post(`/channels/${c.id}/regenerate`, {}); toast('Re-connected — URL & key rotated'); }
     catch (e) { toast((e as Error).message, true); } finally { setBusyId(null); bump(); }
@@ -556,7 +557,7 @@ export default function Channels() {
 
   // ⋮ Delete — soft-delete the connection (event history is kept for audit).
   const del = async (c: Channel) => {
-    if (!confirm(`Delete “${c.name}”?\n\nIt stops receiving leads immediately. Its inbound event history is kept for audit.`)) return;
+    if (!await askConfirm(`Delete “${c.name}”?\n\nIt stops receiving leads immediately. Its inbound event history is kept for audit.`)) return;
     setBusyId(c.id);
     try { await api.del(`/channels/${c.id}`); toast('Integration deleted'); }
     catch (e) { toast((e as Error).message, true); } finally { setBusyId(null); bump(); }
@@ -575,7 +576,7 @@ export default function Channels() {
 
   return (
     <>
-      <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+      <div className="kpi-strip">
         {kpis.map(([lab, val, ic, tone]) => (
           <div className="card kpi" key={lab}>
             <div className={`ic ${tone}`}><Ic k={ic} /></div>

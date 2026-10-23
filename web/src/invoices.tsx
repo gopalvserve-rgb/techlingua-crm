@@ -20,6 +20,7 @@ import { useScope } from './scope';
 import { FilterMulti, EnumMulti } from './dyn';
 import { fmtINR, parseRupees } from './money';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { askConfirm, askText } from './askdialog';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 async function openPdf(path: string) {
@@ -87,18 +88,18 @@ export function InvoicesScreen() {
   const { openBulk, bulkModal } = useBulkDelete('Invoice', '/invoices/bulk-delete/impact', '/invoices/bulk-delete', () => { after(); clear(); }, 'ids');
 
   const del = async (r: any) => {
-    if (!confirm(`Delete draft invoice ${r.invoice_no || '(draft)'}?`)) return;
+    if (!await askConfirm(`Delete draft invoice ${r.invoice_no || '(draft)'}?`)) return;
     try { await api.del(`/invoices/${r.id}`); toast('Invoice deleted'); after(); } catch (e) { toast((e as Error).message, true); }
   };
   const issue = async (r: any) => {
-    if (!confirm(`Issue this invoice? A GST invoice number will be allocated and the document is frozen.`)) return;
+    if (!await askConfirm(`Issue this invoice? A GST invoice number will be allocated and the document is frozen.`)) return;
     try { const res = await api.post<any>(`/invoices/${r.id}/issue`); toast(`Issued ${res.invoice_no}`); after(); } catch (e) { toast((e as Error).message, true); }
   };
   const markPaid = async (r: any) => {
     try { await api.post(`/invoices/${r.id}/mark-paid`); toast('Marked paid'); after(); } catch (e) { toast((e as Error).message, true); }
   };
   const cancel = async (r: any) => {
-    const reason = prompt(`Cancel ${r.invoice_no}? Enter a reason:`);
+    const reason = await askText(`Cancel ${r.invoice_no}? Enter a reason:`);
     if (reason == null) return;
     try { await api.post(`/invoices/${r.id}/cancel`, { reason }); toast('Invoice cancelled'); after(); } catch (e) { toast((e as Error).message, true); }
   };
@@ -385,7 +386,7 @@ export function InvoiceDetailModal({ id, onClose, onChanged }: { id: number; onC
           <button className="btn ghost" onClick={() => openPdf(`/invoices/${id}/pdf`)}><Ic k="doc" />PDF</button>
           {gi?.status === 'draft' && can('invoice.issue') ? <button className="btn primary" disabled={busy} onClick={() => act(() => api.post(`/invoices/${id}/issue`), 'Invoice issued')}><Ic k="check" />Issue</button> : null}
           {gi?.status === 'issued' && can('invoice.issue') ? <button className="btn" disabled={busy} onClick={() => act(() => api.post(`/invoices/${id}/mark-paid`), 'Marked paid')}><Ic k="rupee" />Mark paid</button> : null}
-          {['issued', 'paid'].includes(gi?.status) && can('invoice.cancel') ? <button className="btn danger" disabled={busy} onClick={() => { const reason = prompt('Cancel reason:'); if (reason != null) act(() => api.post(`/invoices/${id}/cancel`, { reason }), 'Cancelled'); }}><Ic k="x" />Cancel</button> : null}
+          {['issued', 'paid'].includes(gi?.status) && can('invoice.cancel') ? <button className="btn danger" disabled={busy} onClick={async () => { const reason = await askText('Cancel reason:'); if (reason != null) act(() => api.post(`/invoices/${id}/cancel`, { reason }), 'Cancelled'); }}><Ic k="x" />Cancel</button> : null}
         </div>
       </div>
     </div>

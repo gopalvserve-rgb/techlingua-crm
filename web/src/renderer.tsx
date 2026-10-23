@@ -1,5 +1,5 @@
 /** Generic spec-driven block renderer — mirrors the prototype's renderBlock(). */
-import { Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent, useState, useMemo } from 'react';
+import { CSSProperties, Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent, useState, useMemo } from 'react';
 import { Block, KpiItem } from './specs';
 import { Ic, checkS } from './icons';
 import { useColumnVisibility, ColumnsButton } from './colprefs';
@@ -66,7 +66,7 @@ export function Kpis({ items, cols = 4 }: { items: KpiItem[]; cols?: number }) {
   const icTone = (ic?: string) =>
     (({ rupee: 'amber', check: 'green', clock: 'rose', leads: 'indigo', users: 'cyan', students: 'indigo' } as Record<string, string>)[ic ?? ''] || 'indigo');
   return (
-    <div className="kpi-strip" style={{ gridTemplateColumns: `repeat(${cols},1fr)` }}>
+    <div className="kpi-strip" style={{ ['--cols' as string]: cols } as CSSProperties}>
       {items.map((k, i) => {
         // #13(c) — a tile with an onClick becomes a real, accessible button: pointer cursor,
         // hover lift, role="button", keyboard-activatable (Enter/Space) and an accessible label.

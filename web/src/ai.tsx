@@ -18,6 +18,7 @@ import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { FilterMulti, EnumMulti } from './dyn';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { askConfirm } from './askdialog';
 
 const TYPE_LABEL: Record<string, string> = {
   summary: 'Summary', sentiment: 'Sentiment', quality: 'Quality', transcription: 'Transcription',
@@ -264,7 +265,7 @@ export function AiIntelligence() {
   const { openBulk, bulkModal } = useBulkDelete('AI analysis', '/ai/analyses/bulk-delete/impact', '/ai/analyses/bulk-delete', () => { after(); clear(); });
 
   const del = async (r: any) => {
-    if (!window.confirm('Delete this AI analysis?')) return;
+    if (!await askConfirm('Delete this AI analysis?')) return;
     try { await api.del(`/ai/analyses/${r.id}`); toast('Analysis deleted'); after(); }
     catch (e) { toast((e as Error).message, true); }
   };

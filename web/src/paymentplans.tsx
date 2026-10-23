@@ -21,6 +21,7 @@ import { CollectModal } from './sprint5';
 import { RowMenu, RowMenuItem } from './rowactions';
 import { AuditHistoryModal, FeeCards, FeeLedgerModal, paymentStatusCell } from './enrolmentfees';
 import { DateRange } from './daterange';
+import { askConfirm, askText } from './askdialog';
 
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 async function openPdf(path: string) {
@@ -102,10 +103,10 @@ function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged:
       const inv = live.find((i) => ['issued', 'paid'].includes(i.status)) ?? live[0];
       if (!inv) { toast('No invoice to cancel — generate one first.', true); return; }
       if (inv.status === 'draft') {
-        if (!window.confirm('Delete the draft invoice?')) return;
+        if (!await askConfirm('Delete the draft invoice?')) return;
         await api.del(`/invoices/${inv.id}`); toast('Draft invoice deleted.'); opts.onChanged(); return;
       }
-      const reason = window.prompt('Reason for cancelling this GST invoice?') ?? '';
+      const reason = await askText('Reason for cancelling this GST invoice?') ?? '';
       await api.post(`/invoices/${inv.id}/cancel`, { reason }); toast('Invoice cancelled (voided).'); opts.onChanged();
     } catch (e: any) { toast(e.message, true); }
   };
@@ -197,7 +198,7 @@ export function PaymentPlansScreen() {
   const { openBulk, bulkModal } = useBulkDelete('Payment plan', '/payment-plans/bulk-delete/impact', '/payment-plans/bulk-delete', () => { after(); clear(); }, 'ids');
 
   const del = async (r: any) => {
-    if (!confirm(`Delete the payment plan for ${r.enrolment_no}? (Only plans with no payments applied.)`)) return;
+    if (!await askConfirm(`Delete the payment plan for ${r.enrolment_no}? (Only plans with no payments applied.)`)) return;
     try { await api.del(`/payment-plans/${r.id}`); toast('Plan deleted'); after(); } catch (e) { toast((e as Error).message, true); }
   };
 

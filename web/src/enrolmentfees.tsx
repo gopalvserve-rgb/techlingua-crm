@@ -31,6 +31,7 @@ import { fmtDateTimeIST } from './daterange';
 import { CollectModal } from './sprint5';
 import { FeeConfigFields, ViewEnrolmentModal, feePlanBody, useFeeConfig } from './dyn';
 import { PlanDetailModal } from './paymentplans';
+import { askText } from './askdialog';
 
 const dmy = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const MODE: Record<string, string> = { cash: 'Cash', upi: 'UPI', card: 'Card', cheque: 'Cheque', bank_transfer: 'Bank transfer', neft: 'NEFT', online: 'Online' };
@@ -301,7 +302,7 @@ export function FeeLedgerModal({ enrolment: e, onClose, onChanged }: { enrolment
     try {
       if (approve) await api.post(`/fees/receipts/${r.id}/reverse/approve`, {});
       else {
-        const remarks = window.prompt('Why is this reversal rejected?') ?? '';
+        const remarks = await askText('Why is this reversal rejected?') ?? '';
         if (!remarks.trim()) return;
         await api.post(`/fees/receipts/${r.id}/reverse/reject`, { remarks });
       }

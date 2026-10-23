@@ -266,7 +266,7 @@ describe('Facebook Form Mapping', () => {
     expect(confirmSpy).toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByLabelText('Close'));
-    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());   // the confirm is async now (in-app dialog)
   });
 
   it('read-only (channel.read): dropdowns are disabled and there is no Save / Auto-map / switch', async () => {

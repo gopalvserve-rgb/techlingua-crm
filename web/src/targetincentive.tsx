@@ -9,7 +9,7 @@
  *   · Incentive Plans — the master: editable achievement SLABS that compute an
  *                     earned incentive for a given achievement %.
  */
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -19,6 +19,7 @@ import { fmtINR, minorToInput } from './money';
 import { rowActions, DetailModal, KV } from './rowactions';
 import { useDelete } from './deletemodal';
 import { BulkBar, useBulkDelete, useTableSelect } from './listtools';
+import { askConfirm } from './askdialog';
 
 type Named = { id: number | string; name: string; status?: string };
 
@@ -74,7 +75,7 @@ function Targets() {
   const rows = data ?? [];
 
   const del = async (t: any) => {
-    if (!confirm(`Delete the target "${t.name}"?`)) return;
+    if (!await askConfirm(`Delete the target "${t.name}"?`)) return;
     try { await api.del(`/performance/target-defs/${t.id}`); toast('Target deleted'); reload(); }
     catch (e) { toast((e as Error).message); }
   };
@@ -138,7 +139,7 @@ function TargetDashboardModal({ target, onClose }: { target: any; onClose: () =>
       <div className="add-modal" style={{ maxWidth: 820 }}>
         <div className="ah"><h3><Ic k="perf" />{d.name} — progress</h3><button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button></div>
         <div className="abody">
-          <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
+          <div className="kpi-strip" style={{ ['--cols' as string]: 3 } as CSSProperties}>
             {cards.map(([lab, act, tgt, pct, ic]) => (
               <div className="card kpi" key={lab}>
                 <div className={`ic ${pct >= 100 ? 'green' : pct >= 50 ? 'indigo' : 'amber'}`}><Ic k={ic} /></div>
@@ -345,7 +346,7 @@ function IncentivePlans() {
   const rows = data ?? [];
 
   const del = async (p: any) => {
-    if (!confirm(`Delete the incentive plan "${p.name}"?`)) return;
+    if (!await askConfirm(`Delete the incentive plan "${p.name}"?`)) return;
     try { await api.del(`/performance/incentive-plans/${p.id}`); toast('Plan deleted'); reload(); }
     catch (e) { toast((e as Error).message); }
   };

@@ -29,6 +29,7 @@ import { RowMenu, RowMenuItem } from './rowactions';
 import { EnrolLevelPicker, FeeConfigFields, FilterMulti, LevelSelection, feePlanBody, useFeeConfig } from './dyn';
 import { EnrolmentActions, FeeCards, PAYMENT_STATUSES, ReversePaymentModal, enrolmentCells, enrolmentColumns } from './enrolmentfees';
 import { useScope } from './scope';
+import { askConfirm, askText } from './askdialog';
 
 /* ==================================================================== */
 /*  shared bits                                                          */
@@ -102,7 +103,7 @@ export function receiptActionItems(r: any, opts: {
     try {
       if (approve) await api.post(`/fees/receipts/${r.id}/reverse/approve`, {});
       else {
-        const remarks = window.prompt('Why is this reversal rejected?') ?? '';
+        const remarks = await askText('Why is this reversal rejected?') ?? '';
         if (!remarks.trim()) return;
         await api.post(`/fees/receipts/${r.id}/reverse/reject`, { remarks });
       }
@@ -145,7 +146,7 @@ export function receiptActionItems(r: any, opts: {
     catch (e: any) { toast(e.message, true); }
   };
   const rejectRec = async () => {
-    const remarks = window.prompt('Reason for sending this receipt back?') ?? '';
+    const remarks = await askText('Reason for sending this receipt back?') ?? '';
     if (!remarks.trim()) return;
     try { await api.post(`/fees/receipts/${r.id}/reject`, { remarks }); toast('Receipt sent back.'); opts.onChanged?.(); }
     catch (e: any) { toast(e.message, true); }
@@ -153,12 +154,12 @@ export function receiptActionItems(r: any, opts: {
   const cancelInvoice = async () => {
     if (!r.invoice_id) { toast('No invoice yet — generate one first.', true); return; }
     if (r.invoice_status === 'draft') {
-      if (!window.confirm('Delete the draft invoice?')) return;
+      if (!await askConfirm('Delete the draft invoice?')) return;
       try { await api.del(`/invoices/${r.invoice_id}`); toast('Draft invoice deleted.'); opts.onChanged?.(); }
       catch (e: any) { toast(e.message, true); }
       return;
     }
-    const reason = window.prompt('Reason for cancelling this GST invoice?') ?? '';
+    const reason = await askText('Reason for cancelling this GST invoice?') ?? '';
     try { await api.post(`/invoices/${r.invoice_id}/cancel`, { reason }); toast('Invoice cancelled (voided).'); opts.onChanged?.(); }
     catch (e: any) { toast(e.message, true); }
   };
@@ -671,7 +672,7 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
         </div>
         <div className="abody">
-          <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+          <div className="kpi-strip">
             {([['Status', ''], ['Lead', q.lead_name], ['Valid until', dt(q.valid_until)], ['Total', fmtINR(q.total_minor)]] as Array<[string, string]>)
               .map(([lab, val], i) => (
                 <div className="card kpi" key={lab}>
@@ -1416,7 +1417,7 @@ export function MonthlyTargets() {
   const rows = data ?? [];
 
   const del = async (t: any) => {
-    if (!confirm(`Delete the ${period} target for ${t.label}?`)) return;
+    if (!await askConfirm(`Delete the ${period} target for ${t.label}?`)) return;
     try { await api.del(`/performance/targets/${t.id}`); toast('Target deleted'); reload(); }
     catch (e) { toast((e as Error).message); }
   };

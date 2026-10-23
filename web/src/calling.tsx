@@ -221,7 +221,7 @@ export default function StartCalling() {
 
   return (
     <>
-      <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+      <div className="kpi-strip">
         <div className="card kpi">
           <div className="ic indigo"><Ic k="leads" /></div>
           <div className="lab">Leads waiting in the pool</div>

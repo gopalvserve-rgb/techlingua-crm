@@ -16,6 +16,7 @@ import { api } from './api';
 import { Ic } from './icons';
 import { toast } from './refdata';
 import type { Channel } from './channels';
+import { askConfirm } from './askdialog';
 
 export interface FbPage {
   page_id: string; page_name: string; business_name?: string | null; monitored: boolean; subscribed: boolean | null;
@@ -104,8 +105,8 @@ export function FbPagesModal({ channel, canManage, onClose, onConnect, onChanged
     () => api.post<FbPagesResp>(`/channels/${channel.id}/fb/pages/${p.page_id}/${p.monitored ? 'unsubscribe' : 'subscribe'}`, {}),
     p.monitored ? `Stopped monitoring "${p.page_name}"` : `Now monitoring "${p.page_name}"`);
   const refresh = () => run('refresh', () => api.post<FbPagesResp>(`/channels/${channel.id}/fb/pages/refresh`, {}), 'Status refreshed from Facebook');
-  const disconnect = () => {
-    if (!confirm(`Disconnect Facebook from “${channel.name}”?\n\nEvery Page is unsubscribed and every Page token is deleted — no more Meta leads arrive on this channel until you Connect Page again. Your form mappings are kept.`)) return;
+  const disconnect = async () => {
+    if (!await askConfirm(`Disconnect Facebook from “${channel.name}”?\n\nEvery Page is unsubscribed and every Page token is deleted — no more Meta leads arrive on this channel until you Connect Page again. Your form mappings are kept.`)) return;
     void run('disconnect', () => api.post(`/channels/${channel.id}/fb/disconnect`, {}), 'Facebook disconnected');
   };
 
@@ -263,8 +264,8 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
   };
   useEffect(() => { setFormId(''); setMapping(null); loadForms(pageId); }, [pageId]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openForm = (fid: string) => {
-    if (dirty && !confirm('You have unsaved mapping changes. Discard them?')) return;
+  const openForm = async (fid: string) => {
+    if (dirty && !await askConfirm('You have unsaved mapping changes. Discard them?')) return;
     setFormId(fid); setMapping(null); setDirty(false);
     if (!fid) return;
     api.get<FbMappingResp>(`/channels/${channel.id}/fb/forms/${fid}/mapping?page_id=${encodeURIComponent(pageId)}`)
@@ -276,8 +277,8 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
       .catch((e) => toast((e as Error).message, true));
   };
 
-  const close = () => {
-    if (dirty && !confirm('You have unsaved mapping changes. Close anyway?')) return;
+  const close = async () => {
+    if (dirty && !await askConfirm('You have unsaved mapping changes. Close anyway?')) return;
     onClose();
   };
 

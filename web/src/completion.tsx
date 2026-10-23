@@ -20,6 +20,7 @@ import { toast, useFetch, useRef_ } from './refdata';
 import { ConfirmModal, DetailModal } from './rowactions';
 import { DateRange } from './daterange';
 import { fmtINR } from './money';
+import { askConfirm, askText } from './askdialog';
 
 const dmy = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
@@ -254,7 +255,7 @@ export function Scholarships() {
   const rows: any[] = list.data?.rows ?? [];
   const sm = list.data?.summary ?? {};
   const removeRow = async (r: any) => {
-    if (!window.confirm(`Delete the ${r.status} scholarship request for ${r.enrolment_no}?`)) return;
+    if (!await askConfirm(`Delete the ${r.status} scholarship request for ${r.enrolment_no}?`)) return;
     try { await api.del(`/scholarships/${r.id}`); toast('Scholarship request deleted'); after(); } catch (e) { toast((e as Error).message, true); }
   };
   return (
@@ -387,7 +388,7 @@ export function SharedDocs() {
     } catch (e) { toast((e as Error).message, true); }
   };
   const newFolder = async () => {
-    const name = window.prompt('Folder name');
+    const name = await askText('Folder name');
     if (!name?.trim()) return;
     try { await api.post('/shared-docs/folders', { name }); toast('Folder created'); after(); } catch (e) { toast((e as Error).message, true); }
   };

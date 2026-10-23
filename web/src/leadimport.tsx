@@ -457,7 +457,7 @@ export default function LeadImport() {
       {/* ---------------------------- 4. preview ---------------------------- */}
       {step === 3 && preview && (
         <>
-          <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+          <div className="kpi-strip">
             {([
               ['Rows in file', preview.total, 'list', 'indigo'],
               ['Will be created', preview.valid, 'check', 'green'],
@@ -510,7 +510,7 @@ export default function LeadImport() {
       {/* ----------------------------- 5. result ---------------------------- */}
       {step === 4 && batch && (
         <>
-          <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+          <div className="kpi-strip">
             {([
               ['Created', batch.created_count, 'check', 'green'],
               ['Duplicates', batch.duplicate_count, 'refresh', 'amber'],

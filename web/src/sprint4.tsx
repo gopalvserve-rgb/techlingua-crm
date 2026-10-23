@@ -17,6 +17,7 @@ import { toast, useFetch, useRef_ } from './refdata';
 import { ApprovalPolicyCard, NumberingCard } from './sprint5';
 import { ensureFbSdk, launchEmbeddedSignup } from './whatsappsignup';
 import { UserPicker } from './userpicker';
+import { askConfirm } from './askdialog';
 
 /* ============================== types =============================== */
 
@@ -385,7 +386,7 @@ export function Templates() {
   const rows = data ?? [];
 
   const del = async (t: Template) => {
-    if (!confirm(`Delete the template "${t.name}"?`)) return;
+    if (!await askConfirm(`Delete the template "${t.name}"?`)) return;
     await api.del(`/templates/${t.id}`);
     toast('Template deleted'); reload();
   };
@@ -726,7 +727,7 @@ export function Journeys() {
     reload();
   };
   const del = async (j: Journey) => {
-    if (!confirm(`Delete the journey "${j.name}"?`)) return;
+    if (!await askConfirm(`Delete the journey "${j.name}"?`)) return;
     await api.del(`/journeys/${j.id}`);
     toast('Journey deleted'); reload();
   };
@@ -1900,7 +1901,7 @@ export function SmsTemplates() {
   const rows = data ?? [];
 
   const del = async (t: SmsTemplateRow) => {
-    if (!confirm(`Delete the SMS template "${t.name}"?`)) return;
+    if (!await askConfirm(`Delete the SMS template "${t.name}"?`)) return;
     await api.del(`/sms-templates/${t.id}`);
     toast('SMS template deleted'); reload();
   };
