@@ -106,10 +106,9 @@ export class JourneyWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * FEE DUE. Phase-1 has no invoice table (Sprint 5 / Phase 3 brings it), so the due date
-   * is read from the lead's custom fields — `custom_fields.fee_due_date`, which the client
-   * can already populate today via a Custom Field. When invoices land, this ONE query
-   * changes and every fee-due journey the client has built keeps working unchanged.
+   * FEE DUE. Fires for a lead whose enrolment has an UNPAID payment-plan installment due on
+   * the target date (the real schedule — Finance › Payment Plans), and, for back-compat, for a
+   * lead whose `custom_fields.fee_due_date` falls on it.
    */
   async sweepFeeDue(): Promise<number> {
     const journeys = await this.db.query<any>(
@@ -120,13 +119,24 @@ export class JourneyWorker implements OnModuleInit, OnModuleDestroy {
     for (const j of journeys) {
       const before = Math.max(0, Number(j.trigger_config?.days_before ?? 3));
       const leads = await this.db.query<{ id: string; due: string }>(
-        `SELECT l.id, (l.custom_fields->>'fee_due_date') AS due
-           FROM lead l
-          WHERE l.deleted_at IS NULL AND l.is_active
-            AND l.custom_fields ? 'fee_due_date'
-            AND (l.custom_fields->>'fee_due_date') ~ '^\\d{4}-\\d{2}-\\d{2}'
-            AND (l.custom_fields->>'fee_due_date')::date = (current_date + ($1 || ' days')::interval)::date
-          ORDER BY l.id LIMIT $2`,
+        `SELECT DISTINCT ON (x.id) x.id, x.due FROM (
+           SELECT l.id, to_char(i.due_date, 'YYYY-MM-DD') AS due
+             FROM installment i
+             JOIN payment_plan pp ON pp.id = i.plan_id AND pp.deleted_at IS NULL AND pp.status = 'active'
+             JOIN enrolment e ON e.id = pp.enrolment_id AND e.deleted_at IS NULL AND e.status = 'active'
+             LEFT JOIN student s ON s.id = e.student_profile_id
+             JOIN lead l ON l.id = COALESCE(e.lead_id, s.lead_id)
+            WHERE l.deleted_at IS NULL AND l.is_active
+              AND i.amount_minor > i.paid_minor
+              AND i.due_date = (current_date + ($1 || ' days')::interval)::date
+           UNION
+           SELECT l.id, (l.custom_fields->>'fee_due_date') AS due
+             FROM lead l
+            WHERE l.deleted_at IS NULL AND l.is_active
+              AND l.custom_fields ? 'fee_due_date'
+              AND (l.custom_fields->>'fee_due_date') ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND (l.custom_fields->>'fee_due_date')::date = (current_date + ($1 || ' days')::interval)::date
+         ) x ORDER BY x.id LIMIT $2`,
         [String(before), JourneyWorker.BATCH],
       );
       for (const l of leads) {

@@ -102,7 +102,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
   },
   {
     key: 'numbering_series', label: 'Numbering series', icon: 'doc', editor: 'numbering',
-    blurb: 'Prefix and next number for quotations, enrolments and fee receipts (and invoices, which Phase 3 uses). '
+    blurb: 'Prefix and next number for quotations, enrolments, fee receipts and invoices. '
       + 'A branch or vertical series overrides the org-wide one — most specific wins, the same rule the SLA policies use.',
   },
   {

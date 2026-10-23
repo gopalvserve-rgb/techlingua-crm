@@ -21,6 +21,7 @@ import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch } from './refdata';
 import { deviceSyncNow, deviceSyncWindow } from './callsync';
+import { AddModal } from './forms';
 
 const dttime = (v: unknown) => v
   ? new Date(String(v)).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -135,10 +136,17 @@ function useCalls(query: string) {
 
 /* ------------------------------------------------------------------ Call Logs */
 
-export default function CallLogs() {
+/** Calls › Incoming / Outgoing / Missed (client, Oct 2026 — were design-reference placeholders):
+ *  the same live call log, locked to one direction. */
+export function CallLogsIncoming() { return <CallLogs lockDir="in" />; }
+export function CallLogsOutgoing() { return <CallLogs lockDir="out" />; }
+export function CallLogsMissed() { return <CallLogs lockDir="missed" />; }
+
+export default function CallLogs({ lockDir }: { lockDir?: 'in' | 'out' | 'missed' } = {}) {
   const { can } = useAuth();
   const [q, setQ] = useState('');
-  const [dir, setDir] = useState('');
+  const [dir, setDir] = useState<string>(lockDir ?? '');
+  const [addLead, setAddLead] = useState<string | null>(null);   // a missed call's number → new lead
   const [hasRec, setHasRec] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -169,7 +177,15 @@ export default function CallLogs() {
     r.disposition_name ? { b: [r.disposition_name, 'b-indigo'] } : ('—' as Cell),
     srcBadge(r.src),
     r.recording_id ? { node: <RecordingPlayer id={r.recording_id} /> } : ('—' as Cell),
-    { node: can('calls.act') ? <button className="btn-mini" onClick={() => setDisp(r.id)}><Ic k="pencil" /> Disposition</button> : <>—</> },
+    { node: (
+      <span style={{ display: 'inline-flex', gap: 4 }}>
+        {can('calls.act') ? <button className="btn-mini" onClick={() => setDisp(r.id)}><Ic k="pencil" /> Disposition</button> : null}
+        {/* a missed call from an unknown number → a lead in one click (missed-call campaigns) */}
+        {!r.lead_id && r.direction === 'missed' && can('lead.create')
+          ? <button className="btn-mini" onClick={() => setAddLead(String(r.phone_raw || r.phone_number || '').replace(/^\+?91/, '').replace(/\D/g, '').slice(-10))} data-testid={`missed-addlead-${r.id}`}><Ic k="plus" /> Add as lead</button>
+          : null}
+        {!can('calls.act') && !(r.direction === 'missed' && !r.lead_id) ? '—' : null}
+      </span>) },
   ]);
 
   return (
@@ -177,10 +193,12 @@ export default function CallLogs() {
       <div className="card toolbar-surface">
         <div className="filter-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <input className="inp" placeholder="Search name / phone" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 180 }} />
-          <select className="inp" value={dir} onChange={(e) => setDir(e.target.value)}>
-            <option value="">All directions</option>
-            <option value="in">Incoming</option><option value="out">Outgoing</option><option value="missed">Missed</option>
-          </select>
+          {!lockDir && (
+            <select className="inp" value={dir} onChange={(e) => setDir(e.target.value)}>
+              <option value="">All directions</option>
+              <option value="in">Incoming</option><option value="out">Outgoing</option><option value="missed">Missed</option>
+            </select>
+          )}
           <label className="chk" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
             <input type="checkbox" checked={hasRec} onChange={(e) => setHasRec(e.target.checked)} /> With recording
           </label>
@@ -195,10 +213,89 @@ export default function CallLogs() {
         { lab: 'Avg duration', val: fmtDur(s?.avg_duration ?? 0), ic: 'clock' },
         { lab: 'Recordings', val: String(s?.recordings ?? 0), ic: 'calls' },
       ]} />
-      <TableCard title={loading ? 'Call logs — loading…' : `Call logs (${rows.length})`} icon="calls"
-        cols={cols} rows={body} fill listKey="callLogs"
-        empty="No calls yet. Calls sync automatically from the mobile app's call log." />
+      <TableCard title={`${lockDir === 'in' ? 'Incoming calls' : lockDir === 'out' ? 'Outgoing calls' : lockDir === 'missed' ? 'Missed calls' : 'Call logs'}${loading ? ' — loading…' : ` (${rows.length})`}`} icon="calls"
+        cols={cols} rows={body} fill listKey={lockDir ? `callLogs-${lockDir}` : 'callLogs'}
+        empty={lockDir === 'missed'
+          ? 'No missed calls yet. They sync automatically from the mobile app\'s call log — an unknown number can be added as a lead in one click.'
+          : 'No calls yet. Calls sync automatically from the mobile app\'s call log.'} />
       {disp != null && <DispositionModal callId={disp} onClose={() => setDisp(null)} onDone={reload} />}
+      {addLead != null && <AddModal formKey="leads.all" prefill={{ 'Mobile Number': addLead, 'Name': `Missed call ${addLead}` }}
+        onClose={() => setAddLead(null)} onSaved={() => { setAddLead(null); reload(); }} />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ Dialer */
+
+/**
+ * DIALER / CLICK-TO-CALL (client, Oct 2026 — was a design-reference placeholder). Find a lead (or
+ * type any number) and press Call: the dial is recorded against the lead (POST /calls/dial — the
+ * same tap-to-dial the lead sheet uses) and the phone's dialer opens. The call's real outcome,
+ * duration and recording arrive with the next call-log sync from the mobile app.
+ */
+export function Dialer() {
+  const { can } = useAuth();
+  const [q, setQ] = useState('');
+  const [num, setNum] = useState('');
+  const [busy, setBusy] = useState(false);
+  const leads = useFetch<any>(q.trim().length >= 2 ? `/leads?q=${encodeURIComponent(q.trim())}&limit=10` : null, [q]);
+  const rows: any[] = Array.isArray(leads.data) ? leads.data : (leads.data?.rows ?? []);
+  const recent = useCalls('?limit=10');
+  const dial = async (phone: string, leadId?: number) => {
+    const p = String(phone ?? '').trim();
+    if (!p) { toast('Enter a number to call', true); return; }
+    setBusy(true);
+    try {
+      const r = await api.post<{ tel: string }>('/calls/dial', { phone: p, ...(leadId ? { lead_id: leadId } : {}) });
+      toast('Call recorded — opening the phone dialer');
+      window.location.href = r?.tel || `tel:${p}`;
+      recent.reload();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+  const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '0', '⌫'];
+  return (
+    <div className="split2">
+      <div className="card">
+        <div className="card-head"><h3><Ic k="phone" /> Dial a number</h3></div>
+        <div className="card-pad">
+          <input className="inp" value={num} onChange={(e) => setNum(e.target.value.replace(/[^\d+]/g, ''))} placeholder="Phone number"
+            style={{ width: '100%', fontSize: 22, textAlign: 'center', letterSpacing: 1 }} data-testid="dialer-number" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, margin: '12px 0' }}>
+            {KEYS.map((k) => (
+              <button key={k} className="btn" style={{ fontSize: 18, padding: '12px 0' }}
+                onClick={() => setNum((n) => (k === '⌫' ? n.slice(0, -1) : n + k))}>{k}</button>
+            ))}
+          </div>
+          <button className="btn primary" style={{ width: '100%' }} disabled={busy || !num || !can('calls.act')} onClick={() => void dial(num)} data-testid="dialer-call">
+            <Ic k="phone" /> Call
+          </button>
+          <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>Opens the phone's dialer (best from the mobile app). The outcome, duration and recording sync in automatically from the phone's call log.</p>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-head"><h3><Ic k="leads" /> Click-to-call a lead</h3></div>
+        <div className="card-pad">
+          <input className="inp" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search lead name / phone" style={{ width: '100%' }} data-testid="dialer-search" />
+          <div style={{ marginTop: 8 }}>
+            {q.trim().length < 2 ? <div className="empty-note">Type at least 2 characters.</div>
+              : !rows.length ? <div className="empty-note">{leads.loading ? 'Searching…' : 'No matching lead.'}</div>
+              : rows.map((l) => (
+                <div key={l.id} className="lrow" style={{ alignItems: 'center' }}>
+                  <div className="gr"><div className="t1">{l.full_name}</div><div className="t2 mono">{l.phone}{l.source_name ? ` · ${l.source_name}` : ''}</div></div>
+                  {can('calls.act') && <button className="btn sm" disabled={busy} onClick={() => void dial(l.phone, Number(l.id))}><Ic k="phone" /> Call</button>}
+                </div>
+              ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ gridColumn: '1 / -1' }}>
+        <TableCard title="Recent calls" icon="calls" cols={['Time', 'Lead / Contact', 'Phone', 'Direction', 'Duration', 'Call back']}
+          rows={(recent.data?.rows ?? []).map((r): Cell[] => [
+            dttime(r.call_start_at || r.created_at), r.lead_name || '—', { mono: r.phone_raw || r.phone_number || '—' },
+            dirBadge(r.direction), fmtDur(r.duration_s),
+            { node: can('calls.act') ? <button className="btn-mini" onClick={() => void dial(r.phone_raw || r.phone_number, r.lead_id ?? undefined)}><Ic k="phone" /> Call</button> : <>—</> },
+          ])} empty="No calls yet." />
+      </div>
     </div>
   );
 }

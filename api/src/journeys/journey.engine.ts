@@ -17,7 +17,7 @@ export const TRIGGERS: Array<{ key: TriggerType; label: string; blurb: string; c
   { key: 'lead_created', label: 'New lead', blurb: 'The moment a lead is created — from ANY channel (Meta, Google, the website form, a Sheet, a CSV import, a walk-in, a referral or a manual Add).', config: [] },
   { key: 'stage_changed', label: 'Stage change', blurb: 'A lead moves into one of the stages you pick.', config: ['stage_ids'] },
   { key: 'no_response', label: 'No response for N days', blurb: 'An open lead with no activity for N days. Swept — nobody has to touch the lead.', config: ['days'] },
-  { key: 'fee_due', label: 'Fee due', blurb: 'N days before the fee due date recorded on the lead. (Reads the invoice in Phase 3.)', config: ['days_before'] },
+  { key: 'fee_due', label: 'Fee due', blurb: 'N days before an unpaid payment-plan installment falls due (or the fee due date recorded on the lead).', config: ['days_before'] },
   { key: 'birthday', label: 'Birthday', blurb: "The lead's date of birth, each year.", config: ['days_before'] },
 ];
 

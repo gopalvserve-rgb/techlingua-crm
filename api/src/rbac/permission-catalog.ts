@@ -197,4 +197,11 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   { module: 'franchise_portal', label: 'Partner Portal (franchise owner)', actions: ['read'] },
   { module: 'franchise_target', label: 'Franchise Targets & Performance', actions: ['read', 'manage'] },
   { module: 'franchise_compliance', label: 'Franchise Compliance & Audits', actions: ['read', 'manage'] },
+  // Module completion (migration 125, Oct 2026) — the screens that were placeholders.
+  // scholarship.request = a counsellor asks; scholarship.approve = a manager decides (the
+  // enrolment's net fee drops by the approved amount). shared_doc.* = the document library.
+  // payroll.* = salary structures, payroll runs and payslips (HR).
+  { module: 'scholarship', label: 'Scholarships (request / approve)', actions: ['read', 'request', 'approve', 'delete'] },
+  { module: 'shared_doc', label: 'Shared Documents', actions: ['read', 'upload', 'delete'] },
+  { module: 'payroll', label: 'Salary / Payroll', actions: ['read', 'manage'] },
 ];

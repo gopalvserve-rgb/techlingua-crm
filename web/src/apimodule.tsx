@@ -11,6 +11,7 @@
  * /api/public-api/* endpoints; create-lead there flows through the same
  * ingestion pipeline as every capture channel.
  */
+import { dedupeSources } from './forms';
 import { useMemo, useState } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
@@ -63,7 +64,8 @@ function GenerateModal({ onClose, onGenerated }: { onClose: () => void; onGenera
   const [source, setSource] = useState<number | undefined>();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const sources = ref.sources.filter((s) => !campaign || Number(s.campaign_id) === campaign);
+  // the campaign's sources + org-wide ones (Oct 2026) — the server gives the campaign its own copy
+  const sources = dedupeSources(ref.sources.filter((s: any) => !campaign || s.campaign_id == null || Number(s.campaign_id) === campaign));
 
   const save = async () => {
     setErr(''); setBusy(true);

@@ -82,6 +82,40 @@ export const CASCADE: Array<{ src: NonNullable<FormField['src']>; parent: string
   { src: 'cities', parent: 'State', fk: 'parent_id' },
 ];
 
+/** A campaign's sources + the org-wide ones, without listing the same source twice: an org-wide
+ *  source whose campaign copy already exists (same master source, or same name) is dropped. */
+export function dedupeSources<T extends { name: string }>(list: T[]): T[] {
+  const own = list.filter((s: any) => s.campaign_id != null);
+  return list.filter((s: any) => s.campaign_id != null || !own.some((o: any) =>
+    (s.master_source_id != null && Number(o.master_source_id) === Number(s.master_source_id))
+    || String(o.name).trim().toLowerCase() === String(s.name).trim().toLowerCase()));
+}
+
+/** Campaign form "Lead Source" options: one entry per source of the Lead Source Master (by its
+ *  canonical master id), plus anything already picked (e.g. just quick-added). */
+export function campaignSourceOptions(ref: { sources: any[]; masterSources?: any[] }, picked: number[] = []): Array<{ id: number; name: string }> {
+  const byId = new Map<number, string>();
+  for (const s of ref.sources ?? []) {
+    const mid = Number(s.master_source_id);
+    if (mid > 0 && !byId.has(mid)) byId.set(mid, String(s.master_source_name ?? s.name));
+  }
+  // legacy data whose sources carry no canonical link yet: offer the whole catalogue
+  if (!byId.size) for (const m of ref.masterSources ?? []) byId.set(Number(m.id), String(m.name));
+  for (const id of picked) {
+    if (!byId.has(Number(id))) {
+      const m = (ref.masterSources ?? []).find((x: any) => Number(x.id) === Number(id));
+      if (m) byId.set(Number(id), String(m.name));
+    }
+  }
+  return [...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** A source's name in a list that spans campaigns — "JustDial · BCL JD" / "JustDial (all campaigns)". */
+export function sourceLabel(s: any): string {
+  if (s?.campaign_id == null) return `${s?.name ?? ''} (all campaigns)`;
+  return s?.campaign_name ? `${s.name} · ${s.campaign_name}` : String(s?.name ?? '');
+}
+
 /* ──────────────────  MULTI-BRANCH USER ACCESS  ────────────────
  * A user may be granted access to SEVERAL branches (and, optionally, specific
  * verticals) at creation/edit. The `/users` API already accepts an `assignments[]`
@@ -1258,10 +1292,12 @@ export function cfToFormField(d: CfDef): FormField {
   };
 }
 
-export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
+export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit, prefill }: {
   formKey: string; onClose: () => void; onSaved?: () => void;
   /** Fires with the created row (when the saver returns one) so the opener can auto-select it. */
   onSavedRow?: (row: Named) => void; edit?: EditSpec;
+  /** ADD-mode starting values by field label (e.g. a missed call's number → "Mobile Number"). */
+  prefill?: Vals;
 }) {
   const ref = useRef_();
   const { can, me } = useAuth();
@@ -1273,7 +1309,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     if (edit?.initialVals) return edit.initialVals;
     const seed: Vals = {};
     for (const f of SPEC_FORMS[formKey]?.fields ?? []) if (f.def !== undefined) seed[f.label] = f.def;
-    return seed;
+    return { ...seed, ...(prefill ?? {}) };
   });
   const [ids, setIds] = useState<Ids>(edit?.initialIds ?? {});
   const [masterAdd, setMasterAdd] = useState<{ type: string; field: string } | null>(null);
@@ -1341,6 +1377,12 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
 
   const srcOptions = (f: FormField): Named[] => {
     let list: Named[] = (ref as any)[f.src!] ?? [];
+    // "How did you hear about us?" lists the LEAD SOURCE MASTER's sources (Oct 2026) — the raw
+    // catalogue carried seeded / test / duplicate names, so it read as a static list
+    if (f.src === 'masterSources') {
+      const cur = ids[f.label] != null ? [Number(ids[f.label])] : [];
+      list = campaignSourceOptions(ref as any, cur) as unknown as Named[];
+    }
     // DEF-1: never offer a deactivated user — but keep the one already selected (edit/prefill).
     if (f.src === 'users') list = selectableUsers(list, ids[f.label] ?? null);
     // Role-restricted user picker (e.g. batch Trainer/Faculty → Trainer role only). The scoped
@@ -1362,8 +1404,11 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
     for (const cc of CASCADE) {
       if (f.src !== cc.src) continue;
       const pid = ids[cc.parent];
-      if (pid != null) list = list.filter((o) => Number((o as any)[cc.fk]) === Number(pid));
+      // An ORG-WIDE Lead Source (no campaign) is offered under EVERY campaign — the server
+      // gives the campaign its own copy on save (Oct 2026, "lead source not showing").
+      if (pid != null) list = list.filter((o) => Number((o as any)[cc.fk]) === Number(pid) || (cc.src === 'sources' && (o as any).campaign_id == null));
       else if (cc.strict && cascadeParent(cc.parent)) list = [];
+      if (cc.src === 'sources' && pid != null) list = dedupeSources(list);
     }
     // UAT-R2 #16 — a Course belongs to ONE Branch → ONE Vertical (update #7 stored
     // meta.branch_id / meta.vertical_id). On any form that carries a Branch and/or Vertical
@@ -1421,7 +1466,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
 
   const save = async () => {
     if (!wired) {
-      toast("This form's design is final; its data entry activates with the module backend in a later project phase — nothing was saved.");
+      toast('Use the Add button on this screen itself to create the record — nothing was saved here.', true);
       onClose();
       return;
     }
@@ -1733,7 +1778,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit }: {
         <div className="abody">
           {!wired && (
             <div className="notice"><Ic k="bolt" />
-              <div><b>Design-final form.</b> This module's data entry activates with its backend in a later project phase — the fields are final; nothing is saved yet.</div>
+              <div>Create this record with the Add button on the screen itself — this shortcut form does not save.</div>
             </div>
           )}
           <div className="form-grid">
@@ -2086,7 +2131,9 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
               </select></div>
             <div className="fld" data-testid="campaign-sources"><label>Lead Source<span className="fhint">multi-select · needed to connect an integration</span>
               <MasterQuickAdd type="source" onAdded={(row) => setSrcIds((x) => (x.includes(Number(row.id)) ? x : [...x, Number(row.id)]))} /></label>
-              <UserPicker options={(ref.masterSources ?? []).map((m) => ({ id: Number(m.id), name: m.name }))} value={srcIds} hideBranch
+              {/* the sources of the LEAD SOURCE MASTER (Oct 2026) — not the whole raw catalogue, which
+                  carried seeded / test / duplicate names the client never created */}
+              <UserPicker options={campaignSourceOptions(ref, srcIds)} value={srcIds} hideBranch
                 placeholder="Select lead source(s)…"
                 // add-only on edit: a source already under this campaign carries leads, so it stays ticked
                 onChange={(arr) => setSrcIds([...new Set([...attachedSources.map((s) => Number((s as any).master_source_id)).filter((n) => n > 0), ...arr])])} />

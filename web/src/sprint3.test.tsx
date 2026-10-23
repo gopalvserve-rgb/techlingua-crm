@@ -135,7 +135,8 @@ describe('Lead Scoring — the rules are DATA the admin edits', () => {
 
     // the default type (source_channel) declares ONE config field -> name, type, points, channels, status
     expect(modal().querySelectorAll('.fld').length).toBe(5);
-    expect(fld('channels')).toBeTruthy();
+    // a channel PICKER (checkboxes), not a typed list (client, Oct 2026)
+    expect(screen.getByTestId('cfg-channels')).toBeTruthy();
     // a type with NO config fields shrinks the form back — the inputs are GENERATED, not hard-coded
     fireEvent.change(fld('Rule Type'), { target: { value: 'walk_in' } });
     expect(modal().querySelectorAll('.fld').length).toBe(4);
@@ -146,7 +147,9 @@ describe('Lead Scoring — the rules are DATA the admin edits', () => {
 
     fireEvent.change(fld('Rule Name'), { target: { value: 'Paid social (Meta)' } });
     fireEvent.change(fld('Points'), { target: { value: '10' } });
-    fireEvent.change(fld('channels'), { target: { value: 'meta, google' } });
+    const chans = screen.getByTestId('cfg-channels');
+    const tick = (label: RegExp) => fireEvent.click([...chans.querySelectorAll('label')].find((l) => label.test(l.textContent ?? ''))!.querySelector('input')!);
+    tick(/^Meta/); tick(/^Google$/);
     primary();
 
     await waitFor(() => expect(post).toHaveBeenCalled());

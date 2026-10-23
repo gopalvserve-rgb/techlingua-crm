@@ -50,6 +50,17 @@ export interface QueueMessage {
   guarded?: boolean;
 }
 
+/** One inbound WhatsApp message, as handed to the bots. */
+export interface InboundWhatsApp {
+  phone: string;               // last 10 digits
+  text: string;
+  name: string | null;
+  lead_id: number | null;
+  lead_name: string | null;
+  /** nothing was ever exchanged with this number before this message */
+  first_message: boolean;
+}
+
 export interface GuardrailPolicy {
   respect_business_hours: boolean;
   max_sends_per_lead_per_day: number;
@@ -597,6 +608,71 @@ export class MessagingService {
       lead_id: lead?.id ?? null, branch_id: lead?.branch_id ?? null, vertical_id: lead?.vertical_id ?? null,
     } as QueueMessage);
     return { ok: r.status !== 'failed', ...r };
+  }
+
+  // ------------------------------------------------------- INBOUND WHATSAPP (Oct 2026)
+  /** Handlers (WhatsBot / AI Bot) told about every inbound WhatsApp message. Registered at
+   *  boot by modules that depend on this one — so this module never imports them. */
+  private readonly inboundHandlers: Array<(m: InboundWhatsApp) => Promise<void>> = [];
+  registerInboundHandler(fn: (m: InboundWhatsApp) => Promise<void>) { this.inboundHandlers.push(fn); }
+
+  /**
+   * One inbound WhatsApp message from the Meta webhook: it is logged on the matching lead (so it
+   * shows in WhatsApp Live Chat and the lead's timeline) and handed to the registered handlers
+   * (the bots). Never throws — the webhook has already answered Meta.
+   */
+  async recordInbound(raw: { phone: string; text: string; name?: string | null; wamid?: string | null }): Promise<void> {
+    try {
+      const orgId = await this.orgId();
+      const ph10 = String(raw.phone ?? '').replace(/\D/g, '').slice(-10);
+      if (ph10.length < 8) return;
+      if (raw.wamid) {   // Meta retries a webhook — never log (or answer) the same message twice
+        const seen = await this.db.one(
+          `SELECT 1 FROM lead_activity WHERE org_id = $1 AND type = 'message' AND to_value->>'wamid' = $2 LIMIT 1`, [orgId, raw.wamid]);
+        if (seen) return;
+      }
+      const lead = await this.db.one<any>(
+        `SELECT id, org_id, branch_id, full_name FROM lead
+          WHERE org_id = $1 AND deleted_at IS NULL
+            AND ( right(regexp_replace(phone,'\\D','','g'),10) = $2
+               OR right(regexp_replace(coalesce(whatsapp_phone,''),'\\D','','g'),10) = $2
+               OR right(regexp_replace(coalesce(alt_phone,''),'\\D','','g'),10) = $2 )
+          ORDER BY id DESC LIMIT 1`, [orgId, ph10]);
+      const prior = await this.db.one<{ n: string }>(
+        `SELECT (SELECT count(*) FROM lead_activity a WHERE a.org_id = $1 AND a.type = 'message'
+                   AND right(regexp_replace(coalesce(a.to_value->>'from',''),'\\D','','g'),10) = $2)
+              + (SELECT count(*) FROM message_log m WHERE m.org_id = $1 AND m.channel = 'whatsapp'
+                   AND right(regexp_replace(coalesce(m.to_addr,''),'\\D','','g'),10) = $2) AS n`, [orgId, ph10]);
+      if (lead) {
+        await this.db.query(
+          `INSERT INTO lead_activity (lead_id, org_id, branch_id, actor_id, type, to_value, note)
+           VALUES ($1,$2,$3,NULL,'message',$4,$5)`,
+          [lead.id, lead.org_id, lead.branch_id,
+            JSON.stringify({ channel: 'whatsapp', direction: 'inbound', from: raw.phone, wamid: raw.wamid ?? null, name: raw.name ?? null }),
+            `[WhatsApp] ${raw.text}`.slice(0, 2000)]);
+        await this.db.query(`UPDATE lead SET last_activity_at = now() WHERE id = $1`, [lead.id]).catch(() => undefined);
+      }
+      const msg: InboundWhatsApp = {
+        phone: ph10, text: String(raw.text ?? ''), name: raw.name ?? null,
+        lead_id: lead ? Number(lead.id) : null, lead_name: lead?.full_name ?? null,
+        first_message: Number(prior?.n ?? 0) === 0,
+      };
+      for (const h of this.inboundHandlers) await h(msg).catch((e) => this.log.warn(`inbound handler: ${(e as Error).message}`));
+    } catch (e) {
+      this.log.warn(`recordInbound failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** A system WhatsApp reply (the bots) — the normal send path, shown in Live Chat. */
+  async waSendSystem(phone10: string, text: string, leadId: number | null): Promise<{ status: string; reason?: string }> {
+    const lead = leadId ? await this.db.one<any>(`SELECT id, phone, whatsapp_phone, branch_id, vertical_id FROM lead WHERE id = $1`, [leadId]) : null;
+    const to = String(lead?.whatsapp_phone || lead?.phone || `+91${phone10}`);
+    try {
+      return await this.sendNow({
+        channel: 'whatsapp' as MsgChannel, to, body: text,
+        lead_id: lead?.id ?? null, branch_id: lead?.branch_id ?? null, vertical_id: lead?.vertical_id ?? null,
+      } as QueueMessage);
+    } catch (e) { return { status: 'failed', reason: (e as Error).message }; }
   }
 
   /** Edit the lead card from the chat's right panel (status / assignee / next follow-up). */

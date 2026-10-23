@@ -362,10 +362,10 @@ describe('Fee Collection — LITE, and it says so', () => {
     expect(screen.getByText('Collection by mode')).toBeTruthy();
   });
 
-  it('states the Phase-3 boundary on the face of the screen', async () => {
+  it('says nothing about "Phase 3" any more — invoices, dues, refunds and Razorpay are live (client, Oct 2026)', async () => {
     render(<FeeCollection />);
-    expect(await screen.findByText(/lite fee collection/)).toBeTruthy();
-    expect(screen.getByText(/Razorpay capture are Phase 3/)).toBeTruthy();
+    await screen.findByText('RCP-2026/0001');
+    expect(document.body.textContent).not.toMatch(/Phase\s*[23]/);
   });
 
   it('hides Record payment from a user without fee.collect', async () => {

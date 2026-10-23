@@ -2596,7 +2596,7 @@ export class StudentService {
     if (net < paidMinor) {
       throw new BadRequestException(
         `${(paidMinor / 100).toFixed(2)} has already been collected on ${enr.enrolment_no}. `
-        + 'The net fee cannot be set below what has been paid — refunds arrive in Phase 3.');
+        + 'The net fee cannot be set below what has been paid — record a refund (Finance › Refunds) first.');
     }
 
     const plan = String(dto?.payment_plan ?? enr.payment_plan ?? 'full');

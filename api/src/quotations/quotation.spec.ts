@@ -215,12 +215,12 @@ describe('CONVERT — the Phase-3 seam, honestly labelled', () => {
     await expect(s.convertPreview(1, {} as never)).rejects.toThrow(/Only an accepted quotation converts/);
   });
 
-  it('produces an ENROLMENT prefill — and says plainly that the GST invoice is Phase 3', async () => {
+  it('produces an ENROLMENT prefill — and points to where the GST invoice is raised', async () => {
     (s as any).get = async () => accepted;
     const p = await s.convertPreview(1, {} as never);
-    expect(p.invoice.available).toBe(false);
-    expect(p.invoice.phase).toBe(3);
+    expect(p.invoice.available).toBe(true);
     expect(p.invoice.note).toMatch(/GST tax invoice/);
+    expect(p.invoice.note).not.toMatch(/Phase/);
     expect(p.course_id).toBe(21);
   });
 

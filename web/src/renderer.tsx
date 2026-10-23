@@ -432,7 +432,7 @@ function BlockView({ b }: { b: Block }): JSX.Element | null {
       return (
         <div className="notice">
           <Ic k="bolt" />
-          <div><b>Planned for Phase 2.</b> Structure confirmed during requirements discovery — the screen below is the final design; build is scheduled after Phase 1 go-live.</div>
+          <div>This capability is not switched on for your organisation. Ask your administrator to enable it.</div>
         </div>
       );
     case 'notice':

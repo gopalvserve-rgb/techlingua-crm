@@ -43,12 +43,10 @@ export class FeeController {
   meta() {
     return {
       modes: PAYMENT_MODES.map((k) => ({ key: k, label: MODE_LABELS[k] })),
-      // The screen must SAY this, not imply it by omission.
       online: {
-        gateway_capture: false,
-        phase: 3,
-        note: 'Razorpay / online capture arrives in Phase 3. The keys are already stored per vertical; '
-          + 'until then, record an online payment by hand with its UTR reference.',
+        gateway_capture: true,
+        note: 'Razorpay payments made through a payment link (Finance › Online Payments) record themselves; '
+          + 'record a transfer made outside Razorpay by hand with its UTR reference.',
       },
     };
   }

@@ -1,4 +1,5 @@
 import { BadRequestException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { sourceForCampaign } from '../hierarchy/source-attach.util';
 import { DatabaseService } from '../database/database.service';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
 import { IngestPayload } from '../ingestion/ingestion.types';
@@ -141,11 +142,10 @@ export class ApiKeyService {
     const campaignId = dto?.default_campaign_id ? Number(dto.default_campaign_id) : null;
     let sourceId = dto?.default_source_id ? Number(dto.default_source_id) : null;
     if (campaignId && sourceId) {
-      const src = await this.db.one<{ id: string }>(
-        `SELECT id FROM source WHERE id = $1 AND campaign_id = $2 AND deleted_at IS NULL`,
-        [sourceId, campaignId],
-      );
+      // an org-wide source → the campaign's own copy (Oct 2026)
+      const src = await sourceForCampaign(this.db, sourceId, campaignId, userId);
       if (!src) throw new BadRequestException('That default source does not belong to the chosen default campaign.');
+      sourceId = src;
     } else if (sourceId && !campaignId) {
       sourceId = null; // a source without its campaign is meaningless as a default
     }
@@ -240,7 +240,7 @@ export class ApiKeyService {
       return { http: 403, body: { ok: false, error: 'This key cannot create leads.' }, outcome: 'failed', lead_id: null, reason: 'scope lead:create missing' };
     }
     const campaignId = body?.campaign_id ? Number(body.campaign_id) : caller.default_campaign_id;
-    const sourceId = body?.source_id ? Number(body.source_id) : caller.default_source_id;
+    let sourceId = body?.source_id ? Number(body.source_id) : caller.default_source_id;
     if (!campaignId || !sourceId) {
       return {
         http: 400,
@@ -249,9 +249,8 @@ export class ApiKeyService {
       };
     }
     // the source must belong to the campaign, or ingestion would mis-file the lead
-    const src = await this.db.one<{ id: string }>(
-      `SELECT id FROM source WHERE id = $1 AND campaign_id = $2 AND deleted_at IS NULL`, [sourceId, campaignId],
-    );
+    const src = await sourceForCampaign(this.db, Number(sourceId), Number(campaignId));
+    if (src) sourceId = src;
     if (!src) {
       return {
         http: 400, body: { ok: false, error: 'source_id does not belong to campaign_id.' },

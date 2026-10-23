@@ -16,6 +16,8 @@ import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { ApprovalPolicyCard, NumberingCard } from './sprint5';
 import { ensureFbSdk, launchEmbeddedSignup } from './whatsappsignup';
+import { sourceLabel } from './forms';
+import { UserPicker } from './userpicker';
 
 /* ============================== types =============================== */
 
@@ -548,10 +550,16 @@ export function JourneyModal({ initial, onClose, onSaved }: {
             </div>
             <div className="fld">
               <label htmlFor="j-sources">Lead Source</label>
-              <select id="j-sources" className="ainp" value={ids(cond.source_ids)}
-                onChange={(e) => setCond({ ...cond, source_ids: e.target.value ? [Number(e.target.value)] : [] })}>
+              <select id="j-sources" className="ainp" value={Array.isArray(cond.source_ids) && cond.source_ids.length ? String(cond.source_ids[0]) : ''}
+                onChange={(e) => {
+                  // an org-wide source also matches every campaign's copy of it (Oct 2026)
+                  const pick: any = ref.sources.find((s) => String(s.id) === e.target.value);
+                  const same = pick && pick.campaign_id == null && pick.master_source_id != null
+                    ? ref.sources.filter((s: any) => Number(s.master_source_id) === Number(pick.master_source_id)).map((s) => Number(s.id)) : [];
+                  setCond({ ...cond, source_ids: pick ? [Number(pick.id), ...same.filter((x) => x !== Number(pick.id))] : [] });
+                }}>
                 <option value="">Any source</option>
-                {ref.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {ref.sources.map((s) => <option key={s.id} value={s.id}>{sourceLabel(s)}</option>)}
               </select>
             </div>
             <div className="fld">
@@ -772,18 +780,43 @@ export function BlastModal({ channel, onClose, onSent }: { channel: string; onCl
   const ref = useRef_();
   const templates = useFetch<Template[]>(`/templates?channel=${channel}`);
   const [templateId, setTemplateId] = useState('');
-  const [campaign, setCampaign] = useState('');
+  // AUDIENCE (client, Oct 2026): Branch › Vertical › Campaign › Lead Source › Stage, each multi-select
+  const [branches, setBranches] = useState<number[]>([]);
+  const [verticals, setVerticals] = useState<number[]>([]);
+  const [campaigns, setCampaigns] = useState<number[]>([]);
+  const [sources, setSources] = useState<number[]>([]);
+  const [stages, setStages] = useState<number[]>([]);
   const [band, setBand] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [result, setResult] = useState<{ audience: number; queued: number; skipped: number; failed: number } | null>(null);
+  const vOpts = ref.verticals.filter((v) => !branches.length || v.branch_id == null || branches.includes(Number(v.branch_id)));
+  const cOpts = ref.campaigns.filter((c: any) => (!verticals.length || c.vertical_id == null || verticals.includes(Number(c.vertical_id)))
+    && (!branches.length || c.branch_id == null || branches.includes(Number(c.branch_id))));
+  // one entry per source name; picking it matches every campaign's copy (and the org-wide one)
+  const srcGroups = (() => {
+    const m = new Map<string, { id: number; name: string; ids: number[] }>();
+    for (const s of ref.sources as any[]) {
+      if (campaigns.length && s.campaign_id != null && !campaigns.includes(Number(s.campaign_id))) continue;
+      const key = s.master_source_id != null ? `m${s.master_source_id}` : `n${String(s.name).toLowerCase()}`;
+      const g = m.get(key) ?? { id: Number(s.id), name: String(s.name), ids: [] };
+      g.ids.push(Number(s.id)); m.set(key, g);
+    }
+    return [...m.values()];
+  })();
+  const stageOpts = ((ref as any).stages ?? []) as any[];
 
   const send = async () => {
     setErr(''); setBusy(true);
     try {
+      const sourceIds = srcGroups.filter((g) => sources.includes(g.id)).flatMap((g) => g.ids);
       const out = await api.post<typeof result>('/messages/bulk', {
         template_id: Number(templateId),
-        campaign_ids: campaign ? [Number(campaign)] : undefined,
+        branch_ids: branches.length ? branches : undefined,
+        vertical_ids: verticals.length ? verticals : undefined,
+        campaign_ids: campaigns.length ? campaigns : undefined,
+        source_ids: sourceIds.length ? sourceIds : undefined,
+        stage_ids: stages.length ? stages : undefined,
         temperature: band || undefined,
       });
       setResult(out);
@@ -808,13 +841,41 @@ export function BlastModal({ channel, onClose, onSent }: { channel: string; onCl
                 {(templates.data ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
-            <div className="fld">
-              <label htmlFor="b-campaign">Campaign</label>
-              <select id="b-campaign" className="ainp" value={campaign} onChange={(e) => setCampaign(e.target.value)}>
-                <option value="">All campaigns</option>
-                {ref.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
+            {ref.branches.length > 0 && (
+              <div className="fld" data-testid="blast-branch">
+                <label>Branch</label>
+                <UserPicker hideBranch options={ref.branches.map((b) => ({ id: Number(b.id), name: b.name }))} value={branches}
+                  placeholder="All branches" onChange={(a) => { setBranches(a); setVerticals([]); setCampaigns([]); }} />
+              </div>
+            )}
+            {vOpts.length > 0 && (
+              <div className="fld" data-testid="blast-vertical">
+                <label>Vertical</label>
+                <UserPicker hideBranch options={vOpts.map((v) => ({ id: Number(v.id), name: v.name }))} value={verticals}
+                  placeholder="All verticals" onChange={(a) => { setVerticals(a); setCampaigns([]); }} />
+              </div>
+            )}
+            {cOpts.length > 0 && (
+              <div className="fld" data-testid="blast-campaign">
+                <label>Campaign</label>
+                <UserPicker hideBranch options={cOpts.map((c) => ({ id: Number(c.id), name: c.name }))} value={campaigns}
+                  placeholder="All campaigns" onChange={(a) => { setCampaigns(a); setSources([]); }} />
+              </div>
+            )}
+            {srcGroups.length > 0 && (
+              <div className="fld" data-testid="blast-source">
+                <label>Lead Source</label>
+                <UserPicker hideBranch options={srcGroups.map((g) => ({ id: g.id, name: g.name }))} value={sources}
+                  placeholder="All sources" onChange={setSources} />
+              </div>
+            )}
+            {stageOpts.length > 0 && (
+              <div className="fld" data-testid="blast-stage">
+                <label>Stage</label>
+                <UserPicker hideBranch options={stageOpts.map((s) => ({ id: Number(s.id), name: String(s.name) }))} value={stages}
+                  placeholder="All stages" onChange={setStages} />
+              </div>
+            )}
             <div className="fld">
               <label htmlFor="b-band">Score band</label>
               <select id="b-band" className="ainp" value={band} onChange={(e) => setBand(e.target.value)}>

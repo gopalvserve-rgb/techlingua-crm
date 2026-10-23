@@ -48,8 +48,6 @@ export const kpi = (lab: string, val: string, ic?: string, delta?: string, tone?
   ({ lab, val, ic, delta, tone });
 export const cap = (t: string, d?: string, p2?: boolean): CapItem => ({ t, d, p2 });
 
-const NOTE_S2 = 'Backend for this module lands in Phase 2 — the screen design is final; data will appear here automatically.';
-const NOTE_P2 = undefined; // P2 screens use the prototype p2notice block instead
 
 const emptyTable = (title: string, cols: string[], empty?: string): Block =>
   ({ type: 'table', title, cols, rows: [], empty });
@@ -140,16 +138,8 @@ const APP_FULL: ModuleItem[] = [
     // so it's surfaced here in the Leads area too. Opens the SAME masters screen on Lead Status.
     { id: 'leadstatus', label: 'Lead Status', spec: { dyn: 'leadStatusMaster',
       sub: 'Add, edit, activate/deactivate the Lead Status values used in the lead form and the Status filter. Same master as Administration › Masters › Lead Status.' } },
-    { id: 'dup', label: 'Duplicate Rules', spec: {
-      sub: 'Detect by phone — scoped by branch, vertical, campaign per settings. Re-enquiry handled intelligently.',
-      blocks: [
-        { type: 'cfg', title: 'Duplicate handling', rows: [
-          { ic: 'phone', k: 'Detect by phone', s: 'Primary match key', v: 'On', toggle: true },
-          { ic: 'branch', k: 'Scope of check', s: 'Branch + vertical + campaign', v: 'Configurable', toggle: true },
-          { ic: 'leads', k: 'If lead is open', s: 'Re-assign to same owner', v: 'Auto', toggle: true },
-          { ic: 'refresh', k: 'If lost / closed', s: 'Flag & re-open the lead', v: 'Auto', toggle: true },
-          { ic: 'bolt', k: 'Highlight duplicates', s: 'Badge on list & card', v: 'On', toggle: true }] },
-      ] } },
+    { id: 'dup', label: 'Duplicate Rules', spec: { dyn: 'duplicateRules',
+      sub: 'The organisation-wide duplicate rule every new lead is checked against (a campaign can still override it): match by phone and/or email, the scope of the check (whole organisation / branch / vertical / campaign) and what happens to a repeat enquiry.' } },
     { id: 'sla', label: 'SLA & TAT', spec: { dyn: 'sla',
       sub: 'First-response time per lead with escalation if missed.' } },
     { id: 'fields', label: 'Custom Fields', spec: { dyn: 'customFields',
@@ -176,7 +166,7 @@ const APP_FULL: ModuleItem[] = [
     { id: 'closure', label: 'Sale Closure', spec: { dyn: 'saleClosure',
       sub: 'Lead marked Won on enrolment. Optional approval per step. Captures course, fee, discount, payment plan & start date.' } },
     { id: 'quotes', label: 'Quotations', spec: { dyn: 'quotations',
-      sub: 'Fee proposals with line items, discounts, validity & revisions. PDF + email/WhatsApp. Convert to enrolment (GST invoicing is Phase 3).' } },
+      sub: 'Fee proposals with line items, discounts, validity & revisions. PDF + email/WhatsApp. Convert to enrolment, then raise the GST invoice from Finance › Fee Invoices.' } },
     { id: 'targets', label: 'Target & Incentive', spec: { dyn: 'targetIncentive',
       sub: 'Named targets (Individual / Team / Branch / Vertical / Course) across Leads · Walk-ins · Admissions · Revenue · Collection · Meetings, over Monthly / Quarterly / Half-Yearly / Yearly / Custom periods, with an Incentive Plan whose achievement slabs compute the earned incentive.' } },
     { id: 'counsellor', label: 'Counsellor Performance', spec: { dyn: 'counsellorPerformance',
@@ -185,28 +175,10 @@ const APP_FULL: ModuleItem[] = [
 
   /* ---------------- Engagement & Workflow ---------------- */
   { id: 'engage', label: 'Engagement & Workflow', icon: 'engage', subs: [
-    { id: 'wabot', label: 'WhatsBot', spec: {
-      sub: 'Meta Cloud API BSP. Auto-reply, lead qualification & fee reminders. Permitted users manage templates.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'kpis', items: [kpi('Conversations (24h)', '0', 'wa'), kpi('Auto-qualified', '0', 'check'), kpi('Templates approved', '0', 'doc'), kpi('Read rate', '—', 'perf')] },
-        { type: 'builder', title: 'Qualification bot flow', steps: [
-          { k: 'trig', t: 'New lead message', d: 'Inbound WhatsApp from any source' },
-          { k: 'act', t: 'Send greeting + menu', d: '"Which course interests you?"' },
-          { k: 'cond', t: 'Branch on course', d: 'Route by course interest' },
-          { k: 'act', t: 'Capture budget & timing', d: 'Auto-fill lead fields' },
-          { k: 'end', t: 'Hand over to counsellor', d: 'Assign + notify owner' }] },
-      ] } },
-    { id: 'aibot', label: 'AI Bot', spec: {
-      sub: 'AI chatbot on website & WhatsApp answering from a knowledge source, with human hand-over.',
-      sprintNote: NOTE_S2,
-      blocks: [
-        { type: 'cfg', title: 'AI bot setup', rows: [
-          { ic: 'intel', k: 'Channels', s: 'Website widget + WhatsApp', v: 'Both', toggle: true },
-          { ic: 'book', k: 'Knowledge source', s: 'Course KB + FAQs', v: 'Linked', toggle: true },
-          { ic: 'users', k: 'Human hand-over', s: 'On intent: pricing/complaint', v: 'Auto', toggle: true },
-          { ic: 'cfg', k: 'AI provider', s: 'Gemini key in Settings', v: 'Gemini', toggle: true }] },
-      ] } },
+    { id: 'wabot', label: 'WhatsBot', spec: { dyn: 'whatsBot',
+      sub: 'WhatsApp auto-replies: a welcome message for a new contact, keyword rules (e.g. "fee" → fee details, "course" → course list) and an out-of-hours reply. Runs on inbound WhatsApp while the conversation\'s bot is ON; a human takes over from Live Chat.' } },
+    { id: 'aibot', label: 'AI Bot', spec: { dyn: 'aiBot',
+      sub: 'AI answers on WhatsApp from your knowledge (courses, fees, FAQs you write here), with human hand-over on chosen words (price, complaint, call me). Uses the Gemini / DeepSeek key from Settings; replies only when no WhatsBot keyword rule matched.' } },
     { id: 'wabulk', label: 'Bulk WhatsApp', spec: { dyn: 'bulkWhatsApp',
       sub: 'Meta Cloud API template messages, audience filters, delivery/read receipts & opt-out (a customer who replies STOP is never messaged again).' } },
     { id: 'journeys', label: 'Automation Journeys (Workflow)', spec: { dyn: 'journeys',
@@ -243,14 +215,14 @@ const APP_FULL: ModuleItem[] = [
     { id: 'placements', label: 'Placement Support', spec: { dyn: 'placements',
       sub: 'Post JOB OPENINGS (title, employer, JD, location, type, openings, salary/stipend, skills) scoped Branch > Vertical, with ELIGIBILITY by course / vertical and an optional minimum enrolment status (e.g. Completed), an application deadline and an optional JD file to Cloudflare R2. Eligible students see the openings they qualify for on their profile’s Placements tab and APPLY; staff track applicants and advance them (applied → shortlisted → selected / rejected). Full list treatment: multi-filter (branch / vertical / status / job type), export names-not-ids, column chooser, refresh, bulk-delete. RBAC placement.*.' } },
     { id: 'crosssell', label: 'Cross-Sell', spec: { dyn: 'crossSell',
-      sub: 'CRM-level cross-sell on the contacts you have today. Converted contacts (won or enrolled) are paired with a suggested additional course from the Course master — via an admin rule map (current course → suggested course) or, failing a rule, other active courses in their vertical. Act on a suggestion: create a cross-sell follow-up, or create a new lead through the ingestion pipeline (dedup / distribution / audit), or dismiss it. Every act is logged so it is never suggested again. RBAC-scoped. (Deeper student-based cross-sell on academic progress remains Phase 2.)' } },
+      sub: 'CRM-level cross-sell on the contacts you have today. Converted contacts (won or enrolled) are paired with a suggested additional course from the Course master — via an admin rule map (current course → suggested course) or, failing a rule, other active courses in their vertical. Act on a suggestion: create a cross-sell follow-up, or create a new lead through the ingestion pipeline (dedup / distribution / audit), or dismiss it. Every act is logged so it is never suggested again. RBAC-scoped.' } },
   ] },
 
   /* ---------------- Learning & Assessment ---------------- */
   { id: 'learning', label: 'Learning & Assessment', icon: 'book', subs: [
-    { id: 'syllabus', label: 'Syllabus', spec: { dyn: 'syllabus', tag: 'p2',
+    { id: 'syllabus', label: 'Syllabus', spec: { dyn: 'syllabus',
       sub: 'A versioned syllabus outline per course (version, structured outline / rich body, optional file to Cloudflare R2 or a link). GOVERNED by the same approval workflow (draft → submit → publish / reject / unpublish); non-approvers see only PUBLISHED items. Full list treatment: multi-filter (branch / vertical / course / status), export, column chooser, refresh, bulk-delete. RBAC syllabus.*.' } },
-    { id: 'coursecontent', label: 'Course Content', spec: { dyn: 'courseContent', tag: 'p2',
+    { id: 'coursecontent', label: 'Course Content', spec: { dyn: 'courseContent',
       sub: 'Structured course content / lessons under a course (module/unit ordering, rich body, optional file to Cloudflare R2 or an external/YouTube link). GOVERNED by the approval workflow: a Trainer drafts + submits; an Academic Admin approves & publishes (or rejects with remarks / unpublishes). Non-approvers see only PUBLISHED items for their scope. Full list treatment: multi-filter (branch / vertical / course / status), export, column chooser, refresh, bulk-delete. RBAC course_content.*.' } },
     { id: 'material', label: 'Study Material', spec: { dyn: 'studyMaterial',
       sub: 'A study-material library — video / link / document / note items scoped to a batch, a course or a whole vertical. A published item is visible to the students it targets; an "allow parents" flag surfaces it in the parent report-card view. Filter by branch / vertical / course / type / visibility, export, choose columns, refresh, bulk-delete. RBAC material.*.' } },
@@ -258,21 +230,21 @@ const APP_FULL: ModuleItem[] = [
       sub: 'An assignment per batch (title, description, due date, attachment link, max marks) with a per-student submission tracker — assigned → submitted → graded (marks + feedback).' } },
     { id: 'tests', label: 'Tests & Scores', spec: { dyn: 'testsScreen',
       sub: 'A test per batch (quiz / mock / exam / other) with max & pass marks; per-student score entry with a computed percentage and letter grade. Result sheet per test; feeds report cards.' } },
-    { id: 'questionbank', label: 'Question Bank', spec: { dyn: 'questionBank', tag: 'p2',
+    { id: 'questionbank', label: 'Question Bank', spec: { dyn: 'questionBank',
       sub: 'The reusable question bank behind the Assessment / Test module (Insta Infotech IT + British College of Language). Every question type — MCQ single/multi, True/False, fill-in, match-the-following, image / audio / YouTube-video MCQ, short/long answer, essay, case study, coding, practical, and language items (reading, listening, speaking, translation, vocabulary, grammar, writing) — with difficulty, marks + negative marks, an options editor for objective types, image/audio upload to Cloudflare R2, a YouTube embed with start/end seconds and a live preview, tags and an explanation. CSV import with a row-by-row error report. Full list treatment: multi-filter (category / type / difficulty / language), export (names not ids), column chooser, refresh, bulk-delete. RBAC question.*.' } },
-    { id: 'questioncats', label: 'Question Categories', spec: { dyn: 'questionCategories', tag: 'p2',
+    { id: 'questioncats', label: 'Question Categories', spec: { dyn: 'questionCategories',
       sub: 'The subject / topic taxonomy for the question bank — a subject (e.g. Programming Fundamentals, English Grammar) or a topic nested under a subject, with an optional code, branch/vertical scope and active flag. Full list treatment. RBAC question_category.*.' } },
-    { id: 'testtemplates', label: 'Test Templates', spec: { dyn: 'testTemplates', tag: 'p2',
+    { id: 'testtemplates', label: 'Test Templates', spec: { dyn: 'testTemplates',
       sub: 'Reusable test-settings presets — duration, negative marking, randomisation, attempt limit, passing %, show-result mode and default instructions, per test type. Creating a test from a template copies its settings. Full list treatment. RBAC assessment_template.*.' } },
-    { id: 'exams', label: 'Tests / Exams', spec: { dyn: 'tests', tag: 'p2',
+    { id: 'exams', label: 'Tests / Exams', spec: { dyn: 'tests',
       sub: 'Create and manage tests/exams assembled from the Question Bank — hand-picked questions and/or pooled sections (pick N at random from a category). Test types: practice, chapter, weekly, mock, assignment, practical, final exam. Settings: duration, total/passing marks (derived or overridden), negative marking, randomise questions/options, shuffle per attempt, questions-to-show, max attempts, availability window, instructions and how results are shown (instant / manual / after window). Live computed total marks, a builder with a question picker, draft → published → closed with validation, a student-facing PREVIEW that strips answers, create-from-template, and CSV import. Full list treatment: multi-filter (type / status / course / batch / language), export (names not ids), column chooser, refresh, bulk-delete. RBAC assessment.*.' } },
-    { id: 'evaluation', label: 'Evaluation Queue', spec: { dyn: 'assessmentEvaluation', tag: 'p2',
+    { id: 'evaluation', label: 'Evaluation Queue', spec: { dyn: 'assessmentEvaluation',
       sub: 'The faculty EVALUATION QUEUE for the Assessment module. Two tabs: student TEST ATTEMPTS (objective portion auto-scored on submit; grade the subjective answers with per-question marks + feedback, a running total, then release) and ASSIGNMENT SUBMISSIONS (open/download the file the student uploaded to Cloudflare R2, award marks + feedback). Launch a test for a student from Tests / Exams — a timed player (live countdown, autosave, auto-submit at 0) for MCQ/subjective tests, or a file upload for assignment/practical tests. Filter by branch / vertical / status; export; refresh; run the overdue-attempt expiry sweep. RBAC assessment_attempt.* / assignment_submission.* / assessment.evaluate.' } },
-    { id: 'assessmentresults', label: 'Results & Analytics', spec: { dyn: 'assessmentResults', tag: 'p2',
+    { id: 'assessmentresults', label: 'Results & Analytics', spec: { dyn: 'assessmentResults',
       sub: 'Per-test RESULTS: a scope-enforced LEADERBOARD (dense rank by score, percentile, grade, pass/fail) with pass-rate and average KPIs, and a drill-in RESULT CARD per student — score breakdown, grade badge, time taken, and analytics by topic/section, difficulty and question type. Export, refresh, column chooser. Results honour the test\'s show-result mode (instant / manual / after window). RBAC assessment.read / assessment_attempt.read.' } },
-    { id: 'gradeschemes', label: 'Grade Schemes', spec: { dyn: 'gradeSchemes', tag: 'p2',
+    { id: 'gradeschemes', label: 'Grade Schemes', spec: { dyn: 'gradeSchemes',
       sub: 'Configurable grading bands (India default seeded: A+ 90–100, A 80–89, B+ 70–79, B 60–69, C 50–59, Fail <50). Add/edit a scheme with a band editor validated to be contiguous over 0–100 with at least one pass band; set the default. A test can pin a scheme, else the org default applies. Full list treatment. RBAC grade_scheme.*.' } },
-    { id: 'assessmentcerts', label: 'Certificates', spec: { dyn: 'assessmentCertificates', tag: 'p2',
+    { id: 'assessmentcerts', label: 'Certificates', spec: { dyn: 'assessmentCertificates',
       sub: 'Assessment certificates for a PASSED, evaluated attempt — a per-branch/vertical FY certificate number (ACRT-), grade + percentage, a generated PDF stored in Cloudflare R2, and a PUBLIC verification code (share the /verify link). Issue / revoke / download / delete. Full list treatment. RBAC assessment_certificate.* (issue / revoke). A login-free public page verifies a certificate by its code.' } },
     { id: 'progress', label: 'Academic Progress', spec: { dyn: 'reportCards',
       sub: 'Per-student, per-term report cards computed from attendance %, test scores and assignment grades (Indian grading bands; tests 50% / assignments 30% / attendance 20% over the components present). Report-card PDF; publish for a login-free PARENT VIEW (a shareable link to the card, attendance and parent-visible study material). Filter, export, choose columns, refresh, bulk-delete. RBAC reportcard.*.' } },
@@ -284,9 +256,6 @@ const APP_FULL: ModuleItem[] = [
       sub: 'REAL ₹ KPIs from fees, invoices & enrolments — total invoiced, collected, outstanding dues, GST (CGST/SGST/IGST), collection by branch / vertical / course / mode, recent receipts & top dues. Scope + DateRange honoured. India-formatted (₹).' } },
     { id: 'invoices', label: 'Fee Invoices', spec: { dyn: 'invoicesList',
       sub: 'GST tax invoices raised from an enrolment (or ad-hoc): seller GSTIN + state, buyer GSTIN + place of supply, HSN/SAC, CGST+SGST (intra-state) or IGST (inter-state), round-off, amount in words, branded PDF. Per-branch & per-vertical FY numbering. Issue / cancel. Full list treatment.' } },
-    // Sprint 5 — LITE fee collection is live: a receipt + a collection entry, partial
-    // payments, receipt PDF. Razorpay capture, GST invoices, dues/ageing and refunds are
-    // Phase 3 and the screen says so on its face rather than implying otherwise.
     { id: 'collection', label: 'Fee Collection', spec: { dyn: 'feeCollection',
       sub: 'Cash, UPI, Card, Cheque, Online (recorded by hand). Partial payments. Auto receipts + PDF. Online Razorpay capture is on the Online Payments screen.' } },
     { id: 'onlinepay', label: 'Online Payments', spec: { dyn: 'onlinePayments',
@@ -295,10 +264,8 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Installment plans on an enrolment — Full / Installment / EMI / Custom. Generates a due-dated schedule that sums EXACTLY to the net fee (₹ paise). Collections apply oldest-due first, updating each installment\'s paid / outstanding / status. Full list treatment.' } },
     { id: 'dues', label: 'Fee Management', spec: { dyn: 'feeDues',
       sub: 'Outstanding per student / enrolment / installment with ageing buckets (Not due / 0–30 / 31–60 / 61–90 / 90+ days) computed in IST. Filter by ageing / branch / vertical / course / owner, export, refresh. Automatic due reminders (WhatsApp / SMS / Email) with configurable offsets — idempotent, degrade cleanly.' } },
-    { id: 'scholar', label: 'Scholarships', spec: {
-      sub: 'Percentage or fixed. Approval workflow at manager level. Scholarship reason mandatory.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyTable('Scholarship requests', ['Student', 'Type', 'Value', 'Reason', 'Approver', 'Status'], 'No scholarship requests yet')] } },
+    { id: 'scholar', label: 'Scholarships', spec: { dyn: 'scholarships',
+      sub: 'Percentage or fixed scholarship on an enrolment, reason mandatory. A counsellor requests; a manager approves (the enrolment\'s net fee drops and the payment plan reconciles) or rejects with remarks.' } },
     // dev/103 — the manageable Discount Master: cap a discount by % AND ₹, optionally scoped by
     // branch/vertical/course (most-specific-wins). An over-cap discount is held for approval by an
     // authorized user (discount.approve = Academic Admin / Org / Super Admin) on the same screen.
@@ -316,32 +283,16 @@ const APP_FULL: ModuleItem[] = [
   { id: 'calls', label: 'Calls', icon: 'calls', subs: [
     { id: 'overview', label: 'Calls', spec: { dyn: 'callLogs',
       sub: 'Every call auto-logged against its lead — from the phone\'s own call log (authoritative) and live dial events. Duration, SIM, disposition and the OEM recording, RBAC-scoped.' } },
-    { id: 'dialer', label: 'Dialer', spec: {
-      sub: 'NeoDove integration. Manual, preview & predictive dialer. Call from any lead/student record.',
-      sprintNote: 'Telephony / calls are out of scope — this screen is a design reference only; no dialler ships.',
-      blocks: [
-        { type: 'kpis', items: [kpi('Calls today', '0', 'calls'), kpi('Connected', '—', 'check'), kpi('Avg duration', '—', 'clock'), kpi('In queue', '0', 'list')] },
-        { type: 'caps', title: 'Dialer modes', items: [
-          cap('Manual / Preview', 'Counsellor-paced'), cap('Predictive', 'Auto-dial queue'),
-          cap('Click-to-call', 'From lead record'), cap('Number masking', 'Privacy on outbound')] },
-      ] } },
-    { id: 'click', label: 'Click-to-Call', spec: {
-      sub: 'Trigger a call from the lead list with number masking for privacy.',
-      blocks: [{ type: 'caps', title: 'Click-to-call', items: [
-        cap('From lead / student / contact', 'One tap'), cap('Number masking', 'Caller ID hidden'),
-        cap('Auto-log + disposition', 'After each call'), cap('Mobile dialer', 'Call via phone')] }] } },
-    { id: 'incoming', label: 'Incoming Calls', spec: {
-      sub: 'IVR routing with screen-pop of the matching CRM record on incoming call.',
-      blocks: [{ type: 'builder', title: 'IVR routing', steps: [
-        { k: 'trig', t: 'Incoming call', d: 'Caller dials business number' },
-        { k: 'cond', t: 'IVR menu', d: 'Route by course / department' },
-        { k: 'act', t: 'Match CRM record', d: 'Screen-pop to owner' },
-        { k: 'end', t: 'Route by skill / vertical', d: 'Connect to counsellor' }] }] } },
-    { id: 'outgoing', label: 'Outgoing Calls', spec: gen('Calls', 'Outgoing Calls') },
-    { id: 'missed', label: 'Missed Calls', spec: {
-      sub: 'Auto-create a lead from a missed call to power missed-call campaigns.',
-      sprintNote: 'Telephony is out of scope, so missed-call auto-leads are not built — this screen is a design reference only.',
-      blocks: [emptyTable('Missed-call leads', ['Number', 'Time', 'Auto-lead', 'Campaign', 'Assigned'], 'No missed-call leads yet')] } },
+    { id: 'dialer', label: 'Dialer', spec: { dyn: 'dialer',
+      sub: 'Dial any number or click-to-call a lead. The call is logged against the lead and the phone dialer opens; outcome, duration and recording sync in from the phone\'s call log.' } },
+    { id: 'click', label: 'Click-to-Call', spec: { dyn: 'dialer',
+      sub: 'Find a lead and call it in one tap — logged against the lead, with disposition after the call.' } },
+    { id: 'incoming', label: 'Incoming Calls', spec: { dyn: 'callLogsIncoming',
+      sub: 'Every incoming call, matched to its lead — synced from the phone\'s call log. Disposition and recording inline.' } },
+    { id: 'outgoing', label: 'Outgoing Calls', spec: { dyn: 'callLogsOutgoing',
+      sub: 'Every outgoing call by your counsellors, matched to its lead, with duration, disposition and recording.' } },
+    { id: 'missed', label: 'Missed Calls', spec: { dyn: 'callLogsMissed',
+      sub: 'Missed calls from the phone\'s call log. A missed call from an unknown number becomes a lead in one click (Add as lead).' } },
     { id: 'transfer', label: 'Call Transfer', spec: gen('Calls', 'Call Transfer') },
     { id: 'conference', label: 'Conference Calling', spec: gen('Calls', 'Conference Calling') },
     { id: 'routing', label: 'Call Routing', spec: gen('Calls', 'Call Routing') },
@@ -361,33 +312,37 @@ const APP_FULL: ModuleItem[] = [
         { ic: 'cfg', k: 'Transfer / Conference', s: 'Not required', v: 'Off', toggle: false }] }] } },
   ] },
 
-  /* ---------------- Communication Intelligence (P2) ---------------- */
-  { id: 'intel', label: 'Communication Intelligence', icon: 'intel', phase: 'P2', subs: [
+  /* ---------------- Communication Intelligence ---------------- */
+  { id: 'intel', label: 'Communication Intelligence', icon: 'intel', subs: [
     { id: 'aiintel', label: 'AI Insights', spec: { dyn: 'aiIntelligence',
       sub: 'Credential-gated AI over the text that exists — paste/upload a transcript or pick a lead, then run summary · sentiment · quality. Saved + listed with the full treatment.' } },
-    { id: 'activity', label: 'Call Activity', spec: gen('Communication Intelligence', 'Call Activity') },
-    { id: 'insights', label: 'Call Insights', spec: p2('Call Insights & Summaries',
-      'Post-call transcription, summaries, intent & keyword tracking across English, Hindi & mixed-language calls.',
-      [cap('Transcription', 'Multi-language', true), cap('AI summaries', 'Per call', true), cap('Intent detection', 'Pricing / objection / interest', true), cap('Keyword tracking', 'Course & competitor mentions', true)]) },
-    { id: 'ratings', label: 'Call Ratings', spec: gen('Communication Intelligence', 'Call Ratings') },
-    { id: 'aiusage', label: 'AI Usage', spec: gen('Communication Intelligence', 'AI Usage') },
+    { id: 'activity', label: 'Call Activity', spec: { dyn: 'callActivityReport',
+      sub: 'Call productivity over any date range — totals, day-wise, user-wise, manager-wise and an hourly chart.' } },
+    { id: 'insights', label: 'Call Insights', spec: { dyn: 'aiIntelligence',
+      sub: 'Call summaries, sentiment and quality from transcripts — pick a lead or paste / upload a transcript and run the analysis.' } },
+    { id: 'ratings', label: 'Call Ratings', spec: { dyn: 'aiIntelligence',
+      sub: 'AI quality score per analysed call — run the Quality analysis on a transcript to rate it.' } },
+    { id: 'aiusage', label: 'AI Usage', spec: { dyn: 'aiUsage',
+      sub: 'Every AI analysis run — by provider, type and user, over any date range.' } },
     { id: 'convanalytics', label: 'Conversation Analytics', spec: gen('Communication Intelligence', 'Conversation Analytics') },
     { id: 'sentiment', label: 'Sentiment Analysis', spec: p2('Sentiment & Conversation Analytics',
       'Sentiment scoring, conversation analytics & follow-up suggestions.',
       [cap('Sentiment score', 'Positive / neutral / negative', true), cap('Objection detection', 'Auto-flagged moments', true), cap('Follow-up suggestions', 'AI next step', true), cap('Conversation analytics', 'Talk ratio, pace', true)]) },
-    { id: 'quality', label: 'Quality Monitoring', spec: p2('Quality Monitoring',
-      'AI-scored quality scorecards reviewing recorded calls.',
-      [cap('AI scorecards', 'Define criteria', true), cap('Quality rating', 'Per call / counsellor', true), cap('Coaching flags', 'Low-score alerts', true)]) },
-    { id: 'reclib', label: 'Recording Library', spec: gen('Communication Intelligence', 'Recording Library') },
-    { id: 'transcription', label: 'Call Transcription', spec: genP2('Communication Intelligence', 'Call Transcription') },
-    { id: 'summaries', label: 'Call Summaries', spec: genP2('Communication Intelligence', 'Call Summaries') },
+    { id: 'quality', label: 'Quality Monitoring', spec: { dyn: 'aiIntelligence',
+      sub: 'AI-scored call quality — run the Quality analysis on a call transcript; scores are saved and listed per lead and counsellor.' } },
+    { id: 'reclib', label: 'Recording Library', spec: { dyn: 'callRecordings',
+      sub: 'Call recordings synced from the phone\'s own dialer folder and attached to the matching lead. Playable inline; RBAC-scoped.' } },
+    { id: 'transcription', label: 'Call Transcription', spec: { dyn: 'aiIntelligence',
+      sub: 'Paste or upload a call transcript (English, Hindi or mixed) against a lead, then run summary · sentiment · quality.' } },
+    { id: 'summaries', label: 'Call Summaries', spec: { dyn: 'aiIntelligence',
+      sub: 'AI summaries of calls — run Summary on a transcript; every summary is saved against its lead.' } },
     { id: 'intent', label: 'Intent Detection', spec: genP2('Communication Intelligence', 'Intent Detection') },
-    { id: 'keyword', label: 'Keyword Tracking', spec: genP2('Communication Intelligence', 'Keyword Tracking') },
+    { id: 'keyword', label: 'Keyword Tracking', spec: { dyn: 'keywordTracking',
+      sub: 'Track the words that matter — course names, competitors, "fees", "discount" — across call transcripts, AI analyses, lead notes and WhatsApp messages, with counts and the leads that mention them.' } },
     { id: 'objection', label: 'Objection Detection', spec: genP2('Communication Intelligence', 'Objection Detection') },
     { id: 'followsug', label: 'Follow-up Suggestions', spec: genP2('Communication Intelligence', 'Follow-up Suggestions') },
-    { id: 'aiset', label: 'AI Settings', spec: p2('AI Provider & Cost',
-      'Deepseek / Gemini with keys in Settings. Budget ceiling per minute.',
-      [cap('Provider', 'Deepseek / Gemini', true), cap('Keys in Settings', 'Bring your own', true), cap('Budget ceiling', 'Per call / minute', true), cap('Post-call only', 'No real-time needed', true)]) },
+    { id: 'aiset', label: 'AI Settings', spec: { dyn: 'aiSettings',
+      sub: 'Which AI provider is connected (Gemini / DeepSeek keys live in Administration › Settings), the default provider, and a monthly run limit that stops runaway cost.' } },
   ] },
 
   /* ---------------- Analytics & Reports ---------------- */
@@ -410,10 +365,14 @@ const APP_FULL: ModuleItem[] = [
     { id: 'roi', label: 'Campaign ROI', spec: { dyn: 'campaignRoi',
       sub: 'Ad spend from the campaign record. Cost per lead, cost per enrolment and return on spend.' } },
     { id: 'counseloranalytics', label: 'Counselor Analytics', spec: gen('Analytics & Reports', 'Counselor Analytics') },
-    { id: 'counselorperf', label: 'Counselor Performance', spec: gen('Analytics & Reports', 'Counselor Performance') },
-    { id: 'revanalytics', label: 'Revenue Analytics', spec: gen('Analytics & Reports', 'Revenue Analytics') },
-    { id: 'studentanalytics', label: 'Student Analytics', spec: gen('Analytics & Reports', 'Student Analytics') },
-    { id: 'forecasting', label: 'Forecasting', spec: gen('Analytics & Reports', 'Forecasting') },
+    { id: 'counselorperf', label: 'Counselor Performance', spec: { dyn: 'counsellorPerformance',
+      sub: 'Leads handled, activity, conversion %, revenue, TAT, follow-up adherence & enrolments — with a leaderboard.' } },
+    { id: 'revanalytics', label: 'Revenue Analytics', spec: { dyn: 'revenueView',
+      sub: 'Collection (money received, net of refunds) and accrual (fee billed) grouped by branch / vertical / course / counsellor / mode / day / month.' } },
+    { id: 'studentanalytics', label: 'Student Analytics', spec: { dyn: 'studentDashboard',
+      sub: 'Live student metrics — total, active, new, by branch / vertical / course, batch allocation and fees collected.' } },
+    { id: 'forecasting', label: 'Forecasting', spec: { dyn: 'forecasting',
+      sub: 'Expected enrolments and revenue: open leads × each pipeline\'s win rate over the last 12 months × its average net fee, plus the cash forecast of fee installments falling due — month by month.' } },
     { id: 'delivery', label: 'Scheduled Delivery', spec: { dyn: 'scheduledDelivery',
       sub: 'Any saved report, emailed daily / weekly / monthly with the file attached. Pause it, run it now, and read the delivery history.' } },
   ] },
@@ -436,33 +395,22 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Internal staff KB — categories, search and access control.' } },
     { id: 'announce', label: 'Announcements', spec: { dyn: 'announcements',
       sub: 'Org / branch announcements with audience targeting and read tracking.' } },
-    { id: 'docs', label: 'Shared Documents', spec: {
-      sub: 'Documents shared inside internal team message.',
-      sprintNote: NOTE_S2,
-      blocks: [emptyList('Recent shared files', 'No shared files yet')] } },
+    { id: 'docs', label: 'Shared Documents', spec: { dyn: 'sharedDocs',
+      sub: 'A shared document library — upload files into folders, share with everyone / a branch / a vertical / a role, download and track who added what.' } },
   ] },
 
   /* ---------------- HR & Workforce ---------------- */
   { id: 'hr', label: 'HR & Workforce', icon: 'hr', subs: [
-    { id: 'directory', label: 'Employee Directory', spec: { dyn: 'hrDirectory', tag: 'p2',
+    { id: 'directory', label: 'Employee Directory', spec: { dyn: 'hrDirectory',
       sub: 'The staff register — employee code (auto EMP-), name, optional login account, designation, department, branch/vertical, date of joining, employment type, contact (Indian mobile/E.164), personal, status and reporting manager. Full list treatment: filters (branch/vertical/department/designation/status), export, column chooser, refresh, bulk-delete.' } },
-    { id: 'attendance', label: 'Attendance', spec: { dyn: 'hrAttendance', tag: 'p2',
+    { id: 'attendance', label: 'Attendance', spec: { dyn: 'hrAttendance',
       sub: 'Daily STAFF attendance (present / absent / half-day / leave / holiday) marked by HR/manager or self check-in, a monthly attendance sheet per branch and a per-employee summary (present days, absent, leaves). Date range via the picker. Full list treatment on the records.' } },
-    { id: 'leaves', label: 'Leaves', spec: { dyn: 'hrLeaves', tag: 'p2',
+    { id: 'leaves', label: 'Leaves', spec: { dyn: 'hrLeaves',
       sub: 'Configurable leave types (Casual / Sick / Earned / Unpaid), a leave balance per employee/type/year, and the apply → approve/reject workflow: on approval the balance is deducted and the days are marked as Leave in attendance; the manager is notified on apply and the employee on the decision. Nobody can approve their own leave. Full list treatment.' } },
-    { id: 'payroll', label: 'Salary', spec: {
-      sub: 'Components, payslips, statutory PF / ESI / TDS.',
-      sprintNote: 'Basic HR lands in Phase 2.',
-      blocks: [
-        { type: 'kpis', items: [kpi('Monthly payroll', '—', 'rupee'), kpi('Payslips', '0', 'doc'), kpi('PF/ESI/TDS', '—', 'shield')] },
-        { type: 'caps', title: 'Payroll', items: [
-          cap('Salary components', 'Earnings + deductions'), cap('Payslips', 'Auto-generated'),
-          cap('Statutory', 'PF / ESI / TDS'), cap('Bank details', 'Sensitive · restricted')] },
-      ] } },
-    { id: 'incentives', label: 'Incentives', spec: {
-      sub: 'Incentive rules on admissions / revenue / targets, calculation, approval & payout tracking.',
-      sprintNote: 'Basic HR lands in Phase 2.',
-      blocks: [emptyTable('Incentive payouts', ['Counsellor', 'Basis', 'Achieved', 'Incentive', 'Status'], 'No incentive payouts yet')] } },
+    { id: 'payroll', label: 'Salary', spec: { dyn: 'payroll',
+      sub: 'Salary structure per employee (basic, HRA, allowances, PF / ESI / TDS / professional tax), monthly payroll runs that pro-rate by the HR attendance sheet (absent / unpaid leave days deducted), and payslips (PDF-ready print view).' } },
+    { id: 'incentives', label: 'Incentives', spec: { dyn: 'targetIncentive',
+      sub: 'Incentive plans with achievement slabs over named targets — the same engine as Performance › Target & Incentive.' } },
     { id: 'bank', label: 'Bank', spec: gen('HR & Workforce', 'Bank') },
     { id: 'performance', label: 'Performance', spec: {
       sub: 'Appraisal cycles, KRAs / goals & ratings.',
@@ -471,22 +419,20 @@ const APP_FULL: ModuleItem[] = [
         cap('Ratings', 'Manager + self'), cap('Linked to incentives', 'Score → payout')] }] } },
     { id: 'hiring', label: 'Hiring', spec: {
       sub: 'Job posts, candidate pipeline, interviews & offers.',
-      sprintNote: 'Basic HR lands in Phase 2.',
       blocks: [emptyTable('Hiring pipeline', ['Role', 'Applicants', 'Interview', 'Offer', 'Status'], 'No open positions yet')] } },
   ] },
 
-  /* ---------------- Operations (P2) ---------------- */
-  /* ---------------- Operations (ERP Batch 5 — now live) ---------------- */
-  { id: 'ops', label: 'Operations', icon: 'ops', phase: 'P2', subs: [
-    { id: 'catalog', label: 'Catalog', spec: { dyn: 'catalogList', tag: 'p2',
+  /* ---------------- Operations (ERP Batch 5 — live) ---------------- */
+  { id: 'ops', label: 'Operations', icon: 'ops', subs: [
+    { id: 'catalog', label: 'Catalog', spec: { dyn: 'catalogList',
       sub: 'The org-wide master of items / products / services the institute deals in — books, kits, merchandise, service items. Item code (auto ITM-), category, unit, price (₹), GST % and HSN/SAC (India), active. Used by inventory and procurement. Full list treatment: multi-filter, export, columns, refresh, bulk-delete.' } },
-    { id: 'inventory', label: 'Inventory', spec: { dyn: 'inventoryList', tag: 'p2',
+    { id: 'inventory', label: 'Inventory', spec: { dyn: 'inventoryList',
       sub: 'Per-branch/location stock of catalog items — quantity on hand, a receipt / issue / adjustment "Stock movement" that writes a movement log, and a low-stock threshold + flag. Receiving a purchase order increments stock automatically. Branch-scoped; full list treatment + a movement log.' } },
-    { id: 'assets', label: 'Assets', spec: { dyn: 'assetsList', tag: 'p2',
+    { id: 'assets', label: 'Assets', spec: { dyn: 'assetsList',
       sub: 'The equipment / furniture / IT register — asset code (auto AST-), category, branch/location, purchase date + cost (₹), status (in-use / in-repair / retired), assigned-to (user), vendor, warranty + AMC dates. Lifecycle. Full list treatment.' } },
-    { id: 'vendors', label: 'Vendor Management', spec: { dyn: 'vendorsList', tag: 'p2',
+    { id: 'vendors', label: 'Vendor Management', spec: { dyn: 'vendorsList',
       sub: 'The vendor master — name, GSTIN (India), category, contact, address, optional bank details, active. Used by procurement and assets. Full list treatment: multi-filter, export, columns, refresh, bulk-delete.' } },
-    { id: 'procure', label: 'Procurement', spec: { dyn: 'procurementList', tag: 'p2',
+    { id: 'procure', label: 'Procurement', spec: { dyn: 'procurementList',
       sub: 'Purchase orders to a vendor for catalog items — line items (qty × ₹ price, per-line discount + GST), PO number (auto PO-), draft → sent → received → closed. Receiving a PO increments inventory. Branded PO PDF (the quotation/receipt PDF pipeline). India GST throughout. Full list treatment.' } },
   ] },
 
@@ -511,11 +457,8 @@ const APP_FULL: ModuleItem[] = [
     // 2026-10-05 (client): Sources are no longer managed here — Leads › Lead Source Master owns them.
     { id: 'masters', label: 'Masters', spec: { dyn: 'mastersAdmin',
       sub: 'Every dropdown master in one place — add, edit, view and activate/deactivate values (states, cities, courses, levels, Lead Status, tags & more). Lead Sources are managed under Leads › Lead Source Master.' } },
-    { id: 'workflow', label: 'Workflow Automation', spec: {
-      sub: 'Admin-built rules (same engine as Automation Journeys). Who can build them.',
-      blocks: [{ type: 'caps', title: 'Workflow automation', items: [
-        cap('Trigger → action', 'Same as journeys'), cap('Admin-built rules', 'Org-wide'),
-        cap('Builder access', 'Super Admin / Org Admin'), cap('Conditions & delays', 'Full control')] }] } },
+    { id: 'workflow', label: 'Workflow Automation', spec: { dyn: 'journeys',
+      sub: 'Admin-built automation rules — triggers (new lead, stage change, no response, fee due, birthday) → conditions → actions. The same engine as Engagement › Automation Journeys.' } },
     { id: 'integrations', label: 'Integrations', spec: {
       sub: 'Lead-source & messaging integrations. Connect and manage lead tools in Marketing › Integrations (Available Tools, field mapping, connected list, logs); credentials live in Settings › Channels.',
       blocks: [{ type: 'table', title: 'Integrations', cols: ['System', 'Type', 'Status'], rows: [
@@ -531,18 +474,13 @@ const APP_FULL: ModuleItem[] = [
         ['99acres', 'Marketplace', { b: ['Live · paste webhook URL in panel', 'b-green'] }],
         ['Custom Integration / Webhook', 'Lead source', { b: ['Live · Marketing › Integrations', 'b-green'] }],
         ['Website form endpoint', 'Website', { b: ['Live · Marketing › Integrations', 'b-green'] }],
-        ['Razorpay', 'Payment', { b: ['Config ready · live payments Phase 3', 'b-amber'] }],
-        ['SMS (DLT)', 'Messaging', { b: ['Built · needs gateway credentials', 'b-amber'] }],
-        ['Gemini / Deepseek', 'AI', { b: ['Phase 2 (AI)', 'b-amber'] }]] }] } },
+        ['Razorpay', 'Payment', { b: ['Live · keys per vertical in Settings · Finance › Online Payments', 'b-green'] }],
+        ['SMS (DLT)', 'Messaging', { b: ['Live · gateway credentials in Settings › Channels', 'b-green'] }],
+        ['Gemini / Deepseek', 'AI', { b: ['Live · key in Settings › Channels · Communication Intelligence', 'b-green'] }]] }] } },
     { id: 'api', label: 'API Access', spec: { dyn: 'apiModule',
       sub: 'Developer API — generate keys (shown once, stored hashed), enable/disable & revoke, read the endpoint docs, and see every inbound API request in the log. Keys authenticate the public create-lead / list-leads endpoints.' } },
-    { id: 'compliance', label: 'Compliance', spec: {
-      sub: 'DPDP / consent capture, DLT records, audit requirements & data-retention policy.',
-      blocks: [{ type: 'cfg', title: 'Compliance', rows: [
-        { ic: 'shield', k: 'DPDP consent', s: 'Capture at lead create', v: 'On', toggle: true },
-        { ic: 'doc', k: 'DLT records', s: 'SMS template registry', v: 'Linked', toggle: true },
-        { ic: 'calls', k: 'Recording consent', s: 'IVR pre-roll', v: 'On', toggle: true },
-        { ic: 'clock', k: 'Data retention', s: 'Auto-purge policy', v: 'Configurable', toggle: true }] }] } },
+    { id: 'compliance', label: 'Compliance', spec: { dyn: 'compliance',
+      sub: 'DPDP consent, opt-outs, DLT template registry, audit trail and data retention — live counts from the system, the consent wording shown on lead forms, and the retention policy for deleted records.' } },
     { id: 'audit', label: 'Audit Logs', spec: { dyn: 'audit',
       sub: 'Every user action across CRM & ERP — work done, edits, updates, messages, emails & calls. Filter by type, user, module & date.' } },
     // Sanctioned addition (client-approved, not in the prototype nav) — see design spec §Sanctioned additions.
@@ -569,14 +507,10 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Recent updates and the full list of feature modules in the CRM. Click a module to open it. This is the destination of the top-bar Features shortcut.' } },
     { id: 'tickets', label: 'Support Tickets', spec: { dyn: 'supportTickets',
       sub: 'Internal staff tickets — full lifecycle. Category (admin-managed master), priority, SLA target with overdue flagging, assignment (active users only), and the Open → In Progress → Resolved → Closed status flow with a reopen path. Comment thread per ticket. RBAC-scoped: you see your own / assigned / branch tickets per your access.' } },
-    { id: 'helpcenter', label: 'Help Center', spec: {
-      sub: 'In-app help articles maintained by Admin. Available at launch.',
-      sprintNote: 'Help articles are being authored — they publish before go-live.',
-      blocks: [emptyTable('Help articles', ['Article', 'Category', 'Views'], 'Help articles publish before go-live')] } },
-    { id: 'guides', label: 'Product Guides', spec: {
-      sub: 'Step-by-step guides for using the system. Available at launch.',
-      sprintNote: 'Guides publish before go-live.',
-      blocks: [emptyList('Guides', 'Product guides publish before go-live')] } },
+    { id: 'helpcenter', label: 'Help Center', spec: { dyn: 'knowledgeBase',
+      sub: 'In-app help articles maintained by Admin — categories, search and access control (the Knowledge Base).' } },
+    { id: 'guides', label: 'Product Guides', spec: { dyn: 'knowledgeBase',
+      sub: 'Step-by-step guides for using the system — write them as Knowledge Base articles in a "Guides" category.' } },
     { id: 'training', label: 'Training Videos', spec: { dyn: 'trainingVideos',
       sub: 'A library of training / how-to videos for staff — title, description, category, video URL (YouTube / Vimeo / MP4 / embed), thumbnail, tags, order and active flag. Staff browse and play in-app; admins manage the library. Filter by category / status / search / date, export, choose columns, refresh, bulk-delete. RBAC training.* (view vs manage).' } },
     { id: 'releases', label: 'Release Notes', spec: { dyn: 'releaseNotes',

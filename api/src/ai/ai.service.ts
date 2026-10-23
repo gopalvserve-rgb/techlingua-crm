@@ -151,6 +151,16 @@ export class AiService {
     if (!ANALYSIS_TYPES.includes(type)) throw new BadRequestException(`Unknown analysis type "${dto?.analysis_type}"`);
     const subjectType = ['lead', 'student', 'transcript'].includes(dto?.subject_type) ? dto.subject_type : 'transcript';
     const subjectId = dto?.subject_id ? Number(dto.subject_id) : null;
+    // Communication Intelligence › AI Settings (Oct 2026): default provider + monthly run limit
+    const aiRow = await this.db.one<{ value: any }>(`SELECT value FROM app_setting WHERE key = 'ai_settings'`).catch(() => null);
+    const aiCfg = { default_provider: String(aiRow?.value?.default_provider ?? ''), monthly_run_limit: Number(aiRow?.value?.monthly_run_limit ?? 0) || 0 };
+    if (aiCfg.monthly_run_limit > 0) {
+      const used = await this.db.one<{ n: string }>(
+        `SELECT count(*) AS n FROM ai_analysis WHERE deleted_at IS NULL AND created_at >= date_trunc('month', now())`);
+      if (Number(used?.n ?? 0) >= aiCfg.monthly_run_limit) {
+        throw new BadRequestException(`This month's AI run limit (${aiCfg.monthly_run_limit}) is reached — raise it in Communication Intelligence › AI Settings.`);
+      }
+    }
 
     // audio transcription is key-dependent — we accept the pasted-transcript path fully.
     if (dto?.has_audio && type === 'transcription') {
@@ -208,7 +218,7 @@ export class AiService {
     const { system, user, json } = this.buildPrompt(type, inputText);
     let result;
     try {
-      result = await this.llm.complete({ system, user, json }, dto?.provider ?? null);
+      result = await this.llm.complete({ system, user, json }, dto?.provider || aiCfg.default_provider || null);
     } catch (e: any) {
       // NotConfiguredException bubbles up as a clean 503 (never stored). Other errors -> 400.
       if (e?.notConfigured) throw e;

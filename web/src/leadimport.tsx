@@ -17,6 +17,7 @@ import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
 import { toast, useFetch, useRef_ } from './refdata';
 import { DateRange, DateRangeValue } from './daterange';
+import { dedupeSources } from './forms';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -305,7 +306,8 @@ export default function LeadImport() {
   const verticals = ref.verticals.filter((v) => !target.branch || Number(v.branch_id) === target.branch);
   const pipelines = ref.pipelines.filter((p) => !target.vertical || Number(p.vertical_id) === target.vertical);
   const campaigns = ref.campaigns.filter((c) => !target.pipeline || Number(c.pipeline_id) === target.pipeline);
-  const sources = ref.sources.filter((s) => !target.campaign || Number(s.campaign_id) === target.campaign);
+  // the campaign's sources + org-wide ones (Oct 2026) — the server gives the campaign its own copy
+  const sources = dedupeSources(ref.sources.filter((s: any) => !target.campaign || s.campaign_id == null || Number(s.campaign_id) === target.campaign));
 
   const allTargets = useMemo(() => [
     ...(parsed?.fields ?? []),

@@ -5,7 +5,7 @@ import { LeadCallsTab } from './calls';
 import { useAuth } from './auth';
 import { Ic, checkS } from './icons';
 import { AddMasterModal } from './mastermodal';
-import { AddModal } from './forms';
+import { AddModal, dedupeSources } from './forms';
 import { fetchLeadCfDefs, coerceCf, displayCf, CfDef } from './customfields';
 import { PhoneInput } from './phonefield';
 import { copyToClipboard } from './contactactions';
@@ -389,7 +389,11 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                   edit form (was read-only). View mode + no options fall back to the read-only name. */}
               <div className="f"><label>Source</label><div className="iv">
                 {canUpdate && (ref.sources.length || extra['source_id']?.length)
-                  ? sel('source_id', withExtra('source_id', ref.sources), false)
+                  // only THIS lead's campaign's sources + org-wide ones (Oct 2026) — a source of
+                  // another campaign would put the lead on the wrong path
+                  ? sel('source_id', withExtra('source_id', dedupeSources(ref.sources.filter((s: any) =>
+                      s.campaign_id == null || Number(s.campaign_id) === Number(lead.campaign_id)
+                      || Number(s.id) === Number(lead.source_id)))), false)
                   : <span>{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</span>}
               </div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">

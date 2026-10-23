@@ -252,7 +252,6 @@ function Screen({ mod, sub, go }: { mod: string; sub: string; go: (m: string, s:
           <div>
             <div className="page-title">
               {screen.sub.label}
-              {spec.tag === 'p2' ? <span className="tag p2">Phase 2</span> : null}
             </div>
             <div className="page-sub">{spec.sub || ''}</div>
           </div>

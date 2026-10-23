@@ -10,6 +10,7 @@
  * duplicates, distribution, idempotency and audit behave identically — the screen
  * says so, because that is the question the client asks first.
  */
+import { dedupeSources } from './forms';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from './api';
@@ -229,7 +230,8 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
   const verticals = ref.verticals.filter((v) => !target.branch || Number(v.branch_id) === target.branch);
   const pipelines = ref.pipelines.filter((p) => !target.vertical || Number(p.vertical_id) === target.vertical);
   const campaigns = ref.campaigns.filter((c) => !target.pipeline || Number(c.pipeline_id) === target.pipeline);
-  const sources = ref.sources.filter((s) => !target.campaign || Number(s.campaign_id) === target.campaign);
+  // the campaign's sources + org-wide ones (Oct 2026) — the server gives the campaign its own copy
+  const sources = dedupeSources(ref.sources.filter((s: any) => !target.campaign || s.campaign_id == null || Number(s.campaign_id) === target.campaign));
 
   const url = cur?.webhook_path ? `${origin()}${cur.webhook_path}` : '';
 

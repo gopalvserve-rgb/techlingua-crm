@@ -127,7 +127,7 @@ export class RolesService {
         'Field-level scope is not supported yet — it would be stored and enforced by nothing, '
         + 'which is worse than not offering it. Remove `field_scope` from '
         + `${withFieldScope.map((e) => e.permission_key).join(', ')} and use record_scope, `
-        + 'which IS enforced on every read and write. Field scope arrives in Phase 2.',
+        + 'which IS enforced on every read and write.',
       );
     }
 

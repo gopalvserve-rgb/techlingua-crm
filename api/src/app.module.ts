@@ -53,6 +53,7 @@ import { AcademicsContentModule } from './academics-content/academics-content.mo
 import { PlacementsModule } from './placements/placements.module';
 import { AdmissionsModule } from './admissions/admissions.module';
 import { AiModule } from './ai/ai.module';
+import { CompletionModule } from './completion/completion.module';
 import { OperationsModule } from './operations/operations.module';
 import { HrModule } from './hr/hr.module';
 import { SupportExtrasModule } from './supportextras/supportextras.module';
@@ -133,6 +134,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     PlacementsModule,  // Placement Support (client #14) — job openings + eligible-student access + applications
     AdmissionsModule,  // ERP Batch 3 — online admission form (public intake + review→approve) + family/siblings
     AiModule,          // ERP Batch 4 — AI Communication Intelligence (DeepSeek/Gemini) over notes/transcripts
+    CompletionModule,  // Oct 2026 — WhatsBot/AI Bot, Scholarships, Shared Docs, Salary, keywords, forecast, dup rules, compliance
     // Phase 2 ERP Batch 5 — Operations: catalog, inventory, assets, vendors, procurement (PO→receive→stock)
     OperationsModule,
     HrModule,        // ERP Batch 6 — Basic HR: employee directory, staff attendance, leaves

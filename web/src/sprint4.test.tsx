@@ -535,7 +535,15 @@ describe('the engagement channel screens', () => {
     fireEvent.click(screen.getByText(/New WhatsApp blast/));
     await screen.findByText(/Welcome — new lead/);
     fireEvent.change(control('Template'), { target: { value: '50' } });
-    fireEvent.change(control('Campaign'), { target: { value: '5' } });
+    // Campaign is a multi-select (client, Oct 2026: Branch › Vertical › Campaign › Source audience)
+    const camp = screen.getByTestId('blast-campaign');
+    fireEvent.click(camp.querySelector('.upick-ctl') as HTMLElement);
+    const row = await waitFor(() => {
+      const r = [...camp.querySelectorAll('.upick-row')].find((x) => x.textContent?.includes('Meta Jul'));
+      if (!r) throw new Error('campaign option not shown');
+      return r as HTMLElement;
+    });
+    fireEvent.mouseDown(row);
     fireEvent.change(control('Score band'), { target: { value: 'hot' } });
     save();
 

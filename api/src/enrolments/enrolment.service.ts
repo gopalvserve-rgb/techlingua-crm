@@ -629,7 +629,7 @@ export class EnrolmentService {
     if (netAfterApplied + money.exam_fee_minor < Number(cur.paid_minor)) {
       throw new BadRequestException(
         `${cur.lead_name} has already paid ${(Number(cur.paid_minor) / 100).toFixed(2)}. `
-        + 'The total payable cannot be set below what has been collected — refunds arrive in Phase 3.',
+        + 'The total payable cannot be set below what has been collected — record a refund (Finance › Refunds) first.',
       );
     }
     const plan = dto?.payment_plan ?? cur.payment_plan;
@@ -756,7 +756,7 @@ export class EnrolmentService {
     if (Number(cur.paid_minor) > 0) {
       throw new BadRequestException(
         `${cur.enrolment_no} has ${(Number(cur.paid_minor) / 100).toFixed(2)} collected against it. `
-        + 'Cancelling would leave money with no enrolment — refunds are Phase 3. Delete the receipts first if they were entered in error.',
+        + 'Cancelling would leave money with no enrolment — refund it (Finance › Refunds) or reverse the payment if it was entered in error, then cancel.',
       );
     }
     await this.db.tx(async (c) => {

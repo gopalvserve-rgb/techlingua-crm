@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { sourceForCampaign } from '../hierarchy/source-attach.util';
 import { DatabaseService } from '../database/database.service';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
 import { LeadMergeService } from '../ingestion/merge.service';
@@ -471,6 +472,12 @@ export class LeadsService {
     // DEF-QA4-03: body-referenced entities must fall inside the creator's scope
     // (out-of-scope -> 404, consistent with the by-ID policy).
     await this.enforcer.assertRefInScope(scope, 'campaign', dto.campaign_id, actorId);
+    // an ORG-WIDE source picked with this campaign → the campaign's own copy (Oct 2026). Resolved
+    // BEFORE the scope check: an org-wide row has no branch, so a branch-scoped user would 404.
+    {
+      const sid = await sourceForCampaign(this.db, Number(dto.source_id), Number(dto.campaign_id), actorId);
+      if (sid && Number.isFinite(sid)) dto.source_id = sid;   // ingestion still rejects a source of another campaign
+    }
     await this.enforcer.assertRefInScope(scope, 'source', dto.source_id, actorId);
     // dev/84 item 3 — round-robin on a manual lead: when the user ticks "Assign via
     // round-robin" we DROP any picked owner and let the campaign distribution engine
@@ -534,11 +541,7 @@ export class LeadsService {
     // Notification Events — a counsellor was assigned. dedupe on owner so re-assigning to a
     // DIFFERENT counsellor fires again, but a no-op re-save does not.
     await this.notifEvents?.safeFire('lead_assigned', { lead_id: Number(id), dedupe: `${id}:${ownerId}` });
-    // dev/132 ITEM C — in-app bell/toast to the newly-assigned counsellor.
-    try {
-      await this.notifier?.notify({ userId: Number(ownerId), type: 'assignment', severity: 'info',
-        title: 'Lead assigned to you', body: `Lead #${id}`, link: { type: 'lead', id: Number(id) } });
-    } catch { /* non-fatal */ }
+    // the in-app bell/toast to the new owner is sent by update() for every owner change
     return out;
   }
 
@@ -638,11 +641,10 @@ export class LeadsService {
   private async resolveTargetSource(camp: any, explicit: unknown, actorId: number): Promise<number> {
     const campaignId = Number(camp.id);
     if (explicit != null && String(explicit) !== '') {
-      const s = await this.db.one<{ id: string }>(
-        `SELECT id FROM source WHERE id = $1 AND campaign_id = $2 AND deleted_at IS NULL`,
-        [Number(explicit), campaignId]);
+      // an org-wide source becomes the target campaign's own copy (Oct 2026)
+      const s = await sourceForCampaign(this.db, Number(explicit), campaignId, actorId);
       if (!s) throw new BadRequestException('source does not belong to the target campaign');
-      return Number(s.id);
+      return s;
     }
     const existing = await this.db.one<{ id: string }>(
       `SELECT id FROM source WHERE campaign_id = $1 AND deleted_at IS NULL AND is_active
@@ -899,7 +901,14 @@ export class LeadsService {
     const target = await this.resolveTransferTarget(dto, actorId, scope);
     const owner = await this.resolveTransferOwner(dto, target);
     await this.transferOneLead(Number(id), target, owner.mode, actorId, owner.ownerId);
+    await this.notifyTransferredOwner(Number(id), actorId);
     return this.get(Number(id));
+  }
+
+  /** After a transfer: tell the lead's (possibly new) owner it arrived in their queue. */
+  private async notifyTransferredOwner(leadId: number, actorId: number) {
+    const r = await this.db.one<{ owner_id: string | null }>(`SELECT owner_id FROM lead WHERE id = $1`, [leadId]).catch(() => null);
+    if (r?.owner_id && Number(r.owner_id) !== Number(actorId)) await this.notifyAssigned(leadId, Number(r.owner_id), 'transferred');
   }
 
   // ---- shared bulk helpers -------------------------------------------------
@@ -935,7 +944,10 @@ export class LeadsService {
     const owner = await this.resolveTransferOwner(dto, target);
     const rows = await this.scopedLeadRows(ids, scope);
     let transferred = 0;
-    for (const r of rows) { await this.transferOneLead(Number(r.id), target, owner.mode, actorId, owner.ownerId); transferred++; }
+    for (const r of rows) {
+      await this.transferOneLead(Number(r.id), target, owner.mode, actorId, owner.ownerId); transferred++;
+      await this.notifyTransferredOwner(Number(r.id), actorId);
+    }
     return { transferred, skipped: ids.length - rows.length, requested: ids.length,
              owner_mode: owner.mode, campaign_id: target.campaign_id };
   }
@@ -1128,7 +1140,11 @@ export class LeadsService {
     // (the caller must be able to see the target source) and logged like any other field.
     if (dto.source_id !== undefined && dto.source_id !== null
         && Number(dto.source_id) !== Number(before.source_id)) {
-      const sid = Number(dto.source_id);
+      // the source must be one of the lead's campaign (an org-wide one gets the campaign's copy)
+      const sid = before.campaign_id != null
+        ? await sourceForCampaign(this.db, Number(dto.source_id), Number(before.campaign_id), actorId)
+        : Number(dto.source_id);
+      if (!sid) throw new BadRequestException('That Lead Source belongs to another campaign — pick one of this lead\'s campaign.');
       await this.enforcer.assertRefInScope(scope, 'source', sid, actorId);
       set('source_id', sid);
       fieldChanges['source_id'] = { from: Number(before.source_id), to: sid };
@@ -1207,7 +1223,27 @@ export class LeadsService {
     if (dto.stage_id !== undefined && Number(dto.stage_id) !== Number(before.stage_id)) {
       await this.journeys?.safeFire('stage_changed', id, { stage_id: Number(dto.stage_id) });
     }
+    // Bell + pop-up to the NEW owner whenever a lead changes hands — edit form, reassign, bulk
+    // reassign, hand-off (client, Oct 2026: "lead assign … pop up"). Never to the person who
+    // assigned it to themselves.
+    if (dto.owner_id != null && Number(dto.owner_id) !== Number(before.owner_id ?? 0) && Number(dto.owner_id) !== Number(actorId)) {
+      await this.notifyAssigned(id, Number(dto.owner_id), 'assigned');
+    }
     return { ...saved, ...(rescored ?? {}) };
+  }
+
+  /** In-app notification (bell count + toast) to a lead's new owner. Best-effort. */
+  async notifyAssigned(leadId: number, ownerId: number, how: 'assigned' | 'transferred' | 'new') {
+    try {
+      const l = await this.db.one<any>(
+        `SELECT l.full_name, l.phone, c.name AS campaign FROM lead l LEFT JOIN campaign c ON c.id = l.campaign_id WHERE l.id = $1`, [leadId]);
+      const title = how === 'transferred' ? 'Lead transferred to you' : how === 'new' ? 'New lead assigned to you' : 'Lead assigned to you';
+      await this.notifier?.notify({
+        userId: ownerId, type: 'assignment', severity: 'info', title,
+        body: `${l?.full_name ?? `Lead #${leadId}`}${l?.phone ? ` · ${l.phone}` : ''}${l?.campaign ? ` · ${l.campaign}` : ''}`,
+        link: { type: 'lead', id: Number(leadId) },
+      });
+    } catch { /* a notification never fails the save */ }
   }
 
   /** Append a free-text note to the timeline. */

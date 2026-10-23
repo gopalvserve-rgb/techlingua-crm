@@ -250,7 +250,7 @@ const SPECS: MsgProviderSpec[] = [
     key: 'razorpay',
     channel: 'payment',
     label: 'Razorpay (per vertical)',
-    blurb: 'Vertical-wise payment gateway. Stored now; fee collection uses it in Sprint 5 / Phase 3.',
+    blurb: 'Vertical-wise payment gateway — Finance › Online Payments mints payment links with it and the webhook records each payment automatically.',
     perVertical: true,
     config: [
       { key: 'key_id', label: 'Key ID', type: 'text', required: true, placeholder: 'rzp_live_xxxxxxxx' },
@@ -264,11 +264,10 @@ const SPECS: MsgProviderSpec[] = [
     setup: [
       'Razorpay Dashboard › Settings › API Keys › Generate Key. Copy the Key ID and Key Secret.',
       'Choose the Vertical this account belongs to and Save. Repeat per vertical.',
-      'Razorpay › Settings › Webhooks: add a webhook and copy its secret here (needed in Phase 3).',
+      'Razorpay › Settings › Webhooks: add a webhook pointing at https://<your-domain>/api/webhooks/razorpay (events payment.captured, payment.failed, payment_link.paid) and copy its secret here — it confirms each payment.',
     ],
     test: 'probe',
     testCaveat: 'Green means Razorpay accepted the Key ID + Key Secret. No payment is created and no money moves.',
-    storedOnly: 'STORED, NOT YET CHARGING. The keys are saved and verified now; fee collection starts using them in Sprint 5 / Phase 3.',
   },
 
   /* --------------------------------------------------------------------- AI */
@@ -276,7 +275,7 @@ const SPECS: MsgProviderSpec[] = [
     key: 'deepseek',
     channel: 'ai',
     label: 'DeepSeek',
-    blurb: 'AI key placeholder — used by the Phase-2 AI features (lead insights, call summaries).',
+    blurb: 'AI provider for Communication Intelligence (call summaries, sentiment, quality) and the AI Bot.',
     perVertical: false,
     config: [
       { key: 'model', label: 'Model', type: 'text', placeholder: 'deepseek-chat' },
@@ -285,19 +284,17 @@ const SPECS: MsgProviderSpec[] = [
     secrets: [{ key: 'api_key', label: 'API key', type: 'password', required: true }],
     setup: ['DeepSeek platform › API keys › Create new key. Paste it here.'],
     test: 'probe',
-    storedOnly: 'STORED, NOT YET ACTIVE. The key is saved and verified now; the AI features that use it land in Phase 2.',
   },
   {
     key: 'gemini',
     channel: 'ai',
     label: 'Google Gemini',
-    blurb: 'AI key placeholder — used by the Phase-2 AI features.',
+    blurb: 'AI provider for Communication Intelligence (call summaries, sentiment, quality) and the AI Bot.',
     perVertical: false,
     config: [{ key: 'model', label: 'Model', type: 'text', placeholder: 'gemini-2.0-flash' }],
     secrets: [{ key: 'api_key', label: 'API key', type: 'password', required: true }],
     setup: ['Google AI Studio › Get API key. Paste it here.'],
     test: 'probe',
-    storedOnly: 'STORED, NOT YET ACTIVE. The key is saved and verified now; the AI features that use it land in Phase 2.',
   },
 
   /* --------------------------------------------------------------- CALENDAR */

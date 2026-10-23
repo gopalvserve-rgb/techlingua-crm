@@ -329,7 +329,11 @@ export default function StartCalling() {
               <div className="fchip"><Ic k="leads" />Source
                 <select aria-label="Filter queue by Source" value={qf.source} onChange={(e) => setQf((x) => ({ ...x, source: e.target.value }))}>
                   <option value="">All</option>
-                  {(ref.sources ?? []).map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  {/* the sources the leads IN THIS BATCH actually carry (Oct 2026) — the whole
+                      source list mixed every campaign's same-named sources and could not match */}
+                  {[...new Map(leads.filter((l: any) => l.source_id).map((l: any) => [String(l.source_id), String(l.source_name ?? `Source ${l.source_id}`)])).entries()]
+                    .sort((a, b) => a[1].localeCompare(b[1]))
+                    .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
                 </select>
               </div>
               <div className="fchip"><Ic k="check" />Status

@@ -561,10 +561,8 @@ export class QuotationService {
       net_fee_minor: Number(q.subtotal_minor) - Number(q.discount_minor),
       counsellor_id: q.owner_id ? Number(q.owner_id) : null,
       invoice: {
-        available: false,
-        phase: 3,
-        note: 'A GST tax invoice (HSN/SAC, CGST/SGST/IGST, place of supply, e-invoice) is Phase 3. '
-          + 'The enrolment created here is what Phase 3 raises that invoice from.',
+        available: true,
+        note: 'Raise the GST tax invoice (HSN/SAC, CGST/SGST/IGST, place of supply) from the enrolment created here — Finance › Fee Invoices.',
       },
     };
   }

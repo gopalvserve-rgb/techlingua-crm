@@ -54,7 +54,10 @@ import { ConvertStudentModal, BulkConvertStudentsModal } from './convertstudent'
 import { AdmissionsScreen } from './admissions';
 import { CustomFieldsAdmin, fetchCfDefs, coerceCf, collectCf, type CfDef } from './customfields';
 import StartCalling from './calling';
-import CallLogs, { Recordings as CallRecordings, CallSettings, CallReport } from './calls';
+import CallLogs, { Recordings as CallRecordings, CallSettings, CallReport, CallLogsIncoming, CallLogsOutgoing, CallLogsMissed, Dialer } from './calls';
+import {
+  AiBot, AiSettings, AiUsage, Compliance, DuplicateRules, Forecasting, KeywordTracking, Payroll, Scholarships, SharedDocs, WhatsBot,
+} from './completion';
 import { Calendar, Referrals, Scoring, Sla, WalkIns, dur } from './sprint3';
 import {
   BulkWhatsApp, Journeys, Settings, SmsTemplates, Templates,
@@ -2202,19 +2205,28 @@ function Sources() {
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Source', 'Branch', 'Vertical', 'Pipeline', 'Campaign', 'Capture', 'This month', 'Cost/lead', 'Status', 'Actions']}
+      <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', rows.map((so: any) => ({
+          source: so.name, branch: so.branch_name ?? (so.campaign_id == null ? 'All' : ''), vertical: so.vertical_name ?? (so.campaign_id == null ? 'All' : ''),
+          pipeline: so.pipeline_name ?? (so.campaign_id == null ? 'All' : ''), campaign: so.campaign_name ?? 'All campaigns',
+          capture: (CAPTURE[so.channel as string] ?? ['Manual'])[0], leads_this_month: Number(so.leads_this_month ?? 0), total_leads: Number(so.lead_count ?? 0),
+          cost_per_lead: Number(so.cost_per_lead ?? 0), status: so.is_active === false ? 'Inactive' : 'Active',
+        })))} onRefresh={() => list.reload()} />} cols={['Source', 'Branch', 'Vertical', 'Pipeline', 'Campaign', 'Capture', 'This month', 'Total leads', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((so) => {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
+          // an ORG-WIDE source (no campaign) is usable under every campaign (Oct 2026)
+          const all = so.campaign_id == null;
+          const cpl = Number(so.cost_per_lead ?? 0);
           return [
             { node: <span className="nm">{so.name}</span> } as Cell,
-            String(so.branch_name ?? '—'),
-            String(so.vertical_name ?? '—'),
-            String(so.pipeline_name ?? '—'),
-            String(so.campaign_name ?? '—'),
+            all ? { node: <span className="sub">All</span> } as Cell : String(so.branch_name ?? '—'),
+            all ? { node: <span className="sub">All</span> } as Cell : String(so.vertical_name ?? '—'),
+            all ? { node: <span className="sub">All</span> } as Cell : String(so.pipeline_name ?? '—'),
+            all ? { b: ['All campaigns', 'b-indigo'] } as Cell : String(so.campaign_name ?? '—'),
             { b: cap } as Cell,
-            '—',
-            '—',
+            { mono: String(Number(so.leads_this_month ?? 0)) } as Cell,
+            { mono: String(Number(so.lead_count ?? 0)) } as Cell,
+            cpl > 0 ? { mono: `₹${cpl.toLocaleString('en-IN')}` } as Cell : '—',
             toggleCell({
               active: so.is_active !== false, name: so.name, entity: 'Source', canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/sources/${so.id}`, { is_active: next }); after(); },
@@ -2235,7 +2247,8 @@ function Sources() {
               ['Branch', view.branch_name ?? '—'],
               ['Vertical', view.vertical_name ?? '—'],
               ['Pipeline', view.pipeline_name ?? '—'],
-              ['Campaign', view.campaign_name ?? '—'],
+              ['Campaign', view.campaign_id == null ? 'All campaigns (org-wide)' : (view.campaign_name ?? '—')],
+              ['Leads', `${Number(view.lead_count ?? 0)} total · ${Number(view.leads_this_month ?? 0)} this month`],
               ['Channel', <span className="mono">{view.channel ?? 'manual'}</span>],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
               ['Webhook', view.webhook_token
@@ -3046,7 +3059,8 @@ function Campaigns() {
       <TableCard fill title="Campaigns" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('campaigns.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Campaign', 'Branch', 'Vertical', 'Pipeline', 'Source', 'UTM', 'Spend', 'Leads', 'CPL', 'Assign rule', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => {
-          const src = ref.sources.find((x) => Number(x.campaign_id) === Number(c.id));
+          // EVERY source of the campaign (Oct 2026 — only the first one used to show)
+          const srcs = ref.sources.filter((x) => Number(x.campaign_id) === Number(c.id));
           const utm = (c.utm as any)?.utm_campaign ?? (c.utm as any)?.utm_source ?? '—';
           const leads = counts[Number(c.id)] ?? 0;
           const cost = Number(c.cost ?? 0);
@@ -3055,7 +3069,9 @@ function Campaigns() {
             String(c.branch_name ?? '—'),
             String(c.vertical_name ?? '—'),
             String(c.pipeline_name ?? '—'),
-            src ? ({ b: [src.name, 'b-indigo'] } as Cell) : '—',
+            srcs.length
+              ? ({ node: <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>{srcs.map((s) => <span key={s.id} className="bdg b-indigo">{s.name}</span>)}</span>, sort: srcs.map((s) => s.name).join(', ') } as Cell)
+              : ({ node: <span className="sub">All-campaign sources only</span>, sort: '' } as Cell),
             { mono: utm === '—' ? '—' : `utm=${utm}`, dim: true } as Cell,
             cost ? `₹${cost.toLocaleString('en-IN')}` : '—',
             // dev/131 (task #213 item 1) — the LEADS count links to the Leads list pre-filtered to this
@@ -4043,7 +4059,7 @@ function Sitemap() {
   return (
     <>
       <div className="page-sub" style={{ marginBottom: 14 }}>
-        All {mods.length} departments &amp; {total} sub-menus. Tap any item to open its screen. Amber = Phase 2. On phone, tap ☰ top-left for the menu.
+        All {mods.length} departments &amp; {total} sub-menus. Tap any item to open its screen. On phone, tap ☰ top-left for the menu.
       </div>
       <div className="mapgrid">
         {mods.map((m) => (
@@ -8321,6 +8337,22 @@ export const DYN: Record<string, () => JSX.Element> = {
   captureChannels: Channels,
   startCalling: StartCalling,
   callLogs: CallLogs,
+  callLogsIncoming: CallLogsIncoming,
+  callLogsOutgoing: CallLogsOutgoing,
+  callLogsMissed: CallLogsMissed,
+  dialer: Dialer,
+  // Oct 2026 — the screens that were placeholders (completion.tsx)
+  whatsBot: WhatsBot,
+  aiBot: AiBot,
+  scholarships: Scholarships,
+  sharedDocs: SharedDocs,
+  payroll: Payroll,
+  keywordTracking: KeywordTracking,
+  aiUsage: AiUsage,
+  aiSettings: AiSettings,
+  forecasting: Forecasting,
+  duplicateRules: DuplicateRules,
+  compliance: Compliance,
   callRecordings: CallRecordings,
   callSettings: CallSettings,
   callActivityReport: CallReport,

@@ -16,6 +16,7 @@ import { SmsTemplateService } from '../smstemplates/sms-template.service';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
 import { MERGEABLE_FIELDS } from './merge.util';
 import { toDateString } from '../common/date.util';
+import { sourceForCampaign } from '../hierarchy/source-attach.util';
 
 /** Campaign duplicacy_config (migration 002). */
 export interface DuplicacyConfig {
@@ -26,6 +27,8 @@ export interface DuplicacyConfig {
   match_key?: 'phone';
   on_duplicate?: 'ignore' | 'merge' | 'create' | 'merge_and_reopen' | 'flag';
   open_reassign_same_user?: boolean;
+  /** Leads › Duplicate Rules (Oct 2026): also treat the same EMAIL as a duplicate. */
+  match_email?: boolean;
 }
 
 /** Everything a channel needs about its target, loaded ONCE per batch. */
@@ -144,6 +147,16 @@ export class LeadIngestionService {
       // Notification Events — the curated `New Lead Created` event. Degrades cleanly to a
       // logged not-configured attempt when a channel has no credentials yet.
       await this.notifEvents?.safeFire('new_lead_created', { lead_id: Number(id) });
+      // Bell + pop-up to the counsellor the new lead was assigned to (round-robin / rule /
+      // import / integration) — client, Oct 2026. Not to the person who created it themselves.
+      try {
+        await this.db.query(
+          `INSERT INTO notification (org_id, user_id, type, severity, title, body, link_type, link_id, meta)
+           SELECT l.org_id, l.owner_id, 'assignment', 'info', 'New lead assigned to you',
+                  l.full_name || COALESCE(' · ' || l.phone, '') || COALESCE(' · ' || c.name, ''), 'lead', l.id, '{}'::jsonb
+             FROM lead l LEFT JOIN campaign c ON c.id = l.campaign_id
+            WHERE l.id = $1 AND l.owner_id IS NOT NULL AND l.owner_id IS DISTINCT FROM l.created_by`, [Number(id)]);
+      } catch { /* a notification never fails an ingest */ }
     }
   }
 
@@ -155,11 +168,10 @@ export class LeadIngestionService {
          FROM campaign WHERE id = $1 AND is_active AND deleted_at IS NULL`, [campaignId],
     );
     if (!camp) throw new NotFoundException('campaign not found');
-    const src = await this.db.one<any>(
-      `SELECT id FROM source WHERE id = $1 AND campaign_id = $2 AND deleted_at IS NULL`,
-      [sourceId, campaignId],
-    );
-    if (!src) throw new BadRequestException('source does not belong to the campaign');
+    // an ORG-WIDE source picked with a campaign becomes that campaign's own copy (Oct 2026)
+    const resolvedSource = await sourceForCampaign(this.db, sourceId, campaignId);
+    if (!resolvedSource) throw new BadRequestException('source does not belong to the campaign');
+    sourceId = resolvedSource;
 
     const org = Number(camp.org_id);
     const masters: Record<string, Map<string, number>> = {};
@@ -185,13 +197,25 @@ export class LeadIngestionService {
     const cfs = await this.db.query<{ field_key: string }>(
       `SELECT field_key FROM custom_field_def WHERE entity = 'lead' AND is_active AND deleted_at IS NULL`,
     );
+    // Leads › Duplicate Rules (Oct 2026) — the ORGANISATION rule is the default; whatever the
+    // campaign sets itself overrides it. Email matching comes from the org rule.
+    const orgDup = await this.db.one<{ value: any }>(`SELECT value FROM app_setting WHERE key = 'duplicate_rules'`).catch(() => null);
+    const od = (orgDup?.value ?? {}) as Record<string, unknown>;
+    const orgDefault: DuplicacyConfig = {
+      ...(od.check_scope ? { check_scope: od.check_scope as DuplicacyConfig['check_scope'] } : {}),
+      ...(od.on_duplicate ? { on_duplicate: od.on_duplicate as DuplicacyConfig['on_duplicate'] } : {}),
+      ...(od.open_reassign_same_user !== undefined ? { open_reassign_same_user: !!od.open_reassign_same_user } : {}),
+      match_email: !!od.match_email,
+    };
+    const campDup = Object.fromEntries(Object.entries((camp.duplicacy_config ?? {}) as Record<string, unknown>)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')) as DuplicacyConfig;
 
     return {
       org_id: org,
       branch_id: Number(camp.branch_id), vertical_id: Number(camp.vertical_id),
       pipeline_id: Number(camp.pipeline_id), campaign_id: campaignId, source_id: sourceId,
       distribution: (camp.distribution_config ?? {}) as DistributionConfig,
-      duplicacy: (camp.duplicacy_config ?? {}) as DuplicacyConfig,
+      duplicacy: { ...orgDefault, ...campDup, match_email: orgDefault.match_email || !!campDup.match_email },
       default_stage_id: stageRows[0] ? Number(stageRows[0].id) : null,
       default_status_id: defStatus ? Number(defStatus.id) : null,
       masters,
@@ -410,9 +434,10 @@ export class LeadIngestionService {
    * differs, its WhatsApp number). Scope (campaign / pipeline / global) is the
    * campaign's configured `check_scope`, unchanged.
    */
-  async findDuplicate(numbers: string | string[], target: IngestTarget) {
+  async findDuplicate(numbers: string | string[], target: IngestTarget, email?: string | null) {
     const nums = [...new Set((Array.isArray(numbers) ? numbers : [numbers]).map((n) => n).filter(Boolean))];
-    if (!nums.length) return null;
+    const mail = target.duplicacy.match_email && email ? String(email).trim().toLowerCase() : '';
+    if (!nums.length && !mail) return null;
     // Client change (Jul 2026): scope = campaign | vertical | branch | global.
     // A legacy `this_pipeline` value is narrowed to `this_campaign` (pipeline
     // scope was removed); migration 040 rewrites stored rows, this is defence in
@@ -425,10 +450,12 @@ export class LeadIngestionService {
     else if (scope === 'this_vertical') { params.push(target.vertical_id); extra = `AND l.vertical_id = $${params.length}`; }
     else if (scope === 'this_branch') { params.push(target.branch_id); extra = `AND l.branch_id = $${params.length}`; }
     // scope === 'global' -> no extra clause (match anywhere in the org)
+    let emailClause = '';
+    if (mail) { params.push(mail); emailClause = ` OR lower(l.email) = $${params.length}`; }
     return this.db.one<{ id: string; owner_id: string | null; stage_type: string | null }>(
       `SELECT l.id, l.owner_id, st.stage_type
          FROM lead l LEFT JOIN pipeline_stage st ON st.id = l.stage_id
-        WHERE (l.phone = ANY($1::text[]) OR l.whatsapp_phone = ANY($1::text[]))
+        WHERE (l.phone = ANY($1::text[]) OR l.whatsapp_phone = ANY($1::text[])${emailClause})
           AND l.is_active AND l.deleted_at IS NULL ${extra}
         ORDER BY l.id LIMIT 1`,
       params,
@@ -600,7 +627,7 @@ export class LeadIngestionService {
     const lead = this.normalise(payload, target, { softMasters, strictMasters });
 
     // 3) duplicate check (phone + WhatsApp cross-match, campaign-configured scope — #22)
-    const dup = await this.findDuplicate([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[], target);
+    const dup = await this.findDuplicate([lead.phone, lead.whatsapp_phone].filter(Boolean) as string[], target, lead.email);
     // Client change (Aug 2026, dev/129): a HUMAN-entered lead (manual Add Lead / walk-in /
     // referral — `always_create`) now honours the campaign's configured duplicate action
     // too. In particular MERGE and MERGE & REOPEN must fire when a desk duplicate matches an

@@ -893,18 +893,32 @@ export class HierarchyService {
     const where = this.resolver.buildScopeWhere(scope, {
       branch: 's.branch_id', vertical: 's.vertical_id', pipeline: 's.pipeline_id', campaign: 's.campaign_id',
     }, params);
+    // ORG-WIDE sources (no campaign) are usable under EVERY campaign (Oct 2026, "lead source not
+    // showing"): visible to every scoped user and kept by any Branch/Vertical/Pipeline/Campaign
+    // filter. Lead counts are real (all-time and this calendar month), never a hard-coded dash.
     let sql = `SELECT s.*, c.name AS campaign_name, ms.name AS master_source_name,
-                      b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name
+                      b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
+                      (s.campaign_id IS NULL) AS org_wide,
+                      lc.lead_count, lc.leads_this_month
                  FROM source s LEFT JOIN campaign c ON c.id = s.campaign_id
                  LEFT JOIN m_source ms ON ms.id = s.master_source_id
                  LEFT JOIN branch b ON b.id = s.branch_id
                  LEFT JOIN vertical v ON v.id = s.vertical_id
                  LEFT JOIN pipeline p ON p.id = s.pipeline_id
-                WHERE ${where} AND s.deleted_at IS NULL${HierarchyService.activeFilter('s', includeInactive)}`;
-    { const c = this.inCol('s.branch_id', undefined, opts?.branchIds, params); if (c) sql += ` AND ${c}`; }
-    { const c = this.inCol('s.vertical_id', undefined, opts?.verticalIds, params); if (c) sql += ` AND ${c}`; }
-    { const c = this.inCol('s.pipeline_id', undefined, opts?.pipelineIds, params); if (c) sql += ` AND ${c}`; }
-    { const c = this.inCol('s.campaign_id', campaignId, opts?.campaignIds, params); if (c) sql += ` AND ${c}`; }
+                 LEFT JOIN LATERAL (
+                   SELECT count(*) AS lead_count,
+                          count(*) FILTER (WHERE l.created_at >= date_trunc('month', now())) AS leads_this_month
+                     FROM lead l
+                    WHERE l.deleted_at IS NULL
+                      AND (l.source_id = s.id OR (s.campaign_id IS NULL AND s.master_source_id IS NOT NULL
+                           AND l.source_id IN (SELECT s2.id FROM source s2 WHERE s2.master_source_id = s.master_source_id)))
+                 ) lc ON TRUE
+                WHERE (${where} OR s.campaign_id IS NULL) AND s.deleted_at IS NULL${HierarchyService.activeFilter('s', includeInactive)}`;
+    const orgWide = (c: string) => `(${c} OR s.campaign_id IS NULL)`;
+    { const c = this.inCol('s.branch_id', undefined, opts?.branchIds, params); if (c) sql += ` AND ${orgWide(c)}`; }
+    { const c = this.inCol('s.vertical_id', undefined, opts?.verticalIds, params); if (c) sql += ` AND ${orgWide(c)}`; }
+    { const c = this.inCol('s.pipeline_id', undefined, opts?.pipelineIds, params); if (c) sql += ` AND ${orgWide(c)}`; }
+    { const c = this.inCol('s.campaign_id', campaignId, opts?.campaignIds, params); if (c) sql += ` AND ${orgWide(c)}`; }
     return this.db.query(sql + ` ORDER BY s.name`, params);
   }
 

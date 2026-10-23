@@ -16,6 +16,7 @@ import { AddModal, EditSpec, need } from './forms';
 import { AddMasterModal } from './mastermodal';
 import { ScreenCtx, FilterMulti } from './dyn';
 import { DateRange, presetRange, WEEK_START } from './daterange';
+import { UserPicker } from './userpicker';
 
 const useScreen = () => useContext(ScreenCtx);
 
@@ -65,6 +66,7 @@ export function RuleModal({ initial, types, onClose, onSaved }: {
   });
   const [busy, setBusy] = useState(false);
   const spec = types.find((t) => t.type === ruleType);
+  const ref = useRef_();
 
   const setC = (k: string, v: string) => setCfg((x) => ({ ...x, [k]: v }));
 
@@ -141,14 +143,75 @@ export function RuleModal({ initial, types, onClose, onSaved }: {
                 onChange={(e) => setPoints(e.target.value)} />
               <div className="fhint">Negative values are penalties (e.g. &minus;15 for no response)</div>
             </div>
-            {(spec?.fields ?? []).map((f) => (
-              <div className="fld span2" key={f}>
-                <label htmlFor={`cfg-${f}`}>{f.replace(/_/g, ' ').replace(/\bids\b/, 'IDs')}</label>
-                <input id={`cfg-${f}`} className="ainp" value={cfg[f] ?? ''} onChange={(e) => setC(f, e.target.value)}
-                  placeholder={HINT[f] || ''} />
-                {HINT[f] ? <div className="fhint">{HINT[f]}</div> : null}
-              </div>
-            ))}
+            {(spec?.fields ?? []).map((f) => {
+              // PICKERS, not typed ids / words (Oct 2026): the client saw "3, 7" and a hard-coded
+              // channel hint. Sources / campaigns / courses / budgets come from their masters.
+              const idList = (cfg[f] ?? '').split(',').map((x) => Number(x.trim())).filter((n) => n > 0);
+              const wordList = (cfg[f] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+              const LABEL: Record<string, string> = {
+                channels: 'Source channel', values: 'Priority', types: 'Stage type', source_ids: 'Lead Source',
+                campaign_ids: 'Campaign', course_ids: 'Course', budget_ids: 'Budget',
+              };
+              const lab = LABEL[f] ?? f.replace(/_/g, ' ');
+              const ENUMS: Record<string, Array<[string, string]>> = {
+                channels: [['meta', 'Meta (Facebook / Instagram)'], ['google', 'Google'], ['justdial', 'JustDial'], ['indiamart', 'IndiaMART'],
+                  ['form', 'Website form'], ['webhook', 'Webhook / API'], ['sheet', 'Google Sheet / import'], ['walkin', 'Walk-in'],
+                  ['referral', 'Referral'], ['manual', 'Manual']],
+                values: [['low', 'Low'], ['med', 'Medium'], ['high', 'High']],
+                types: [['open', 'Open'], ['won', 'Won'], ['lost', 'Lost']],
+              };
+              if (ENUMS[f]) {
+                return (
+                  <div className="fld span2" key={f} data-testid={`cfg-${f}`}>
+                    <label>{lab}</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                      {ENUMS[f].map(([k, l]) => (
+                        <label key={k} style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontWeight: 400 }}>
+                          <input type="checkbox" checked={wordList.includes(k)}
+                            onChange={(e) => setC(f, (e.target.checked ? [...wordList, k] : wordList.filter((w) => w !== k)).join(', '))} />{l}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+              if (f === 'source_ids') {
+                // one option per source NAME (org-wide + every campaign's copy); picking it matches all copies
+                const groups = new Map<string, { name: string; ids: number[] }>();
+                for (const s of ref.sources as any[]) {
+                  const key = s.master_source_id != null ? `m${s.master_source_id}` : `n${String(s.name).toLowerCase()}`;
+                  const g = groups.get(key) ?? { name: String(s.name), ids: [] };
+                  g.ids.push(Number(s.id)); groups.set(key, g);
+                }
+                const opts = [...groups.values()].map((g) => ({ id: g.ids[0], name: g.name, ids: g.ids }));
+                const picked = opts.filter((o) => o.ids.some((id) => idList.includes(id))).map((o) => o.id);
+                return (
+                  <div className="fld span2" key={f} data-testid="cfg-source_ids">
+                    <label>{lab}</label>
+                    <UserPicker hideBranch options={opts.map((o) => ({ id: o.id, name: o.name }))} value={picked} placeholder="Select lead source(s)…"
+                      onChange={(arr) => setC(f, opts.filter((o) => arr.includes(o.id)).flatMap((o) => o.ids).join(', '))} />
+                  </div>
+                );
+              }
+              const MASTER: Record<string, any[]> = { campaign_ids: ref.campaigns, course_ids: ref.courses, budget_ids: ref.budgets };
+              if (MASTER[f]) {
+                return (
+                  <div className="fld span2" key={f} data-testid={`cfg-${f}`}>
+                    <label>{lab}</label>
+                    <UserPicker hideBranch options={(MASTER[f] ?? []).map((o: any) => ({ id: Number(o.id), name: String(o.name) }))} value={idList}
+                      placeholder={`Select ${lab.toLowerCase()}(s)…`} onChange={(arr) => setC(f, arr.join(', '))} />
+                  </div>
+                );
+              }
+              return (
+                <div className="fld span2" key={f}>
+                  <label htmlFor={`cfg-${f}`}>{lab}</label>
+                  <input id={`cfg-${f}`} className="ainp" value={cfg[f] ?? ''} onChange={(e) => setC(f, e.target.value)}
+                    placeholder={HINT[f] || ''} />
+                  {HINT[f] ? <div className="fhint">{HINT[f]}</div> : null}
+                </div>
+              );
+            })}
             <div className="fld">
               <label htmlFor="rule-status">Status</label>
               <select id="rule-status" className="ainp" value={active ? 'Active' : 'Inactive'}
@@ -227,6 +290,7 @@ export function Scoring() {
   const [edit, setEdit] = useState<Rule | null | undefined>(undefined);   // undefined = closed, null = add
   const [bands, setBands] = useState(false);
   const [del, setDel] = useState<Rule | null>(null);
+  const rref = useRef_();
 
   const s = sum.data;
   const cfg = s?.config ?? { bands: { hot: 70, warm: 40 }, min: 0, max: 100 };
@@ -270,8 +334,20 @@ export function Scoring() {
         cols={['Rule', 'Type', 'Condition', 'Points', 'Status', 'Actions']}
         rowClass={(i) => ((rules.data ?? [])[i].is_active === false ? 'row-inactive' : undefined)}
         rows={(rules.data ?? []).map((r) => {
+          // names, not ids (Oct 2026)
+          const NAMES: Record<string, [string, any[]]> = {
+            source_ids: ['Lead Source', rref.sources], campaign_ids: ['Campaign', rref.campaigns],
+            course_ids: ['Course', rref.courses], budget_ids: ['Budget', rref.budgets],
+          };
           const cond = Object.entries(r.config ?? {})
-            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join(' · ');
+            .map(([k, v]) => {
+              const arr = Array.isArray(v) ? v : [v];
+              if (NAMES[k]) {
+                const names = [...new Set(arr.map((id) => (NAMES[k][1] ?? []).find((o: any) => Number(o.id) === Number(id))?.name ?? `#${id}`))];
+                return `${NAMES[k][0]}: ${names.join(', ')}`;
+              }
+              return `${k.replace(/_/g, ' ')}: ${arr.join(', ')}`;
+            }).join(' · ');
           return [
             { node: <span className="nm">{r.name}</span> } as Cell,
             { mono: r.rule_type } as Cell,

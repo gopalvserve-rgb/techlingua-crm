@@ -442,7 +442,7 @@ export function QuotationModal({ initial, leadId, mode = 'edit', onClose, onSave
                       <label htmlFor={`q-tax-${i}`}>Tax %</label>
                       <input id={`q-tax-${i}`} className="ainp" value={l.tax_pct}
                         onChange={(e) => setLine(i, { tax_pct: e.target.value })} placeholder="0" />
-                      <div className="fhint">Shown on the quotation. A GST tax invoice is Phase 3.</div>
+                      <div className="fhint">Shown on the quotation. The GST tax invoice is raised after enrolment (Finance › Fee Invoices).</div>
                     </div>
                     <div className="fld">
                       <label htmlFor={`q-linetotal-${i}`}>Line total</label>
@@ -559,13 +559,9 @@ export function SendQuoteModal({ quote, onClose, onSent }: { quote: any; onClose
                 <option value="">Default quotation message</option>
                 {opts.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
-              <div className="fhint">Uses the Sprint-4 templates, so merge variables and the send log behave as everywhere else.</div>
+              <div className="fhint">Uses your Message Templates, so merge variables and the send log behave as everywhere else.</div>
             </div>
           </div>
-          <PhaseNote>
-            The message links the customer to you, not to the PDF — file hosting (Cloudflare R2)
-            is stored but not yet serving. Download the PDF and attach it, or send the link once R2 is cut over.
-          </PhaseNote>
           {result && (
             <div className={`notice ${result.sent ? '' : 'err'}`} style={{ marginTop: 10 }}>
               <Ic k={result.sent ? 'check' : 'bolt'} />
@@ -731,11 +727,10 @@ function QuoteDetail({ id, onClose, onChanged, onEnrol }: {
           {q.terms ? <div className="card" style={{ marginTop: 12 }}><div className="card-pad"><div className="sub">Terms</div><div>{q.terms}</div></div></div> : null}
 
           {q.status === 'accepted' && (
-            <PhaseNote>
-              <b>Convert to enrolment</b> creates the sale-closure record this quotation becomes.
-              A <b>GST tax invoice</b> — with HSN/SAC, CGST/SGST/IGST and place of supply — is Phase 3,
-              and will be raised from that enrolment.
-            </PhaseNote>
+            <div className="notice" style={{ marginTop: 12 }}><Ic k="doc" /><div>
+              <b>Convert to enrolment</b> creates the sale-closure record this quotation becomes. Raise the
+              <b> GST tax invoice</b> (HSN/SAC, CGST/SGST/IGST, place of supply) from that enrolment in Finance › Fee Invoices.
+            </div></div>
           )}
         </div>
         <div className="af">
@@ -1094,7 +1089,7 @@ function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
         <div className="abody">
           {prefill?.quote_no && (
             <div className="notice" style={{ marginBottom: 12 }}>
-              <Ic k="doc" /><div>Converted from quotation <b>{prefill.quote_no}</b>. Tax is not carried across — a GST invoice is Phase 3.</div>
+              <Ic k="doc" /><div>Converted from quotation <b>{prefill.quote_no}</b>. Tax is not carried across — raise the GST invoice from the enrolment (Finance › Fee Invoices).</div>
             </div>
           )}
           {approvals?.enabled && !initial?.id && (
@@ -1163,7 +1158,7 @@ function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
                   <option key={p.key} value={p.key}>{p.label}</option>
                 ))}
               </select>
-              <div className="fhint">What was agreed at the desk. The installment SCHEDULE, dues and reminders are Phase 3.</div>
+              <div className="fhint">What was agreed at the desk. Re-schedule the installments from the enrolment's Fee Ledger (Re-setup plan).</div>
             </div>
             <div className="fld">
               <label htmlFor="e-first">First payment (₹)</label>
@@ -1701,12 +1696,10 @@ export function CollectModal({ enrolmentId, installmentId, leadId, defaultAmount
               <input id="c-note" className="ainp" value={note} onChange={(e) => setNote(e.target.value)} />
             </div>
           </div>
-          {meta.data?.online && (
-            <PhaseNote>
-              <b>Online capture (Razorpay) is Phase 3.</b> The keys are already stored per vertical — nothing is waiting on you.
-              Until then record an online payment by hand, with its UTR.
-            </PhaseNote>
-          )}
+          <div className="fhint" style={{ marginTop: 8 }}>
+            Paid online? A Razorpay payment link (Finance › Online Payments) records itself on payment. A transfer made
+            outside Razorpay is recorded here by hand, with its UTR as the reference.
+          </div>
           {err ? <div className="notice err" style={{ marginTop: 10 }}><Ic k="bolt" /><div>{err}</div></div> : null}
         </div>
         <div className="af">
@@ -1799,11 +1792,6 @@ export function FeeCollection() {
         <FilterMulti label="Vertical" icon="ops" value={fVerticals} options={(ref.verticals ?? []) as any} onChange={setFVerticals} />
         <DateRange value={range} onChange={setRange} idPrefix="fees-dr" />
       </div>
-      <PhaseNote>
-        This is <b>lite fee collection</b>: a receipt and a collection entry.
-        <b> GST invoices, dues &amp; ageing, installment schedules, refunds and Razorpay capture are Phase 3.</b>
-        <b> Outstanding</b> is net fee less cash received, across active enrolments — not an ageing report.
-      </PhaseNote>
       <HBars title="Collection by mode"
         rows={(s?.by_mode ?? []).map((m: any) => ({
           label: `${m.label} — ${m.n} receipt${m.n === 1 ? '' : 's'}`,
@@ -1967,7 +1955,7 @@ export function NumberingCard() {
       </div>
       <div className="card-pad">
         <p className="sub" style={{ marginTop: 0 }}>
-          Prefix and next number for quotations, enrolments and fee receipts (and invoices, which Phase 3 uses).
+          Prefix and next number for quotations, enrolments, fee receipts and invoices.
           A branch or vertical series overrides the org-wide one — <b>most specific wins</b>, the same rule
           the SLA policies and the channel credentials use.
         </p>

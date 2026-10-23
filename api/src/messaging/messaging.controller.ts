@@ -237,6 +237,11 @@ export class WhatsAppWebhookController {
                 reason: `Replied "${String(text).slice(0, 40)}" on WhatsApp`,
                 source: 'inbound',
               });
+            } else if (String(text).trim()) {
+              // Oct 2026 — every other inbound message is logged on its lead (WhatsApp Live Chat)
+              // and answered by WhatsBot / AI Bot when they are switched on
+              const name = (value.contacts ?? []).find((c: any) => String(c?.wa_id) === String(m.from))?.profile?.name ?? null;
+              await this.messaging.recordInbound({ phone: from, text: String(text), name, wamid: m?.id ? String(m.id) : null });
             }
           }
         }

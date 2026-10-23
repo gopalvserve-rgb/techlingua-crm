@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { sourceForCampaign } from '../../hierarchy/source-attach.util';
 import { DatabaseService } from '../../database/database.service';
 import { ScopeEnforcerService } from '../../rbac/scope-enforcer.service';
 import { ScopeResolverService } from '../../rbac/scope-resolver.service';
@@ -158,23 +159,23 @@ export class ChannelService {
     // DEF-INT-01: a deep-link tile (Meta WhatsApp) is connected in Settings, not here.
     if (spec.deeplink) throw new BadRequestException(`${spec.label} is connected in Settings › Channels, not as a capture channel.`);
     const campaignId = Number(dto?.campaign_id);
-    const sourceId = Number(dto?.source_id);
+    let sourceId = Number(dto?.source_id);
     if (!campaignId || !sourceId) throw new BadRequestException('Choose a target Campaign and Source.');
     if (!String(dto?.name ?? '').trim()) throw new BadRequestException('Give the channel a name.');
 
     // RBAC: a scoped admin may only wire up campaigns/sources inside their own units.
     await this.enforcer.assertRefInScope(scope, 'campaign', campaignId, userId);
-    await this.enforcer.assertRefInScope(scope, 'source', sourceId, userId);
 
     const camp = await this.db.one<any>(
       `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign
         WHERE id = $1 AND deleted_at IS NULL`, [campaignId],
     );
     if (!camp) throw new NotFoundException('campaign not found');
-    const src = await this.db.one<any>(
-      `SELECT id FROM source WHERE id = $1 AND campaign_id = $2 AND deleted_at IS NULL`, [sourceId, campaignId],
-    );
-    if (!src) throw new BadRequestException('That source does not belong to the chosen campaign.');
+    // an ORG-WIDE source → the campaign's own copy (Oct 2026); then the scope check on that copy
+    const resolved = await sourceForCampaign(this.db, sourceId, campaignId, userId);
+    if (!resolved) throw new BadRequestException('That source does not belong to the chosen campaign.');
+    sourceId = resolved;
+    await this.enforcer.assertRefInScope(scope, 'source', sourceId, userId);
 
     const secrets = this.encryptIncoming(spec, dto?.secrets ?? {}, {});
     const row = await this.db.one<any>(
