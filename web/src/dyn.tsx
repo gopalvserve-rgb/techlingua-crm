@@ -36,7 +36,7 @@ import { useColumnVisibility, ColumnsButton } from './colprefs';
 import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload, VerticalQrUpload, VerticalBanksEditor } from './documents';
 import type { VertPayments } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
-import { APP } from './specs';
+import { APP, isModuleHidden } from './specs';
 import { useScope } from './scope';
 import { DateRange, presetRange, matchPreset, fmtDMYIST, fmtDateTimeIST } from './daterange';
 import { ContactQuickActions } from './contactactions';
@@ -1081,12 +1081,17 @@ function TargetBars() {
  * clickable stat cards that open the relevant Assessment lists. RBAC-scoped server-side, and the
  * whole block is hidden from anyone without assessment_attempt.read (no empty teaser).
  */
+/** Student-profile tabs that belong to Learning & Assessment (hidden with the module). */
+const LEARNING_TABS = new Set(['learning', 'reportcards']);
+
 function AssessmentDashboardCards() {
   const { can } = useAuth();
   const { go } = useScreen();
-  const admin = useFetch<any>(can('assessment_attempt.read') ? '/assessment-reports/admin' : null);
-  const faculty = useFetch<any>(can('assessment_attempt.read') ? '/assessment-reports/faculty' : null);
-  if (!can('assessment_attempt.read')) return null;
+  // Learning & Assessment is hidden (docs/HIDDEN_MODULES.md) — so is its dashboard block
+  const show = can('assessment_attempt.read') && !isModuleHidden('learning');
+  const admin = useFetch<any>(show ? '/assessment-reports/admin' : null);
+  const faculty = useFetch<any>(show ? '/assessment-reports/faculty' : null);
+  if (!show) return null;
   const k = admin.data?.kpis; const fk = faculty.data?.kpis;
   const dist = admin.data?.grade_distribution ?? [];
   const max = Math.max(1, ...dist.map((d: any) => Number(d.n)));
@@ -5476,7 +5481,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
     ['leadjourney', 'Lead Journey', 'target'],
     ['admission', 'Admission Journey', 'check'],
     ['certs', 'Certificates', 'award'], ['reportcards', 'Report Cards', 'list'],
-  ];
+  ].filter(([k]) => !(isModuleHidden('learning') && LEARNING_TABS.has(k))) as Array<[string, string, string]>;
   const activeCourses: string[] = Array.from(new Set(((prof?.fees?.enrolments ?? []) as any[])
     .filter((e: any) => !['cancelled', 'withdrawn', 'dropped_out'].includes(String(e.course_status ?? '')))
     .map((e: any) => String(e.course_name ?? '').trim()).filter(Boolean)));
@@ -5742,6 +5747,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                 ))}</tbody></table>
             ) : <Empty t="No branch transfers yet." />}
           </Section>
+          {!isModuleHidden('learning') && <>
           <Section title="Tests & Scores">
             {ac?.tests?.length ? (
               <table className="minitbl"><thead><tr><th>Test</th><th>Type</th><th>Date</th><th>Score</th><th>Grade</th></tr></thead>
@@ -5760,6 +5766,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                 ))}</tbody></table>
             ) : <Empty t="No assignments yet." />}
           </Section>
+          </>}
           {canEdit && (
             <Section title="Manage">
               <div className="form-grid">

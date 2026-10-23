@@ -567,9 +567,26 @@ const APP_FULL: ModuleItem[] = [
  *   • Communication Intelligence — Intent Detection, Conversation Analytics,
  *       Sentiment Analysis, Objection Detection, Follow-up Suggestions
  *   • Calls (Telephony) — Telephony Settings, Call Routing, Conference Calling, Call Transfer
+ *   • Learning & Assessment — the whole module (Oct 2026), plus its pieces elsewhere: the
+ *       Assessments block on the dashboards, the student profile's Syllabus / Report Cards tabs
+ *       and Tests / Assignments sections, the parent report-card link, and its permission rows
+ *       in the Role editor (grants are KEPT, only not shown) — see isModuleHidden('learning').
+ *
+ * The full, current list lives in docs/HIDDEN_MODULES.md — keep it in step with this block.
  */
 const HIDDEN_MODULES = new Set<string>([
-  'ops', // Operations — entire module hidden
+  'ops',      // Operations — entire module hidden
+  'learning', // Learning & Assessment — entire module hidden (Oct 2026)
+]);
+
+/** True when a whole module is hidden — for the module's pieces that live on OTHER screens. */
+export const isModuleHidden = (id: string): boolean => HIDDEN_MODULES.has(id);
+
+/** Role-editor permission groups that belong to Learning & Assessment (hidden with it). */
+export const LEARNING_PERMISSION_MODULES = new Set<string>([
+  'test', 'coursework', 'material', 'reportcard', 'results', 'syllabus', 'course_content',
+  'question_category', 'question', 'assessment', 'assessment_attempt', 'assignment_submission',
+  'assessment_template', 'grade_scheme', 'assessment_certificate',
 ]);
 const HIDDEN_SUBS: Record<string, Set<string>> = {
   hr:        new Set(['hiring', 'bank', 'performance', 'incentives']),

@@ -9,6 +9,7 @@ import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { toast } from './refdata';
+import { isModuleHidden, LEARNING_PERMISSION_MODULES } from './specs';
 
 interface CatalogModule { module: string; label: string; actions: string[] }
 interface Grant { permission_key: string; record_scope: string }
@@ -32,7 +33,9 @@ export function RoleModal({ roleId, readOnly, onClose, onSaved }: {
 
   useEffect(() => {
     api.get<{ catalog: CatalogModule[] }>('/roles/permissions')
-      .then((r) => setCatalog(r.catalog ?? [])).catch(() => setCatalog([]));
+      // a hidden module's permission rows are not shown (its existing grants are kept on save)
+      .then((r) => setCatalog((r.catalog ?? []).filter((m) => !(isModuleHidden('learning') && LEARNING_PERMISSION_MODULES.has(m.module)))))
+      .catch(() => setCatalog([]));
   }, []);
   useEffect(() => {
     if (!roleId) return;

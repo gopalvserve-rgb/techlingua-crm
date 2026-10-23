@@ -8,10 +8,13 @@ import { GlobalScopeProvider } from './scope';
 import { ParentReportView } from './learning';
 import { PublicAdmissionForm } from './admissions';
 import { PublicCertificateVerify } from './assessments';
+import { isModuleHidden } from './specs';
 
 /** Public, login-free parent report-card view (tokenised share link). */
 function ParentReportRoute() {
   const { token } = useParams();
+  // part of Learning & Assessment — hidden with it (docs/HIDDEN_MODULES.md)
+  if (isModuleHidden('learning')) return <div className="empty-note" style={{ paddingTop: '30vh' }}>This report is not available.</div>;
   return <ParentReportView token={token ?? ''} />;
 }
 
