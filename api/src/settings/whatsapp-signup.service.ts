@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ChannelConfigService } from '../messaging/channel-config.service';
 import { NotConfiguredException } from '../common/not-configured.exception';
+import { PHONE_FIELDS, WaNumber, connectedWabas, numbersOf, wabaTokenKey } from './whatsapp-account.service';
 
 export type HttpFn = (url: string, init?: any) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
 const defaultHttp: HttpFn = (url, init) => (globalThis as any).fetch(url, init);
@@ -14,6 +15,10 @@ export interface SignupResult {
   subscribed: boolean;
   subscribe_error: string | null;
   warning: string | null;
+  /** true on the FIRST connection (it became the sender); false when added as another number */
+  made_default?: boolean;
+  /** how many numbers this signup added to the list */
+  added?: number;
 }
 
 /**
@@ -38,8 +43,9 @@ export interface SignupResult {
  *     shared by every tenant. We are SINGLE-TENANT and settings-driven (a project rule),
  *     so app_id/app_secret come from the client's own `channel_config` row — he can
  *     change them with no deploy.
- *   - No `wa_phones` table and no multi-number fan-out: one org, one WhatsApp number.
- *     The SaaS's "add another number" branch has no meaning here and is not ported.
+ *   - No `wa_phones` table: the numbers live on the one WhatsApp row (`config.numbers`).
+ *     "Connect another number" ADDS to them — also from another WABA, whose token is kept
+ *     as `waba_token:<id>` — and leaves the default sender alone (see the end of exchange()).
  *   - No central webhook forwarder: our webhook is this app's own URL.
  *   - Storage goes through ChannelConfigService.save(), so the token is AES-256-GCM
  *     encrypted and masked on read like every other secret — the SaaS stored it raw.
@@ -125,22 +131,32 @@ export class WhatsAppSignupService {
     let wabaId = String(input?.waba_id ?? '').trim();
     let warning: string | null = null;
 
+    // What this org is ALREADY connected to — so "Connect another number" ADDS to it.
+    const priorNumbers = cfg ? numbersOf(cfg.config ?? {}) : [];
+    const knownWabas = cfg ? connectedWabas(cfg.config ?? {}, priorNumbers) : [];
+    const alreadyConnected = !!(cfg?.secrets?.access_token && cfg?.config?.phone_number_id);
+
     if (!wabaId) {
       // The postMessage did not carry it (Meta has shipped several payload shapes).
       // Ask Meta what this token is actually scoped to rather than guessing — a WRONG
       // waba_id stored here would look connected and fail silently on every send.
-      const owned = await this.wabaFromToken(graph, appId, appSecret, accessToken);
-      if (owned) wabaId = owned;
+      // A token granted several WABAs lists the already-connected one too: prefer one we do
+      // NOT have yet — taking the first is how a second number "connected" back onto the first.
+      const owned = await this.wabasFromToken(graph, appId, appSecret, accessToken);
+      wabaId = owned.find((w) => !knownWabas.includes(w)) ?? owned[0] ?? '';
     }
     if (!wabaId) {
       throw new BadRequestException(
         'Meta did not tell us which WhatsApp Business Account was selected. Make sure your Login-for-Business configuration has WhatsApp asset selection enabled, then try again.',
       );
     }
+    // The numbers of the WABA just granted — for "another number" every one of them is added.
+    const wabaPhones = await this.wabaPhones(graph, accessToken, wabaId);
     if (!phoneNumberId) {
-      const first = await this.firstPhone(graph, accessToken, wabaId);
+      // prefer a number this org does not have yet (same reason as the WABA choice above)
+      const first = (wabaPhones.find((p) => !priorNumbers.some((n) => n.phone_number_id === p.id)) ?? wabaPhones[0])?.id;
       if (first) phoneNumberId = first;
-      else warning = 'Connected to the WhatsApp Business Account, but Meta has not finished provisioning the phone number yet. Give it a minute and press Test connection.';
+      else warning = 'Connected to the WhatsApp Business Account, but Meta has not finished provisioning the phone number yet. Give it a minute and press Sync from Meta.';
     }
 
     let displayPhone = '';
@@ -173,24 +189,61 @@ export class WhatsAppSignupService {
     // Same service as a manual save => AES-256-GCM at rest, masked on read, audit-safe.
     // The Sprint-4 sender reads exactly this row, so it starts working immediately;
     // nothing about HOW we send changed, only how the credential arrived.
-    await this.configs.save({
-      provider: 'meta_cloud',
-      channel: 'whatsapp',
-      vertical_id: null,
-      config: {
-        ...(cfg?.config ?? {}),
-        phone_number_id: phoneNumberId,
+    //
+    // FIRST connection: the new number becomes the sender (as before).
+    // ANOTHER number (client, Oct 2026): it is ADDED next to the numbers already connected —
+    // possibly from a different WABA, with that WABA's own token — and the current default
+    // keeps sending until the admin presses Set default. Overwriting the one WABA / token is
+    // how the second number used to vanish.
+    const added: WaNumber[] = (wabaPhones.length ? wabaPhones : (phoneNumberId ? [{ id: phoneNumberId, display_phone_number: displayPhone, verified_name: verifiedName } as any] : []))
+      .filter((p: any) => !priorNumbers.some((n) => n.phone_number_id === String(p.id)))
+      .map((p: any) => ({
+        phone_number_id: String(p.id),
+        display_phone_number: String(p.display_phone_number ?? (String(p.id) === phoneNumberId ? displayPhone : '')),
+        verified_name: String(p.verified_name ?? (String(p.id) === phoneNumberId ? verifiedName : '')),
         waba_id: wabaId,
-        display_phone_number: displayPhone,
-        verified_name: verifiedName,
-        connected_via: 'embedded_signup',
-      },
-      secrets: { access_token: accessToken },
-      is_active: true,
-    }, actorId);
+        status: String(p.status ?? ''), quality_rating: String(p.quality_rating ?? ''),
+        code_verification_status: String(p.code_verification_status ?? ''), name_status: String(p.name_status ?? ''),
+        label: '', is_default: false,
+      }));
+    const systemSecrets: Record<string, string> = { [wabaTokenKey(wabaId)]: accessToken };
+    const makeDefault = !alreadyConnected;
+    if (makeDefault) {
+      await this.configs.save({
+        provider: 'meta_cloud',
+        channel: 'whatsapp',
+        vertical_id: null,
+        config: {
+          ...(cfg?.config ?? {}),
+          phone_number_id: phoneNumberId,
+          waba_id: wabaId,
+          display_phone_number: displayPhone,
+          verified_name: verifiedName,
+          connected_via: 'embedded_signup',
+        },
+        secrets: { access_token: accessToken },
+        is_active: true,
+      }, actorId, { system: { numbers: [...priorNumbers.filter((n) => n.waba_id === wabaId), ...added] }, systemSecrets });
+    } else {
+      // keep the sender exactly as it is; remember its token under its own WABA key too
+      const curWaba = String(cfg!.config.waba_id ?? '');
+      if (curWaba && curWaba !== wabaId && !cfg!.secrets[wabaTokenKey(curWaba)] && cfg!.secrets.access_token) {
+        systemSecrets[wabaTokenKey(curWaba)] = cfg!.secrets.access_token;
+      }
+      // same WABA re-connected: the fresh token replaces the sender's too
+      const secrets = curWaba === wabaId ? { access_token: accessToken } : {};
+      await this.configs.save({
+        provider: 'meta_cloud', channel: 'whatsapp', vertical_id: null,
+        config: { ...(cfg!.config ?? {}), connected_via: 'embedded_signup' },
+        secrets, is_active: true,
+      }, actorId, { system: { numbers: [...priorNumbers, ...added] }, systemSecrets });
+    }
 
     if (!subscribed) {
       this.log.warn(`Embedded Signup connected WABA ${wabaId} but webhook subscribe failed: ${subscribeError}`);
+    }
+    if (alreadyConnected && !added.length && phoneNumberId && priorNumbers.some((n) => n.phone_number_id === phoneNumberId)) {
+      warning = [warning, `${displayPhone || 'This number'} was already connected — in Meta's dialog, choose or add the NEW number (and its WhatsApp Business Account) to connect another one.`].filter(Boolean).join(' ');
     }
     return {
       ok: true,
@@ -201,6 +254,8 @@ export class WhatsAppSignupService {
       subscribed,
       subscribe_error: subscribeError,
       warning,
+      made_default: makeDefault,
+      added: added.length,
     };
   }
 
@@ -211,7 +266,7 @@ export class WhatsAppSignupService {
    * debug_token -> granular_scopes -> whatsapp_business_management -> target_ids.
    * Used only when the postMessage did not carry the id.
    */
-  private async wabaFromToken(graph: string, appId: string, appSecret: string, token: string): Promise<string> {
+  private async wabasFromToken(graph: string, appId: string, appSecret: string, token: string): Promise<string[]> {
     try {
       const r = await this.http(
         `${graph}/debug_token?input_token=${encodeURIComponent(token)}`
@@ -221,18 +276,19 @@ export class WhatsAppSignupService {
       const scopes: any[] = j?.data?.granular_scopes ?? [];
       const wa = scopes.find((s) => s?.scope === 'whatsapp_business_management')
         ?? scopes.find((s) => s?.scope === 'whatsapp_business_messaging');
-      return String(wa?.target_ids?.[0] ?? '');
-    } catch { return ''; }
+      return (Array.isArray(wa?.target_ids) ? wa.target_ids : []).map(String).filter(Boolean);
+    } catch { return []; }
   }
 
-  private async firstPhone(graph: string, token: string, wabaId: string): Promise<string> {
+  /** Every number of a WABA (empty on any failure — the caller degrades to the one number). */
+  private async wabaPhones(graph: string, token: string, wabaId: string): Promise<any[]> {
     try {
-      const r = await this.http(`${graph}/${encodeURIComponent(wabaId)}/phone_numbers`, {
+      const r = await this.http(`${graph}/${encodeURIComponent(wabaId)}/phone_numbers?fields=${PHONE_FIELDS}&limit=100`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const j = safeJson(await r.text());
-      return String(j?.data?.[0]?.id ?? '');
-    } catch { return ''; }
+      return (Array.isArray(j?.data) ? j.data : []).filter((d: any) => d?.id);
+    } catch { return []; }
   }
 
   private async phoneDetails(graph: string, token: string, phoneNumberId: string) {

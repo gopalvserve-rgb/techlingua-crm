@@ -32,7 +32,21 @@ export interface WaAccountPayload {
   webhook: { callback_path: string; last_inbound_at: string | null; events_24h: number; healthy: boolean };
 }
 
-const PHONE_FIELDS = 'id,display_phone_number,verified_name,quality_rating,code_verification_status,status,name_status';
+export const PHONE_FIELDS = 'id,display_phone_number,verified_name,quality_rating,code_verification_status,status,name_status';
+
+/**
+ * MORE THAN ONE WABA. "Connect another number" through Embedded Signup usually lands the new
+ * number in a DIFFERENT WhatsApp Business Account (a Meta test number lives in the developer's
+ * test WABA; a real number in the business's own). Each WABA has its own token, kept as the
+ * system secret `waba_token:<waba_id>`. `secrets.access_token` stays THE DEFAULT number's token
+ * — the one the sender uses — and moves with the default (see `persist`).
+ */
+export const wabaTokenKey = (wabaId: string) => `waba_token:${wabaId}`;
+export function tokenForWaba(cfg: { config: Record<string, any>; secrets: Record<string, string> }, wabaId: string): string {
+  return cfg.secrets[wabaTokenKey(wabaId)]
+    || (String(cfg.config.waba_id ?? '') === wabaId ? cfg.secrets.access_token ?? '' : '')
+    || '';
+}
 /** "Receiving" = Meta reached us within this window. A quiet weekend must not read as broken. */
 const HEALTHY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -119,23 +133,59 @@ export class WhatsAppAccountService {
 
   // ----------------------------------------------------------------- writes
 
-  /** Re-pull the WABA's numbers from Meta; labels and the default survive. */
+  /**
+   * Re-pull the numbers of EVERY connected WABA from Meta (each with its own token); labels
+   * and the default survive. A WABA Meta refuses keeps its previously stored numbers and is
+   * reported — one bad WABA never wipes the others.
+   */
   async sync(configId: number, actorId: number) {
     const cfg = await this.own(configId);
-    const wabaId = String(cfg.config.waba_id ?? '');
-    const token = cfg.secrets.access_token ?? '';
-    if (!wabaId || !token) {
+    const priorList = numbersOf(cfg.config);
+    const wabas = connectedWabas(cfg.config, priorList);
+    if (!wabas.length || !wabas.some((w) => tokenForWaba(cfg, w))) {
       throw new BadRequestException(
         'Nothing to sync yet — this connection has no WhatsApp Business Account ID or access token. Press Connect another number first.',
       );
     }
+    const prior = new Map(priorList.map((n) => [n.phone_number_id, n]));
+    const fresh: WaNumber[] = [];
+    const warnings: string[] = [];
+    const failures: Error[] = [];
+    for (const wabaId of wabas) {
+      const token = tokenForWaba(cfg, wabaId);
+      try {
+        if (!token) throw new BadRequestException('no access token is stored for it — connect it again with Connect another number');
+        fresh.push(...await this.wabaNumbers(cfg, wabaId, token, prior));
+      } catch (e) {
+        failures.push(e as Error);
+        warnings.push(`WhatsApp Business Account ${wabaId}: ${(e as Error).message.replace(/^Meta rejected the sync: /, '')}`);
+        fresh.push(...priorList.filter((n) => n.waba_id === wabaId));
+      }
+    }
+    // nothing synced at all: a clean 400 carrying Meta's words, and NOTHING is stored
+    if (failures.length === wabas.length) throw failures[0];
+
+    // THE DEFAULT IS WHAT THE SENDER USES. Keep it if Meta still lists it; adopt the first
+    // number only when there was no default at all (signup finished before Meta provisioned
+    // the phone). A default Meta does NOT list is left alone and reported — silently
+    // re-pointing every outgoing message to another number is not a sync's decision.
+    let defaultId = String(cfg.config.phone_number_id ?? '');
+    if (!defaultId && fresh.length) defaultId = fresh[0].phone_number_id;
+    else if (defaultId && fresh.length && !fresh.some((n) => n.phone_number_id === defaultId)) {
+      warnings.push(`The default sending number (ID ${defaultId}) is not listed by Meta any more. Pick a default from the list below.`);
+    }
+    await this.persist(cfg, fresh, defaultId, actorId);
+    return { ok: true, synced: fresh.length, warning: warnings.length ? warnings.join(' ') : null, ...(await this.account()) };
+  }
+
+  /** The numbers of ONE WABA, as Meta lists them now (labels carried over from `prior`). */
+  async wabaNumbers(cfg: ResolvedConfig, wabaId: string, token: string, prior = new Map<string, WaNumber>()): Promise<WaNumber[]> {
     const j = await this.graph(
       cfg, `/${encodeURIComponent(wabaId)}/phone_numbers?fields=${PHONE_FIELDS}&limit=100`,
       { headers: { Authorization: `Bearer ${token}` } },
       'Meta rejected the sync',
     );
-    const prior = new Map(numbersOf(cfg.config).map((n) => [n.phone_number_id, n]));
-    const fresh: WaNumber[] = (Array.isArray(j?.data) ? j.data : [])
+    return (Array.isArray(j?.data) ? j.data : [])
       .filter((d: any) => d?.id)
       .map((d: any) => ({
         phone_number_id: String(d.id),
@@ -149,19 +199,6 @@ export class WhatsAppAccountService {
         label: prior.get(String(d.id))?.label ?? '',
         is_default: false,
       }));
-
-    // THE DEFAULT IS WHAT THE SENDER USES. Keep it if Meta still lists it; adopt the first
-    // number only when there was no default at all (signup finished before Meta provisioned
-    // the phone). A default Meta does NOT list is left alone and reported — silently
-    // re-pointing every outgoing message to another number is not a sync's decision.
-    let defaultId = String(cfg.config.phone_number_id ?? '');
-    let warning: string | null = null;
-    if (!defaultId && fresh.length) defaultId = fresh[0].phone_number_id;
-    else if (defaultId && fresh.length && !fresh.some((n) => n.phone_number_id === defaultId)) {
-      warning = `The default sending number (ID ${defaultId}) is not listed under WhatsApp Business Account ${wabaId}. Pick a default from the list below.`;
-    }
-    await this.persist(cfg, fresh, defaultId, actorId);
-    return { ok: true, synced: fresh.length, warning, ...(await this.account()) };
   }
 
   /** Edit a label and / or make this number the default sender. */
@@ -194,7 +231,8 @@ export class WhatsAppAccountService {
     if (!pid || !numbersOf(cfg.config).some((n) => n.phone_number_id === pid)) {
       throw new NotFoundException('That number is not part of this WhatsApp connection — press Sync from Meta and try again.');
     }
-    const token = cfg.secrets.access_token ?? '';
+    const num = numbersOf(cfg.config).find((n) => n.phone_number_id === pid)!;
+    const token = tokenForWaba(cfg, num.waba_id) || cfg.secrets.access_token || '';
     if (!token) throw new BadRequestException('This connection has no access token — press Connect another number first.');
     await this.graph(cfg, `/${encodeURIComponent(pid)}/register`, {
       method: 'POST',
@@ -239,8 +277,16 @@ export class WhatsAppAccountService {
           defaultId = (rest.find((n) => n.status.toUpperCase() === 'CONNECTED') ?? rest[0]).phone_number_id;
           newDefault = defaultId;
         }
-        await this.persist(cfg, rest, defaultId, actorId);
-        return { ok: true, mode: 'number_removed' as const, removed: removeId, new_default: newDefault, warning: null, ...(await this.account()) };
+        // the LAST number of its WABA: stop Meta calling us for that WABA and drop its token
+        const goneWaba = list.find((n) => n.phone_number_id === removeId)!.waba_id;
+        let warning: string | null = null;
+        const dropSecrets: Record<string, string | null> = {};
+        if (goneWaba && !rest.some((n) => n.waba_id === goneWaba)) {
+          warning = await this.unsubscribe(cfg, goneWaba);
+          dropSecrets[wabaTokenKey(goneWaba)] = null;
+        }
+        await this.persist(cfg, rest, defaultId, actorId, dropSecrets);
+        return { ok: true, mode: 'number_removed' as const, removed: removeId, new_default: newDefault, warning, ...(await this.account()) };
       }
       // the last number: removing it IS disconnecting — fall through
     }
@@ -248,17 +294,9 @@ export class WhatsAppAccountService {
     // best-effort: tell Meta to stop calling us. A failure here must not strand the admin
     // with a connection he cannot remove.
     let warning: string | null = null;
-    const wabaId = String(cfg.config.waba_id ?? '');
-    const token = cfg.secrets.access_token ?? '';
-    if (wabaId && token) {
-      try {
-        await this.graph(cfg, `/${encodeURIComponent(wabaId)}/subscribed_apps`, {
-          method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
-        }, 'Meta would not unsubscribe the webhook');
-      } catch (e) {
-        warning = `${(e as Error).message}. WhatsApp is disconnected here, but Meta may keep calling the webhook until you remove the app from the WhatsApp Business Account in Meta Business Settings.`;
-        this.log.warn(`disconnect: unsubscribe failed for WABA ${wabaId}: ${(e as Error).message}`);
-      }
+    for (const wabaId of connectedWabas(cfg.config, list)) {
+      const w = await this.unsubscribe(cfg, wabaId);
+      if (w) warning = [warning, w].filter(Boolean).join(' ');
     }
 
     await this.configs.remove(cfg.id, actorId);
@@ -297,20 +335,55 @@ export class WhatsAppAccountService {
     return cfg;
   }
 
-  /** Write the numbers + the sender's fields through the ONE storage path. */
-  private async persist(cfg: ResolvedConfig, list: WaNumber[], defaultId: string, actorId: number) {
+  /** Best-effort: tell Meta to stop calling us for one WABA. Returns a warning, never throws. */
+  private async unsubscribe(cfg: ResolvedConfig, wabaId: string): Promise<string | null> {
+    const token = tokenForWaba(cfg, wabaId);
+    if (!wabaId || !token) return null;
+    try {
+      await this.graph(cfg, `/${encodeURIComponent(wabaId)}/subscribed_apps`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      }, 'Meta would not unsubscribe the webhook');
+      return null;
+    } catch (e) {
+      this.log.warn(`unsubscribe failed for WABA ${wabaId}: ${(e as Error).message}`);
+      return `${(e as Error).message}. Meta may keep calling the webhook for WhatsApp Business Account ${wabaId} until you remove the app from it in Meta Business Settings.`;
+    }
+  }
+
+  /**
+   * Write the numbers + the sender's fields through the ONE storage path. When the default is
+   * a number of ANOTHER WABA, the sender's WABA and token move with it — the sender always
+   * posts with `secrets.access_token`, so a token of the wrong WABA would fail every send.
+   */
+  private async persist(cfg: ResolvedConfig, list: WaNumber[], defaultId: string, actorId: number,
+    systemSecrets: Record<string, string | null> = {}) {
     const numbers = list.map((n) => ({ ...n, is_default: n.phone_number_id === defaultId }));
     const def = numbers.find((n) => n.is_default);
     const config: Record<string, unknown> = {};
+    const secrets: Record<string, string> = {};
     if (def) {
       // exactly what MetaWhatsAppTransport posts to, and what the chat's "Sending from" shows
       config.phone_number_id = def.phone_number_id;
       if (def.display_phone_number) config.display_phone_number = def.display_phone_number;
       if (def.verified_name) config.verified_name = def.verified_name;
+      const curWaba = String(cfg.config.waba_id ?? '');
+      if (def.waba_id && def.waba_id !== curWaba) {
+        const token = tokenForWaba(cfg, def.waba_id);
+        if (!token) {
+          throw new BadRequestException(`No access token is stored for WhatsApp Business Account ${def.waba_id} — connect that number again with Connect another number.`);
+        }
+        config.waba_id = def.waba_id;
+        secrets.access_token = token;
+        // keep the outgoing default's token reachable under its own WABA key
+        const curToken = cfg.secrets.access_token;
+        if (curWaba && curToken && !cfg.secrets[wabaTokenKey(curWaba)] && !(wabaTokenKey(curWaba) in systemSecrets)) {
+          systemSecrets = { ...systemSecrets, [wabaTokenKey(curWaba)]: curToken };
+        }
+      }
     }
     await this.configs.save(
-      { provider: cfg.provider, channel: 'whatsapp', vertical_id: cfg.vertical_id, config },
-      actorId, { system: { numbers } },
+      { provider: cfg.provider, channel: 'whatsapp', vertical_id: cfg.vertical_id, config, secrets },
+      actorId, { system: { numbers }, systemSecrets },
     );
   }
 
@@ -368,6 +441,13 @@ export function numbersOf(config: Record<string, unknown>): WaNumber[] {
   }
   // default first — every picker wants it on top
   return list.sort((a, b) => Number(b.is_default) - Number(a.is_default));
+}
+
+/** Every WABA this connection holds numbers in — the sender's first. */
+export function connectedWabas(config: Record<string, unknown>, list: WaNumber[] = numbersOf(config)): string[] {
+  const out: string[] = [];
+  for (const w of [String(config?.waba_id ?? ''), ...list.map((n) => n.waba_id)]) if (w && !out.includes(w)) out.push(w);
+  return out;
 }
 
 function safeJson(s: string): any {

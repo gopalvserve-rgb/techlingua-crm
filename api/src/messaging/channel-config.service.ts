@@ -145,7 +145,12 @@ export class ChannelConfigService {
   // ----------------------------------------------------------------- writes
 
   /** Create or update the row for (channel, vertical) — one row per pair, by design. */
-  async save(dto: any, actorId: number, opts: { system?: Record<string, unknown> } = {}) {
+  async save(dto: any, actorId: number, opts: {
+    system?: Record<string, unknown>;
+    /** SYSTEM-MANAGED secrets (e.g. one WhatsApp token per WABA, `waba_token:<id>`). Set by a
+     *  SERVICE only — encrypted like every other secret; `null` removes the key. */
+    systemSecrets?: Record<string, string | null>;
+  } = {}) {
     const spec = this.spec(dto?.provider);
     const verticalId = spec.perVertical && dto?.vertical_id ? Number(dto.vertical_id) : null;
     if (!spec.perVertical && dto?.vertical_id) {
@@ -173,6 +178,10 @@ export class ChannelConfigService {
     );
 
     const secrets = this.encryptIncoming(spec, dto?.secrets ?? {}, existing?.secrets ?? {});
+    for (const [k, v] of Object.entries(opts.systemSecrets ?? {})) {
+      if (v === null || String(v).trim() === '') delete secrets[k];
+      else secrets[k] = encryptSecret(String(v).trim());
+    }
     const config = this.cleanConfig(spec, { ...(existing?.config ?? {}), ...(dto?.config ?? {}) });
     // SYSTEM-MANAGED keys (e.g. WhatsApp's `numbers`) are not form fields: a generic save
     // can neither set nor wipe them. They ride over from the stored row unless the calling

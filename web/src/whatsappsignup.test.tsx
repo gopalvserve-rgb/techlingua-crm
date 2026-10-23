@@ -99,6 +99,26 @@ describe('Embedded Signup launcher (Meta SDK faked)', () => {
     await expect(launchEmbeddedSignup('c')).resolves.toMatchObject({ phone_number_id: '888', waba_id: '999' });
   });
 
+  it('accepts the ids from web. / business.facebook.com too (client, Oct 2026 — the second number vanished)', async () => {
+    for (const origin of ['https://web.facebook.com', 'https://business.facebook.com']) {
+      fakeFB({ origin, message: { type: 'WA_EMBEDDED_SIGNUP', data: { phone_number_id: 'P2', waba_id: 'W2' } } });
+      await expect(launchEmbeddedSignup('c')).resolves.toMatchObject({ phone_number_id: 'P2', waba_id: 'W2' });
+    }
+  });
+
+  it('look-alike domains are NOT Facebook', async () => {
+    for (const origin of ['https://facebook.com.evil.io', 'https://evilfacebook.com', 'http://www.facebook.com']) {
+      fakeFB({ origin, message: { type: 'WA_EMBEDDED_SIGNUP', data: { phone_number_id: 'X', waba_id: 'X' } } });
+      const out = await launchEmbeddedSignup('c');
+      expect(out.waba_id).toBe('');
+    }
+  });
+
+  it('Meta\'s own ERROR event is shown verbatim instead of a vague "closed the popup"', async () => {
+    fakeFB({ message: { type: 'WA_EMBEDDED_SIGNUP', event: 'ERROR', data: { error_message: 'Phone number already registered' } }, code: null });
+    await expect(launchEmbeddedSignup('c')).rejects.toThrow(/Phone number already registered/);
+  });
+
   it('a message from a NON-Facebook origin is ignored — no id spoofing', async () => {
     fakeFB({
       origin: 'https://evil.example.com',

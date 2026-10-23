@@ -9,6 +9,7 @@
 import { ChannelConfigService } from '../messaging/channel-config.service';
 import { ConnectionTestService } from './connection-test.service';
 import { WhatsAppSignupService } from './whatsapp-signup.service';
+import { WhatsAppAccountService } from './whatsapp-account.service';
 import { makeSprint4Db } from '../messaging/sprint4.testkit';
 import { MSG_PROVIDERS, ALL_CHANNELS, CHANNEL_LABEL, missingRequirements } from '../messaging/providers';
 import { decryptSecret, encryptSecret } from '../common/crypto.util';
@@ -397,6 +398,95 @@ describe('WhatsApp Embedded Signup (Meta mocked)', () => {
       .exchange({ code: 'c', phone_number_id: '555' }, ADMIN);
     expect(out.waba_id).toBe('WABA-FROM-TOKEN');
     expect(st.channelConfigs[0].config.waba_id).toBe('WABA-FROM-TOKEN');
+  });
+
+  /**
+   * CONNECT ANOTHER NUMBER (client, Oct 2026): "after embedded sign-up the second number is not
+   * showing". The first number was Meta's test number in the developer's test WABA; the new one
+   * is in the business's own WABA. The exchange used to OVERWRITE the one WABA/token, and with
+   * no ids on the postMessage it re-picked the FIRST WABA from the token — so nothing changed.
+   */
+  describe('Connect ANOTHER number', () => {
+    const CONNECTED = () => ({
+      ...BASE(),
+      config: {
+        ...BASE().config, phone_number_id: 'OLD-PID', waba_id: 'OLD-WABA', display_phone_number: '+1 555-337-4699',
+        numbers: [{ phone_number_id: 'OLD-PID', waba_id: 'OLD-WABA', display_phone_number: '+1 555-337-4699', label: 'Test line' }],
+      } as Record<string, unknown>,
+      secrets: { ...BASE().secrets, access_token: encryptSecret('OLD-TOKEN') } as Record<string, string>,
+    });
+    const routes = (over: Array<[RegExp, any]> = []) => fakeHttp([
+      ...over,
+      [/oauth\/access_token/, { body: { access_token: 'NEW-TOKEN' } }],
+      [/\/NEW-WABA\/phone_numbers/, { body: { data: [{ id: 'NEW-PID', display_phone_number: '+91 98100 00002', verified_name: 'British College of Language', status: 'CONNECTED' }] } }],
+      [/\/NEW-PID\?fields=/, { body: { display_phone_number: '+91 98100 00002', verified_name: 'British College of Language' } }],
+      [/subscribed_apps/, { body: { success: true } }],
+    ]);
+
+    it('a number from ANOTHER WABA is ADDED next to the first — the sender and its token are untouched', async () => {
+      const { db, st } = makeSprint4Db({ channelConfigs: [CONNECTED()] });
+      const { fn } = routes();
+      const out: any = await new WhatsAppSignupService(new ChannelConfigService(db), fn)
+        .exchange({ code: 'c', phone_number_id: 'NEW-PID', waba_id: 'NEW-WABA' }, ADMIN);
+      expect(out.made_default).toBe(false);
+      expect(out.added).toBe(1);
+      const row: any = st.channelConfigs[0];
+      // both numbers listed, each with its own WABA; the label survives
+      expect(row.config.numbers.map((n: any) => n.phone_number_id)).toEqual(['OLD-PID', 'NEW-PID']);
+      expect(row.config.numbers[1].waba_id).toBe('NEW-WABA');
+      expect(row.config.numbers[0].label).toBe('Test line');
+      // the default keeps sending, with ITS token
+      expect(row.config.phone_number_id).toBe('OLD-PID');
+      expect(row.config.waba_id).toBe('OLD-WABA');
+      expect(decryptSecret(row.secrets.access_token)).toBe('OLD-TOKEN');
+      // each WABA's token kept, encrypted
+      expect(decryptSecret(row.secrets['waba_token:NEW-WABA'])).toBe('NEW-TOKEN');
+      expect(decryptSecret(row.secrets['waba_token:OLD-WABA'])).toBe('OLD-TOKEN');
+      expect(JSON.stringify(row.secrets)).not.toContain('NEW-TOKEN');
+    });
+
+    it('no ids on the postMessage + a token covering BOTH WABAs: the NEW one is chosen, not the first', async () => {
+      const { db } = makeSprint4Db({ channelConfigs: [CONNECTED()] });
+      const { fn } = routes([
+        [/debug_token/, { body: { data: { granular_scopes: [{ scope: 'whatsapp_business_management', target_ids: ['OLD-WABA', 'NEW-WABA'] }] } } }],
+      ]);
+      const out: any = await new WhatsAppSignupService(new ChannelConfigService(db), fn).exchange({ code: 'c' }, ADMIN);
+      expect(out.waba_id).toBe('NEW-WABA');
+      expect(out.phone_number_id).toBe('NEW-PID');
+      expect(out.added).toBe(1);
+    });
+
+    it('Set default on the new number moves the sender AND its token to that WABA — and back', async () => {
+      const { db } = makeSprint4Db({ channelConfigs: [CONNECTED()] });
+      const cfgs = new ChannelConfigService(db);
+      const { fn } = routes();
+      await new WhatsAppSignupService(cfgs, fn).exchange({ code: 'c', phone_number_id: 'NEW-PID', waba_id: 'NEW-WABA' }, ADMIN);
+      const acct = new WhatsAppAccountService(db as never, cfgs, new ConnectionTestService(cfgs, fn), fn);
+      await acct.updateNumber({ config_id: 1, phone_number_id: 'NEW-PID', is_default: true }, ADMIN);
+      let sender = await cfgs.require('whatsapp');
+      expect(sender.config.phone_number_id).toBe('NEW-PID');
+      expect(sender.config.waba_id).toBe('NEW-WABA');
+      expect(sender.secrets.access_token).toBe('NEW-TOKEN');
+      await acct.updateNumber({ config_id: 1, phone_number_id: 'OLD-PID', is_default: true }, ADMIN);
+      sender = await cfgs.require('whatsapp');
+      expect(sender.config.phone_number_id).toBe('OLD-PID');
+      expect(sender.secrets.access_token).toBe('OLD-TOKEN');
+    });
+
+    it('Sync pulls EVERY WABA with its own token, and keeps both numbers', async () => {
+      const { db, st } = makeSprint4Db({ channelConfigs: [CONNECTED()] });
+      const cfgs = new ChannelConfigService(db);
+      const { fn, calls } = routes([
+        [/\/OLD-WABA\/phone_numbers/, { body: { data: [{ id: 'OLD-PID', display_phone_number: '+1 555-337-4699', status: 'CONNECTED' }] } }],
+      ]);
+      await new WhatsAppSignupService(cfgs, fn).exchange({ code: 'c', phone_number_id: 'NEW-PID', waba_id: 'NEW-WABA' }, ADMIN);
+      const acct = new WhatsAppAccountService(db as never, cfgs, new ConnectionTestService(cfgs, fn), fn);
+      await acct.sync(1, ADMIN);
+      expect((st.channelConfigs[0].config.numbers as any[]).map((n: any) => n.phone_number_id).sort()).toEqual(['NEW-PID', 'OLD-PID']);
+      const auth = (re: RegExp) => calls.filter((c) => re.test(c.url)).pop()!.init.headers.Authorization;
+      expect(auth(/\/OLD-WABA\/phone_numbers/)).toBe('Bearer OLD-TOKEN');
+      expect(auth(/\/NEW-WABA\/phone_numbers/)).toBe('Bearer NEW-TOKEN');
+    });
   });
 
   it('if the WABA cannot be determined we STOP — a wrong id would look connected and fail silently', async () => {

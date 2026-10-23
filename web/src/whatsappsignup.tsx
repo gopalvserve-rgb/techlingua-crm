@@ -18,8 +18,8 @@
  *     redirect URI not being whitelisted. We say so, because "nothing happened" is the
  *     single most expensive thing this screen could tell the client.
  *
- * What we do NOT port: the SaaS's coexistence/`featureType` variants and its
- * multi-number "add another" branch. Single-tenant, one WhatsApp number, one WABA.
+ * What we do NOT port: the SaaS's coexistence/`featureType` variants. "Connect another
+ * number" re-runs this same flow; the server ADDS the number (also from another WABA).
  */
 
 declare global {
@@ -54,6 +54,11 @@ export function ensureFbSdk(appId: string): Promise<void> {
   return sdkLoading;
 }
 
+/** https://facebook.com or any https://<sub>.facebook.com (www., web., business., m. …). */
+export function isFacebookOrigin(origin: string): boolean {
+  return /^https:\/\/([a-z0-9-]+\.)*facebook\.com$/i.test(String(origin ?? ''));
+}
+
 /** Test seam: the unit tests reset the module-level SDK promise between cases. */
 export const __resetSdk = () => { sdkLoading = null; };
 
@@ -71,9 +76,13 @@ export function launchEmbeddedSignup(configId: string): Promise<SignupPayload> {
     let phoneNumberId = '';
     let wabaId = '';
     let heardFromMeta = false;
+    let metaError = '';
 
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== 'https://www.facebook.com') return;
+      // Meta posts from www., web. or business.facebook.com depending on the account and
+      // region. Accepting www. only silently dropped the new number's ids, and the server's
+      // fallback then re-connected the FIRST number (client, Oct 2026).
+      if (!isFacebookOrigin(event.origin)) return;
       heardFromMeta = true;
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
@@ -81,9 +90,14 @@ export function launchEmbeddedSignup(configId: string): Promise<SignupPayload> {
         // Meta has shipped at least three shapes for this payload. Accept all of them.
         const inner = data.data ?? data.session_info ?? {};
         const pid = inner.phone_number_id ?? inner.phone_id ?? data.phone_number_id ?? '';
-        const wid = inner.waba_id ?? inner.business_id ?? inner.business_account_id ?? data.waba_id ?? '';
+        // `business_id` only as the LAST resort: an older payload shape carried the WABA
+        // there, but in today's shape it is the Business Manager id next to `waba_id`
+        const wid = inner.waba_id ?? inner.business_account_id ?? data.waba_id ?? inner.business_id ?? '';
         if (pid) phoneNumberId = String(pid);
         if (wid) wabaId = String(wid);
+        if (String(data.event ?? '').toUpperCase() === 'ERROR') {
+          metaError = String(inner.error_message ?? inner.message ?? 'Meta reported an error in the signup dialog.');
+        }
       } catch { /* not our message */ }
     };
     window.addEventListener('message', onMessage);
@@ -93,6 +107,7 @@ export function launchEmbeddedSignup(configId: string): Promise<SignupPayload> {
       window.removeEventListener('message', onMessage);
       const code = response?.authResponse?.code;
       if (!code) {
+        if (metaError) { reject(new Error(`Meta: ${metaError}`)); return; }
         reject(new Error(heardFromMeta
           ? 'Login was cancelled before it finished.'
           : `Facebook closed the popup without returning anything. This almost always means "${location.origin}/" is not listed under Valid OAuth Redirect URIs in your Meta app (Facebook Login for Business › Settings). Add it, save, and try again.`));

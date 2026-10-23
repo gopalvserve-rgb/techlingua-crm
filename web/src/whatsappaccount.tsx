@@ -213,36 +213,32 @@ export default function WhatsAppAccount() {
       return;
     }
     if (!sdkReady) { setErr('The Facebook SDK is still loading — press Connect another number again in a moment.'); return; }
-    const prevDefault = defaultNo?.phone_number_id ?? '';
-    const prevWaba = account?.waba_id ?? '';
     setBusy('connect');
     try {
       // MUST be called synchronously from this click, or Chrome blocks the popup.
       const payload = await launchEmbeddedSignup(signup.config_id);
-      const r = await api.post<{ display_phone_number: string; waba_id: string; phone_number_id: string; subscribed: boolean; subscribe_error: string | null; warning: string | null }>(
+      const r = await api.post<{ display_phone_number: string; waba_id: string; phone_number_id: string; subscribed: boolean; subscribe_error: string | null; warning: string | null; made_default?: boolean; added?: number }>(
         '/settings/whatsapp/embedded-signup', payload,
       );
       let m = `Connected ${r.display_phone_number || 'the number'} (WABA ${r.waba_id}).`;
       if (!r.subscribed) m += ` Subscribing the webhook failed: ${r.subscribe_error}.`;
-      if (r.warning) m += ` ${r.warning}`;
-      // the exchange re-points the sender at the new number; pull the list, then keep the
-      // admin's previous default when it is still part of the same account
+      // the server ADDS another number next to the existing ones (any WABA) and keeps the
+      // current default; the first connection becomes the default. Pull the list, then sync
+      // every WABA so statuses are fresh.
       const fresh = await api.get<WaAccountPayload>('/settings/whatsapp/account');
       apply(fresh);
       const cfgId = fresh.accounts[0]?.config_id;
-      let after: ActionResult | null = cfgId
+      const after: ActionResult | null = cfgId
         ? await api.post<ActionResult>('/settings/whatsapp/account/sync', { config_id: cfgId }).catch(() => null)
         : null;
-      if (after && prevDefault && prevDefault !== r.phone_number_id && r.waba_id === prevWaba
-        && after.numbers.some((n) => n.phone_number_id === prevDefault)) {
-        after = await api.post<ActionResult>('/settings/whatsapp/account/number', { config_id: cfgId, phone_number_id: prevDefault, is_default: true }).catch(() => after);
-        m += ' Your previous default is still the sending number — press Set default to switch.';
-      } else if (after) {
-        m += ' It is now the default sending number.';
-      }
       if (after) apply(after);
+      m += r.made_default === false
+        ? ' Your current default keeps sending — press Set default on the new number to send from it.'
+        : ' It is now the default sending number.';
+      if (r.warning) m += ` ${r.warning}`;
+      if (after?.warning) m += ` ${after.warning}`;
       setNote(m);
-      toast('WhatsApp number connected');
+      toast(r.added === 0 && r.made_default === false ? 'No new number was added' : 'WhatsApp number connected', r.added === 0 && r.made_default === false);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(''); }
   };
 
