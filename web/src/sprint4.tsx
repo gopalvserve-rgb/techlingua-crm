@@ -132,7 +132,7 @@ export const STATE_RANK: Record<IntegrationState, number> = {
 
 export const STATE_BADGE: Record<IntegrationState, [string, string]> = {
   not_configured: ['Not configured', 'b-amber'],
-  configured: ['Configured — not yet tested', 'b-cyan'],
+  configured: ['Configured · Active', 'b-cyan'],
   verified: ['Verified', 'b-green'],
   failed: ['Test failed', 'b-red'],
   inactive: ['Paused', 'b-gray'],

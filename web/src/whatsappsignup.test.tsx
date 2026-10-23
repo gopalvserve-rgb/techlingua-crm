@@ -24,7 +24,7 @@ describe('integrationState — "Configured" and "Verified" are NOT the same word
   it('complete but NEVER TESTED -> Configured (never "Verified")', () => {
     // The whole point: saving a Razorpay key proves nothing. Nobody has asked Razorpay.
     expect(integrationState(row({}))).toBe('configured');
-    expect(STATE_BADGE.configured[0]).toMatch(/not yet tested/);
+    expect(STATE_BADGE.configured[0]).toMatch(/Configured · Active/);
   });
 
   it('a passing test -> Verified', () => {

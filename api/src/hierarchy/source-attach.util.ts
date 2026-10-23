@@ -24,7 +24,8 @@ export async function sourceForCampaign(
   if (own) return Number(own.id);
   try {
     return await orgWideCopy(db, sourceId, campaignId, actorId);
-  } catch {
+  } catch (e) {
+    console.error('[source-attach] org-wide copy failed', sourceId, campaignId, (e as Error)?.message);
     return null;   // reported by the caller as "source does not belong to the campaign"
   }
 }
@@ -55,7 +56,7 @@ async function orgWideCopy(db: Pick<DatabaseService, 'one'>, sourceId: number, c
   const created = await db.one<{ id: string }>(
     `INSERT INTO source (org_id, branch_id, vertical_id, pipeline_id, campaign_id, name, channel,
                          master_source_id, webhook_token, config, cost_per_lead, is_active, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::jsonb,'{}'::jsonb),COALESCE($11,0),TRUE,$12)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::jsonb,'{}'::jsonb),COALESCE($11::numeric,0),TRUE,$12::bigint)
      RETURNING id`,
     [camp.org_id, camp.branch_id, camp.vertical_id, camp.pipeline_id, campaignId, src.name,
       channel, src.master_source_id ?? null, webhookToken, src.config ? JSON.stringify(src.config) : null,

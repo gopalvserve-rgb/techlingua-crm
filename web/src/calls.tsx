@@ -168,7 +168,7 @@ export default function CallLogs({ lockDir }: { lockDir?: 'in' | 'out' | 'missed
   const cols = ['Time', 'Lead / Contact', 'Phone', 'Direction', 'Duration', 'SIM', 'Counsellor', 'Disposition', 'Source', 'Recording', 'Action'];
   const body: Cell[][] = rows.map((r) => [
     dttime(r.call_start_at || r.created_at),
-    r.lead_name ? { node: <a className="lnk" href={`/m/leads/leadsAll?id=${r.lead_id}`}>{r.lead_name}</a> } : { mono: '—', dim: true },
+    r.lead_name ? { node: <a className="lnk" href={`/m/leads/all?lead=${r.lead_id}`}>{r.lead_name}</a> } : { mono: '—', dim: true },
     { mono: r.phone_raw || r.phone_number || '—' },
     dirBadge(r.direction),
     fmtDur(r.duration_s),

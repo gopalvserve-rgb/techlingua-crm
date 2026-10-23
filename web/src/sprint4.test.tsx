@@ -566,7 +566,7 @@ describe('Administration › Settings', () => {
     // "Connected" became FOUR distinct states. A stored-but-never-tested credential is
     // "Configured", not "Verified" — the client must never read a saved key as a proven
     // one. (See `integrationState`.)
-    expect(screen.getByText(/BCL: Configured — not yet tested/)).toBeTruthy();
+    expect(screen.getByText(/BCL: Configured · Active/)).toBeTruthy();
     expect(screen.getAllByText('Not configured').length).toBeGreaterThan(0);
   });
 
