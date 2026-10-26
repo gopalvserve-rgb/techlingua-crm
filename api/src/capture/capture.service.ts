@@ -159,7 +159,10 @@ export class CaptureService {
               w.convert_to_lead, w.branch_id, w.vertical_id, w.campaign_id, w.source_id,
               w.created_at,
               u.name AS counsellor_name, c.name AS course_name, b.name AS branch_name,
-              v.name AS vertical_name, ms.name AS heard_about_name,
+              v.name AS vertical_name,
+              -- the LEAD SOURCE MASTER's name (Oct 2026), the catalogue name only as a fallback
+              COALESCE((SELECT s.name FROM source s WHERE s.master_source_id = w.heard_about_source_id
+                          AND s.campaign_id IS NULL AND s.deleted_at IS NULL ORDER BY s.id LIMIT 1), ms.name) AS heard_about_name,
               cmp.name AS campaign_name, cmp.pipeline_id, pl.name AS pipeline_name,
               sr.name AS source_name,
               wl.temperature, wl.score, wl.full_name AS lead_name,

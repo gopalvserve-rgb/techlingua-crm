@@ -1014,8 +1014,19 @@ export class HierarchyService {
       // Keep the canonical m_source link in sync when the name changes (item 1b): a rename of a
       // Lead Source find-or-creates its canonical catalogue row so the two source screens agree.
       if (dto.name !== undefined && String(dto.name).trim() && (dto.master_source_id === undefined || dto.master_source_id === null)) {
-        const row = await this.db.one<{ org_id: string }>(`SELECT org_id FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
-        if (row) dto.master_source_id = await this.ensureMasterSource(Number(row.org_id), String(dto.name).trim(), null, actorId);
+        const row = await this.db.one<{ org_id: string; campaign_id: string | null; master_source_id: string | null }>(
+          `SELECT org_id, campaign_id, master_source_id FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
+        const newName = String(dto.name).trim();
+        // Renaming an ORG-WIDE Lead Source renames its catalogue row IN PLACE (Oct 2026), so every
+        // record already linked to it (walk-ins' "How did you hear", campaign picks) shows the new name.
+        const clash = row?.campaign_id == null && row?.master_source_id
+          ? await this.db.one<{ id: string }>(`SELECT id FROM m_source WHERE lower(name) = lower($1) AND id <> $2 AND deleted_at IS NULL LIMIT 1`,
+              [newName, Number(row.master_source_id)])
+          : null;
+        if (row && row.campaign_id == null && row.master_source_id && !clash) {
+          await this.db.query(`UPDATE m_source SET name = $1, updated_at = now() WHERE id = $2`, [newName, Number(row.master_source_id)]);
+          dto.master_source_id = Number(row.master_source_id);
+        } else if (row) dto.master_source_id = await this.ensureMasterSource(Number(row.org_id), newName, null, actorId);
       }
       const before = await this.db.one<{ campaign_id: string | null; master_source_id: string | null; name: string }>(
         `SELECT campaign_id, master_source_id, name FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
