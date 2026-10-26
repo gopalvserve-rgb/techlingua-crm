@@ -951,6 +951,13 @@ export class HierarchyService {
       if (!o) throw new NotFoundException('no organisation');
       orgId = Number(o.id);
     }
+    if (!hasCampaign) {
+      // ONE Lead Source per name in the Lead Source Master (Oct 2026) — no org-wide duplicates
+      const dup = await this.db.one<{ id: string }>(
+        `SELECT id FROM source WHERE org_id = $1 AND campaign_id IS NULL AND deleted_at IS NULL
+            AND lower(name) = lower($2) LIMIT 1`, [orgId, dto.name.trim()]);
+      if (dup) throw new BadRequestException(`"${dto.name.trim()}" is already in the Lead Source Master`);
+    }
     const masterSourceId = await this.ensureMasterSource(orgId, dto.name.trim(), dto.master_source_id, actorId);
     const channel = dto.channel ?? 'manual';
     const webhookToken = ['meta', 'google', 'justdial', 'indiamart', 'form', 'webhook'].includes(channel)
@@ -1010,8 +1017,21 @@ export class HierarchyService {
         const row = await this.db.one<{ org_id: string }>(`SELECT org_id FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
         if (row) dto.master_source_id = await this.ensureMasterSource(Number(row.org_id), String(dto.name).trim(), null, actorId);
       }
-      return this.genericUpdate('source', id, dto,
+      const before = await this.db.one<{ campaign_id: string | null; master_source_id: string | null; name: string }>(
+        `SELECT campaign_id, master_source_id, name FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
+      const updated = await this.genericUpdate('source', id, dto,
         ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active']);
+      // ONE Lead Source (Oct 2026): an ORG-WIDE source's per-campaign copies (made when it was first
+      // used under a campaign) follow its name, so the master and every campaign show the same name.
+      if (before && before.campaign_id == null && dto.name !== undefined && String(dto.name).trim()
+          && String(dto.name).trim() !== before.name) {
+        await this.db.query(
+          `UPDATE source SET name = $1, master_source_id = COALESCE($2::bigint, master_source_id), updated_at = now()
+            WHERE campaign_id IS NOT NULL AND deleted_at IS NULL
+              AND (($3::bigint IS NOT NULL AND master_source_id = $3::bigint) OR lower(name) = lower($4))`,
+          [String(dto.name).trim(), dto.master_source_id ?? null, before.master_source_id, before.name]);
+      }
+      return updated;
     }
     const targetCampaignId = Number(dto.campaign_id);
     if (!Number.isInteger(targetCampaignId) || targetCampaignId <= 0) {

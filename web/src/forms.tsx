@@ -95,12 +95,13 @@ export function dedupeSources<T extends { name: string }>(list: T[]): T[] {
  *  canonical master id), plus anything already picked (e.g. just quick-added). */
 export function campaignSourceOptions(ref: { sources: any[]; masterSources?: any[] }, picked: number[] = []): Array<{ id: number; name: string }> {
   const byId = new Map<number, string>();
-  for (const s of ref.sources ?? []) {
+  // ONLY the Lead Source Master's entries (Oct 2026 — never the raw catalogue); the org-wide
+  // row's name wins over a campaign copy's
+  const rows = [...(ref.sources ?? [])].sort((a: any, b: any) => Number(a.campaign_id != null) - Number(b.campaign_id != null));
+  for (const s of rows) {
     const mid = Number(s.master_source_id);
-    if (mid > 0 && !byId.has(mid)) byId.set(mid, String(s.master_source_name ?? s.name));
+    if (mid > 0 && !byId.has(mid)) byId.set(mid, String(s.name));
   }
-  // legacy data whose sources carry no canonical link yet: offer the whole catalogue
-  if (!byId.size) for (const m of ref.masterSources ?? []) byId.set(Number(m.id), String(m.name));
   for (const id of picked) {
     if (!byId.has(Number(id))) {
       const m = (ref.masterSources ?? []).find((x: any) => Number(x.id) === Number(id));
@@ -251,10 +252,12 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // 27aug Batch C item 1 — Campaign is now OPTIONAL: a Lead Source can exist org-wide with no
   // campaign. Branch/Vertical/Pipeline/Campaign are an optional cascade that (when chosen) scopes
   // the source under that campaign; left blank, the source is created org-level.
+  // Oct 2026 (client) — ONE Lead Source Master: a source is created once, org-wide, and every
+  // campaign picks it (the Campaign form's Lead Source). The Branch › Vertical › Pipeline ›
+  // Campaign cascade is gone from this form; a source is attached to a campaign automatically
+  // the first time it is used there.
   'leads.sources': { title: 'Add Lead Source', fields: [
-    F('Branch', 'select', 0, 0, 'optional — scope the source', 'branches'), F('Vertical', 'select', 0, 0, 'filtered by Branch', 'verticals'),
-    F('Pipeline', 'select', 0, 0, 'filtered by Vertical', 'pipelines'), F('Campaign', 'select', 0, 0, 'optional — leave blank for an org-wide source', 'campaigns'),
-    F('Source Name', 'text', 1, 0, 'editable'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Source Name', 'text', 1, 0, 'one entry per source — available under every campaign'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'leads.pipelinemaster': { title: 'Add Pipeline', fields: [
     F('Pipeline Name', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline Code', 'text', 1, 0, 'e.g. ADM'), F('Pipeline Stages', 'table', 0, 0, 'Default stage set added — edit after create'), F('Pipeline Owner', 'select', 0, 0, 'Users', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
@@ -655,8 +658,8 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
   'leads.sources': async (vals, ids) => {
     // UAT-R2 #4 — channel + cost_per_lead no longer collected; backend keeps its defaults.
     // UAT-R2 #17 — return the created row so a ＋ quick-add auto-selects it live.
-    const row = await api.post<Named>('/sources', {
-      campaign_id: ids['Campaign'] || undefined,   // OPTIONAL (item 1) — org-level source when blank
+    void ids;
+    const row = await api.post<Named>('/sources', {   // always org-wide (Lead Source Master, Oct 2026)
       name: need(vals['Source Name'], 'Source name is required'),
       is_active: vals['Status'] !== 'Inactive',
     });
@@ -957,9 +960,6 @@ export function EntityLookup({ type, value, onPick }: {
 const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
   courses: 'course', statuses: 'status', followupTypes: 'followup_type',
   dispositions: 'disposition', budgets: 'budget', states: 'state', cities: 'city',
-  // "How did you hear about us?" -> the Lead Source MASTER (m_source), so ＋ Master adds
-  // a new one exactly the way every other master-backed select does.
-  masterSources: 'source',
 };
 /** mopts (string-valued master selects) -> generic master type key (POST /api/masters/<type>). */
 const MOPTS_MASTER: Record<NonNullable<FormField['mopts']>, string> = {
@@ -973,6 +973,8 @@ const MOPTS_MASTER: Record<NonNullable<FormField['mopts']>, string> = {
  *  not just Name/Code). Rule: ＋ Master = the master's own management-screen form. */
 const SRC_MASTER_FORM: Partial<Record<NonNullable<FormField['src']>, string>> = {
   courses: 'students.courses',
+  // "How did you hear about us?" — ＋ Master opens the Lead Source Master's own Add form (Oct 2026)
+  masterSources: 'leads.sources',
 };
 /** Hierarchy-bound srcs open their full add-form inline instead (not generic masters). */
 const SRC_FORM: Partial<Record<NonNullable<FormField['src']>, { form: string; perm: string }>> = {
@@ -1741,6 +1743,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit, prefill 
     const hf = f.src ? SRC_FORM[f.src] : undefined;
     const isCamp = f.src === 'campaigns';
     if (mt && !can('master.create')) return null;
+    if (mf === 'leads.sources' && !can('source.create')) return null;
     if (hf && !can(hf.perm)) return null;
     if (isCamp && !can('campaign.create')) return null;
     return (
@@ -1824,7 +1827,10 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit, prefill 
         <AddModal formKey={masterForm.form} onClose={() => setMasterForm(null)}
           onSavedRow={(row) => {
             setExtras((x) => ({ ...x, [masterForm.field]: [...(x[masterForm.field] ?? []), row] }));
-            setField(masterForm.field, row.name, Number(row.id)); // auto-select the new value
+            // a Lead Source picked by its canonical master id (campaign / walk-in pickers)
+            const srcF = spec.fields.find((x) => x.label === masterForm.field);
+            const newId = srcF?.src === 'masterSources' ? Number((row as any).master_source_id ?? row.id) : Number(row.id);
+            setField(masterForm.field, row.name, newId); // auto-select the new value
             const fee = (row as any)?.meta?.fee; // course fee auto-fetch, same as manual select
             const feeField = spec.fields.find((x) => /course fee|standard fee/i.test(x.label));
             if (fee != null && fee !== '' && feeField) setVals((x) => ({ ...x, [feeField.label]: String(fee) }));
@@ -2253,13 +2259,17 @@ export function MasterQuickAdd({ type, onAdded }: { type: string; onAdded?: (row
   const can = auth?.can ?? (() => false); // hidden outside an AuthProvider (e.g. isolated unit tests)
   const ref = useRef_();
   const [open, setOpen] = useState(false);
-  if (!can('master.create')) return null;
-  const done = (row: Named) => { onAdded?.(row); ref.reload(); setOpen(false); };
+  const isSource = type === 'source';   // the Lead Source Master's own form (Oct 2026)
+  if (!can(isSource ? 'source.create' : 'master.create')) return null;
+  const done = (row: Named) => {
+    onAdded?.(isSource ? { ...row, id: (row as any).master_source_id ?? row.id } as Named : row);
+    ref.reload(); setOpen(false);
+  };
   return (
     <>
       <a className="mlink" onClick={(e) => { e.preventDefault(); setOpen(true); }}>＋ Master</a>
-      {open && createPortal(type === 'course'
-        ? <AddModal formKey="students.courses" onClose={() => setOpen(false)} onSavedRow={done} />
+      {open && createPortal(type === 'course' || isSource
+        ? <AddModal formKey={isSource ? 'leads.sources' : 'students.courses'} onClose={() => setOpen(false)} onSavedRow={done} />
         : <AddMasterModal type={type} onClose={() => setOpen(false)} onCreated={done} />, document.body)}
     </>
   );

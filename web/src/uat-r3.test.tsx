@@ -4,8 +4,7 @@
  * the specific new behaviour so it runs quickly on its own.
  *   #17 — Course "Duration" is a free-TEXT input (not number).
  *   #20 — Add Campaign walks a STRICT Branch -> Vertical -> Pipeline cascade.
- *   #21 — Add Source walks a STRICT Branch -> Vertical -> Pipeline -> Campaign cascade,
- *          and posts ONLY campaign_id (path derived server-side).
+ *   #21 — (Oct 2026) Add Lead Source is name + status only — one org-wide Lead Source Master.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/react';
@@ -48,46 +47,30 @@ describe('#17 — Course Duration accepts free text', () => {
   });
 });
 
-describe('#21 — Add Source walks Branch -> Vertical -> Pipeline -> Campaign (strict)', () => {
-  it('each child is empty+disabled until its parent is chosen', () => {
+describe('#21 (Oct 2026) — ONE Lead Source Master: Add Lead Source is name + status, always org-wide', () => {
+  it('renders only Source Name and Status — no Branch / Vertical / Pipeline / Campaign', () => {
     render(<AddModal formKey="leads.sources" onClose={() => {}} />);
-    expect(sel('Vertical').disabled).toBe(true);
-    expect(sel('Pipeline').disabled).toBe(true);
-    expect(sel('Campaign').disabled).toBe(true);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    expect(sel('Vertical').disabled).toBe(false);
-    expect(opts('Vertical')).toEqual(['1']);          // branch 9 only
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    expect(opts('Pipeline')).toEqual(['4']);
-    fireEvent.change(sel('Pipeline'), { target: { value: '4' } });
-    expect(opts('Campaign')).toEqual(['5']);
+    const labels = [...document.querySelectorAll('.add-modal .fld label')].map((l) => (l.textContent || '').trim());
+    expect(labels.some((t) => t.startsWith('Source Name'))).toBe(true);
+    for (const gone of ['Branch', 'Vertical', 'Pipeline', 'Campaign']) expect(labels.some((t) => t.startsWith(gone))).toBe(false);
   });
 
-  it('posts ONLY campaign_id — the path is derived server-side (no branch/vertical/pipeline in body)', async () => {
+  it('posts an org-wide source (no campaign_id / path in the body)', async () => {
     render(<AddModal formKey="leads.sources" onClose={() => {}} />);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    fireEvent.change(sel('Pipeline'), { target: { value: '4' } });
-    fireEvent.change(sel('Campaign'), { target: { value: '5' } });
-    const nameInput = fld('Source Name').querySelector('input') as HTMLInputElement;
-    fireEvent.change(nameInput, { target: { value: 'JustDial' } });
+    fireEvent.change(fld('Source Name').querySelector('input') as HTMLInputElement, { target: { value: 'JustDial' } });
     fireEvent.click([...document.querySelectorAll('.add-modal button')].find((b) => /save/i.test(b.textContent || ''))!);
-    await Promise.resolve();
-    expect(post).toHaveBeenCalledWith('/sources', expect.objectContaining({ campaign_id: 5, name: 'JustDial' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/sources', expect.objectContaining({ name: 'JustDial' })));
     const body = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.campaign_id).toBeUndefined();
     expect(body.branch_id).toBeUndefined();
-    expect(body.vertical_id).toBeUndefined();
-    expect(body.pipeline_id).toBeUndefined();
   });
 
-  it('changing the Branch resets the whole descendant chain', () => {
-    render(<AddModal formKey="leads.sources" onClose={() => {}} />);
-    fireEvent.change(sel('Branch'), { target: { value: '9' } });
-    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
-    fireEvent.change(sel('Branch'), { target: { value: '10' } });
-    expect(sel('Vertical').value).toBe('');
-    expect(sel('Pipeline').disabled).toBe(true);
-    expect(sel('Campaign').disabled).toBe(true);
+  it("the Campaign form's Lead Source ＋ opens this same Add Lead Source form", () => {
+    render(<CampaignModal onClose={() => {}} />);
+    const link = [...document.querySelectorAll('[data-testid="campaign-sources"] a.mlink')][0] as HTMLElement;
+    fireEvent.click(link);
+    const titles = [...document.querySelectorAll('.add-modal .ah h3')].map((h) => h.textContent || '');
+    expect(titles.some((t) => /Add Lead Source/.test(t))).toBe(true);
   });
 });
 

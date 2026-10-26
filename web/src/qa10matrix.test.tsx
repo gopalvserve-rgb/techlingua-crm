@@ -68,7 +68,10 @@ const REF = {
   verticals: [{ id: 1, name: 'BCL', branch_id: 9 }, { id: 2, name: 'PTE', branch_id: 9 }, { id: 3, name: 'Coaching', branch_id: 10 }],
   pipelines: [{ id: 4, name: 'Admissions', vertical_id: 1 }],
   campaigns: [{ id: 5, name: 'Meta Jul', pipeline_id: 4 }],
-  sources: [{ id: 7, name: 'Meta Ads', campaign_id: 5 }],
+  // the Lead Source Master (Oct 2026): org-wide entries linked to their canonical m_source ids —
+  // the Walk-in "How did you hear" and Campaign pickers list THESE, never the raw catalogue
+  sources: [{ id: 7, name: 'Meta Ads', campaign_id: 5 }, { id: 8, name: 'Google Ads', campaign_id: null, master_source_id: 81 },
+    { id: 9, name: 'Hoarding', campaign_id: null, master_source_id: 82 }],
   // the LEAD SOURCE MASTER (m_source) — "How did you hear about us?" (DEF-S34-02)
   masterSources: [{ id: 81, name: 'Google Ads' }, { id: 82, name: 'Hoarding' }],
   // UAT-R2 #16 — a Course belongs to ONE Branch (9) → ONE Vertical (1); both rows carry
@@ -441,14 +444,7 @@ const EXEMPT: Record<string, Allow> = {
   'admin.users': {
     // nothing exempt — every field on Add User reaches the API
   },
-  // UAT-R3 #21 — the Add Source form now walks Branch → Vertical → Pipeline → Campaign.
-  // Only Campaign reaches the payload (source.campaign_id); the source's whole path is
-  // DERIVED from the Campaign server-side, so Branch/Vertical/Pipeline are cascade filters.
-  'leads.sources': {
-    Branch: 'cascade filter only — a source\'s path is DERIVED from its Campaign, server-side',
-    Vertical: 'cascade filter only — derived from the Campaign (see Branch)',
-    Pipeline: 'cascade filter only — derived from the Campaign (see Branch)',
-  },
+  // Oct 2026 — Add Lead Source is name + status only (ONE org-wide Lead Source Master); nothing exempt.
 };
 // UAT (Aug 2026) — the course form gained an OPTIONAL Pipeline → Campaign cascade on top of its
 // required Branch → Vertical ownership. Both ARE sent (meta.pipeline_id / meta.campaign_id — see

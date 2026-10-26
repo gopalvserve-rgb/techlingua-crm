@@ -2200,12 +2200,33 @@ function Sources() {
   if (fPipelines.length) sqs.set('pipeline_ids', fPipelines.join(','));
   if (fCampaigns.length) sqs.set('campaign_ids', fCampaigns.join(','));
   const list = useFetch<any[]>(withScope(`/sources${sqs.toString() ? `?${sqs}` : ''}`, sp), [refreshTick, scopeKey, sqs.toString()]);
-  const rows = list.data ?? [];
+  // ONE row per Lead Source (client, Oct 2026): the org-wide entry and the per-campaign copies made
+  // when it was first used under a campaign share a canonical master id — shown as a single row
+  // whose "Campaigns" column lists where it is used. The org-wide row's counts already include its
+  // copies; a campaign-only source sums its own rows.
+  const rows = (() => {
+    const g = new Map<string, any[]>();
+    for (const so of list.data ?? []) {
+      const k = Number(so.master_source_id) > 0 ? `m${so.master_source_id}` : `n${String(so.name).trim().toLowerCase()}`;
+      g.set(k, [...(g.get(k) ?? []), so]);
+    }
+    return [...g.values()].map((members) => {
+      const org = members.find((m) => m.campaign_id == null);
+      const repr = org ?? members[0];
+      const sum = (f: string) => members.reduce((n, m) => n + Number(m[f] ?? 0), 0);
+      return {
+        ...repr, members,
+        campaigns: members.filter((m) => m.campaign_id != null).map((m) => String(m.campaign_name ?? '')).filter(Boolean),
+        lead_count: org ? Number(org.lead_count ?? 0) : sum('lead_count'),
+        leads_this_month: org ? Number(org.leads_this_month ?? 0) : sum('leads_this_month'),
+      };
+    }).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  })();
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('source.update');
   const del = useDelete('Source', '/sources', () => { list.reload(); ref.reload(); bump(); });
-  const _bdIds = (list.data ?? []).map((r: any) => Number(r.id));
+  const _bdIds = rows.map((r: any) => Number(r.id));
   const _bdSel = useTableSelect(_bdIds);
   const _bd = useBulkDelete('Source', '/sources/bulk-delete/impact', '/sources/bulk-delete', () => { list.reload(); _bdSel.clear(); });
   const after = () => { list.reload(); ref.reload(); bump(); };
@@ -2231,11 +2252,11 @@ function Sources() {
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', rows.map((so: any) => ({
-          source: so.name, branch: so.branch_name ?? (so.campaign_id == null ? 'All' : ''), vertical: so.vertical_name ?? (so.campaign_id == null ? 'All' : ''),
-          pipeline: so.pipeline_name ?? (so.campaign_id == null ? 'All' : ''), campaign: so.campaign_name ?? 'All campaigns',
+          source: so.name, available_in: so.campaign_id == null ? 'All campaigns' : so.campaigns.join(', '),
+          used_in_campaigns: so.campaigns.join(', '),
           capture: (CAPTURE[so.channel as string] ?? ['Manual'])[0], leads_this_month: Number(so.leads_this_month ?? 0), total_leads: Number(so.lead_count ?? 0),
           cost_per_lead: Number(so.cost_per_lead ?? 0), status: so.is_active === false ? 'Inactive' : 'Active',
-        })))} onRefresh={() => list.reload()} />} cols={['Source', 'Branch', 'Vertical', 'Pipeline', 'Campaign', 'Capture', 'This month', 'Total leads', 'Cost/lead', 'Status', 'Actions']}
+        })))} onRefresh={() => list.reload()} />} cols={['Source', 'Campaigns', 'Capture', 'This month', 'Total leads', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((so) => {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
@@ -2244,24 +2265,24 @@ function Sources() {
           const cpl = Number(so.cost_per_lead ?? 0);
           return [
             { node: <span className="nm">{so.name}</span> } as Cell,
-            all ? { node: <span className="sub">All</span> } as Cell : String(so.branch_name ?? '—'),
-            all ? { node: <span className="sub">All</span> } as Cell : String(so.vertical_name ?? '—'),
-            all ? { node: <span className="sub">All</span> } as Cell : String(so.pipeline_name ?? '—'),
-            all ? { b: ['All campaigns', 'b-indigo'] } as Cell : String(so.campaign_name ?? '—'),
+            { node: <span>{all ? renderCell({ b: ['All campaigns', 'b-indigo'] }) : null}
+              {so.campaigns.length ? <span className="sub" style={{ marginLeft: all ? 6 : 0 }}>{all ? 'used in ' : ''}{so.campaigns.join(', ')}</span> : null}
+              {!all && !so.campaigns.length ? '—' : null}</span> } as Cell,
             { b: cap } as Cell,
             { mono: String(Number(so.leads_this_month ?? 0)) } as Cell,
             { mono: String(Number(so.lead_count ?? 0)) } as Cell,
             cpl > 0 ? { mono: `₹${cpl.toLocaleString('en-IN')}` } as Cell : '—',
             toggleCell({
               active: so.is_active !== false, name: so.name, entity: 'Source', canToggle: canEdit,
-              onToggle: async (next) => { await api.patch(`/sources/${so.id}`, { is_active: next }); after(); },
+              // a Lead Source is switched on/off as a whole — the master entry and its campaign copies
+              onToggle: async (next) => { for (const m of so.members) await api.patch(`/sources/${m.id}`, { is_active: next }); after(); },
             }),
             rowActions({
               onView: () => setView(so), onEdit: canEdit ? () => setEdit(so) : undefined,
               onDelete: can('source.delete') ? () => del.openDelete(Number(so.id), so.name) : undefined,
             }),
           ];
-        })} empty="No sources connected yet — add one per campaign" />
+        })} empty="No lead sources yet — add one; it is available under every campaign" />
       {_bd.bulkModal}
       {del.deleteModal}
       {view && (
@@ -2269,10 +2290,8 @@ function Sources() {
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
-              ['Branch', view.branch_name ?? '—'],
-              ['Vertical', view.vertical_name ?? '—'],
-              ['Pipeline', view.pipeline_name ?? '—'],
-              ['Campaign', view.campaign_id == null ? 'All campaigns (org-wide)' : (view.campaign_name ?? '—')],
+              ['Available in', view.campaign_id == null ? 'All campaigns' : (view.campaign_name ?? '—')],
+              ['Used in campaigns', view.campaigns?.length ? view.campaigns.join(', ') : '—'],
               ['Leads', `${Number(view.lead_count ?? 0)} total · ${Number(view.leads_this_month ?? 0)} this month`],
               ['Channel', <span className="mono">{view.channel ?? 'manual'}</span>],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
@@ -2294,30 +2313,14 @@ function Sources() {
         <AddModal formKey="leads.sources" onClose={() => setEdit(null)} onSaved={after}
           edit={{
             title: `Edit Source — ${edit.name}`,
-            // Client (Aug 2026): the source's Branch > Vertical > Pipeline > Campaign are now
-            // EDITABLE as the same strict cascade as Add Source, PREFILLED with the source's
-            // current path. Choosing a new Campaign RE-PARENTS the source: the server re-derives
-            // the whole denormalised path (branch/vertical/pipeline) from the target campaign
-            // (HierarchyService.updateSource), RBAC-checking both the source and the target
-            // campaign against the actor's scope. Existing leads keep their own captured path.
+            // Oct 2026 — ONE Lead Source Master: name + status only (no campaign path). Renaming an
+            // org-wide source renames its per-campaign copies too (HierarchyService.updateSource).
             initialVals: {
-              'Branch': edit.branch_name ?? '', 'Vertical': edit.vertical_name ?? '',
-              'Pipeline': edit.pipeline_name ?? '', 'Campaign': edit.campaign_name ?? '',
               'Source Name': edit.name ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            initialIds: {
-              'Branch': edit.branch_id != null ? Number(edit.branch_id) : undefined,
-              'Vertical': edit.vertical_id != null ? Number(edit.vertical_id) : undefined,
-              'Pipeline': edit.pipeline_id != null ? Number(edit.pipeline_id) : undefined,
-              'Campaign': edit.campaign_id != null ? Number(edit.campaign_id) : undefined,
-            },
-            // UAT-R2 #4 — Source Category + Cost per Lead removed; backend keeps existing values.
-            // Only campaign_id is sent for the path — the source's Branch/Vertical/Pipeline are
-            // re-derived server-side from the chosen Campaign.
-            submit: async (vals, ids) => {
+            submit: async (vals) => {
               await api.patch(`/sources/${edit.id}`, {
-                campaign_id: need(ids['Campaign'], 'Pick a Campaign'),
                 name: need(vals['Source Name'], 'Source name is required'),
                 is_active: vals['Status'] !== 'Inactive',
               });
