@@ -87,12 +87,6 @@ export function NotificationEvents() {
 
   return (
     <>
-      <div className="page-head">
-        <h2><Ic k="bell" /> Notification Events</h2>
-        <p className="sub">A catalog of standard events. For each, turn SMS / Email / WhatsApp on or off and
-          choose the template it should send. Messages fire over the existing channels — opt-out and business
-          hours are respected, and a channel with no credentials yet degrades to a logged, not-sent attempt.</p>
-      </div>
 
       <div className="filters" style={{ marginBottom: 12 }}>
         <EnumMulti label="Category" icon="grid" value={fCats}

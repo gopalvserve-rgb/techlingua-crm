@@ -1178,7 +1178,7 @@ function QuickContact() {
     <div className="fld" key={label}>
       <label>{label}</label>
       <select className="ainp" value={value ?? ''} onChange={(e) => set(e.target.value ? Number(e.target.value) : undefined)}>
-        <option value="">All {label}s</option>
+        <option value="">All {pluralLabel(label)}</option>
         {list.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
     </div>
@@ -1199,10 +1199,8 @@ function QuickContact() {
           <div className="form-grid" style={{ padding: 0 }}>
             <div className="fld"><label>Contact Name</label><input className="ainp" placeholder="Contact Name" value={name} onChange={(e) => setName(e.target.value)} /></div>
             <div className="fld"><label>Contact Number</label>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <div style={{ flex: 1, minWidth: 0 }}><PhoneInput value={phone} onChange={setPhone} placeholder="Contact Number" /></div>
-                <button className="verify" style={{ position: 'static', flex: '0 0 auto' }} title="Verify" onClick={() => toast('Numbers are format-checked automatically as you type (country code + length).')}><Ic k="check" w={2.6} /></button>
-              </div></div>
+              {/* the old "Verify" tick only showed a toast — numbers are format-checked as you type */}
+              <PhoneInput value={phone} onChange={setPhone} placeholder="Contact Number" /></div>
             <div className="fld"><label>Alternate Mobile Number</label>
               <PhoneInput value={altPhone} onChange={setAltPhone} placeholder="Alternate Mobile Number" /></div>
             <div className="fld"><label>WhatsApp Number</label>
@@ -2329,13 +2327,13 @@ function Branches() {
   // only if it owns one of the picked verticals (a branch HAS verticals under it). Seeded from
   // the global top-bar scope so it lands pre-narrowed. Applied client-side over ref.verticals.
   const [q, setQ] = useState('');
-  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
+  // No Vertical filter here (client, Oct 2026): a vertical sits UNDER one branch, so filtering the
+  // branch list by vertical only ever narrowed it to that vertical's own parent.
   const bparams = new URLSearchParams();
   if (inc) bparams.set('include_inactive', '1');
   if (q.trim()) bparams.set('q', q.trim());
   const list = useFetch<any[]>(`/branches${bparams.toString() ? `?${bparams}` : ''}`, [refreshTick, bparams.toString()]);
-  const vBranchIds = new Set(ref.verticals.filter((v) => fVerticals.includes(Number(v.id))).map((v) => Number(v.branch_id)));
-  const rows = (list.data ?? []).filter((b: any) => !fVerticals.length || vBranchIds.has(Number(b.id)));
+  const rows = list.data ?? [];
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('branch.update');
@@ -2364,7 +2362,6 @@ function Branches() {
       <Blocks blocks={[{ type: 'tree', title: 'Hierarchy', nodes }]} />
       <div className="filters" style={{ flexWrap: 'wrap', gap: 8 }}>
         <SearchChip q={q} setQ={setQ} ph="Search branch name / code…" />
-        <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={ref.verticals} onChange={setFVerticals} />
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Branch" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
@@ -3041,7 +3038,7 @@ function Campaigns() {
       <Kpis cols={4} items={[
         { lab: 'Active campaigns', val: String(rows.filter((c) => c.is_active !== false).length), ic: 'bolt' },
         // Total Lead (dev/139) — all leads across the current scope (+ Lead Counsellor narrow); opens the Leads list.
-        { lab: 'Total Lead', val: String(k?.total ?? 0), ic: 'leads',
+        { lab: 'Total Leads', val: String(k?.total ?? 0), ic: 'leads',
           onClick: () => go('leads', 'all', { ...ownerNav }), navLabel: `Total leads in scope: ${k?.total ?? 0}. Open the Leads list` },
         { lab: 'Leads (MTD)', val: String(k?.mtd ?? '0'), ic: 'leads',
           onClick: () => go('leads', 'all', { created_from: `${new Date().toISOString().slice(0, 7)}-01`, ...ownerNav }),
@@ -3082,7 +3079,8 @@ function Campaigns() {
             String(c.pipeline_name ?? '—'),
             srcs.length
               ? ({ node: <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>{srcs.map((s) => <span key={s.id} className="bdg b-indigo">{s.name}</span>)}</span>, sort: srcs.map((s) => s.name).join(', ') } as Cell)
-              : ({ node: <span className="sub">All-campaign sources only</span>, sort: '' } as Cell),
+              // every Lead Source Master entry is usable under every campaign (Oct 2026)
+              : ({ node: <span className="sub" title={(ref.sources ?? []).filter((s: any) => s.campaign_id == null).map((s: any) => s.name).join(', ')}>All Lead Sources</span>, sort: '' } as Cell),
             { mono: utm === '—' ? '—' : `utm=${utm}`, dim: true } as Cell,
             cost ? `₹${cost.toLocaleString('en-IN')}` : '—',
             // dev/131 (task #213 item 1) — the LEADS count links to the Leads list pre-filtered to this
@@ -3172,16 +3170,11 @@ function Courses() {
   // Course master list filters (client, Aug 2026): Branch/Vertical (cascade, multi-select) + name search.
   const [fBranches, setFBranches] = useState<number[]>([]);
   const [fVerticals, setFVerticals] = useState<number[]>([]);
-  const [fCourses, setFCourses] = useState<number[]>([]);
   const [fStatuses, setFStatuses] = useState<string[]>([]);
   const [fTypes, setFTypes] = useState<string[]>([]);
   // dev/100 (client): Delivery Mode filter removed from the course list (field dropped from the UI).
   const [q, setQ] = useState('');
   const vOpts = ref.verticals.filter((vt) => !fBranches.length || fBranches.includes(Number(vt.branch_id)));
-  // Course filter options cascade off Branch/Vertical (a course's meta carries branch_id/vertical_id).
-  const cCourseOpts = ref.courses.filter((c: any) =>
-    (!fBranches.length || fBranches.includes(Number((c.meta as any)?.branch_id))) &&
-    (!fVerticals.length || fVerticals.includes(Number((c.meta as any)?.vertical_id))));
   // Course Type / Delivery Mode filter options come from the seeded catalogs (RefData →
   // GET /courses/*-catalog); fall back to the bundled constants offline / in unit tests.
   const typeFilterOpts = (ref.courseTypes.length ? ref.courseTypes : COURSE_TYPES.map((t) => ({ id: t, name: t }))).map((o: any) => ({ id: String(o.id ?? o.name), name: String(o.name) }));
@@ -3191,7 +3184,6 @@ function Courses() {
   if (inc || fStatuses.includes('inactive')) cparams.set('all', '1');
   if (fBranches.length) cparams.set('branch_ids', fBranches.join(','));
   if (fVerticals.length) cparams.set('vertical_ids', fVerticals.join(','));
-  if (fCourses.length) cparams.set('course_ids', fCourses.join(','));
   if (fStatuses.length) cparams.set('statuses', fStatuses.join(','));
   if (fTypes.length) cparams.set('course_types', fTypes.join(','));
   if (q.trim()) cparams.set('q', q.trim());
@@ -3208,14 +3200,13 @@ function Courses() {
   return (
     <>
       <div className="filters">
-        {/* Course master filters (client, Aug 2026): Branch > Vertical > Course, Status, Course Type
+        {/* Course master filters (client, Aug 2026): Branch > Vertical, Status, Course Type
             (all multi-select) + name search. Each genuinely narrows the server query. dev/100 (client):
             the Delivery Mode filter was removed (the course Delivery Mode field was dropped from the UI). */}
         <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
-          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); setFCourses((cur) => cur.filter((id) => ref.courses.some((c: any) => Number(c.id) === id && v.includes(Number((c.meta as any)?.branch_id))))); }} />
+          onChange={(v) => { setFBranches(v); setFVerticals((cur) => cur.filter((id) => ref.verticals.some((vt) => Number(vt.id) === id && v.includes(Number(vt.branch_id))))); }} />
         <FilterMulti label="Vertical" icon="grid" value={fVerticals} options={vOpts}
-          onChange={(v) => { setFVerticals(v); setFCourses((cur) => cur.filter((id) => !v.length || ref.courses.some((c: any) => Number(c.id) === id && v.includes(Number((c.meta as any)?.vertical_id))))); }} />
-        <FilterMulti label="Course" icon="book" value={fCourses} options={cCourseOpts} onChange={setFCourses} />
+          onChange={setFVerticals} />
         <EnumMulti label="Status" icon="check" value={fStatuses}
           options={[{ id: 'active', name: 'Active' }, { id: 'inactive', name: 'Inactive' }]} onChange={setFStatuses} />
         <EnumMulti label="Course Type" icon="award" value={fTypes} options={typeFilterOpts} onChange={setFTypes} />
@@ -3763,6 +3754,14 @@ function Roles() {
   );
 }
 
+/** Audit module codes → the screen names a user knows. */
+const AUDIT_MODULE: Record<string, string> = {
+  auth: 'Sign-in', sources: 'Lead Source', source: 'Lead Source', lead: 'Lead', leads: 'Lead',
+  campaign: 'Campaign', campaigns: 'Campaign', branch: 'Branch', vertical: 'Vertical', pipeline: 'Pipeline',
+  user: 'User', role: 'Role', student: 'Student', enrolment: 'Enrolment', follow_up: 'Follow-up',
+  payment: 'Payment', invoice: 'Invoice', master: 'Master', settings: 'Settings',
+};
+
 function Audit() {
   const { refreshTick } = useScreen();
   // SHARED date range on when the action occurred. Default All time.
@@ -3792,9 +3791,10 @@ function Audit() {
       </div>
       <TableCard fill title="Activity log — all users" more={<ListActions onExport={() => downloadObjectsCsv('audit-log.csv', logs.data ?? [])} onRefresh={() => logs.reload()} />} cols={['Time', 'User', 'Module', 'Activity', 'Detail', 'Actions']}
         rows={rows.map((r) => [
-          { mono: new Date(r.occurred_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), dim: true } as Cell,
+          // date AND time — a bare "04:54 pm" gave no clue which day it was (audit, Oct 2026)
+          { mono: fmtFull(r.occurred_at), dim: true } as Cell,
           r.actor_name ?? 'System',
-          String(r.entity_type ?? '—'),
+          AUDIT_MODULE[String(r.entity_type ?? '')] ?? (r.entity_type ? String(r.entity_type).replace(/_/g, ' ').replace(/^./, (c: string) => c.toUpperCase()) : '—'),
           { b: ACT[r.action] ?? [r.action, 'b-gray'] } as Cell,
           r.entity_id ? `#${r.entity_id}` : '—',
           rowActions({ onView: () => setSel(r) }),
@@ -4345,9 +4345,25 @@ function ErrorLogs() {
    generic master list (add / edit / view / activate-deactivate). */
 
 /** Master types not managed on Administration › Masters (they have their own screen). */
-const MASTERS_ADMIN_HIDDEN = new Set(['source']);
+// 'disposition' — the old list; every disposition now comes from Call Dispositions (Oct 2026)
+const MASTERS_ADMIN_HIDDEN = new Set(['source', 'disposition']);
 
-function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {}) {
+/** "Lead Statuses" → "Lead Status", "Cities" → "City", "Courses" → "Course" (stripping a bare
+ *  trailing "s" gave "+ Add Lead Statuse"). */
+/** "Branch" → "Branches", "City" → "Cities", "Lead" → "Leads" (appending a bare "s" gave "branchs"). */
+export function pluralLabel(label: string): string {
+  if (/(s|x|ch|sh)$/i.test(label)) return label + 'es';
+  if (/[^aeiou]y$/i.test(label)) return label.slice(0, -1) + 'ies';
+  return label + 's';
+}
+
+export function singularLabel(label: string): string {
+  if (/(ss|us|x|ch|sh)es$/i.test(label)) return label.slice(0, -2);
+  if (/[^aeiou]ies$/i.test(label)) return label.slice(0, -3) + 'y';
+  return label.replace(/s$/, '');
+}
+
+function MastersAdmin({ initialType = 'course', lockType = false }: { initialType?: string; lockType?: boolean } = {}) {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
@@ -4364,30 +4380,32 @@ function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {})
   const [view, setView] = useState<any | null>(null);
   const canEdit = can('master.update');
   const label = MASTER_LABELS[type] ?? types.data?.find((t) => t.type === type)?.label ?? type;
+  const one = singularLabel(label);
   const hasParent = !!types.data?.find((t) => t.type === type)?.parent;
   const after = () => { list.reload(); ref.reload(); bump(); };
-  const del = useDelete(label.replace(/s$/, ''), `/masters/${type}`, after);
+  const del = useDelete(one, `/masters/${type}`, after);
   const _bdIds = rows.map((r: any) => Number(r.id));
   const _bdSel = useTableSelect(_bdIds);
-  const _bd = useBulkDelete(label.replace(/s$/, ''), `/masters/${type}/bulk-delete/impact`, `/masters/${type}/bulk-delete`, () => { list.reload(); _bdSel.clear(); });
+  const _bd = useBulkDelete(one, `/masters/${type}/bulk-delete/impact`, `/masters/${type}/bulk-delete`, () => { list.reload(); _bdSel.clear(); });
   const cols = ['Name', 'Code', ...(hasParent ? ['Parent'] : []), 'Sort', 'Status', 'Actions'];
   return (
     <>
       <div className="filters">
-        <div className="fchip"><Ic k="cfg" />Master
+        {/* the Lead Status page is ONE master — no switcher to unrelated masters there */}
+        {!lockType && <div className="fchip"><Ic k="cfg" />Master
           <select value={type} onChange={(e) => { setType(e.target.value); }}>
             {(types.data ?? []).map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
           </select>
-        </div>
+        </div>}
         <IncInactiveChip on={inc} set={setInc} />
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> values</div>
       </div>
-      <BulkBar count={_bdSel.count} entityLabel={label.replace(/s$/, '')} onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
+      <BulkBar count={_bdSel.count} entityLabel={one} onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard title={`${label} master`} icon="cfg" select={_bdSel.tableSelect}
         more={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           <ListActions onExport={() => downloadObjectsCsv(`${type}.csv`, list.data ?? [])} onRefresh={() => list.reload()} />
           {can('master.create')
-            ? <a className="mlink" style={{ cursor: 'pointer' }} onClick={() => setAdd(true)}>＋ Add {label.replace(/s$/, '')}</a>
+            ? <a className="mlink" style={{ cursor: 'pointer' }} onClick={() => setAdd(true)}>＋ Add {one}</a>
             : null}
         </span>}
         cols={cols}
@@ -4401,7 +4419,7 @@ function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {})
           cells.push(
             { mono: String(m.sort_order ?? 0), dim: true },
             toggleCell({
-              active: m.is_active !== false, name: m.name, entity: label.replace(/s$/, ''), canToggle: canEdit,
+              active: m.is_active !== false, name: m.name, entity: one, canToggle: canEdit,
               onToggle: async (next) => { await api.patch(`/masters/${type}/${m.id}`, { is_active: next }); after(); },
             }),
             rowActions({
@@ -4420,7 +4438,7 @@ function MastersAdmin({ initialType = 'course' }: { initialType?: string } = {})
         ? <AddModal formKey="students.courses" onClose={() => setEdit(null)} onSaved={after} edit={courseEditSpec(edit)} />
         : <AddMasterModal type={type} initial={edit} onClose={() => setEdit(null)} onCreated={after} />)}
       {view && (
-        <DetailModal title={`${label.replace(/s$/, '')} — ${view.name}`} icon="cfg" onClose={() => setView(null)}>
+        <DetailModal title={`${one} — ${view.name}`} icon="cfg" onClose={() => setView(null)}>
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
@@ -4528,7 +4546,7 @@ function DeletedItems() {
         </div>
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> deleted</div>
       </div>
-      <TableCard title={`Deleted ${label.toLowerCase()}s`} icon="trash"
+      <TableCard title={`Deleted ${pluralLabel(label.toLowerCase())}`} icon="trash"
         cols={['Name', 'Deleted at', 'Deleted by', 'Actions']}
         rows={rows.map((r) => [
           { node: <span className="nm">{r.name}</span> } as Cell,
@@ -4542,7 +4560,7 @@ function DeletedItems() {
             ],
           }),
         ])}
-        empty={`No deleted ${label.toLowerCase()}s — everything is live`} />
+        empty={`No deleted ${pluralLabel(label.toLowerCase())} — everything is live`} />
       {impactRow && (
         <DetailModal title={`Impact — ${impactRow.name}`} icon="trash" width={560} onClose={() => setImpactRow(null)}>
           {!impact ? <div className="empty-note">Loading impact…</div> : (
@@ -7594,7 +7612,10 @@ function BatchesList() {
   const typeOpts = (typeCat.data && typeCat.data.length)
     ? typeCat.data.map((t: any) => ({ id: String(t.code), name: String(t.label ?? t.code) }))
     : BATCH_TYPE_OPTS;
-  const modeOpts = (ref.deliveryModes?.length ? ref.deliveryModes.map((m: any) => ({ id: String(m.id ?? m.name), name: String(m.name) })) : DELIVERY_MODES.map((m) => ({ id: m, name: m })));
+  // Delivery mode = the Training Mode master (Administration › Masters) — the same list the lead and
+  // course forms use, so a mode the client adds there appears here too (Oct 2026). Batches store
+  // the mode's NAME, so the filter value is the name as well.
+  const modeOpts = (ref.trainings?.length ? ref.trainings.map((m: any) => ({ id: String(m.name), name: String(m.name) })) : DELIVERY_MODES.map((m) => ({ id: m, name: m })));
   const params = new URLSearchParams();
   if (fBranches.length) params.set('branch_id', fBranches.join(','));
   if (fVerticals.length) params.set('vertical_id', fVerticals.join(','));
@@ -7892,7 +7913,7 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
             <div className="fld">
               <label htmlFor="b-delivery">Delivery mode</label>
               <select id="b-delivery" className="ainp" value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)}>
-                {((ref.deliveryModes?.length ? ref.deliveryModes.map((m: any) => String(m.name)) : DELIVERY_MODES)).map((m: string) => (
+                {((ref.trainings?.length ? ref.trainings.map((m: any) => String(m.name)) : DELIVERY_MODES)).map((m: string) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
@@ -8303,7 +8324,6 @@ function TemplateSetup() {
   const rows = data ?? [];
   return (
     <>
-      <Kpis items={[{ lab: 'Templates', val: String(rows.length || 0), ic: 'doc' }]} />
       <div className="card tbl-fill">
         <div className="card-head"><h3><Ic k="doc" />Document & ID Templates</h3></div>
         <div className="tbl-scroll">
@@ -8317,7 +8337,7 @@ function TemplateSetup() {
                     <td><b>{t.name}</b> <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.type}</span></td>
                     <td>{(t.settings?.header_title) || '—'}</td>
                     <td>{t.settings?.show_logo === false ? 'Off' : 'On'}</td>
-                    <td>{t.updated_at ? fmtDateTimeIST(t.updated_at) : '—'}</td>
+                    <td>{t.updated_at ? fmtFull(t.updated_at) : '—'}</td>
                     <td>
                       <button className="btn sm" data-testid={`tpl-edit-${t.type}`} onClick={() => setEdit(t)}><Ic k="edit" />Edit</button>
                     </td>
@@ -8422,7 +8442,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   mastersAdmin: MastersAdmin,
   // Marketing › Lead Status — the SAME Masters admin, opened straight on the Lead Status master
   // so it is reachable from the Leads area (client couldn't find it under Administration).
-  leadStatusMaster: () => <MastersAdmin initialType="status" />,
+  leadStatusMaster: () => <MastersAdmin initialType="status" lockType />,
   users: Users,
   roles: Roles,
   audit: Audit,

@@ -37,7 +37,7 @@ async function openHrPdf(path: string) {
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
 
 const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
-const isoToday = () => new Date().toISOString().slice(0, 10);
+const isoToday = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const uniq = (xs: any[]) => Array.from(new Set(xs.filter(Boolean)));
 const asOpts = (vals: string[]) => vals.map((v) => ({ id: v, name: v }));
@@ -286,7 +286,7 @@ export function StaffAttendanceScreen() {
         { lab: 'Half-day', val: String(k?.half_day ?? 0), ic: 'clock' },
       ]} />
 
-      <TableCard title={`Mark attendance — ${date}`} icon="check"
+      <TableCard title={`Mark attendance — ${date ? new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}`} icon="check"
         more={canMark ? <button className="btn primary" onClick={save} data-testid="hratt-save"><Ic k="check" />Save attendance</button> : null}
         cols={['Employee', 'Dept', 'Status']}
         empty="No active employees for these filters."

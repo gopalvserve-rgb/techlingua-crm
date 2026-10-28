@@ -559,23 +559,20 @@ describe('the STANDARD reports render real numbers', () => {
     expect(screen.getByText(/counts only stages a lead has/)).toBeTruthy();
   });
 
-  /**
-   * TELEPHONY IS OUT OF SCOPE. The prototype drew a "Calls" column; inventing a call
-   * count would be the worst kind of green tick. The screen SAYS so instead of showing
-   * an em-dash the client has to ask about.
-   */
-  it('ACTIVITY — says out loud why there is no Calls column', async () => {
+  /** Calling CRM (Oct 2026): calls ARE logged now (phone call log → call_event), so the
+   *  Activity report shows a real Calls count — the old "no Calls column" note is gone. */
+  it('ACTIVITY — shows the real Calls count per user', async () => {
     routes.activity = {
-      range: { from: null, to: null }, telephony: false,
-      rows: [{ user_id: 3, user_name: 'Asha Rao', activities: 42, notes: 8, followups_done: 12, logins: 20, edits: 15 }],
+      range: { from: null, to: null },
+      rows: [{ user_id: 3, user_name: 'Asha Rao', calls: 17, activities: 42, notes: 8, followups_done: 12, logins: 20, edits: 15 }],
       scope: { unrestricted: true },
     };
     render(<ActivityReport />);
-    expect(await screen.findByText(/There is no "Calls" column/)).toBeTruthy();
-    expect(screen.getByText(/rather say so than show you a number we invented/)).toBeTruthy();
-    expect(screen.getByText('Asha Rao')).toBeTruthy();
+    expect(await screen.findByText('Asha Rao')).toBeTruthy();
+    expect(screen.getByText('Calls')).toBeTruthy();
+    expect(screen.getByText('17')).toBeTruthy();
     expect(screen.getByText('42')).toBeTruthy();
-    expect(screen.queryByText('Calls')).toBeNull();
+    expect(screen.queryByText(/There is no "Calls" column/)).toBeNull();
   });
 
   it('CAMPAIGN ROI — spend, CPL, CPA, return, and the booked-vs-cash warning', async () => {
@@ -611,7 +608,7 @@ describe('the STANDARD reports render real numbers', () => {
   it('an empty standard report renders its empty state, not a crash', async () => {
     routes.funnel = { stages: [], totals: { leads: 0, won: 0, lost: 0, conversion_pct: 0 }, scope: {} };
     routes.tat = { first_response: {}, by_stage: [], lead_to_enrolment: {}, scope: {} };
-    routes.activity = { telephony: false, rows: [], scope: {} };
+    routes.activity = { rows: [], scope: {} };
     routes.roi = { columns: [], rows: [], totals: null, scope: {} };
     render(<FunnelReport />); render(<TatReport />); render(<ActivityReport />); render(<CampaignRoiReport />);
     await waitFor(() => expect(screen.getAllByText(/fills as leads|accumulates|appears when|No stages/).length).toBeGreaterThan(0));

@@ -56,7 +56,7 @@ describe('B · Lead Status master is relabelled and discoverable, and feeds the 
     expect(/id:\s*'leadstatus',\s*label:\s*'Lead Status'/.test(specs)).toBe(true);
     expect(/dyn:\s*'leadStatusMaster'/.test(specs)).toBe(true);
     // and the dyn variant opens the masters screen straight on the status master
-    expect(/leadStatusMaster:\s*\(\)\s*=>\s*<MastersAdmin initialType="status" \/>/.test(read('dyn.tsx'))).toBe(true);
+    expect(/leadStatusMaster:\s*\(\)\s*=>\s*<MastersAdmin initialType="status" lockType \/>/.test(read('dyn.tsx'))).toBe(true);
   });
 
   it('a Lead Status value round-trips into the lead form (statuses refdata → status master)', () => {

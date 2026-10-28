@@ -284,7 +284,7 @@ function RoyaltyPlanModal({ initial, onClose, onSaved }: { initial?: any; onClos
   const [slabs, setSlabs] = useState<any[]>(initial?.slabs?.length
     ? initial.slabs.map((s: any) => ({ min_amount: minorToInput(s.min_amount_minor), max_amount: minorToInput(s.max_amount_minor), percent: String(s.percent), label: s.label }))
     : [{ min_amount: '0', max_amount: '', percent: '5', label: 'Tier 1' }]);
-  const [from, setFrom] = useState<string>(initial?.effective_from ? String(initial.effective_from).slice(0, 10) : new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState<string>(initial?.effective_from ? String(initial.effective_from).slice(0, 10) : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
   const [to, setTo] = useState<string>(initial?.effective_to ? String(initial.effective_to).slice(0, 10) : '');
   const [status, setStatus] = useState<string>(initial?.status ?? 'active');
   const [note, setNote] = useState<string>(initial?.note ?? '');
@@ -558,7 +558,7 @@ function FranchisePick({ list, value, onChange, allowAll }: { list: any[]; value
 /* -------------------------------------------------------- Record payment -- */
 function RoyaltyPaymentModal({ invoice, onClose, onSaved }: { invoice: any; onClose: () => void; onSaved?: () => void }) {
   const [amount, setAmount] = useState<string>(minorToInput(invoice.outstanding_minor));
-  const [paidOn, setPaidOn] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [paidOn, setPaidOn] = useState<string>(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
   const [mode, setMode] = useState<string>('bank_transfer');
   const [reference, setReference] = useState<string>('');
   const [note, setNote] = useState<string>('');

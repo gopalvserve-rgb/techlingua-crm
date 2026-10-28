@@ -350,8 +350,9 @@ export function Scoring() {
             }).join(' · ');
           return [
             { node: <span className="nm">{r.name}</span> } as Cell,
-            { mono: r.rule_type } as Cell,
-            cond || '—',
+            // the rule type's own label ("Walk-in visitor"), not its code ("walk_in")
+            String((types.data ?? []).find((t: any) => t.type === r.rule_type)?.label ?? String(r.rule_type).replace(/_/g, ' ')),
+            cond ? cond.replace(/^channels: /, 'Channel: ').replace(/(^| · )values: /g, '$1').replace(/(^| · )field: /g, '$1Field: ') : '—',
             { b: [`${r.points > 0 ? '+' : ''}${r.points}`, r.points >= 0 ? 'b-green' : 'b-rose'] } as Cell,
             { b: [r.is_active ? 'Active' : 'Inactive', r.is_active ? 'b-green' : 'b-gray'] } as Cell,
             rowActions({
@@ -811,7 +812,7 @@ export function Calendar() {
       <div className="cal-head">
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn" aria-label="Previous month" onClick={() => navMonth(-1)}>
-            <Ic k="chev" />
+            <span style={{ display: 'inline-flex', transform: 'rotate(180deg)' }}><Ic k="chev" /></span>
           </button>
           <h3 style={{ margin: 0, fontFamily: 'var(--f-display)', fontSize: 15 }}>
             {cursor.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}

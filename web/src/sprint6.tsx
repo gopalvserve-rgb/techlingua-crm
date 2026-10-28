@@ -268,8 +268,8 @@ export function ReportBuilder() {
       </PhaseNote>
 
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="ch"><h3><Ic k="analytics" />Build a report</h3></div>
-        <div className="cb">
+        <div className="card-head"><h3><Ic k="analytics" />Build a report</h3></div>
+        <div className="card-pad">
           <div className="form-grid">
             <div className="fld">
               <label htmlFor="rb-entity">Data source <span className="star">*</span></label>
@@ -804,7 +804,7 @@ function RangeBar({ from, to, setFrom, setTo }: {
 }) {
   return (
     <div className="card" style={{ marginBottom: 12 }}>
-      <div className="cb">
+      <div className="card-pad">
         <DateRange
           value={{ from: from || undefined, to: to || undefined }}
           onChange={(v) => { setFrom(v.from || ''); setTo(v.to || ''); }}
@@ -899,22 +899,11 @@ export function ActivityReport() {
   return (
     <>
       <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo} />
-      {/* THE MISSING "CALLS" COLUMN, EXPLAINED ON THE SCREEN. The prototype drew it;
-          telephony is out of scope, so inventing a call count would be the worst kind of
-          green tick. Saying so beats an em-dash the client has to ask about. */}
-      {d.data && d.data.telephony === false ? (
-        <PhaseNote>
-          <b>There is no "Calls" column.</b> Telephony is out of scope for this system, so we
-          have no call counts — and we would rather say so than show you a number we invented.
-          What the team actually logged is below: dispositions, notes, stage changes and
-          completed follow-ups.
-        </PhaseNote>
-      ) : null}
       <TableCard title="User activity"
-        cols={['User', 'Activities logged', 'Notes', 'Follow-ups completed', 'Logins', 'Edits']}
+        cols={['User', 'Calls', 'Activities logged', 'Notes', 'Follow-ups completed', 'Logins', 'Edits']}
         rows={(d.data?.rows ?? []).map((r: any) => [
           { node: <span className="nm">{r.user_name}</span> } as Cell,
-          String(r.activities), String(r.notes), String(r.followups_done), String(r.logins), String(r.edits),
+          String(r.calls ?? 0), String(r.activities), String(r.notes), String(r.followups_done), String(r.logins), String(r.edits),
         ])}
         empty="Activity accumulates as the team works" />
       <ScopeNote note={d.data?.scope?.unrestricted === false ? 'Showing only the records your role gives you access to.' : undefined} />
@@ -1119,7 +1108,7 @@ export function Notes() {
   return (
     <>
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="cb" style={{ display: 'flex', gap: 8 }}>
+        <div className="card-pad" style={{ display: 'flex', gap: 8 }}>
           <input className="ainp" aria-label="Search notes" placeholder="Search notes…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="btn primary" onClick={() => setEdit({})}><Ic k="plus" />New note</button>
         </div>
@@ -1265,7 +1254,7 @@ export function KnowledgeBase() {
   return (
     <>
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="cb" style={{ display: 'flex', gap: 8 }}>
+        <div className="card-pad" style={{ display: 'flex', gap: 8 }}>
           <input className="ainp" aria-label="Search the knowledge base" placeholder="Search articles…" value={q} onChange={(e) => setQ(e.target.value)} />
           {can('kb.manage') ? <button className="btn primary" onClick={() => setEdit({})}><Ic k="plus" />New article</button> : null}
         </div>
@@ -1402,7 +1391,7 @@ export function Announcements() {
     <>
       {can('announcement.manage') ? (
         <div className="card" style={{ marginBottom: 12 }}>
-          <div className="cb"><button className="btn primary" onClick={() => setEdit({})}><Ic k="plus" />New announcement</button></div>
+          <div className="card-pad"><button className="btn primary" onClick={() => setEdit({})}><Ic k="plus" />New announcement</button></div>
         </div>
       ) : null}
 

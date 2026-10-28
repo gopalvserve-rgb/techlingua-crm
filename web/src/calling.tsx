@@ -186,8 +186,11 @@ export default function StartCalling() {
     setBusy(true);
     try {
       const body: Record<string, unknown> = { lead_id: lead.id };
-      if (form.disposition_id) body.disposition_id = Number(form.disposition_id);
-      if (form.call_disposition_id) body.call_disposition_id = Number(form.call_disposition_id);
+      // ONE disposition (Oct 2026): the call outcome is also the hand-out item's disposition
+      if (form.call_disposition_id) {
+        body.call_disposition_id = Number(form.call_disposition_id);
+        body.disposition_id = Number(form.call_disposition_id);
+      }
       if (form.stage_id) body.stage_id = Number(form.stage_id);
       if (form.temperature) body.temperature = form.temperature;
       if (form.priority) body.priority = form.priority;
@@ -216,7 +219,6 @@ export default function StartCalling() {
     );
   }
 
-  const dispositions = ref.dispositions ?? [];
   const callDispositions = ref.callDispositions ?? [];
 
   return (
@@ -441,14 +443,6 @@ export default function StartCalling() {
 
                 <div className="card-pad" style={{ borderTop: '1px solid var(--border)' }}>
                   <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)', padding: 0 }}>
-                    <div className="fld">
-                      <label>Disposition</label>
-                      <select className="ainp" aria-label="Disposition" value={form.disposition_id ?? ''}
-                        onChange={(e) => setForm((f) => ({ ...f, disposition_id: e.target.value }))}>
-                        <option value="">Select…</option>
-                        {dispositions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                      </select>
-                    </div>
                     <div className="fld">
                       <label>Call Disposition <span className="fhint">outcome of this call — becomes the lead&apos;s last call disposition</span></label>
                       <select className="ainp" aria-label="Call Disposition" value={form.call_disposition_id ?? ''}

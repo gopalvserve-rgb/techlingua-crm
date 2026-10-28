@@ -438,10 +438,10 @@ describe('Counsellor Performance', () => {
     expect(screen.getAllByText('₹50,000.00').length).toBeGreaterThan(0);     // collected (row + Row-2 KPI)
   });
 
-  it('explains that "Activity" is not a call count — telephony is out of scope', async () => {
+  it('explains what "Leads Contacted" counts (calls are logged now, Oct 2026)', async () => {
     render(<CounsellorPerformance />);
-    expect(await screen.findByText(/telephony is out of scope/)).toBeTruthy();
-    expect(screen.getByText(/is not a call count/)).toBeTruthy();
+    expect(await screen.findByText(/leads with a call, note or other activity logged/)).toBeTruthy();
+    expect(screen.queryByText(/telephony is out of scope/)).toBeNull();
   });
 
   it('separates BOOKED revenue from COLLECTED cash in words, not just columns', async () => {

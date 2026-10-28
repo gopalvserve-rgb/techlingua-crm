@@ -641,7 +641,7 @@ function TeamModal({ team, onClose, onSaved }: { team?: any | null; onClose: () 
             </div>
           </div>
         </div>
-        <div className="afoot">
+        <div className="af">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={save} disabled={busy} data-testid="team-save"><Ic k="check" />{team?.id ? 'Save team' : 'Create team'}</button>
         </div>

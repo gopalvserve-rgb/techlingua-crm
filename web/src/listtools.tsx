@@ -129,7 +129,7 @@ export function ListActions({ onExport, onRefresh, extra }: {
 export async function exportLeads(query: string): Promise<void> {
   try {
     const r = await api.get<{ rows: Record<string, any>[]; count: number; capped: boolean }>(`/leads/export${query ? `?${query}` : ''}`);
-    downloadObjectsCsv(`leads-${new Date().toISOString().slice(0, 10)}.csv`, r.rows ?? []);
+    downloadObjectsCsv(`leads-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)}.csv`, r.rows ?? []);
     if (r.capped) toast(`Exported the first ${r.count} rows (large result capped) - narrow the filter for the rest.`);
   } catch (e: any) { toast(e.message, true); }
 }

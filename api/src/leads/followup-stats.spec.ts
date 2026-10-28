@@ -74,7 +74,7 @@ describe('stats() — one scoped query with all 8 buckets', () => {
   it('joins the disposition master so the name-based buckets resolve', async () => {
     const { svc, statsSql } = build();
     await svc.stats(ALL, 1);
-    expect(statsSql()).toContain('LEFT JOIN m_disposition d ON d.id = f.disposition_id');
+    expect(statsSql()).toContain('LEFT JOIN m_call_disposition d ON d.id = f.disposition_id');
   });
   it('excludes soft-deleted / inactive follow-ups and leads', async () => {
     const { svc, statsSql } = build();

@@ -32,7 +32,7 @@ interface Rule {
 
 const capText = (r: { max_percent: number | null; max_amount_minor: number | null }): string => {
   const parts: string[] = [];
-  if (r.max_percent != null) parts.push(`${r.max_percent}%`);
+  if (r.max_percent != null) parts.push(`${Number(r.max_percent)}%`);
   if (r.max_amount_minor != null) parts.push(fmtINR(r.max_amount_minor));
   return parts.length ? parts.join(' and ') : 'no limit';
 };
@@ -74,17 +74,6 @@ export function DiscountMaster() {
 
   return (
     <>
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div className="card-pad">
-          <p className="sub" style={{ marginTop: 0 }}>
-            Cap the discount a counsellor may apply — <b>by percentage AND by amount (₹)</b> — optionally scoped by
-            <b> branch / vertical / course</b> (the most specific rule wins). If a counsellor enters a discount
-            <b> above the cap</b>, the over-cap portion is <b>held for approval</b> — an authorized user
-            (<code>discount.approve</code> — Academic Admin / Org / Super Admin) approves or rejects it below.
-          </p>
-        </div>
-      </div>
-
       {mayCreate && <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)} data-testid="dm-add"><Ic k="plus" />New discount rule</button></div>}
       <div className="filters">
         <FilterMulti label="Branch" icon="branch" value={fB} options={rd.branches}
@@ -99,7 +88,7 @@ export function DiscountMaster() {
         empty="No discount rules yet — add one to cap discounts."
         rows={shown.map((r) => [
           { node: <b className="nm">{r.name}</b> } as Cell,
-          r.max_percent != null ? `${r.max_percent}%` : '—',
+          r.max_percent != null ? `${Number(r.max_percent)}%` : '—',
           r.max_amount_minor != null ? fmtINR(r.max_amount_minor) : '—',
           { node: <span className="sub">{r.branch_name ? r.branch_name : 'All branches'}{r.vertical_name ? ` › ${r.vertical_name}` : ''}{r.course_name ? ` › ${r.course_name}` : ''}{r.course_level_code ? ` › ${r.course_level_label || r.course_level_code}` : ''}</span> } as Cell,
           { b: [r.active ? 'Active' : 'Inactive', r.active ? 'b-green' : 'b-gray'] } as Cell,

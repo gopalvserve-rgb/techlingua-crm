@@ -1550,7 +1550,7 @@ export function CounsellorPerformance() {
       <div className="card" style={{ marginTop: 12 }}>
         <div className="card-pad">
           <div className="sub" style={{ marginTop: 0 }}>
-            <b>Row 1 (Sales):</b> Leads Assigned · Leads Contacted (leads with an activity logged — telephony is out of scope, so this is not a call count) · Enrolments · Conversion % (enrolments / owned leads).
+            <b>Row 1 (Sales):</b> Leads Assigned · Leads Contacted (leads with a call, note or other activity logged) · Enrolments · Conversion % (enrolments / owned leads).
             <b> Row 2 (Financial &amp; Productivity):</b> Revenue Booked (net fee of approved enrolments) · Revenue Collected (cash receipted) · Meetings Scheduled (calendar meetings) · Follow-up Adherence (follow-ups completed on time). They are different numbers and are shown separately on purpose.
             All figures respect the calendar range and the Branch / Vertical / Counsellor filter above.
           </div>
@@ -1577,7 +1577,7 @@ export function CollectModal({ enrolmentId, installmentId, leadId, defaultAmount
   const [amount, setAmount] = useState(defaultAmount ?? '');
   const [mode, setMode] = useState('cash');
   const [reference, setReference] = useState('');
-  const [receivedAt, setReceivedAt] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedAt, setReceivedAt] = useState(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');

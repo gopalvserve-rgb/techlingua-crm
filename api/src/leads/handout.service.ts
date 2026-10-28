@@ -374,7 +374,7 @@ export class HandoutService {
               ms.name AS status_name, u.name AS owner_name, src.name AS source_name
          FROM lead_handout_item i
          JOIN lead l ON l.id = i.lead_id
-         LEFT JOIN m_disposition d ON d.id = i.disposition_id
+         LEFT JOIN m_call_disposition d ON d.id = i.disposition_id
          LEFT JOIN m_call_disposition lcd ON lcd.id = l.last_call_disposition_id
          LEFT JOIN m_course co ON co.id = l.course_id
          LEFT JOIN city ci ON ci.id = l.city_id
@@ -453,7 +453,7 @@ export class HandoutService {
     }
     if (dto.disposition_id != null) {
       const d = await this.db.one(
-        `SELECT id FROM m_disposition WHERE id = $1 AND is_active AND deleted_at IS NULL`, [Number(dto.disposition_id)],
+        `SELECT id FROM m_call_disposition WHERE id = $1 AND is_active AND deleted_at IS NULL`, [Number(dto.disposition_id)],
       );
       if (!d) throw new BadRequestException('unknown disposition');
     }

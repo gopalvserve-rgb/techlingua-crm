@@ -113,7 +113,7 @@ describe('Lead Scoring — the rules are DATA the admin edits', () => {
   it('renders the band KPIs and every configured rule', async () => {
     scoringRoutes();
     draw(<Scoring />);
-    expect(await screen.findByText('Walk-in visitor')).toBeTruthy();
+    expect((await screen.findAllByText('Walk-in visitor')).length).toBeGreaterThan(0);   // rule name + its type label
     expect(screen.getByText('No response for 7 days')).toBeTruthy();
     expect(screen.getByText('+25')).toBeTruthy();
     expect(screen.getByText('-15')).toBeTruthy();          // penalties render as negative
@@ -200,7 +200,7 @@ describe('Lead Scoring — the rules are DATA the admin edits', () => {
     perms.value = new Set(['score.read']);
     scoringRoutes();
     draw(<Scoring />);
-    await screen.findByText('Walk-in visitor');
+    await screen.findAllByText('Walk-in visitor');
     expect(screen.queryByText('+ Add rule')).toBeNull();
     expect(screen.queryByText('Band thresholds')).toBeNull();
     expect(document.querySelectorAll('.ract[title="Edit"]').length).toBe(0);

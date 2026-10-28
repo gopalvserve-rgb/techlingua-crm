@@ -216,10 +216,7 @@ export class StandardReportService {
    *   · logins      = audit_log action 'login'
    *   · edits       = audit_log action 'update'
    *
-   * THERE IS STILL NO "CALLS" COLUMN, and there will not be one: TELEPHONY IS OUT OF
-   * SCOPE (a standing project rule). The prototype drew the column; inventing a call
-   * count from nothing would be the worst kind of green tick, so the column is named
-   * "Activity" and reports what we actually have.
+   *   · calls       = call_event rows the user made / received (Calling CRM, phone call log)
    */
   async activity(me: Me, f: { from?: string; to?: string } = {}) {
     const scope = await this.leadScope(me);
@@ -254,7 +251,11 @@ export class StandardReportService {
               (SELECT count(*)::int FROM audit_log al2
                 WHERE al2.actor_id = p.user_id AND al2.action = 'update'
                   AND ($1::date IS NULL OR al2.occurred_at >= $1::date)
-                  AND ($2::date IS NULL OR al2.occurred_at <  $2::date)) AS edits
+                  AND ($2::date IS NULL OR al2.occurred_at <  $2::date)) AS edits,
+              (SELECT count(*)::int FROM call_event ce
+                WHERE ce.user_id = p.user_id
+                  AND ($1::date IS NULL OR COALESCE(ce.call_start_at, ce.created_at) >= $1::date)
+                  AND ($2::date IS NULL OR COALESCE(ce.call_start_at, ce.created_at) <  $2::date)) AS calls
          FROM people p JOIN "user" u ON u.id = p.user_id
         WHERE u.deleted_at IS NULL
         ORDER BY activities DESC, u.name
@@ -264,14 +265,11 @@ export class StandardReportService {
 
     return {
       range: { from, to },
-      // `telephony: false` is in the payload on purpose: the UI reads it and prints the
-      // reason next to the missing Calls column, rather than showing an em-dash the
-      // client has to ask about.
-      telephony: false,
       rows: rows.map((r) => ({
         user_id: Number(r.user_id), user_name: r.user_name,
         activities: Number(r.activities), notes: Number(r.notes),
         followups_done: Number(r.followups_done), logins: Number(r.logins), edits: Number(r.edits),
+        calls: Number(r.calls ?? 0),
       })),
       scope: { unrestricted: scope.all === true },
     };

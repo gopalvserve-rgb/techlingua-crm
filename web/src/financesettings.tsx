@@ -141,14 +141,6 @@ export function FinanceSettings() {
     <>
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-pad">
-          <p className="sub" style={{ marginTop: 0 }}>
-            Set the maximum <b>discount</b>, <b>scholarship</b> and the hard <b>capping limit</b> —
-            each configurable <b>by percentage AND by amount (₹)</b>. A discount is allowed only when
-            it is within <b>both</b> the percent cap and the amount cap (the stricter binds); leave a
-            box blank to switch that limit off. The cap is enforced everywhere a discount is entered —
-            quotation lines and enrolment. Only a permitted user (<code>finance.manage</code>) can change
-            these; a user with <code>finance.override</code> may exceed them at closure.
-          </p>
           <div className="fld" style={{ maxWidth: 360 }}>
             <label>Scope</label>
             <select className="ainp" value={scope} onChange={(e) => setScope(e.target.value)}>

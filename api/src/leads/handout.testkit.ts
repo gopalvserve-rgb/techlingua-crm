@@ -279,7 +279,7 @@ export function makeHandoutDb(init: Partial<FakeHandoutState> = {}) {
       const stg = stageOf(params[0]);
       return stg ? [{ pipeline_id: stg.pipeline_id }] : [];
     }
-    if (s.startsWith('SELECT id FROM m_disposition')) {
+    if (s.startsWith('SELECT id FROM m_call_disposition')) {
       return st.dispositions.includes(Number(params[0])) ? [{ id: Number(params[0]) }] : [];
     }
     if (s.startsWith('UPDATE lead SET') && s.includes('WHERE id = $')) {

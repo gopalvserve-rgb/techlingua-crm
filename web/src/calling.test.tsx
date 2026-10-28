@@ -22,6 +22,7 @@ const REF = {
   branches: [], verticals: [], pipelines: [], campaigns: [], sources: [], users: [], courses: [],
   statuses: [], followupTypes: [],
   dispositions: [{ id: 81, name: 'Interested' }, { id: 82, name: 'Not picking up' }],
+  callDispositions: [{ id: 81, name: 'Interested' }, { id: 82, name: 'Not picking up' }],
   budgets: [], states: [], cities: [], loaded: true, reload: () => undefined,
 };
 const toastFn = vi.fn((_t: string, _e?: boolean) => undefined);
@@ -132,7 +133,7 @@ describe('Start Calling — the agent flow', () => {
     render(<StartCalling />);
     await waitFor(() => expect(txt(screen.getByTestId('progress'))).toBe('0 of 10'));
 
-    fireEvent.change(screen.getByLabelText('Disposition'), { target: { value: '81' } });
+    fireEvent.change(screen.getByLabelText('Call Disposition'), { target: { value: '81' } });
     fireEvent.change(screen.getByLabelText('Move to stage'), { target: { value: '52' } });
     fireEvent.change(screen.getByLabelText('Call note'), { target: { value: 'Wants a callback' } });
     fireEvent.click(screen.getByRole('button', { name: /Save & next/i }));
@@ -140,7 +141,7 @@ describe('Start Calling — the agent flow', () => {
     await waitFor(() => expect(txt(screen.getByTestId('progress'))).toBe('1 of 10'));
     const [path, body] = posts.find(([p]) => p.endsWith('/action'))!;
     expect(path).toContain('/leads/handout/701/action');
-    expect(body).toMatchObject({ lead_id: 1000, disposition_id: 81, stage_id: 52, note: 'Wants a callback' });
+    expect(body).toMatchObject({ lead_id: 1000, disposition_id: 81, call_disposition_id: 81, stage_id: 52, note: 'Wants a callback' });
     // the worked lead is ticked off and the pane moved to lead 2
     expect(screen.getByText('Lead 2 of 10')).toBeTruthy();
     expect(screen.getAllByText('Pending')).toHaveLength(9);

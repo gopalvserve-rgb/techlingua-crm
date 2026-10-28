@@ -46,7 +46,7 @@ function ScopeFilters({ rd, fB, setFB, fV, setFV, batchId, setBatchId, batches, 
   );
 }
 
-const isoToday = () => new Date().toISOString().slice(0, 10);
+const isoToday = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 /* ==========================================================================
  * 1) ATTENDANCE

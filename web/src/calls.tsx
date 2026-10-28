@@ -100,7 +100,7 @@ function DispositionModal({ callId, onClose, onDone }: { callId: number; onClose
   return (
     <div className="add-scrim">
       <div className="add-modal" style={{ maxWidth: 460 }}>
-        <div className="ahead"><h3><Ic k="calls" /> Log call disposition</h3><button className="x" onClick={onClose}><Ic k="x" /></button></div>
+        <div className="ah"><h3><Ic k="calls" /> Log call disposition</h3><button className="ax" aria-label="Close" onClick={onClose}><Ic k="x" /></button></div>
         <div className="abody">
           <label className="fld"><span>Disposition</span>
             <select value={dispId} onChange={(e) => setDispId(e.target.value)}>
@@ -112,7 +112,7 @@ function DispositionModal({ callId, onClose, onDone }: { callId: number; onClose
             <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Optional remark for this call" />
           </label>
         </div>
-        <div className="afoot">
+        <div className="af">
           <button className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn" disabled={busy || (!dispId && !note.trim())} onClick={save}>Save</button>
         </div>
@@ -189,21 +189,21 @@ export default function CallLogs({ lockDir }: { lockDir?: 'in' | 'out' | 'missed
   ]);
 
   return (
-    <div className="main main--list">
+    <div className="calls-view">
       <div className="card toolbar-surface">
         <div className="filter-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input className="inp" placeholder="Search name / phone" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 180 }} />
+          <input className="ainp" placeholder="Search name / phone" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 180 }} />
           {!lockDir && (
-            <select className="inp" value={dir} onChange={(e) => setDir(e.target.value)}>
+            <select className="ainp" value={dir} onChange={(e) => setDir(e.target.value)}>
               <option value="">All directions</option>
               <option value="in">Incoming</option><option value="out">Outgoing</option><option value="missed">Missed</option>
             </select>
           )}
-          <label className="chk" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+          <label className="chkline" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
             <input type="checkbox" checked={hasRec} onChange={(e) => setHasRec(e.target.checked)} /> With recording
           </label>
-          <input className="inp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
-          <input className="inp" type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
+          <input className="ainp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
+          <input className="ainp" type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
           <button className="btn ghost" onClick={reload}><Ic k="refresh" /> Refresh</button>
         </div>
       </div>
@@ -258,7 +258,7 @@ export function Dialer() {
       <div className="card">
         <div className="card-head"><h3><Ic k="phone" /> Dial a number</h3></div>
         <div className="card-pad">
-          <input className="inp" value={num} onChange={(e) => setNum(e.target.value.replace(/[^\d+]/g, ''))} placeholder="Phone number"
+          <input className="ainp" value={num} onChange={(e) => setNum(e.target.value.replace(/[^\d+]/g, ''))} placeholder="Phone number"
             style={{ width: '100%', fontSize: 22, textAlign: 'center', letterSpacing: 1 }} data-testid="dialer-number" />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, margin: '12px 0' }}>
             {KEYS.map((k) => (
@@ -275,7 +275,7 @@ export function Dialer() {
       <div className="card">
         <div className="card-head"><h3><Ic k="leads" /> Click-to-call a lead</h3></div>
         <div className="card-pad">
-          <input className="inp" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search lead name / phone" style={{ width: '100%' }} data-testid="dialer-search" />
+          <input className="ainp" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search lead name / phone" style={{ width: '100%' }} data-testid="dialer-search" />
           <div style={{ marginTop: 8 }}>
             {q.trim().length < 2 ? <div className="empty-note">Type at least 2 characters.</div>
               : !rows.length ? <div className="empty-note">{leads.loading ? 'Searching…' : 'No matching lead.'}</div>
@@ -316,9 +316,9 @@ export function Recordings() {
     r.recording_id ? { node: <RecordingPlayer id={r.recording_id} /> } : ('—' as Cell),
   ]);
   return (
-    <div className="main main--list">
+    <div className="calls-view">
       <div className="card toolbar-surface" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <p className="muted" style={{ margin: 0 }}>Call recordings synced from the phone's own dialer. Playable inline; access is RBAC-scoped.</p>
+        <p className="muted" style={{ margin: 0 }}>Call recordings synced from the phone's own dialer. Play any recording inline; you see the calls your role allows.</p>
         <button className="btn ghost" onClick={reload}><Ic k="refresh" /> Refresh</button>
       </div>
       <TableCard title={loading ? 'Recordings — loading…' : `Recordings (${rows.length})`} icon="calls"
@@ -371,38 +371,38 @@ export function CallSettings() {
   const pickFolder = async () => { try { if (cap()?.pickRecordingFolder) await cap().pickRecordingFolder(); else if (tl()?.pickRecordingFolder) tl().pickRecordingFolder(); else toast('Open this in the Android app', true); } catch (e) { toast((e as Error).message, true); } };
   const openOverlay = () => { try { if (cap()?.openOverlaySettings) cap().openOverlaySettings(); else if (tl()?.openOverlaySettings) tl().openOverlaySettings(); else toast('Open this in the Android app', true); } catch { /* noop */ } };
   const openAppInfo = () => { try { if (tl()?.openAppSettings) tl().openAppSettings(); else toast('Open this in the Android app', true); } catch { /* noop */ } };
-  if (!s) return <div className="main"><p className="muted">Loading…</p></div>;
+  if (!s) return <div className="calls-view"><p className="muted">Loading…</p></div>;
   const slotOn = (n: number) => Array.isArray(s.sim_slots) && s.sim_slots.includes(n);
   const toggleSlot = (n: number) => setS((p: any) => {
     const cur: number[] = Array.isArray(p.sim_slots) ? p.sim_slots : [];
     return { ...p, sim_slots: cur.includes(n) ? cur.filter((x) => x !== n) : [...cur, n] };
   });
   return (
-    <div className="main">
+    <div className="calls-view">
       <div className="card" style={{ maxWidth: 640 }}>
         <div className="card-head"><h3><Ic k="calls" /> Call tracking settings</h3></div>
         <div style={{ padding: 16, display: 'grid', gap: 14 }}>
-          <label className="chk" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <label className="chkline" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input type="checkbox" checked={!!s.tracking_enabled} onChange={(e) => setS({ ...s, tracking_enabled: e.target.checked })} />
             <span><b>Enable call tracking</b> — import this phone's call log and recordings into leads</span>
           </label>
           <div className="fld"><span>SIM slots to track</span>
             <div style={{ display: 'flex', gap: 12 }}>
-              <label className="chk"><input type="checkbox" checked={slotOn(0)} onChange={() => toggleSlot(0)} /> SIM 1</label>
-              <label className="chk"><input type="checkbox" checked={slotOn(1)} onChange={() => toggleSlot(1)} /> SIM 2</label>
+              <label className="chkline"><input type="checkbox" checked={slotOn(0)} onChange={() => toggleSlot(0)} /> SIM 1</label>
+              <label className="chkline"><input type="checkbox" checked={slotOn(1)} onChange={() => toggleSlot(1)} /> SIM 2</label>
               <span className="muted">Leave both off to track all SIMs.</span>
             </div>
           </div>
           <label className="fld"><span>Recording folder (device path / SAF)</span>
-            <input className="inp" value={s.recording_folder || ''} onChange={(e) => setS({ ...s, recording_folder: e.target.value })}
+            <input className="ainp" value={s.recording_folder || ''} onChange={(e) => setS({ ...s, recording_folder: e.target.value })}
               placeholder="e.g. Recordings/Call — set on the phone via 'Pick folder'" />
           </label>
           <div style={{ display: 'flex', gap: 12 }}>
             <label className="fld" style={{ flex: 1 }}><span>Call-log sync (minutes)</span>
-              <input className="inp" type="number" min={15} value={s.log_sync_minutes} onChange={(e) => setS({ ...s, log_sync_minutes: e.target.value })} />
+              <input className="ainp" type="number" min={15} value={s.log_sync_minutes} onChange={(e) => setS({ ...s, log_sync_minutes: e.target.value })} />
             </label>
             <label className="fld" style={{ flex: 1 }}><span>Recording sync (minutes)</span>
-              <input className="inp" type="number" min={15} value={s.rec_sync_minutes} onChange={(e) => setS({ ...s, rec_sync_minutes: e.target.value })} />
+              <input className="ainp" type="number" min={15} value={s.rec_sync_minutes} onChange={(e) => setS({ ...s, rec_sync_minutes: e.target.value })} />
             </label>
           </div>
           <div style={{ display: 'flex', gap: 8 }}><button className="btn" disabled={busy} onClick={save}>Save settings</button><button className="btn ghost" onClick={syncNow}><Ic k="refresh" /> Sync now (this device)</button></div>
@@ -413,7 +413,7 @@ export function CallSettings() {
         <div className="card-head"><h3><Ic k="phone" /> Tap-to-dial test</h3></div>
         <div style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           <label className="fld" style={{ flex: 1 }}><span>Phone number</span>
-            <input className="inp" value={testNo} onChange={(e) => setTestNo(e.target.value)} placeholder="e.g. 9876543210" />
+            <input className="ainp" value={testNo} onChange={(e) => setTestNo(e.target.value)} placeholder="e.g. 9876543210" />
           </label>
           <button className="btn" disabled={!testNo.trim()} onClick={testDial}><Ic k="phone" /> Dial</button>
         </div>
@@ -556,12 +556,12 @@ export function CallReport() {
   ]);
 
   return (
-    <div className="main main--list">
+    <div className="calls-view">
       <div className="card toolbar-surface">
         <div className="filter-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <span className="muted">Date range:</span>
-          <input className="inp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
-          <input className="inp" type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
+          <input className="ainp" type="date" value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
+          <input className="ainp" type="date" value={to} onChange={(e) => setTo(e.target.value)} title="To" />
           <button className="btn ghost" onClick={reload}><Ic k="refresh" /> Refresh</button>
           <span className="muted" style={{ marginLeft: 'auto' }}>{loading ? 'Loading…' : (from || to ? 'Custom range' : 'Default: last 30 days')}</span>
         </div>

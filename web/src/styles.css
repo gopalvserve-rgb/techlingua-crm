@@ -1073,3 +1073,92 @@ select.ainp option{background:var(--surface);color:var(--text)}
 .wa-fld select:focus,.wa-fld input:focus{border-color:var(--success)}
 .wa-save{width:100%;margin-top:14px;padding:10px;border-radius:10px;background:var(--success);color:#fff;font-weight:600;font-size:13px;border:none;cursor:pointer}
 .wa-save:disabled{opacity:.55;cursor:default}
+
+/* ---- Design audit, Oct 2026 (live click-through of every screen) ---- */
+/* A .form-grid inside an already-padded card / dialog body doubled the inset: fields sat 18px
+   further in than the Save button, section headings and notes below them. */
+.card-pad>.form-grid,.abody>.form-grid,.card-pad>form>.form-grid{padding:0}
+.card-pad>.form-grid+*,.abody>.form-grid+*{margin-top:14px}
+/* A checkbox's own label is a sentence, not a field caption — no SHOUTING CAPS. */
+.fld label:has(>input[type=checkbox]),.fld label:has(>input[type=radio]){text-transform:none;letter-spacing:0;font-size:12.5px;font-weight:500;color:var(--text);display:inline-flex;align-items:center;gap:8px}
+/* Buttons never wrap their label onto two lines ("New / note"). */
+.btn{white-space:nowrap;flex-shrink:0}
+/* Search fields in a filter row are wide enough for their own placeholder. */
+.fchip input:not([type=date]):not([type=checkbox]):not([type=radio]){min-width:230px}
+/* Row actions (view / edit / delete) sit side by side, never stacked. */
+.rowacts{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.icon-btn.sm{width:26px;height:26px;border-radius:8px}
+.icon-btn.sm svg{width:13px;height:13px}
+/* Calls module (calls.tsx) — it used class names the stylesheet never defined, so its controls
+   rendered as raw browser widgets and the SIM checkboxes collapsed into the 18px .chk tick box. */
+.calls-view{display:flex;flex-direction:column;gap:14px;min-width:0}
+.calls-view>.card{margin:0}
+.toolbar-surface{padding:10px 14px}
+.filter-row .ainp{width:auto}
+.filter-row input.ainp:not([type=date]){min-width:220px}
+.chkline{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer}
+.calls-view .fld>span:first-child{font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;display:block;margin-bottom:6px}
+.calls-view label.fld{display:block}
+.split2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:900px){.split2{grid-template-columns:1fr}}
+.split2 .card-pad .btn{justify-content:center}
+.btn-mini{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);white-space:nowrap;cursor:pointer}
+.btn-mini:hover{color:var(--primary);border-color:var(--primary)}
+.btn-mini svg{width:12px;height:12px}
+.lnk{color:var(--primary);font-weight:600;cursor:pointer}
+.empty-note{color:var(--text-dim);font-size:12.5px;text-align:center;padding:18px 0}
+/* Classes the screens used but the stylesheet never defined (audit scan, Oct 2026). */
+.page-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:14px}
+button.fchip{cursor:pointer}
+.tabs>button.fchip.on,.tabs>.fchip.on{background:var(--primary-soft);border-color:var(--primary);color:var(--primary);font-weight:600}
+.hint{font-size:11.5px;color:var(--text-dim);margin-top:5px;line-height:1.45}
+.muted{color:var(--text-muted)}
+.dim{color:var(--text-dim)}
+.kv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px 18px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}
+.kv-grid>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.kv-grid .kl{font-size:10.5px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em}
+.kv-grid .kvv{font-size:13px;color:var(--text);overflow-wrap:anywhere}
+.totals-box{display:flex;flex-direction:column;gap:6px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;max-width:360px;margin-left:auto}
+.totals-box>div{display:flex;justify-content:space-between;gap:16px;font-size:13px}
+.totals-box>div>span{color:var(--text-muted)}
+.totals-box .grand{border-top:1px solid var(--border);padding-top:7px;font-size:14px}
+.mini-table,.mini-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.mini-table th,.mini-tbl th{text-align:left;font-size:10.5px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em;padding:7px 8px;border-bottom:1px solid var(--border)}
+.mini-table td,.mini-tbl td{padding:8px;border-bottom:1px solid var(--border);vertical-align:middle}
+.mini-table tr:last-child td,.mini-tbl tr:last-child td{border-bottom:none}
+.steps{margin:6px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:13px;line-height:1.5}
+.frow{align-items:flex-end}
+.frow .fld{flex:1 1 180px}
+.switch{position:relative;display:inline-block;width:32px;height:18px;flex:none;cursor:pointer}
+.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch .slider{position:absolute;inset:0;border-radius:18px;background:var(--border-strong);transition:.16s}
+.switch .slider::before{content:"";position:absolute;width:14px;height:14px;left:2px;top:2px;border-radius:50%;background:#fff;transition:.16s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.switch input:checked+.slider{background:var(--primary)}
+.switch input:checked+.slider::before{transform:translateX(14px)}
+.switch input:disabled+.slider{opacity:.5;cursor:not-allowed}
+.ne-tpl{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;max-width:150px;outline:none}
+.ne-tpl:focus{border-color:var(--primary)}
+.badge{display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--surface-3);color:var(--text-muted)}
+.xs{font-size:11px}
+.cal-filter{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.cal-count{font-size:12px;color:var(--text-muted)}
+/* Top-bar scope pickers: the search input kept its intrinsic ~150px width and pushed each
+   chip's caret OUT of its box onto the next chip's search icon (the stray "⌄" / "<Q"). */
+.scope-multi .upick-chips{min-width:0}
+.scope-multi .upick-chips input{width:0;min-width:44px}
+.scope-multi .upick-ctl{overflow:hidden}
+/* Section headings inside cards (Quick Contact "Lead Details — Scope" / "Basic Details") —
+   .sechead was only styled inside dialogs, so on a page it rendered as plain body text. */
+.card .sechead{font-family:var(--font-display);font-weight:700;font-size:13px;margin:18px 0 10px;color:var(--text);padding-bottom:6px;border-bottom:1px solid var(--border)}
+/* Marketing › Integrations — Available Tools tiles */
+.tool-group{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-dim);margin:14px 18px 8px}
+.tool-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:0 18px 4px}
+.tool-grid:last-child{padding-bottom:18px}
+.tool-tile{display:flex;flex-direction:column;gap:6px;text-align:left;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;transition:.14s;font-family:inherit;color:var(--text)}
+.tool-tile:hover{border-color:var(--primary);box-shadow:0 2px 10px color-mix(in srgb,var(--primary) 12%,transparent)}
+.tool-tile .tt-head{display:flex;align-items:center;gap:8px;font-size:13px}
+.tool-tile .tt-head svg{width:15px;height:15px;color:var(--primary);flex:none}
+.tool-tile .tt-blurb{font-size:12px;color:var(--text-muted);line-height:1.45}
+/* Kanban: columns share the width (min 170px) so a 7-stage pipeline fits a laptop screen
+   instead of cutting the last stage off; more stages still scroll sideways. */
+.kanban>.kcol{flex:1 1 0;min-width:170px;width:auto}

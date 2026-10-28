@@ -59,7 +59,7 @@ export const FOLLOWUP_BUCKETS = [
 export type FollowupBucket = (typeof FOLLOWUP_BUCKETS)[number];
 
 /** The SQL predicate for a KPI bucket (no bind params — literal windows + ILIKE literals).
- *  Assumes the query joins follow_up f, lead l and m_disposition d (LEFT). */
+ *  Assumes the query joins follow_up f, lead l and m_call_disposition d (LEFT). */
 export function followupBucketSql(bucket: string): string | null {
   const ist = (col: string) => `(${col} AT TIME ZONE 'Asia/Kolkata')::date`;
   const today = `(now() AT TIME ZONE 'Asia/Kolkata')::date`;
@@ -146,7 +146,7 @@ const FU_SELECT = `
     FROM follow_up f
     JOIN lead l ON l.id = f.lead_id
     LEFT JOIN m_followup_type ft ON ft.id = f.type_id
-    LEFT JOIN m_disposition d ON d.id = f.disposition_id
+    LEFT JOIN m_call_disposition d ON d.id = f.disposition_id
     LEFT JOIN "user" u ON u.id = f.owner_id
     LEFT JOIN "user" cu ON cu.id = f.created_by
     LEFT JOIN "user" ru ON ru.id = f.report_to_id
@@ -328,7 +328,7 @@ export class FollowUpsService {
       `SELECT ${FOLLOWUP_BUCKETS.map(cnt).join(',\n              ')}
          FROM follow_up f
          JOIN lead l ON l.id = f.lead_id
-         LEFT JOIN m_disposition d ON d.id = f.disposition_id
+         LEFT JOIN m_call_disposition d ON d.id = f.disposition_id
         WHERE (${w}) AND f.is_active AND l.is_active
           AND f.deleted_at IS NULL AND l.deleted_at IS NULL`, params,
     );

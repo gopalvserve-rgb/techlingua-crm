@@ -98,7 +98,8 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
         safe(can('master.read'), () => api.get<Named[]>('/masters/status'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/course'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/followup_type'), []),
-        safe(can('master.read'), () => api.get<Named[]>('/masters/disposition'), []),
+        // ONE disposition master (Oct 2026): `dispositions` is the Call Disposition list too
+        safe(can('master.read'), () => api.get<Named[]>('/masters/call_disposition'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/budget'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/training'), []),
         safe(can('master.read'), () => api.get<Named[]>('/masters/visit_purpose'), []),

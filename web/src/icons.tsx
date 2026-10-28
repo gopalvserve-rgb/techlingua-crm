@@ -30,7 +30,8 @@ export const I: Record<string, string> = {
   mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 6 10-6"/>',
   doc: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
-  rupee: '<path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>',
+  // the Indian rupee sign (₹) — this key used to draw a dollar sign on every money KPI
+  rupee: '<path d="M6 3h12M6 8h12M6 13l8.5 8M6 13h3c6.7 0 6.7-10 0-10"/>',
   branch: '<path d="M3 21h18M5 21V7l7-4 7 4v14"/>',
   book: '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>',
   award: '<circle cx="12" cy="8" r="6"/><path d="M9 13l-1 8 4-3 4 3-1-8"/>',
@@ -66,6 +67,16 @@ export const I: Record<string, string> = {
   swap: '<path d="M7 10l-4 4 4 4"/><path d="M3 14h14a4 4 0 004-4V4"/>',
   download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
+  // keys screens already ask for — they rendered as a blank square until now
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8M10 12h4"/>',
+  tag: '<path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L2 12V2h10l8.6 8.6a2 2 0 010 2.8z"/><circle cx="7" cy="7" r="1.5"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>',
+  edit: '<path d="M17 3a2.8 2.8 0 014 4L7.5 20.5 2 22l1.5-5.5z"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0112 0v1"/>',
+  undo: '<path d="M3 7v6h6"/><path d="M3 13a9 9 0 103-7.7L3 8"/>',
+  play: '<path d="M6 4l14 8-14 8z"/>',
+  save: '<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
 };
 
 /** Inline SVG icon, mirrors the prototype's svg() helper. */

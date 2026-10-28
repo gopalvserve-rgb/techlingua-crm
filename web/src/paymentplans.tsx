@@ -270,7 +270,7 @@ export function PlanCreateModal({ onClose, onSaved, enrolmentId }: { onClose: ()
   const [frequency, setFrequency] = useState<'monthly' | 'weekly'>('monthly');
   const [num, setNum] = useState('3');
   const [down, setDown] = useState('');
-  const [start, setStart] = useState(new Date().toISOString().slice(0, 10));
+  const [start, setStart] = useState(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');

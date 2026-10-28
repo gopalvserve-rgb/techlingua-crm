@@ -137,11 +137,17 @@ function AnalysisDetail({ id, onClose }: { id: number; onClose: () => void }) {
 
 /* -------------------------------------------------------------------- run panel */
 
-function RunPanel({ configured, onDone }: { configured: boolean; onDone: () => void }) {
+type AiType = 'summary' | 'sentiment' | 'quality' | 'transcription';
+/** The Communication Intelligence menu opens this ONE screen from several entries — each now
+ *  lands on its own analysis (Call Ratings / Quality Monitoring → Quality, Call Summaries →
+ *  Summary, Call Transcription → Transcription) instead of all defaulting to Summary. */
+const ROUTE_PRESET: Record<string, AiType> = { ratings: 'quality', quality: 'quality', summaries: 'summary', transcription: 'transcription' };
+
+function RunPanel({ configured, onDone, preset }: { configured: boolean; onDone: () => void; preset?: AiType }) {
   const [subjectMode, setSubjectMode] = useState<'transcript' | 'lead' | 'student'>('transcript');
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<{ id: number; label: string } | null>(null);
-  const [type, setType] = useState<'summary' | 'sentiment' | 'quality' | 'transcription'>('summary');
+  const [type, setType] = useState<AiType>(preset ?? 'summary');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -229,6 +235,7 @@ function RunPanel({ configured, onDone }: { configured: boolean; onDone: () => v
 
 export function AiIntelligence() {
   const { can } = useAuth();
+  const preset = ROUTE_PRESET[window.location.pathname.split('/')[3] ?? ''];
   const ref = useRef_();
   const [tick, setTick] = useState(0);
   const after = () => setTick((t) => t + 1);
@@ -238,7 +245,7 @@ export function AiIntelligence() {
   const configured = !!status.data?.configured;
 
   const [fq, setFq] = useState('');
-  const [fType, setFType] = useState<string[]>([]);
+  const [fType, setFType] = useState<string[]>(preset ? [preset] : []);
   const [fSent, setFSent] = useState<string[]>([]);
   const [fSubj, setFSubj] = useState<string[]>([]);
   const [fBranches, setFBranches] = useState<number[]>([]);
@@ -284,7 +291,7 @@ export function AiIntelligence() {
         { lab: 'Avg quality', val: s.avg_quality != null ? `${s.avg_quality}/100` : '—', ic: 'perf' },
       ]} />
 
-      {can('ai.run') && <RunPanel configured={configured} onDone={after} />}
+      {can('ai.run') && <RunPanel key={preset ?? 'all'} configured={configured} onDone={after} preset={preset} />}
 
       <div className="filters" style={{ margin: '12px 0', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
         <input className="ainp" style={{ width: 200 }} placeholder="Search subject / summary…"

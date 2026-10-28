@@ -613,14 +613,16 @@ export default function Channels() {
           // Connect drawer — WhatsApp is minted by Embedded Signup, never wired as a webhook.
           const [t, tone] = sp.deeplink ? ['SETTINGS', 'b-indigo'] : typeBadge(sp.kind);
           return (
-            <div className="fld" key={sp.key}>
-              <button className="btn" style={{ justifyContent: 'flex-start', width: '100%' }}
-                onClick={() => (sp.deeplink ? nav(sp.deeplink) : setOpen({ spec: sp, channel: null }))}>
-                <Ic k={PROVIDER_IC[sp.key] ?? 'link'} />{sp.label}
+            // one bordered tile holds the title AND its description (the description used to sit
+            // outside the button's border, so each tool looked like a pill with loose text under it)
+            <button className="tool-tile" key={sp.key}
+              onClick={() => (sp.deeplink ? nav(sp.deeplink) : setOpen({ spec: sp, channel: null }))}>
+              <span className="tt-head">
+                <Ic k={PROVIDER_IC[sp.key] ?? 'link'} /><b>{sp.label}</b>
                 <span className={`bdg ${tone}`} style={{ marginLeft: 'auto' }}>{t}</span>
-              </button>
-              <span className="fhint">{sp.blurb}</span>
-            </div>
+              </span>
+              <span className="tt-blurb">{sp.blurb}</span>
+            </button>
           );
         };
 
@@ -630,8 +632,8 @@ export default function Channels() {
               <span className="more">Pick a tool, choose Branch › Vertical › Campaign, then map its fields</span></div>
             {groups.map((g) => (
               <div key={g.title} style={{ marginTop: 4 }}>
-                <div className="sub" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.04em', margin: '10px 2px 4px', color: 'var(--text-dim)' }}>{g.title}</div>
-                <div className="form-grid">{g.items.map(Tool)}</div>
+                <div className="tool-group">{g.title}</div>
+                <div className="tool-grid">{g.items.map(Tool)}</div>
               </div>
             ))}
           </div>

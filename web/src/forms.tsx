@@ -959,7 +959,7 @@ export function EntityLookup({ type, value, onPick }: {
 /** refdata src -> generic master type key (POST /api/masters/<type>). */
 const SRC_MASTER: Partial<Record<NonNullable<FormField['src']>, string>> = {
   courses: 'course', statuses: 'status', followupTypes: 'followup_type',
-  dispositions: 'disposition', budgets: 'budget', states: 'state', cities: 'city',
+  dispositions: 'call_disposition', budgets: 'budget', states: 'state', cities: 'city',
 };
 /** mopts (string-valued master selects) -> generic master type key (POST /api/masters/<type>). */
 const MOPTS_MASTER: Record<NonNullable<FormField['mopts']>, string> = {
@@ -2060,7 +2060,6 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
     // every field the modal renders goes in the body (qa/09 rule)
     const formFields = {
       campaign_type: vals['type'] || null,
-      marketing_channel: vals['channel'] || null,
       start_date: vals['start'] || null,
       end_date: vals['end'] || null,
     };
@@ -2146,7 +2145,6 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
               {initial && attachedSources.length > 0
                 ? <div className="fhint" style={{ display: 'block', marginTop: 4 }}>Already under this campaign: {attachedSources.map((s) => s.name).join(', ')}. Remove a source from the Lead Source Master.</div>
                 : null}</div>
-            <div className="fld"><label>Marketing Channel</label>{sel(['Google', 'Meta', 'SMS', 'Hoarding', 'Email'], vals['channel'] ?? '', (x) => setVals((s) => ({ ...s, channel: x })))}</div>
             <div className="fld"><label>Start Date <span className="star">*</span></label><input className="ainp" type="date" value={vals['start'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, start: e.target.value }))} /></div>
             <div className="fld"><label>End Date</label><input className="ainp" type="date" value={vals['end'] ?? ''} onChange={(e) => setVals((x) => ({ ...x, end: e.target.value }))} /></div>
             {/* MONEY, so a number input: as free text, `Number(vals['cost'])` turned anything

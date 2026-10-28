@@ -133,7 +133,7 @@ const FOLLOW_UPS: ReportEntity = {
      LEFT JOIN "user" ow      ON ow.id = f.owner_id
      LEFT JOIN "user" rp      ON rp.id = f.report_to_id
      LEFT JOIN m_followup_type ft ON ft.id = f.type_id
-     LEFT JOIN m_disposition dp   ON dp.id = f.disposition_id
+     LEFT JOIN m_call_disposition dp   ON dp.id = f.disposition_id
      LEFT JOIN branch br      ON br.id = l.branch_id
      LEFT JOIN vertical vt    ON vt.id = l.vertical_id`,
   where: ['f.deleted_at IS NULL', 'l.deleted_at IS NULL'],
@@ -151,7 +151,7 @@ const FOLLOW_UPS: ReportEntity = {
     { key: 'lead_name', label: 'Lead', sql: 'l.full_name', type: 'text', deps: ['lead.full_name'], groupable: false },
     { key: 'lead_phone', label: 'Lead mobile', sql: 'l.phone', type: 'text', deps: ['lead.phone'], groupable: false },
     { key: 'type', label: 'Type', sql: 'ft.name', type: 'text', deps: ['m_followup_type.name'] },
-    { key: 'disposition', label: 'Disposition', sql: 'dp.name', type: 'text', deps: ['m_disposition.name'] },
+    { key: 'disposition', label: 'Disposition', sql: 'dp.name', type: 'text', deps: ['m_call_disposition.name'] },
     { key: 'owner', label: 'Owner', sql: 'ow.name', type: 'text', deps: ['user.name'] },
     { key: 'report_to', label: 'Report to', sql: 'rp.name', type: 'text', deps: ['user.name'] },
     { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },

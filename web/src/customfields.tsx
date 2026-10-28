@@ -208,9 +208,6 @@ export function CustomFieldsAdmin() {
       {canCreate && (
         <div className="page-actions"><button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />Add custom field</button></div>
       )}
-      <div className="sub" style={{ margin: '4px 0 12px' }}>
-        Extra lead fields you define here render on the Add / Edit Lead form and save into each lead’s record.
-      </div>
       <TableCard title="Lead custom fields" icon="cfg" listKey="customFields"
         cols={['Field', 'Key', 'Type', 'Mandatory', 'Options', 'Status', 'Actions']}
         rows={rows}

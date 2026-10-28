@@ -712,7 +712,7 @@ export function AiSettings() {
     <div className="card">
       <div className="card-head"><h3><Ic k="cfg" />AI provider &amp; cost</h3></div>
       <div className="card-pad">
-        <table className="minitbl" style={{ width: '100%', marginBottom: 12 }}>
+        <table className="mini-table" style={{ marginBottom: 14 }}>
           <thead><tr><th>Provider</th><th>Key</th></tr></thead>
           <tbody>{(data?.providers ?? []).map((p: any) => (
             <tr key={p.provider}><td>{p.label}</td><td>{p.configured ? <span className="bdg b-green">Key saved</span> : <span className="bdg b-gray">No key — add it in Administration › Settings › Channels › AI</span>}</td></tr>))}</tbody>

@@ -812,7 +812,7 @@ export class StudentService {
               ft.name AS type_name, d.name AS disposition_name, u.name AS owner_name
          FROM follow_up f
          LEFT JOIN m_followup_type ft ON ft.id = f.type_id
-         LEFT JOIN m_disposition d ON d.id = f.disposition_id
+         LEFT JOIN m_call_disposition d ON d.id = f.disposition_id
          LEFT JOIN "user" u ON u.id = f.owner_id
         WHERE f.lead_id = $1::bigint AND f.is_active AND f.deleted_at IS NULL
         ORDER BY f.scheduled_at DESC`, [leadId]);
