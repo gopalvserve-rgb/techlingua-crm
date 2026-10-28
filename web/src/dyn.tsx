@@ -4358,6 +4358,7 @@ export function pluralLabel(label: string): string {
 }
 
 export function singularLabel(label: string): string {
+  if (/(ss|us|is)$/i.test(label)) return label;               // "Lead Status" is already singular
   if (/(ss|us|x|ch|sh)es$/i.test(label)) return label.slice(0, -2);
   if (/[^aeiou]ies$/i.test(label)) return label.slice(0, -3) + 'y';
   return label.replace(/s$/, '');
