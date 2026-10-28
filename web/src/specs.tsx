@@ -133,7 +133,7 @@ const APP_FULL: ModuleItem[] = [
     { id: 'scoring', label: 'Lead Scoring', spec: { dyn: 'scoring',
       sub: 'Rule-based scoring you configure yourself — source, budget, course, engagement, recency. Bands for Hot / Warm / Cold.' } },
     { id: 'sources', label: 'Lead Source Master', spec: { dyn: 'sources',
-      sub: 'The manageable master list of Lead Sources (per Campaign). Auto-capture via API/webhook; cost per source tracked for ROI. The lead form’s “Lead Source” field picks from this master.' } },
+      sub: 'The one list of Lead Sources — each source is available under every campaign. Every Lead Source dropdown in the CRM (leads, walk-ins, campaigns, imports, integrations) picks from this master.' } },
     // Client (Aug 2026): the Lead Status master was hard to find under Administration › Masters,
     // so it's surfaced here in the Leads area too. Opens the SAME masters screen on Lead Status.
     { id: 'leadstatus', label: 'Lead Status', spec: { dyn: 'leadStatusMaster',
