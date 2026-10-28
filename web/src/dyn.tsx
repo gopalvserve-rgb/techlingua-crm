@@ -2185,20 +2185,12 @@ function Sources() {
   const { refreshTick, bump } = useScreen();
   const { can } = useAuth();
   const ref = useRef_();
-  const { scope: gScope, params: sp, key: scopeKey } = useScope();
+  const { params: sp, key: scopeKey } = useScope();
   const [inc, setInc] = useState(false);
-  // In-panel multi-select filters (client, Aug 2026) — Branch › Vertical › Pipeline › Campaign,
-  // seeded from the global scope, ANDed on top of it + RBAC.
-  const [fBranches, setFBranches] = useState<number[]>(gScope.branches);
-  const [fVerticals, setFVerticals] = useState<number[]>(gScope.verticals);
-  const [fPipelines, setFPipelines] = useState<number[]>(gScope.pipelines);
-  const [fCampaigns, setFCampaigns] = useState<number[]>(gScope.campaigns);
+  // No Branch / Vertical / Pipeline / Campaign filters (client, Oct 2026): the master is just
+  // Source Name + Status and every source is org-wide, so those filters could never narrow it.
   const sqs = new URLSearchParams();
   if (inc) sqs.set('include_inactive', '1');
-  if (fBranches.length) sqs.set('branch_ids', fBranches.join(','));
-  if (fVerticals.length) sqs.set('vertical_ids', fVerticals.join(','));
-  if (fPipelines.length) sqs.set('pipeline_ids', fPipelines.join(','));
-  if (fCampaigns.length) sqs.set('campaign_ids', fCampaigns.join(','));
   const list = useFetch<any[]>(withScope(`/sources${sqs.toString() ? `?${sqs}` : ''}`, sp), [refreshTick, scopeKey, sqs.toString()]);
   // ONE row per Lead Source (client, Oct 2026): the org-wide entry and the per-campaign copies made
   // when it was first used under a campaign share a canonical master id — shown as a single row
@@ -2238,17 +2230,8 @@ function Sources() {
   return (
     <>
       <div className="filters">
-        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
-          onChange={(v) => { setFBranches(v); setFVerticals([]); setFPipelines([]); setFCampaigns([]); }} />
-        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
-          options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))}
-          onChange={(v) => { setFVerticals(v); setFPipelines([]); setFCampaigns([]); }} />
-        <FilterMulti label="Pipeline" icon="list" value={fPipelines}
-          options={ref.pipelines.filter((p) => !fVerticals.length || fVerticals.includes(Number(p.vertical_id)))}
-          onChange={(v) => { setFPipelines(v); setFCampaigns([]); }} />
-        <FilterMulti label="Campaign" icon="bolt" value={fCampaigns}
-          options={ref.campaigns.filter((c) => !fPipelines.length || fPipelines.includes(Number(c.pipeline_id)))} onChange={setFCampaigns} />
         <IncInactiveChip on={inc} set={setInc} />
+        <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> sources</div>
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', rows.map((so: any) => ({
