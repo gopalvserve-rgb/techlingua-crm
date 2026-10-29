@@ -934,6 +934,7 @@ export class HierarchyService {
   async createSource(dto: {
     campaign_id?: number | null; name: string; channel?: string; master_source_id?: number; config?: object;
     cost_per_lead?: number | string | null; is_active?: boolean;
+    branch_id?: number | string | null; vertical_id?: number | string | null; pipeline_id?: number | string | null;
   }, actorId: number) {
     if (!dto?.name || !String(dto.name).trim()) throw new BadRequestException('name is required');
     const hasCampaign = dto.campaign_id !== undefined && dto.campaign_id !== null && String(dto.campaign_id).trim() !== '';
@@ -957,6 +958,8 @@ export class HierarchyService {
         `SELECT id FROM source WHERE org_id = $1 AND campaign_id IS NULL AND deleted_at IS NULL
             AND lower(name) = lower($2) LIMIT 1`, [orgId, dto.name.trim()]);
       if (dup) throw new BadRequestException(`"${dto.name.trim()}" is already in the Lead Source Master`);
+      // optional Branch › Vertical › Pipeline on a Lead Source Master entry (Oct 2026)
+      ({ branchId, verticalId, pipelineId } = await this.resolveSourcePath(dto));
     }
     const masterSourceId = await this.ensureMasterSource(orgId, dto.name.trim(), dto.master_source_id, actorId);
     const channel = dto.channel ?? 'manual';
@@ -971,6 +974,34 @@ export class HierarchyService {
         JSON.stringify(dto.config ?? {}), dto.cost_per_lead ?? 0, dto.is_active ?? null, actorId],
     );
     return rows[0];
+  }
+
+  /**
+   * Lead Source Master path (Oct 2026): Branch › Vertical › Pipeline are each optional, but must
+   * agree — a Pipeline fixes its Vertical and Branch, a Vertical fixes its Branch. Blank = any.
+   */
+  private async resolveSourcePath(dto: { branch_id?: unknown; vertical_id?: unknown; pipeline_id?: unknown }) {
+    const num = (v: unknown) => (v === undefined || v === null || String(v).trim() === '' ? null : Number(v));
+    let branchId = num(dto.branch_id); let verticalId = num(dto.vertical_id); const pipelineId = num(dto.pipeline_id);
+    if (pipelineId != null) {
+      const p = await this.db.one<{ vertical_id: string; branch_id: string }>(
+        `SELECT p.vertical_id, v.branch_id FROM pipeline p JOIN vertical v ON v.id = p.vertical_id
+          WHERE p.id = $1 AND p.deleted_at IS NULL`, [pipelineId]);
+      if (!p) throw new BadRequestException('Pipeline not found');
+      if (verticalId != null && verticalId !== Number(p.vertical_id)) throw new BadRequestException('That pipeline is not under the chosen vertical');
+      if (branchId != null && branchId !== Number(p.branch_id)) throw new BadRequestException('That pipeline is not under the chosen branch');
+      verticalId = Number(p.vertical_id); branchId = Number(p.branch_id);
+    } else if (verticalId != null) {
+      const v = await this.db.one<{ branch_id: string }>(
+        `SELECT branch_id FROM vertical WHERE id = $1 AND deleted_at IS NULL`, [verticalId]);
+      if (!v) throw new BadRequestException('Vertical not found');
+      if (branchId != null && branchId !== Number(v.branch_id)) throw new BadRequestException('That vertical is not under the chosen branch');
+      branchId = Number(v.branch_id);
+    } else if (branchId != null) {
+      const b = await this.db.one<{ id: string }>(`SELECT id FROM branch WHERE id = $1 AND deleted_at IS NULL`, [branchId]);
+      if (!b) throw new BadRequestException('Branch not found');
+    }
+    return { branchId, verticalId, pipelineId };
   }
 
   /**
@@ -1030,8 +1061,13 @@ export class HierarchyService {
       }
       const before = await this.db.one<{ campaign_id: string | null; master_source_id: string | null; name: string }>(
         `SELECT campaign_id, master_source_id, name FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
+      const pathKeys = ['branch_id', 'vertical_id', 'pipeline_id'];
+      if (before && before.campaign_id == null && pathKeys.some((k) => dto[k] !== undefined)) {
+        const p = await this.resolveSourcePath(dto as any);
+        dto.branch_id = p.branchId; dto.vertical_id = p.verticalId; dto.pipeline_id = p.pipelineId;
+      } else for (const k of pathKeys) delete dto[k];   // a campaign copy keeps its campaign's path
       const updated = await this.genericUpdate('source', id, dto,
-        ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active']);
+        ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active', ...pathKeys]);
       // ONE Lead Source (Oct 2026): an ORG-WIDE source's per-campaign copies (made when it was first
       // used under a campaign) follow its name, so the master and every campaign show the same name.
       if (before && before.campaign_id == null && dto.name !== undefined && String(dto.name).trim()

@@ -32,10 +32,17 @@ export async function sourceForCampaign(
 
 async function orgWideCopy(db: Pick<DatabaseService, 'one'>, sourceId: number, campaignId: number, actorId: number | null): Promise<number | null> {
   const src = await db.one<any>(
-    `SELECT id, org_id, campaign_id, name, channel, master_source_id, cost_per_lead, config
+    `SELECT id, org_id, campaign_id, branch_id, vertical_id, pipeline_id, name, channel, master_source_id, cost_per_lead, config
        FROM source WHERE id = $1 AND deleted_at IS NULL`, [sourceId]);
   if (!src) return null;
   if (src.campaign_id != null) return null;   // a source of ANOTHER campaign
+
+  const camp = await db.one<any>(
+    `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [campaignId]);
+  if (!camp) return null;
+  // A Lead Source Master entry may be limited to a Branch › Vertical › Pipeline (Oct 2026): it is
+  // usable only under campaigns on that path (a blank level means "any").
+  if (!sourceFitsPath(src, camp)) return null;
 
   // org-wide: the campaign's own copy (by canonical master source, else by name)
   const existing = await db.one<{ id: string }>(
@@ -46,9 +53,6 @@ async function orgWideCopy(db: Pick<DatabaseService, 'one'>, sourceId: number, c
     [campaignId, src.master_source_id ?? null, String(src.name)]);
   if (existing) return Number(existing.id);
 
-  const camp = await db.one<any>(
-    `SELECT org_id, branch_id, vertical_id, pipeline_id FROM campaign WHERE id = $1 AND deleted_at IS NULL`, [campaignId]);
-  if (!camp) return null;
   const channel = String(src.channel ?? 'manual');
   // same rule as HierarchyService.createSource: an integration channel gets its own webhook token
   const webhookToken = ['meta', 'google', 'justdial', 'indiamart', 'form', 'webhook'].includes(channel)
@@ -62,4 +66,14 @@ async function orgWideCopy(db: Pick<DatabaseService, 'one'>, sourceId: number, c
       channel, src.master_source_id ?? null, webhookToken, src.config ? JSON.stringify(src.config) : null,
       src.cost_per_lead ?? 0, actorId]);
   return created ? Number(created.id) : null;
+}
+
+/** Does an org-level source's (optional) Branch › Vertical › Pipeline allow this campaign's path?
+ *  A blank level on the source means "any". */
+export function sourceFitsPath(
+  src: { branch_id?: unknown; vertical_id?: unknown; pipeline_id?: unknown },
+  camp: { branch_id?: unknown; vertical_id?: unknown; pipeline_id?: unknown },
+): boolean {
+  const ok = (a: unknown, b: unknown) => a == null || Number(a) === Number(b);
+  return ok(src.branch_id, camp.branch_id) && ok(src.vertical_id, camp.vertical_id) && ok(src.pipeline_id, camp.pipeline_id);
 }

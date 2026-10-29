@@ -2185,8 +2185,12 @@ function Sources() {
   const ref = useRef_();
   const { params: sp, key: scopeKey } = useScope();
   const [inc, setInc] = useState(false);
-  // No Branch / Vertical / Pipeline / Campaign filters (client, Oct 2026): the master is just
-  // Source Name + Status and every source is org-wide, so those filters could never narrow it.
+  // Branch › Vertical › Pipeline (client, Oct 2026 — later): a Lead Source Master entry may be
+  // limited to a path (blank = all). The filters cascade like every other master and keep the
+  // sources AVAILABLE on the chosen path — so an "all branches" source stays in the list.
+  const [fBranches, setFBranches] = useState<number[]>([]);
+  const [fVerticals, setFVerticals] = useState<number[]>([]);
+  const [fPipelines, setFPipelines] = useState<number[]>([]);
   const sqs = new URLSearchParams();
   if (inc) sqs.set('include_inactive', '1');
   const list = useFetch<any[]>(withScope(`/sources${sqs.toString() ? `?${sqs}` : ''}`, sp), [refreshTick, scopeKey, sqs.toString()]);
@@ -2210,8 +2214,13 @@ function Sources() {
         lead_count: org ? Number(org.lead_count ?? 0) : sum('lead_count'),
         leads_this_month: org ? Number(org.leads_this_month ?? 0) : sum('leads_this_month'),
       };
-    }).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    }).sort((a, b) => String(a.name).localeCompare(String(b.name)))
+      .filter((so: any) => {
+        const fits = (v: unknown, picked: number[]) => !picked.length || v == null || picked.includes(Number(v));
+        return fits(so.branch_id, fBranches) && fits(so.vertical_id, fVerticals) && fits(so.pipeline_id, fPipelines);
+      });
   })();
+  const pathCell = (name: unknown, id: unknown) => (id == null ? { node: <span className="sub">All</span> } as Cell : String(name ?? '—'));
   const [view, setView] = useState<any | null>(null);
   const [edit, setEdit] = useState<any | null>(null);
   const canEdit = can('source.update');
@@ -2228,16 +2237,24 @@ function Sources() {
   return (
     <>
       <div className="filters">
+        <FilterMulti label="Branch" icon="branch" value={fBranches} options={ref.branches}
+          onChange={(v) => { setFBranches(v); setFVerticals([]); setFPipelines([]); }} />
+        <FilterMulti label="Vertical" icon="grid" value={fVerticals}
+          options={ref.verticals.filter((v) => !fBranches.length || fBranches.includes(Number(v.branch_id)))}
+          onChange={(v) => { setFVerticals(v); setFPipelines([]); }} />
+        <FilterMulti label="Pipeline" icon="list" value={fPipelines}
+          options={ref.pipelines.filter((p) => !fVerticals.length || fVerticals.includes(Number(p.vertical_id)))} onChange={setFPipelines} />
         <IncInactiveChip on={inc} set={setInc} />
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> sources</div>
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Source" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
       <TableCard fill title="Lead Source Master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('sources.csv', rows.map((so: any) => ({
-          source: so.name, available_in: so.campaign_id == null ? 'All campaigns' : so.campaigns.join(', '),
+          source: so.name, branch: so.branch_id == null ? 'All' : so.branch_name, vertical: so.vertical_id == null ? 'All' : so.vertical_name,
+          pipeline: so.pipeline_id == null ? 'All' : so.pipeline_name, available_in: so.campaign_id == null ? 'All campaigns' : so.campaigns.join(', '),
           used_in_campaigns: so.campaigns.join(', '),
           capture: (CAPTURE[so.channel as string] ?? ['Manual'])[0], leads_this_month: Number(so.leads_this_month ?? 0), total_leads: Number(so.lead_count ?? 0),
           cost_per_lead: Number(so.cost_per_lead ?? 0), status: so.is_active === false ? 'Inactive' : 'Active',
-        })))} onRefresh={() => list.reload()} />} cols={['Source', 'Campaigns', 'Capture', 'This month', 'Total leads', 'Cost/lead', 'Status', 'Actions']}
+        })))} onRefresh={() => list.reload()} />} cols={['Source', 'Branch', 'Vertical', 'Pipeline', 'Campaigns', 'Capture', 'This month', 'Total leads', 'Cost/lead', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((so) => {
           const cap = CAPTURE[so.channel as string] ?? ['Manual', 'b-gray'];
@@ -2246,6 +2263,9 @@ function Sources() {
           const cpl = Number(so.cost_per_lead ?? 0);
           return [
             { node: <span className="nm">{so.name}</span> } as Cell,
+            pathCell(so.branch_name, so.branch_id),
+            pathCell(so.vertical_name, so.vertical_id),
+            pathCell(so.pipeline_name, so.pipeline_id),
             { node: <span>{all ? renderCell({ b: ['All campaigns', 'b-indigo'] }) : null}
               {so.campaigns.length ? <span className="sub" style={{ marginLeft: all ? 6 : 0 }}>{all ? 'used in ' : ''}{so.campaigns.join(', ')}</span> : null}
               {!all && !so.campaigns.length ? '—' : null}</span> } as Cell,
@@ -2263,7 +2283,7 @@ function Sources() {
               onDelete: can('source.delete') ? () => del.openDelete(Number(so.id), so.name) : undefined,
             }),
           ];
-        })} empty="No lead sources yet — add one; it is available under every campaign" />
+        })} empty={fBranches.length || fVerticals.length || fPipelines.length ? 'No lead sources for this Branch › Vertical › Pipeline' : 'No lead sources yet — add one'} />
       {_bd.bulkModal}
       {del.deleteModal}
       {view && (
@@ -2271,6 +2291,9 @@ function Sources() {
           <Section title="Details">
             <KV rows={[
               ['Name', view.name],
+              ['Branch', view.branch_id == null ? 'All branches' : (view.branch_name ?? '—')],
+              ['Vertical', view.vertical_id == null ? 'All verticals' : (view.vertical_name ?? '—')],
+              ['Pipeline', view.pipeline_id == null ? 'All pipelines' : (view.pipeline_name ?? '—')],
               ['Available in', view.campaign_id == null ? 'All campaigns' : (view.campaign_name ?? '—')],
               ['Used in campaigns', view.campaigns?.length ? view.campaigns.join(', ') : '—'],
               ['Leads', `${Number(view.lead_count ?? 0)} total · ${Number(view.leads_this_month ?? 0)} this month`],
@@ -2294,16 +2317,22 @@ function Sources() {
         <AddModal formKey="leads.sources" onClose={() => setEdit(null)} onSaved={after}
           edit={{
             title: `Edit Source — ${edit.name}`,
-            // Oct 2026 — ONE Lead Source Master: name + status only (no campaign path). Renaming an
-            // org-wide source renames its per-campaign copies too (HierarchyService.updateSource).
+            // Lead Source Master: optional Branch › Vertical › Pipeline + name + status (no campaign).
+            // Renaming an org-wide source renames its per-campaign copies too (HierarchyService.updateSource).
+            initialIds: {
+              ...(edit.branch_id != null ? { Branch: Number(edit.branch_id) } : {}),
+              ...(edit.vertical_id != null ? { Vertical: Number(edit.vertical_id) } : {}),
+              ...(edit.pipeline_id != null ? { Pipeline: Number(edit.pipeline_id) } : {}),
+            },
             initialVals: {
               'Source Name': edit.name ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
-            submit: async (vals) => {
+            submit: async (vals, ids) => {
               await api.patch(`/sources/${edit.id}`, {
                 name: need(vals['Source Name'], 'Source name is required'),
                 is_active: vals['Status'] !== 'Inactive',
+                branch_id: ids['Branch'] ?? null, vertical_id: ids['Vertical'] ?? null, pipeline_id: ids['Pipeline'] ?? null,
               });
               return 'Source updated';
             },

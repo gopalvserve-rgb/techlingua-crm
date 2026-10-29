@@ -93,11 +93,22 @@ export function dedupeSources<T extends { name: string }>(list: T[]): T[] {
 
 /** Campaign form "Lead Source" options: one entry per source of the Lead Source Master (by its
  *  canonical master id), plus anything already picked (e.g. just quick-added). */
-export function campaignSourceOptions(ref: { sources: any[]; masterSources?: any[] }, picked: number[] = []): Array<{ id: number; name: string }> {
+/** A Lead Source Master entry limited to a Branch › Vertical › Pipeline is offered only on that
+ *  path (a blank level = any). Mirrors sourceFitsPath on the server. */
+export function sourceFitsPath(src: any, path: { branch_id?: unknown; vertical_id?: unknown; pipeline_id?: unknown } | null | undefined): boolean {
+  if (!path) return true;
+  const ok = (a: unknown, b: unknown) => a == null || b == null || Number(a) === Number(b);
+  return ok(src?.branch_id, path.branch_id) && ok(src?.vertical_id, path.vertical_id) && ok(src?.pipeline_id, path.pipeline_id);
+}
+
+export function campaignSourceOptions(ref: { sources: any[]; masterSources?: any[] }, picked: number[] = [],
+  path?: { branch_id?: unknown; vertical_id?: unknown; pipeline_id?: unknown } | null): Array<{ id: number; name: string }> {
   const byId = new Map<number, string>();
   // ONLY the Lead Source Master's entries (Oct 2026 — never the raw catalogue); the org-wide
   // row's name wins over a campaign copy's
-  const rows = [...(ref.sources ?? [])].sort((a: any, b: any) => Number(a.campaign_id != null) - Number(b.campaign_id != null));
+  const rows = [...(ref.sources ?? [])]
+    .filter((s: any) => s.campaign_id != null || sourceFitsPath(s, path))
+    .sort((a: any, b: any) => Number(a.campaign_id != null) - Number(b.campaign_id != null));
   for (const s of rows) {
     const mid = Number(s.master_source_id);
     if (mid > 0 && !byId.has(mid)) byId.set(mid, String(s.name));
@@ -256,8 +267,14 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
   // campaign picks it (the Campaign form's Lead Source). The Branch › Vertical › Pipeline ›
   // Campaign cascade is gone from this form; a source is attached to a campaign automatically
   // the first time it is used there.
+  // Oct 2026 (client, later) — Branch › Vertical › Pipeline are back as OPTIONAL fields (cascading,
+  // like every other master); Campaign stays out. Blank = the source is offered under every campaign;
+  // a chosen level limits it to campaigns on that path.
   'leads.sources': { title: 'Add Lead Source', fields: [
-    F('Source Name', 'text', 1, 0, 'one entry per source — available under every campaign'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
+    F('Branch', 'select', 0, 0, 'blank = all branches', 'branches'),
+    F('Vertical', 'select', 0, 0, 'filtered by Branch · blank = all', 'verticals'),
+    F('Pipeline', 'select', 0, 0, 'filtered by Vertical · blank = all', 'pipelines'),
+    F('Source Name', 'text', 1, 0, 'one entry per source'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'leads.pipelinemaster': { title: 'Add Pipeline', fields: [
     F('Pipeline Name', 'text', 1), F('Branch', 'select', 1, 0, 'master', 'branches'), F('Vertical', 'select', 1, 0, 'filtered by Branch', 'verticals'),
     F('Pipeline Code', 'text', 1, 0, 'e.g. ADM'), F('Pipeline Stages', 'table', 0, 0, 'Default stage set added — edit after create'), F('Pipeline Owner', 'select', 0, 0, 'Users', 'users'), F('Status', 'select', 0, ['Active', 'Inactive'])] },
@@ -658,10 +675,10 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
   'leads.sources': async (vals, ids) => {
     // UAT-R2 #4 — channel + cost_per_lead no longer collected; backend keeps its defaults.
     // UAT-R2 #17 — return the created row so a ＋ quick-add auto-selects it live.
-    void ids;
-    const row = await api.post<Named>('/sources', {   // always org-wide (Lead Source Master, Oct 2026)
+    const row = await api.post<Named>('/sources', {   // never under a campaign (Lead Source Master, Oct 2026)
       name: need(vals['Source Name'], 'Source name is required'),
       is_active: vals['Status'] !== 'Inactive',
+      branch_id: ids['Branch'] ?? null, vertical_id: ids['Vertical'] ?? null, pipeline_id: ids['Pipeline'] ?? null,
     });
     return { msg: 'Source connected', row };
   },
@@ -1383,7 +1400,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit, prefill 
     // catalogue carried seeded / test / duplicate names, so it read as a static list
     if (f.src === 'masterSources') {
       const cur = ids[f.label] != null ? [Number(ids[f.label])] : [];
-      list = campaignSourceOptions(ref as any, cur) as unknown as Named[];
+      list = campaignSourceOptions(ref as any, cur, { branch_id: ids['Branch'], vertical_id: ids['Vertical'] }) as unknown as Named[];
     }
     // DEF-1: never offer a deactivated user — but keep the one already selected (edit/prefill).
     if (f.src === 'users') list = selectableUsers(list, ids[f.label] ?? null);
@@ -1408,7 +1425,9 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit, prefill 
       const pid = ids[cc.parent];
       // An ORG-WIDE Lead Source (no campaign) is offered under EVERY campaign — the server
       // gives the campaign its own copy on save (Oct 2026, "lead source not showing").
-      if (pid != null) list = list.filter((o) => Number((o as any)[cc.fk]) === Number(pid) || (cc.src === 'sources' && (o as any).campaign_id == null));
+      const camp = cc.src === 'sources' && pid != null ? (ref.campaigns ?? []).find((c: any) => Number(c.id) === Number(pid)) : null;
+      if (pid != null) list = list.filter((o) => Number((o as any)[cc.fk]) === Number(pid)
+        || (cc.src === 'sources' && (o as any).campaign_id == null && sourceFitsPath(o, camp as any)));
       else if (cc.strict && cascadeParent(cc.parent)) list = [];
       if (cc.src === 'sources' && pid != null) list = dedupeSources(list);
     }
@@ -2138,7 +2157,7 @@ export function CampaignModal({ onClose, onSaved, initial }: { onClose: () => vo
               <MasterQuickAdd type="source" onAdded={(row) => setSrcIds((x) => (x.includes(Number(row.id)) ? x : [...x, Number(row.id)]))} /></label>
               {/* the sources of the LEAD SOURCE MASTER (Oct 2026) — not the whole raw catalogue, which
                   carried seeded / test / duplicate names the client never created */}
-              <UserPicker options={campaignSourceOptions(ref, srcIds)} value={srcIds} hideBranch
+              <UserPicker options={campaignSourceOptions(ref, srcIds, { branch_id: branchId, vertical_id: verticalId, pipeline_id: pipelineId })} value={srcIds} hideBranch
                 placeholder="Select lead source(s)…"
                 // add-only on edit: a source already under this campaign carries leads, so it stays ticked
                 onChange={(arr) => setSrcIds([...new Set([...attachedSources.map((s) => Number((s as any).master_source_id)).filter((n) => n > 0), ...arr])])} />

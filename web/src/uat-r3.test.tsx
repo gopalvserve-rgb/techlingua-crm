@@ -4,7 +4,7 @@
  * the specific new behaviour so it runs quickly on its own.
  *   #17 — Course "Duration" is a free-TEXT input (not number).
  *   #20 — Add Campaign walks a STRICT Branch -> Vertical -> Pipeline cascade.
- *   #21 — (Oct 2026) Add Lead Source is name + status only — one org-wide Lead Source Master.
+ *   #21 — (Oct 2026) Add Lead Source: optional cascading Branch › Vertical › Pipeline, no Campaign.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/react';
@@ -47,22 +47,32 @@ describe('#17 — Course Duration accepts free text', () => {
   });
 });
 
-describe('#21 (Oct 2026) — ONE Lead Source Master: Add Lead Source is name + status, always org-wide', () => {
-  it('renders only Source Name and Status — no Branch / Vertical / Pipeline / Campaign', () => {
+describe('#21 (Oct 2026) — Lead Source Master: optional Branch › Vertical › Pipeline, never a Campaign', () => {
+  it('renders Branch / Vertical / Pipeline / Source Name / Status — and no Campaign', () => {
     render(<AddModal formKey="leads.sources" onClose={() => {}} />);
     const labels = [...document.querySelectorAll('.add-modal .fld label')].map((l) => (l.textContent || '').trim());
-    expect(labels.some((t) => t.startsWith('Source Name'))).toBe(true);
-    for (const gone of ['Branch', 'Vertical', 'Pipeline', 'Campaign']) expect(labels.some((t) => t.startsWith(gone))).toBe(false);
+    for (const want of ['Branch', 'Vertical', 'Pipeline', 'Source Name', 'Status']) expect(labels.some((t) => t.startsWith(want))).toBe(true);
+    expect(labels.some((t) => t.startsWith('Campaign'))).toBe(false);
   });
 
-  it('posts an org-wide source (no campaign_id / path in the body)', async () => {
+  it('Vertical follows Branch and Pipeline follows Vertical (cascade)', () => {
     render(<AddModal formKey="leads.sources" onClose={() => {}} />);
+    fireEvent.change(sel('Branch'), { target: { value: '9' } });
+    expect(opts('Vertical')).toEqual(['1']);
+    fireEvent.change(sel('Vertical'), { target: { value: '1' } });
+    expect(opts('Pipeline')).toEqual(['4']);
+  });
+
+  it('posts the chosen path with no campaign_id; a blank path stays null (= all)', async () => {
+    render(<AddModal formKey="leads.sources" onClose={() => {}} />);
+    fireEvent.change(sel('Branch'), { target: { value: '9' } });
     fireEvent.change(fld('Source Name').querySelector('input') as HTMLInputElement, { target: { value: 'JustDial' } });
     fireEvent.click([...document.querySelectorAll('.add-modal button')].find((b) => /save/i.test(b.textContent || ''))!);
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/sources', expect.objectContaining({ name: 'JustDial' })));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/sources', expect.objectContaining({ name: 'JustDial', branch_id: 9 })));
     const body = post.mock.calls[0][1] as Record<string, unknown>;
     expect(body.campaign_id).toBeUndefined();
-    expect(body.branch_id).toBeUndefined();
+    expect(body.vertical_id).toBeNull();
+    expect(body.pipeline_id).toBeNull();
   });
 
   it("the Campaign form's Lead Source ＋ opens this same Add Lead Source form", () => {

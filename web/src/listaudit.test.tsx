@@ -64,7 +64,7 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   { name: 'Campaigns', file: 'dyn.tsx', req: FULL },         // client's explicit example
   { name: 'Verticals', file: 'dyn.tsx', req: FULL },
   { name: 'Pipelines', file: 'dyn.tsx', req: FULL },
-  { name: 'Sources', file: 'dyn.tsx', req: NO_MULTIFILTER }, // org-wide master: Source Name + Status only (Oct 2026)
+  { name: 'Sources', file: 'dyn.tsx', req: FULL },
   { name: 'Courses', file: 'dyn.tsx', req: FULL },
   { name: 'Users', file: 'dyn.tsx', req: FULL },
   { name: 'Branches', file: 'dyn.tsx', req: NO_MULTIFILTER },
@@ -186,7 +186,7 @@ describe('list-audit — every registered list screen renders the full treatment
 
   // The client's explicit complaint: Campaigns (and the other hierarchy lists) MUST be multi-select.
   it('the hierarchy lists all use a multi-select filter control', () => {
-    for (const name of ['Campaigns', 'Verticals', 'Pipelines']) {
+    for (const name of ['Campaigns', 'Verticals', 'Pipelines', 'Sources']) {
       const slice = sliceComponent(read('dyn.tsx'), name) as string;
       expect(/FilterMulti/.test(slice), `${name} must use FilterMulti (multi-select)`).toBe(true);
     }
