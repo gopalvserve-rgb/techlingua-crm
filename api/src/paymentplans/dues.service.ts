@@ -240,6 +240,7 @@ export class DuesService {
                          WHERE fr.enrolment_id = e.id AND fr.deleted_at IS NULL), 0) AS paid_minor
          FROM enrolment e
          JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN student sp ON sp.id = e.student_profile_id AND sp.deleted_at IS NULL
          LEFT JOIN m_course c ON c.id = e.course_id
         WHERE e.id = $1 AND e.deleted_at IS NULL AND ${scopeWhere}
         LIMIT 1`,
