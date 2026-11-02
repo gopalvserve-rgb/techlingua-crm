@@ -178,6 +178,48 @@ export class WhatsAppAccountService {
     return { ok: true, synced: fresh.length, warning: warnings.length ? warnings.join(' ') : null, ...(await this.account()) };
   }
 
+  /**
+   * TEMPLATE SYNC (client call, Oct 2026). Pulls the templates Meta has APPROVED for every
+   * connected WABA into Message Templates. A template the CRM already has (same Meta name and
+   * language) only gets its text refreshed: its vertical, its status and its variable mapping
+   * are the client's. Nothing is ever deleted here.
+   */
+  async syncTemplates(actorId: number) {
+    const cfg = await this.configs.resolve('whatsapp', null);
+    if (!cfg || cfg.provider !== 'meta_cloud') throw new BadRequestException('Connect WhatsApp first, then sync templates.');
+    const wabas = connectedWabas(cfg.config, numbersOf(cfg.config)).filter((w) => tokenForWaba(cfg, w));
+    if (!wabas.length) throw new BadRequestException('This WhatsApp connection has no WhatsApp Business Account ID or access token.');
+    const org = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
+    let added = 0; let updated = 0; let skipped = 0;
+    for (const wabaId of wabas) {
+      const token = tokenForWaba(cfg, wabaId);
+      const j = await this.graph(
+        cfg, `/${encodeURIComponent(wabaId)}/message_templates?fields=name,status,language,components&limit=200`,
+        { headers: { Authorization: `Bearer ${token}` } }, 'Meta rejected the template sync',
+      );
+      for (const t of j?.data ?? []) {
+        if (t.status !== 'APPROVED') { skipped++; continue; }
+        const body = String((t.components ?? []).find((c: any) => c.type === 'BODY')?.text ?? '');
+        const lang = String(t.language ?? 'en');
+        const name = String(t.name);
+        const had = await this.db.one<{ id: string }>(
+          `UPDATE message_template SET body = $1, updated_by = $2, updated_at = now()
+            WHERE channel = 'whatsapp' AND wa_template_name = $3 AND wa_language = $4 AND deleted_at IS NULL
+            RETURNING id`,
+          [body, actorId, name, lang],
+        );
+        if (had) { updated++; continue; }
+        await this.db.query(
+          `INSERT INTO message_template (org_id, channel, name, body, wa_template_name, wa_language, created_by, updated_by)
+           VALUES ($1, 'whatsapp', $2, $3, $2, $4, $5, $5)`,
+          [Number(org!.id), name, body, lang, actorId],
+        );
+        added++;
+      }
+    }
+    return { ok: true, added, updated, skipped };
+  }
+
   /** The numbers of ONE WABA, as Meta lists them now (labels carried over from `prior`). */
   async wabaNumbers(cfg: ResolvedConfig, wabaId: string, token: string, prior = new Map<string, WaNumber>()): Promise<WaNumber[]> {
     const j = await this.graph(

@@ -53,7 +53,7 @@ const MAX_OPTIONS = 15;
 const ALWAYS = /status|type|branch|vertical|channel|category|stage|trigger/i;
 const NUMERIC = /^[-₹\d,.\s%]+$/;
 /** Names, amounts and counts: every row differs, so a dropdown only repeats the table. */
-const NEVER = /name|title|code|#|lead|employee|student|variables|revenue|collection|amount|fee|cost|points|gross|basic|hra|allowance|tds|tax|phone|email|key|url/i;
+const NEVER = /when|name|title|code|#|lead|employee|student|variables|revenue|collection|amount|fee|cost|points|gross|basic|hra|allowance|tds|tax|phone|email|key|url/i;
 /** Date columns, recognised by name while the list has no dates in it yet. */
 const DATE_COL = /date|validity|created|when|^from$|^to$/i;
 

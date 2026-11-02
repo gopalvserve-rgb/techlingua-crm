@@ -384,6 +384,7 @@ export function Templates() {
   const { data, reload } = useFetch<Template[]>('/templates');
   const [modal, setModal] = useState<{ open: boolean; row?: Template | null }>({ open: false });
   const rows = data ?? [];
+  const [syncing, setSyncing] = useState(false);
 
   const del = async (t: Template) => {
     if (!await askConfirm(`Delete the template "${t.name}"?`)) return;
@@ -391,9 +392,22 @@ export function Templates() {
     toast('Template deleted'); reload();
   };
 
+  const syncMeta = async () => {
+    setSyncing(true);
+    try {
+      const r = await api.post<any>('/settings/whatsapp/account/templates/sync', {});
+      toast(`Synced from Meta: ${r.added} added, ${r.updated} updated${r.skipped ? `, ${r.skipped} not approved yet` : ''}`);
+      reload();
+    } catch (e) { toast((e as Error).message, true); }
+    finally { setSyncing(false); }
+  };
+
   return (
     <>
       <div className="page-actions">
+        <button className="btn" disabled={syncing} onClick={() => void syncMeta()}>
+          <Ic k="refresh" />{syncing ? 'Syncing…' : 'Sync from Meta'}
+        </button>
         <button className="btn primary" onClick={() => setModal({ open: true, row: null })}>
           <Ic k="plus" />New template
         </button>

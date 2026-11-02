@@ -20,6 +20,10 @@ export class WhatsAppAccountController {
     return this.account.account();
   }
 
+  @Post('templates/sync')
+  @RequirePermission('template.create')
+  syncTemplates(@CurrentUser() me: any) { return this.account.syncTemplates(Number(me.id)); }
+
   /** "Sync from Meta" — re-pull the WABA's numbers; labels and the default survive. */
   @Post('sync')
   @RequirePermission('settings.update')
