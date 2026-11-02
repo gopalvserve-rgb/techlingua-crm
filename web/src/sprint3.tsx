@@ -7,6 +7,7 @@
  */
 import { useContext, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
+import { askConfirm } from './askdialog';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, HBars, Kpis, TableCard, TempBadge, renderCell } from './renderer';
@@ -642,13 +643,16 @@ interface CalFeed {
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // week starts Monday (WEEK_START)
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-export function EventModal({ onClose, onSaved, initial }: {
+export function EventModal({ onClose, onSaved, initial, day }: {
   onClose: () => void; onSaved: () => void; initial?: CalEvent | null;
+  /** yyyy-mm-dd of the date clicked on the grid: prefills Starts at 10:00 */
+  day?: string;
 }) {
+  const { can } = useAuth();
   const [title, setTitle] = useState(initial?.title ?? '');
   const [type, setType] = useState(initial?.type ?? 'meeting');
-  const [starts, setStarts] = useState(initial?.starts_at ? initial.starts_at.slice(0, 16) : '');
-  const [ends, setEnds] = useState(initial?.ends_at ? initial.ends_at.slice(0, 16) : '');
+  const [starts, setStarts] = useState(initial?.starts_at ? toLocalDT(initial.starts_at) : day ? `${day}T10:00` : '');
+  const [ends, setEnds] = useState(initial?.ends_at ? toLocalDT(initial.ends_at) : '');
   const [location, setLocation] = useState(initial?.location ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [busy, setBusy] = useState(false);
@@ -667,6 +671,18 @@ export function EventModal({ onClose, onSaved, initial }: {
       if (initial) await api.patch(`/calendar/${initial.id}`, body);
       else await api.post('/calendar', body);
       toast(initial ? 'Event updated' : 'Event added');
+      onSaved(); onClose();
+    } catch (e: any) { toast(e.message, true); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!initial) return;
+    if (!await askConfirm(`Delete the event “${initial.title}”?`)) return;
+    setBusy(true);
+    try {
+      await api.del(`/calendar/${initial.id}`);
+      toast('Event deleted');
       onSaved(); onClose();
     } catch (e: any) { toast(e.message, true); }
     finally { setBusy(false); }
@@ -716,6 +732,11 @@ export function EventModal({ onClose, onSaved, initial }: {
           </div>
         </div>
         <div className="af">
+          {initial && can('calendar.delete') && (
+            <button className="btn" style={{ color: 'var(--danger)', marginRight: 'auto' }} disabled={busy} onClick={() => void remove()}>
+              <Ic k="trash" />Delete
+            </button>
+          )}
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy} onClick={save}>
             {busy ? 'Saving…' : initial ? 'Save changes' : 'Add event'}
@@ -734,8 +755,10 @@ export function Calendar() {
   // ITEM A (dev/132) — the shared date-range shortcuts (All time / Today / Yesterday / This Week /
   // This Month / Custom) now drive the calendar feed AND the total count, not just the visible month.
   const [range, setRange] = useState<{ from?: string; to?: string }>(() => monthWindow(new Date()));
-  const [add, setAdd] = useState(false);
+  const [add, setAdd] = useState<{ day?: string } | null>(null);
+  const [editing, setEditing] = useState<CalEvent | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const canAdd = can('calendar.create');
 
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const last = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
@@ -758,7 +781,7 @@ export function Calendar() {
 
   /** day (yyyy-mm-dd) -> the things happening that day */
   const byDay = useMemo(() => {
-    const m = new Map<string, Array<{ kind: 'fu' | 'ev'; label: string; overdue?: boolean; type?: string; leadId?: number }>>();
+    const m = new Map<string, Array<{ kind: 'fu' | 'ev'; label: string; overdue?: boolean; type?: string; leadId?: number; event?: CalEvent }>>();
     const push = (iso: string, item: any) => {
       const key = ymd(new Date(iso));
       m.set(key, [...(m.get(key) ?? []), item]);
@@ -770,7 +793,7 @@ export function Calendar() {
       });
     }
     for (const e of feed.data?.events ?? []) {
-      push(e.starts_at, { kind: 'ev', type: e.type, leadId: e.lead_id ?? undefined, label: e.title });
+      push(e.starts_at, { kind: 'ev', type: e.type, leadId: e.lead_id ?? undefined, label: e.title, event: e });
     }
     return m;
   }, [feed.data]);
@@ -798,17 +821,6 @@ export function Calendar() {
 
   return (
     <>
-      {sync && !sync.configured && (
-        <div className="notice">
-          <Ic k="bolt" />
-          <div>
-            <b>Google / Outlook sync — not configured.</b> {sync.note}{' '}
-            Still needed: <b>{sync.missing.join(', ')}</b>. Add them under Settings › Integrations —
-            no deploy, it starts syncing straight away.
-          </div>
-        </div>
-      )}
-
       <div className="cal-head">
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn" aria-label="Previous month" onClick={() => navMonth(-1)}>
@@ -825,11 +837,13 @@ export function Calendar() {
           </button>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" disabled={syncing} onClick={doSync}>
-            <Ic k="bolt" />{syncing ? 'Syncing…' : 'Sync now'}
-          </button>
-          {can('calendar.create') && (
-            <button className="btn primary" onClick={() => setAdd(true)}><Ic k="plus" />Add event</button>
+          {sync?.configured && (
+            <button className="btn" disabled={syncing} onClick={doSync}>
+              <Ic k="bolt" />{syncing ? 'Syncing…' : 'Sync now'}
+            </button>
+          )}
+          {canAdd && (
+            <button className="btn primary" onClick={() => setAdd({})}><Ic k="plus" />Add event</button>
           )}
         </div>
       </div>
@@ -850,24 +864,36 @@ export function Calendar() {
             const items = byDay.get(key) ?? [];
             const outside = d.getMonth() !== cursor.getMonth();
             return (
-              <div className={`cal-cell${outside ? ' out' : ''}${key === todayKey ? ' today' : ''}`} key={i}
-                data-day={key}>
+              <div className={`cal-cell${outside ? ' out' : ''}${key === todayKey ? ' today' : ''}${canAdd ? ' addable' : ''}`} key={i}
+                data-day={key} title={canAdd ? 'Click to add an event on this date' : undefined}
+                onClick={() => { if (canAdd) setAdd({ day: key }); }}>
                 <div className="cal-num">{d.getDate()}</div>
                 {items.slice(0, 3).map((it, j) => (
                   <div key={j}
                     className={`cal-ev ${it.kind === 'fu' ? 'fu' : ''}${it.overdue ? ' overdue' : ''}${it.type === 'demo' ? ' demo' : ''}`}
                     title={it.label}
-                    onClick={() => it.leadId && openLead(it.leadId)}>
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (it.event) setEditing(it.event);
+                      else if (it.leadId) openLead(it.leadId);
+                    }}>
                     {it.label}
                   </div>
                 ))}
-                {items.length > 3 && <div className="cal-more">+{items.length - 3} more</div>}
+                {items.length > 3 && (
+                  <div className="cal-more" role="button" title="Show everything on this date" onClick={(ev) => {
+                    ev.stopPropagation();
+                    setRange({ from: key, to: key });
+                    document.getElementById('cal-range-list')?.scrollIntoView({ behavior: 'smooth' });
+                  }}>+{items.length - 3} more</div>
+                )}
               </div>
             );
           })}
         </div>
       </div></div>
 
+      <div id="cal-range-list" />
       <TableCard title={`In selected range — ${fuCount + evCount} result${fuCount + evCount === 1 ? '' : 's'}`} icon="cal"
         cols={['When', 'What', 'Lead', 'Lead Counsellor', 'Type']}
         rows={[
@@ -881,7 +907,7 @@ export function Calendar() {
           ]),
           ...(feed.data?.events ?? []).map((e) => [
             { mono: fmtDT(e.starts_at) } as Cell,
-            e.title,
+            { node: <span className="nm" style={{ cursor: 'pointer' }} onClick={() => setEditing(e)}>{e.title}</span> } as Cell,
             e.lead_name || '—',
             e.owner_name || '—',
             { b: [e.type.charAt(0).toUpperCase() + e.type.slice(1), 'b-cyan'] } as Cell,
@@ -889,7 +915,8 @@ export function Calendar() {
         ]}
         empty="Nothing scheduled this month" />
 
-      {add && <EventModal onClose={() => setAdd(false)} onSaved={() => { feed.reload(); bump(); }} />}
+      {add && <EventModal day={add.day} onClose={() => setAdd(null)} onSaved={() => { feed.reload(); bump(); }} />}
+      {editing && <EventModal initial={editing} onClose={() => setEditing(null)} onSaved={() => { feed.reload(); bump(); }} />}
     </>
   );
 }

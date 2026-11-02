@@ -216,6 +216,8 @@ export class CalendarService {
     const params: unknown[] = [];
     for (const [k, val] of Object.entries(v)) { params.push(val); sets.push(`${k} = $${params.length}`); }
     if (!sets.length) throw new BadRequestException('nothing to update');
+    // a moved event must remind again at its new time
+    if (v.starts_at !== undefined) sets.push('reminded_at = NULL');
     params.push(id);
     return this.db.one(
       `UPDATE calendar_event SET ${sets.join(', ')}, updated_at = now()

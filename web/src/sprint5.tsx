@@ -1193,6 +1193,67 @@ function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
   );
 }
 
+/** The approve / reject table: on Sale Closure, and on the Enrolment Approvals screen. */
+function ApprovalQueueCard({ rows, onChanged, decided }: { rows: any[]; onChanged: () => void; decided?: boolean }) {
+  const decide = async (a: any, approve: boolean) => {
+    let note: string | null = null;
+    if (approve) {
+      if (!await askConfirm(`Approve enrolment ${a.enrolment_no} for ${a.lead_name}?`)) return;
+    } else {
+      note = await askText(`Reason for rejecting ${a.enrolment_no}`);
+      if (note == null) return;
+    }
+    try {
+      await api.post(`/enrolments/approvals/${a.id}/${approve ? 'approve' : 'reject'}`, { note });
+      toast(approve ? 'Enrolment approved' : 'Enrolment rejected'); onChanged();
+    } catch (e) { toast((e as Error).message, true); }
+  };
+  return (
+    <TableCard
+      title={decided ? 'Enrolment approvals' : 'Awaiting your approval'} icon="clock"
+      cols={['Enrolment', 'Student', 'Course', 'Net fee', 'Why it needs approval', 'Requested by', 'Requested on', decided ? 'Decision' : 'Action']}
+      empty="No enrolments here"
+      rows={rows.map((a): Cell[] => [
+        { mono: a.enrolment_no }, a.lead_name, a.course_name ?? '—',
+        { mono: fmtINR(a.net_fee_minor) }, a.step_label, a.requested_by_name ?? '—', a.requested_at ? fmtDateTimeIST(a.requested_at) : '—',
+        a.status === 'pending' ? {
+          node: <span style={{ display: 'inline-flex', gap: 6 }}>
+            <button className="btn primary sm" data-testid={`approve-${a.id}`} onClick={() => void decide(a, true)}><Ic k="check" />Approve</button>
+            <button className="btn sm" data-testid={`reject-${a.id}`} onClick={() => void decide(a, false)}><Ic k="x" />Reject</button>
+          </span>,
+        } : { b: [`${a.status === 'approved' ? 'Approved' : 'Rejected'}${a.approver_name ? ` by ${a.approver_name}` : ''}`, a.status === 'approved' ? 'b-green' : 'b-rose'] },
+      ])}
+    />
+  );
+}
+
+/** Performance & Conversion › Enrolment Approvals: every approval in one place. */
+export function EnrolmentApprovals() {
+  const { can } = useAuth();
+  const [status, setStatus] = useState('pending');
+  const q = useFetch<any[]>(can('enrolment.approve') ? `/enrolments/approvals?status=${status}` : null, [status]);
+  const policy = useFetch<any>('/enrolments/approval-policy');
+  const steps = (policy.data?.steps ?? []).filter((x: any) => x.enabled);
+  return (
+    <>
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <select className="ainp" style={{ width: 'auto' }} aria-label="Approval status" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option>
+        </select>
+      </div>
+      {policy.data && (
+        <PhaseNote>
+          {policy.data.enabled && steps.length
+            ? <>Approval is needed for: <b>{steps.map((x: any) => (x.discount_pct_over != null ? `${x.label} (over ${x.discount_pct_over}%)` : x.label)).join(', ')}</b>.</>
+            : <>Approvals are <b>off</b>: every enrolment is confirmed straight away.</>}
+          {' '}Change this in <b>Administration › Settings › Enrolment approvals</b>.
+        </PhaseNote>
+      )}
+      <ApprovalQueueCard rows={q.data ?? []} decided={status !== 'pending'} onChanged={() => q.reload()} />
+    </>
+  );
+}
+
 export function SaleClosure() {
   const { can } = useAuth();
   // SHARED date range on the enrolment date (created_at). Default All time so nothing is hidden.
@@ -1219,13 +1280,6 @@ export function SaleClosure() {
   const s = summary.data;
 
   const bump = () => { reload(); summary.reload(); queue.reload(); setTick((t) => t + 1); };
-
-  const decide = async (id: number, approve: boolean) => {
-    try {
-      await api.post(`/enrolments/approvals/${id}/${approve ? 'approve' : 'reject'}`, {});
-      toast(approve ? 'Approved' : 'Rejected'); bump();
-    } catch (e) { toast((e as Error).message); }
-  };
 
   return (
     <>
@@ -1260,20 +1314,7 @@ export function SaleClosure() {
       ) : null}
 
       {can('enrolment.approve') && (queue.data ?? []).length > 0 && (
-        <div id="enr-approval-queue"><TableCard
-          title="Awaiting your approval" icon="clock"
-          cols={['Enrolment', 'Student', 'Course', 'Net fee', 'Step', 'Requested by', '']}
-          rows={(queue.data ?? []).map((a): Cell[] => [
-            { mono: a.enrolment_no }, a.lead_name, a.course_name ?? '—',
-            { mono: fmtINR(a.net_fee_minor) }, a.step_label, a.requested_by_name ?? '—',
-            {
-              node: <RowBtns items={[
-                ['check', 'Approve', () => void decide(a.id, true)],
-                ['x', 'Reject', () => void decide(a.id, false)],
-              ]} />,
-            },
-          ])}
-        /></div>
+        <div id="enr-approval-queue"><ApprovalQueueCard rows={queue.data ?? []} onChanged={bump} /></div>
       )}
 
       <TableCard

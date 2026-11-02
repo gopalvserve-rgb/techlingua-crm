@@ -341,7 +341,7 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Start Date', 'date', 1), F('End Date', 'date', 1), F('Class Timing', 'text', 1), F('Capacity (Max Seats)', 'number', 1),
     // Client feedback: offer ONLY Trainer-role users here, not every user.
     { ...F('Trainer / Faculty Assigned', 'select', 0, 0, 'Trainer-role users only', 'users'), role: 'Trainer' },
-    F('Mode', 'select', 1, ['Online', 'Offline', 'Hybrid']), F('Status', 'select', 1, ['Upcoming', 'Ongoing', 'Completed', 'Cancelled'])] },
+    { ...F('Mode', 'select', 1, 0, 'master'), mopts: 'trainings' }, F('Status', 'select', 1, ['Upcoming', 'Ongoing', 'Completed', 'Cancelled'])] },
   'finance.invoices': { title: 'Add Invoice', fields: [
     F('Invoice Number', 'auto', 1, 0, 'Auto-generated'), F('Student', 'lookup', 1, 0, 'Student master'), F('Branch', 'auto', 1, 0, 'Auto-filled from Admission'), F('Vertical', 'select', 1, 0, 'invoice created & numbered per vertical', 'verticals'), F('Course / Batch', 'auto', 1, 0, 'Auto-filled from Admission'),
     F('Invoice Date', 'date', 1), F('Total Amount', 'number', 1), F('Tax / GST Amount', 'number', 1, 0, 'auto-computed'), F('Discount / Scholarship Applied', 'number', 0, 0, 'auto from Quotation'),

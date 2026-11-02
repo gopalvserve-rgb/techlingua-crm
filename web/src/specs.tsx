@@ -165,6 +165,8 @@ const APP_FULL: ModuleItem[] = [
     // 1:1 by the dyn components (KPI strip, tables, hbars); only the fake numbers are gone.
     { id: 'closure', label: 'Sale Closure', spec: { dyn: 'saleClosure',
       sub: 'Lead marked Won on enrolment. Optional approval per step. Captures course, fee, discount, payment plan & start date.' } },
+    { id: 'approvals', label: 'Enrolment Approvals', spec: { dyn: 'enrolApprovals',
+      sub: 'Enrolments waiting for a decision. Approve or reject them here; decided ones stay listed.' } },
     { id: 'quotes', label: 'Quotations', spec: { dyn: 'quotations',
       sub: 'Fee proposals with line items, discounts, validity & revisions. PDF + email/WhatsApp. Convert to enrolment, then raise the GST invoice from Finance › Fee Invoices.' } },
     { id: 'targets', label: 'Target & Incentive', spec: { dyn: 'targetIncentive',

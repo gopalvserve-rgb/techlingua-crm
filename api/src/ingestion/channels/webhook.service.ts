@@ -144,7 +144,9 @@ export class WebhookService {
     this.assertRate(`meta:${publicKey}`, HARD_WEBHOOK_LIMIT);
 
     const secrets = this.channels.secretsOf(ch);
-    const appSecret = secrets.app_secret ?? '';
+    // A channel connected through Facebook login has no secret of its own: Meta signs with the
+    // shared app's secret, which lives in the meta_cloud config.
+    const appSecret = secrets.app_secret || (await this.fbAppCreds()).appSecret;
 
     // ---- signature: an unsigned or wrongly-signed payload is NEVER processed ----
     const sig = meta.signature ?? '';

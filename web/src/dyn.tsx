@@ -63,7 +63,7 @@ import {
   BulkWhatsApp, Journeys, Settings, SmsTemplates, Templates,
 } from './sprint4';
 import {
-  CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure, CollectModal, ReceiptViewModal,
+  CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure, EnrolmentApprovals, CollectModal, ReceiptViewModal,
 } from './sprint5';
 import { TargetIncentive } from './targetincentive';
 import { fmtINR, enrolDiscount, previewSchedule, EnrolDiscountType } from './money';
@@ -2919,7 +2919,6 @@ export function CampaignView({ campaign, leadCount, onClose, onChanged }: { camp
           ['Path', `${campaign.branch_name ?? '—'} › ${campaign.vertical_name ?? '—'} › ${campaign.pipeline_name ?? '—'}`],
           ['Status', renderCell(statusBadge(campaign.is_active !== false))],
           ['Campaign Type', campaign.campaign_type || '—'],
-          ['Marketing Channel', campaign.marketing_channel || '—'],
           ['Runs', campaign.start_date
             ? `${fmtDate(campaign.start_date)}${campaign.end_date ? ` → ${fmtDate(campaign.end_date)}` : ' → open-ended'}`
             : '—'],
@@ -8445,6 +8444,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   // Sprint 5 — conversion & money-lite
   quotations: Quotations,
   saleClosure: SaleClosure,
+  enrolApprovals: EnrolmentApprovals,
   monthlyTargets: MonthlyTargets,
   targetIncentive: TargetIncentive,
   counsellorPerformance: CounsellorPerformance,

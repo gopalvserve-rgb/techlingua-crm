@@ -3,6 +3,7 @@ import { CSSProperties, Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent
 import { Block, KpiItem } from './specs';
 import { Ic, checkS } from './icons';
 import { useColumnVisibility, ColumnsButton } from './colprefs';
+import { useAutoFilter } from './autofilter';
 
 /* A table/list cell: plain string, badge {b:[text,klass]}, mono {mono}, or raw node */
 export type Cell = string | number | { b: [string, string] } | { mono: string; dim?: boolean } | { node: ReactNode; sort?: string | number };
@@ -155,8 +156,9 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
   // COLUMN SORT (S3): click a header to sort ascending, again for descending, a third time to
   // restore the server order. Row callbacks keep receiving the ORIGINAL row index.
   const [sortBy, setSortBy] = useState<{ col: number; dir: 1 | -1 } | null>(null);
+  const af = useAutoFilter(cols, rows);
   const order = useMemo(() => {
-    const idx = rows.map((_, i) => i);
+    const idx = rows.map((_, i) => i).filter((i) => !af.active || af.passes(rows[i]));
     if (!sortBy) return idx;
     const key = (ri: number) => cellSortKey(rows[ri]?.[sortBy.col] as Cell);
     return idx.sort((a, b) => {
@@ -167,7 +169,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
       if (typeof ka === 'number' && typeof kb === 'number') return (ka - kb) * sortBy.dir;
       return String(ka).localeCompare(String(kb), 'en', { numeric: true }) * sortBy.dir;
     });
-  }, [rows, sortBy]);
+  }, [rows, sortBy, af.active, af.passes]);
   const clickSort = (col: number) => setSortBy((s) => (!s || s.col !== col ? { col, dir: 1 } : s.dir === 1 ? { col, dir: -1 } : null));
   return (
     <div className={`card${fill ? ' tbl-fill' : ''}`}>
@@ -177,6 +179,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
           {(colsBtn || more) ? <span className="more" style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>{colsBtn}{more}</span> : null}
         </div>
       )}
+      {af.bar}
       <div className={scrollCls}>
         <table className="tbl">
           <thead><tr>
@@ -204,6 +207,8 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
           <tbody>
             {rows.length === 0 ? (
               <tr><td className="empty" colSpan={span}>{empty || 'No records yet'}</td></tr>
+            ) : order.length === 0 ? (
+              <tr><td className="empty" colSpan={span}>No records match these filters</td></tr>
             ) : order.map((ri, pos) => {
               const r = rows[ri];
               return (

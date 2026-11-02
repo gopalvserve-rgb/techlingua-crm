@@ -334,14 +334,28 @@ const CAL_NOT_CONFIGURED = {
 };
 
 describe('Calendar — the in-app calendar works; the SYNC degrades cleanly', () => {
-  it('shows a "not configured" notice that names what is missing — and still renders the grid', async () => {
+  it('an unconnected sync shows no banner or Sync button, and the grid still renders', async () => {
     ROUTES = { '/calendar': CAL_NOT_CONFIGURED };
     draw(<Calendar />);
-    expect(await screen.findByText(/Google \/ Outlook sync — not configured/)).toBeTruthy();
-    expect(screen.getByText(/Calendar provider \(Google or Outlook\), OAuth client id \+ secret/)).toBeTruthy();
-    // the calendar itself is fully there
+    await screen.findByText(/In selected range/);
+    expect(screen.queryByText(/not configured/i)).toBeNull();
+    expect(screen.queryByText('Sync now')).toBeNull();
     expect(document.querySelectorAll('.cal-cell').length).toBe(42);
     expect(document.querySelectorAll('.cal-dow').length).toBe(7);
+  });
+
+  it('clicking a date opens Add event with that date; clicking an event opens Edit', async () => {
+    ROUTES = { '/calendar': CAL_NOT_CONFIGURED };
+    draw(<Calendar />);
+    await screen.findByText(/In selected range/);
+    const ev = [...document.querySelectorAll('.cal-ev')].find((e) => !e.classList.contains('fu')) as HTMLElement;
+    fireEvent.click(ev);
+    expect(await screen.findByText(/Edit event —/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Close'));
+    const cell = document.querySelectorAll('.cal-cell')[10] as HTMLElement;
+    fireEvent.click(cell);
+    const start = document.getElementById('ev-start') as HTMLInputElement;
+    expect(start.value).toBe(`${cell.dataset.day}T10:00`);
   });
 
   it('renders follow-ups AND events on the grid, with overdue highlighted', async () => {
@@ -352,16 +366,6 @@ describe('Calendar — the in-app calendar works; the SYNC degrades cleanly', ()
     expect(evs.length).toBeGreaterThanOrEqual(2);
     expect(document.querySelectorAll('.cal-ev.overdue').length).toBe(1);   // the pending, past follow-up
     expect(document.querySelectorAll('.cal-ev.demo').length).toBe(1);
-  });
-
-  it('"Sync now" surfaces the 503 reason verbatim instead of a crash', async () => {
-    ROUTES = { '/calendar': CAL_NOT_CONFIGURED };
-    post.mockRejectedValueOnce(new Error('Not configured — still needed: OAuth client id'));
-    draw(<Calendar />);
-    fireEvent.click(await screen.findByText('Sync now'));
-    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/Not configured — still needed: OAuth client id/), true,
-    ));
   });
 
   it('ADD EVENT sends the title, type and times', async () => {

@@ -199,7 +199,7 @@ export class ApprovalService {
     const status = f.status ?? 'pending';
     params.push(status);
     return this.db.query<any>(
-      `SELECT a.id, a.entity_type, a.entity_id, a.step_key, a.step_label, a.status,
+      `SELECT a.id, a.entity_type, a.entity_id, a.step_key, a.step_label, a.status, a.requested_by,
               a.requested_at, a.decided_at, a.note,
               e.enrolment_no, e.net_fee_minor, e.fee_minor, e.discount_minor, e.status AS enrolment_status,
               l.full_name AS lead_name, c.name AS course_name,
@@ -238,7 +238,14 @@ export class ApprovalService {
       // The permission grid already keeps counsellors out, but a Branch Manager can
       // create an enrolment AND holds `enrolment.approve` — so the self-approval bar
       // has to be enforced here, on the request, not merely in the role grid.
-      throw new BadRequestException('You cannot approve your own enrolment. Ask another approver.');
+      // The Super Admin is exempt: nobody sits above them, so their request would stay stuck.
+      const top = await this.db.query(
+        `SELECT 1 FROM user_assignment ua JOIN role r ON r.id = ua.role_id
+          WHERE ua.user_id = $1::bigint AND r.name = 'Super Admin' LIMIT 1`, [me.id],
+      );
+      if (!top?.length) {
+        throw new BadRequestException('You cannot approve your own enrolment. Ask another approver.');
+      }
     }
     await this.db.query(
       `UPDATE approval_request

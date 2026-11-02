@@ -70,7 +70,7 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     try {
       const p = await this.policy();
-      const reminders = p.enabled ? await this.sweepReminders(p) : 0;
+      const reminders = p.enabled ? (await this.sweepReminders(p)) + (await this.sweepEventReminders(p)) : 0;
       const escalations = p.enabled ? await this.sweepEscalations(p) : 0;
       const breaches = await this.sweepSlaBreaches();
       const rescored = await this.scoring.ageingSweep(ReminderWorker.BATCH);
@@ -131,6 +131,50 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
       if (ok) fired++;
     }
     if (fired) this.log.log(`reminders sent: ${fired}`);
+    return fired;
+  }
+
+  /**
+   * Calendar events remind their owner on the same lead time as follow-ups, with the same
+   * exactly-once claim. The notification opens the lead when the event has one.
+   */
+  async sweepEventReminders(p = ReminderWorker.DEFAULT_POLICY): Promise<number> {
+    const due = await this.db.query(
+      `SELECT e.id, e.title, e.type, e.starts_at, e.location, e.lead_id, e.owner_id
+         FROM calendar_event e
+        WHERE e.reminded_at IS NULL AND e.deleted_at IS NULL AND e.owner_id IS NOT NULL
+          AND e.starts_at > now()
+          AND e.starts_at - ($1 || ' minutes')::interval <= now()
+        ORDER BY e.starts_at
+        LIMIT $2`,
+      [String(p.reminder_lead_minutes ?? 30), ReminderWorker.BATCH],
+    );
+
+    let fired = 0;
+    for (const e of due) {
+      const ok = await this.db.tx(async (c) => {
+        const claim = await c.query(
+          `UPDATE calendar_event SET reminded_at = now() WHERE id = $1 AND reminded_at IS NULL RETURNING id`,
+          [Number(e.id)],
+        );
+        if (!claim.rowCount) return false;
+        const when = new Date(e.starts_at).toLocaleString('en-IN', {
+          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata',
+        });
+        await this.notifier.notify({
+          userId: Number(e.owner_id),
+          type: 'reminder',
+          severity: 'info',
+          title: `Event soon: ${e.title}`,
+          body: `Starts ${when}.${e.location ? ` — ${String(e.location).slice(0, 120)}` : ''}`,
+          ...(e.lead_id ? { link: { type: 'lead', id: Number(e.lead_id) } } : {}),
+          meta: { calendar_event_id: Number(e.id) },
+        }, c);
+        return true;
+      });
+      if (ok) fired++;
+    }
+    if (fired) this.log.log(`event reminders sent: ${fired}`);
     return fired;
   }
 
