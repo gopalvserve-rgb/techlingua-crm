@@ -52,6 +52,10 @@ const MAX_OPTIONS = 15;
 /** Columns worth a dropdown even when only one value exists yet. */
 const ALWAYS = /status|type|branch|vertical|channel|category|stage|trigger/i;
 const NUMERIC = /^[-₹\d,.\s%]+$/;
+/** Names, amounts and counts: every row differs, so a dropdown only repeats the table. */
+const NEVER = /name|title|code|#|lead|employee|student|variables|revenue|collection|amount|fee|cost|points|gross|basic|hra|allowance|tds|tax|phone|email|key|url/i;
+/** Date columns, recognised by name while the list has no dates in it yet. */
+const DATE_COL = /date|validity|created|when|^from$|^to$/i;
 
 export function useAutoFilter(cols: string[], rows: Cell[][]) {
   const on = AUTO_FILTER_SCREENS.has(window.location.pathname.replace(/^\/m\//, ''));
@@ -63,7 +67,7 @@ export function useAutoFilter(cols: string[], rows: Cell[][]) {
   const dropdowns = useMemo(() => {
     if (!on) return [];
     return cols.flatMap((name, ci) => {
-      if (!name.trim() || /^actions?$/i.test(name.trim())) return [];
+      if (!name.trim() || /^actions?$/i.test(name.trim()) || NEVER.test(name)) return [];
       const vals = [...new Set(rows.map((r) => cellText(r[ci]).trim()).filter((v) => !BLANK.has(v)))];
       if (!vals.length || vals.length > MAX_OPTIONS || vals.every((v) => NUMERIC.test(v) || !!cellDay(v))) return [];
       if (vals.length < 2 && !ALWAYS.test(name)) return [];
@@ -75,9 +79,9 @@ export function useAutoFilter(cols: string[], rows: Cell[][]) {
 
   const dateCol = useMemo(() => {
     if (!on) return -1;
-    return cols.findIndex((_, ci) => {
+    return cols.findIndex((name, ci) => {
       const vals = rows.map((r) => cellText(r[ci]).trim()).filter((v) => !BLANK.has(v));
-      return vals.length > 0 && vals.every((v) => !!cellDay(v));
+      return vals.length ? vals.every((v) => !!cellDay(v)) : DATE_COL.test(name);
     });
   }, [on, cols, rows]);
 
@@ -94,7 +98,7 @@ export function useAutoFilter(cols: string[], rows: Cell[][]) {
   };
   const clear = () => { setQ(''); setPicks({}); setFrom(''); setTo(''); };
 
-  const bar = on && rows.length > 0 ? (
+  const bar = on ? (
     <div className="filters auto-filters" data-testid="auto-filters">
       <label className="fchip"><Ic k="search" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search this list" />
