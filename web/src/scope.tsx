@@ -182,13 +182,15 @@ function Level({ lv, value, list, onChange }: {
 }) {
   const opts = useMemo(() => list.map((o) => ({ id: Number(o.id), name: o.name })), [list]);
   return (
-    <label className={`scope-chip scope-pick${value.length ? ' on' : ''}`} title={`Filter by ${lv}`}>
+    // client 31 Oct (10): a <div>, not a <label>. A label forwards every click inside it to its
+    // first button, which was the new chip's Remove "x", so each pick was undone at once.
+    <div className={`scope-chip scope-pick${value.length ? ' on' : ''}`} title={`Filter by ${lv}`}>
       <span className="lv">{lv}</span>
       <span className="vl scope-multi">
         <UserPicker multiple value={value} onChange={onChange} options={opts} hideBranch
           placeholder={value.length ? `${value.length} selected` : 'All'} />
       </span>
-    </label>
+    </div>
   );
 }
 

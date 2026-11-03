@@ -23,6 +23,7 @@ import { useScope } from './scope';
 import { FilterMulti } from './dyn';
 import { DOC_ACCEPT, DOC_MAX_FILES, SINGLE_DOCS, docError, fileToDoc, DocumentList } from './documents';
 import { ListActions, downloadObjectsCsv, useTableSelect, BulkBar, useBulkDelete } from './listtools';
+import { EnrolmentModal } from './sprint5';
 import { EnrolmentActions, FeeCards, PAYMENT_STATUSES, enrolmentCells, enrolmentColumns, enrolmentCsvRow } from './enrolmentfees';
 
 const STATUS_CELL = (s: string): Cell =>
@@ -328,20 +329,29 @@ const ADM_TABS: Array<{ id: string; label: string; icon: string }> = [
 export function AdmissionsScreen() {
   const { can } = useAuth();
   const [tab, setTab] = useState('online');
+  const [newEnrol, setNewEnrol] = useState(false);
+  const [gen, setGen] = useState(0);
   const tabs = ADM_TABS.filter((t) => t.id !== 'links' || can('admission.manage'));
   return (
     <>
-      <div className="seg-tabs" role="tablist" style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div className="seg-tabs" role="tablist" style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         {tabs.map((t) => (
           <button key={t.id} role="tab" aria-selected={tab === t.id} className={`btn${tab === t.id ? ' primary' : ''}`} onClick={() => setTab(t.id)}>
             <Ic k={t.icon} />{t.label}
           </button>
         ))}
+        {/* client 31 Oct (13): close a sale from here too, the same form as Sale Closure */}
+        {can('enrolment.create') && (
+          <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => setNewEnrol(true)} data-testid="adm-new-enrolment">
+            <Ic k="plus" />New enrolment
+          </button>
+        )}
       </div>
       {tab === 'online' && <OnlineApplicationsTab />}
-      {tab === 'direct' && <EnrolmentsTab origin="direct" />}
+      {tab === 'direct' && <EnrolmentsTab key={gen} origin="direct" />}
       {tab === 'links' && can('admission.manage') && <ApplicationLinksTab />}
-      {tab === 'master' && <EnrolmentsTab showOrigin />}
+      {tab === 'master' && <EnrolmentsTab key={gen} showOrigin />}
+      {newEnrol && <EnrolmentModal onClose={() => setNewEnrol(false)} onSaved={() => { setGen((g) => g + 1); if (tab !== 'master') setTab('direct'); }} />}
     </>
   );
 }

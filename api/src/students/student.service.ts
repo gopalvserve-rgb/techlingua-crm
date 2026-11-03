@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
+import { ApprovalService, ApprovalStep, requiredSteps } from '../enrolments/approval.service';
 import { assertDateRange, requireDateString, toDateString } from '../common/date.util';
 import { normalizePhone } from '../common/phone.util';
 import { NumberingService } from '../numbering/numbering.service';
@@ -85,7 +86,30 @@ export class StudentService {
     private readonly discountMaster?: DiscountMasterService,
     /** dev/143 item 5 — Template Setup overrides for the Student ID card PDF. Optional (unit tests). */
     private readonly docTemplates?: DocTemplateService,
+    /** client 31 Oct (15) — the enrolment approval policy applies here too. Optional (unit tests). */
+    private readonly approvals?: ApprovalService,
   ) {}
+
+  /* ------------------------------ enrolment approvals on convert / add (client 31 Oct, 15) */
+
+  /** The approval steps an enrolment with this fee and REQUESTED discount must clear: the same
+   *  policy (Administration > Settings > Enrolment approvals) Sale Closure applies. */
+  private async approvalStepsFor(feeMinor: number, discountRequestedMinor: number): Promise<ApprovalStep[]> {
+    if (!this.approvals) return [];
+    try {
+      return requiredSteps(await this.approvals.policy(), { fee_minor: feeMinor, discount_minor: discountRequestedMinor });
+    } catch { return []; }
+  }
+
+  /** Hold a just-inserted enrolment for approval: Pending approval + one request per step. */
+  private async holdForApproval(c: any, a: { orgId: number; enrolmentId: number; branchId: number; verticalId: number; requestedBy: number }, steps: ApprovalStep[]) {
+    if (!steps.length || !this.approvals) return;
+    await c.query(`UPDATE enrolment SET status = 'pending_approval', updated_at = now() WHERE id = $1::bigint`, [a.enrolmentId]);
+    await this.approvals.open(c, {
+      orgId: a.orgId, entityType: 'enrolment', entityId: a.enrolmentId,
+      branchId: a.branchId, verticalId: a.verticalId, requestedBy: a.requestedBy,
+    }, steps);
+  }
 
   /* ------------------------------------ over-cap discount decision (dev/103, DEF-4) */
 
@@ -1780,7 +1804,7 @@ export class StudentService {
       batchId: number | null; feeMinor: number; disc: number; net: number; examMinor: number; plan: string; startDate: string | null; courseType: string | null;
       discount_type: string; discount_value: number; discountScope: DiscountScope; levels: ResolvedLevel[];
       discRequested: number; appStatus: DiscountApprovalStatus; capMinor: number | null;
-      requestedBy: number | null; approvedBy: number | null };
+      requestedBy: number | null; approvedBy: number | null; steps: ApprovalStep[] };
     const resolved: R[] = [];
     for (const row of rows) {
       const courseId = row?.course_id ? Number(row.course_id) : null;
@@ -1859,7 +1883,8 @@ export class StudentService {
         ? String(row.course_type).trim() : ((course.meta as any)?.course_type ?? null);
       resolved.push({ courseId, courseName: course.name, courseCode: String(course.code ?? '').trim() || 'CRS', branchId, verticalId, batchId, feeMinor, disc, net, examMinor, plan, startDate, courseType,
         discount_type, discount_value, discountScope, levels,
-        discRequested, appStatus: dd.status, capMinor: dd.capMinor, requestedBy: dd.requestedBy, approvedBy: dd.approvedBy });
+        discRequested, appStatus: dd.status, capMinor: dd.capMinor, requestedBy: dd.requestedBy, approvedBy: dd.approvedBy,
+        steps: await this.approvalStepsFor(feeMinor, discRequested) });
     }
     const out: any[] = [];
     await this.db.tx(async (c) => {
@@ -1897,7 +1922,9 @@ export class StudentService {
             `Enrolled in ${r.courseName}`, r.startDate, r.net, me.id]);
         // VERTICAL-WISE STUDENT ID — mint (or reuse) the per-vertical display ID for THIS enrolment's vertical.
         const svid = await this.ensureVerticalId(c, studentId, r.branchId, r.verticalId, me.id);
-        out.push({ id: eid, enrolment_no: enrolmentNo, course_id: r.courseId, course_name: r.courseName, course_type: r.courseType,
+        await this.holdForApproval(c, { orgId, enrolmentId: eid, branchId: r.branchId, verticalId: r.verticalId, requestedBy: me.id }, r.steps);
+        out.push({ id: eid, enrolment_no: enrolmentNo, status: r.steps.length ? 'pending_approval' : 'active',
+          pending_steps: r.steps.map((x) => x.label), course_id: r.courseId, course_name: r.courseName, course_type: r.courseType,
           vertical_id: r.verticalId, branch_id: r.branchId, net_fee_minor: r.net, admission_stage: 'course_selected',
           student_vertical_no: svid.student_vertical_no, exam_fee_minor: r.examMinor ?? 0,
           total_fee_minor: r.feeMinor, gross_fee_minor: r.feeMinor, discount_type: r.discount_type, discount_value: r.discount_value,
@@ -1906,7 +1933,16 @@ export class StudentService {
           discount_requested_minor: r.discRequested, discount_cap_minor: r.capMinor,
           levels: r.levels.map((l) => ({ course_level_id: l.course_level_id, code: l.code, label: l.label, fee_minor: l.fee_minor, discount_minor: l.discount_minor })) });
       }
+      // every course held for approval: the student waits too, and is not Active until approved
+      if (out.length && out.every((o) => o.status === 'pending_approval')) {
+        await c.query(`UPDATE student SET status = 'pending_approval', updated_at = now() WHERE id = $1::bigint`, [studentId]);
+      }
     });
+    for (const [i, o] of out.entries()) {
+      if (o.status === 'pending_approval') {
+        await this.approvals?.notifyApprovers(o.id, o.enrolment_no, resolved[i].branchId, leadId, resolved[i].steps);
+      }
+    }
     return out;
   }
 
@@ -2434,6 +2470,7 @@ export class StudentService {
     }
     disc = dd.applied; net = fee - disc;
     const orgId = await this.orgId();
+    const steps = await this.approvalStepsFor(fee, discRequested);
 
     const out = await this.db.tx(async (c) => {
       // Enrolment No — <COURSE_CODE>-<YEAR>-<NNN> (client ID re-model), sequence per course+year.
@@ -2471,9 +2508,12 @@ export class StudentService {
           `Enrolled in ${course.name}`, startDate, net, me.id]);
       // VERTICAL-WISE STUDENT ID — mint (or reuse) the per-vertical display ID for this enrolment's vertical.
       const svid = await this.ensureVerticalId(c, id, enrolBranchId, enrolVerticalId, me.id);
+      await this.holdForApproval(c, { orgId, enrolmentId: eid, branchId: Number(enrolBranchId), verticalId: enrolVerticalId!, requestedBy: me.id }, steps);
       return { id: eid, enrolment_no: enrolmentNo, student_vertical_no: svid.student_vertical_no };
     });
-    return { ...out, course_id: courseId, course_name: course.name, status: 'active', course_status: 'active',
+    if (steps.length) await this.approvals?.notifyApprovers(out.id, out.enrolment_no, Number(enrolBranchId), Number(student.lead_id ?? 0), steps);
+    return { ...out, course_id: courseId, course_name: course.name, status: steps.length ? 'pending_approval' : 'active',
+      pending_steps: steps.map((x) => x.label), course_status: 'active',
       vertical_id: enrolVerticalId, branch_id: enrolBranchId, exam_fee_minor: examMinor,
       total_fee_minor: fee, gross_fee_minor: fee, discount_type: discountType, discount_value: discountValue,
       discount_amount_minor: disc, net_fee_minor: net, discount_scope: discountScope,

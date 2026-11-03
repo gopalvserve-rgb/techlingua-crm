@@ -71,7 +71,14 @@ export class DuesService {
              (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
                 FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
              COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
-             e.net_fee_minor AS net_fee_minor, COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor, e.payment_plan AS fee_plan, COALESCE(e.start_date, e.created_at::date) AS enrolment_date,
+             e.net_fee_minor AS net_fee_minor, COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor, e.payment_plan AS fee_plan,
+             -- client 31 Oct (11): the CURRENT plan (after any re-setup), not the intent typed at the desk
+             (SELECT CASE WHEN cp.plan_type = 'full' THEN 'Full payment'
+                         ELSE (SELECT count(*) FROM installment ci WHERE ci.plan_id = cp.id)::text || ' instalments' END
+                FROM payment_plan cp
+               WHERE cp.enrolment_id = e.id AND cp.deleted_at IS NULL AND cp.status IN ('active', 'completed')
+               ORDER BY cp.id DESC LIMIT 1) AS plan_label,
+             COALESCE(e.start_date, e.created_at::date) AS enrolment_date,
              i.due_date, i.amount_minor, i.paid_minor,
              (i.amount_minor - i.paid_minor) AS outstanding_minor,
              -- enrolment-level Balance (Total payable − everything receipted on the enrolment), so the
@@ -113,7 +120,14 @@ export class DuesService {
              (SELECT string_agg(el.code, ', ' ORDER BY el.ordering, el.id)
                 FROM enrolment_level el WHERE el.enrolment_id = e.id) AS level_summary,
              COALESCE(NULLIF(e.gross_fee_minor, 0), e.fee_minor) AS total_fee_minor,
-             e.net_fee_minor AS net_fee_minor, COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor, e.payment_plan AS fee_plan, COALESCE(e.start_date, e.created_at::date) AS enrolment_date,
+             e.net_fee_minor AS net_fee_minor, COALESCE(e.exam_fee_minor, 0) AS exam_fee_minor, e.payment_plan AS fee_plan,
+             -- client 31 Oct (11): the CURRENT plan (after any re-setup), not the intent typed at the desk
+             (SELECT CASE WHEN cp.plan_type = 'full' THEN 'Full payment'
+                         ELSE (SELECT count(*) FROM installment ci WHERE ci.plan_id = cp.id)::text || ' instalments' END
+                FROM payment_plan cp
+               WHERE cp.enrolment_id = e.id AND cp.deleted_at IS NULL AND cp.status IN ('active', 'completed')
+               ORDER BY cp.id DESC LIMIT 1) AS plan_label,
+             COALESCE(e.start_date, e.created_at::date) AS enrolment_date,
              COALESCE(e.start_date, e.created_at::date) AS due_date,
              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)) AS amount_minor,
              COALESCE(pr.paid_minor, 0) AS paid_minor,

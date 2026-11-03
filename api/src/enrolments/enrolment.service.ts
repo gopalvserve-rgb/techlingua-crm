@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -10,6 +10,7 @@ import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { DiscountMasterService } from '../finance/discount-master.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
 import { PlanService } from '../paymentplans/plan.service';
+import { StudentService } from '../students/student.service';
 import { stageOrdinal } from './admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from './discount.util';
 import { DiscountScope, MasterLevel, ResolvedLevel, resolveLevels, sumLevelDiscounts, sumLevelExamFees, sumLevelFees } from './level.util';
@@ -70,7 +71,8 @@ export const PLAN_LABELS: Record<string, string> = {
 };
 
 @Injectable()
-export class EnrolmentService {
+export class EnrolmentService implements OnApplicationBootstrap {
+  private readonly log = new Logger('EnrolmentService');
   constructor(
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
@@ -80,7 +82,59 @@ export class EnrolmentService {
     private readonly discountMaster?: DiscountMasterService,
     private readonly rbac?: RbacDataService,
     private readonly plans?: PlanService,
+    /** client 31 Oct (14): an approved sale becomes a student in Student Management. */
+    private readonly students?: StudentService,
   ) {}
+
+  /**
+   * STUDENT FROM A CLOSED SALE (client 31 Oct, point 14). Convert to Student made a student; a sale
+   * closed on Sale Closure did not, so it never reached Student Management. An enrolment that is
+   * ACTIVE (closed with no approval, or approved) now gets its student: the lead's existing student
+   * is linked, else one is created exactly as Convert to Student does. A student held at
+   * "Pending approval" (point 15) becomes Active here. Best-effort: the sale itself stands.
+   */
+  async ensureStudent(enrolmentId: number, actorId: number): Promise<number | null> {
+    try {
+      const e = await this.db.one<any>(
+        `SELECT id, lead_id, student_profile_id, status FROM enrolment WHERE id = $1::bigint AND deleted_at IS NULL`, [enrolmentId]);
+      if (!e || e.status !== 'active') return null;
+      let sid = e.student_profile_id ? Number(e.student_profile_id) : null;
+      if (!sid && e.lead_id && this.students) {
+        const ALL: ResolvedScope = { permissionKey: 'student.create', allowed: true, all: true, filters: [], allowedFields: null, deniedFields: [] };
+        const st: any = await this.students.convert({ lead_id: Number(e.lead_id) }, { id: actorId }, ALL);
+        sid = st?.id != null ? Number(st.id) : null;
+        if (sid) {
+          await this.db.query(
+            `UPDATE enrolment SET student_profile_id = $2::bigint, updated_at = now() WHERE id = $1::bigint AND student_profile_id IS NULL`,
+            [enrolmentId, sid]);
+        }
+      }
+      if (sid) {
+        await this.db.query(`UPDATE student SET status = 'active', updated_at = now() WHERE id = $1::bigint AND status = 'pending_approval'`, [sid]);
+      }
+      return sid;
+    } catch (err) {
+      this.log.warn(`enrolment ${enrolmentId}: student not created - ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Sales closed before point 14 was fixed: give each active, student-less enrolment its student. */
+  async backfillStudents(): Promise<number> {
+    const rows = await this.db.query<{ id: string; created_by: string | null }>(
+      `SELECT id, created_by FROM enrolment
+        WHERE deleted_at IS NULL AND status = 'active' AND student_profile_id IS NULL AND lead_id IS NOT NULL
+        ORDER BY id`);
+    let n = 0;
+    for (const r of rows) if (await this.ensureStudent(Number(r.id), Number(r.created_by ?? 1))) n++;
+    if (n) this.log.log(`Student Management backfill: ${n} closed sale(s) now have their student`);
+    return n;
+  }
+
+  onApplicationBootstrap() {
+    if (!this.students || process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID) return;
+    setTimeout(() => { void this.backfillStudents().catch(() => undefined); }, 20_000);
+  }
 
   /** Does the user hold a permission that lets them apply an OVER-CAP discount outright
    *  (discount.approve — the client's approvers — or the legacy finance.override)? */
@@ -159,6 +213,11 @@ export class EnrolmentService {
 
     return this.db.query<any>(
       `SELECT e.id, e.enrolment_no, e.status, e.start_date, e.payment_plan,
+              (SELECT CASE WHEN cp.plan_type = 'full' THEN 'Full payment'
+                         ELSE (SELECT count(*) FROM installment ci WHERE ci.plan_id = cp.id)::text || ' instalments' END
+                FROM payment_plan cp
+               WHERE cp.enrolment_id = e.id AND cp.deleted_at IS NULL AND cp.status IN ('active', 'completed')
+               ORDER BY cp.id DESC LIMIT 1) AS plan_label,
               e.fee_minor, e.discount_minor, e.net_fee_minor, e.first_payment_minor,
               e.created_at, e.lead_id, e.quotation_id, e.course_id, e.course_type, e.student_profile_id, e.branch_id, e.vertical_id,
               EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL) AS from_admission,
@@ -223,7 +282,7 @@ export class EnrolmentService {
    * FEE CARDS for a chosen period (client 4 Sep: "cards should follow the selected date range,
    * not always month-to-date"). Collected / receipts by received date in the range; outstanding,
    * overdue and due-today are as of now on the enrolments in scope; discount averages over the
-   * enrolments created in the range. Without a range the period is this calendar month.
+   * enrolments created in the range. Without a range the period is all time.
    */
   async feeCards(scope: ResolvedScope, f: { from?: string; to?: string; origin?: string } = {}) {
     const params: unknown[] = [];
@@ -233,7 +292,9 @@ export class EnrolmentService {
     params.push(_dr.to ?? null); const pTo = params.length;
     const ADM = `EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL)`;
     const originW = f.origin === 'online' ? ADM : f.origin === 'direct' ? `NOT ${ADM}` : 'TRUE';
-    const inRange = (col: string) => `${col} >= COALESCE($${pFrom}::date, date_trunc('month', now())::date)
+    // client 31 Oct (13): no range is the "All time" button, so it means all time (it used to be
+    // this month, so "All time" showed this month's enrolments).
+    const inRange = (col: string) => `${col} >= COALESCE($${pFrom}::date, '-infinity'::date)
                                       AND ${col} < COALESCE($${pTo}::date, now()::date) + 1`;
     const r = await this.db.one<any>(
       `WITH en AS (
@@ -504,9 +565,10 @@ export class EnrolmentService {
         planId = p?.id != null ? Number(p.id) : null;
       } catch (e) { planError = (e as Error).message; }
     }
+    const studentId = steps.length ? null : await this.ensureStudent(out.id, me.id);
     return {
       ...out, status, pending_steps: steps.map((s) => s.label),
-      plan_id: planId, plan_error: planError, plan_pending_approval: !!(dto?.plan_setup && steps.length),
+      student_id: studentId, plan_id: planId, plan_error: planError, plan_pending_approval: !!(dto?.plan_setup && steps.length),
       discount_approval_status: dd.status,
       discount_over_cap: dd.status === 'pending',
       discount_cap_minor: dd.capMinor,
@@ -531,17 +593,25 @@ export class EnrolmentService {
       `SELECT e.id, e.enrolment_no, e.status, e.lead_id, e.plan_setup,
               l.id AS l_id, l.pipeline_id AS l_pipeline_id, l.stage_id AS l_stage_id, l.full_name
          FROM enrolment e
-         JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN lead l ON l.id = e.lead_id
         WHERE e.id = $1::bigint AND e.deleted_at IS NULL`,
       [enrolmentId],
     );
     if (!e) throw new NotFoundException('Enrolment not found');
+    // an enrolment added from Student Management may have no lead (point 15 holds those too)
+    const hasLead = e.l_id != null;
     const lead = { id: Number(e.l_id), pipeline_id: e.l_pipeline_id, stage_id: e.l_stage_id };
 
     if (!approved) {
       await this.db.tx(async (c) => {
         await c.query(`UPDATE enrolment SET status = 'rejected', updated_at = now() WHERE id = $1::bigint`, [enrolmentId]);
-        await this.activity(c, Number(e.lead_id), actorId, `Enrolment ${e.enrolment_no} rejected`);
+        // a student held only for this enrolment does not become a student
+        await c.query(
+          `UPDATE student s SET status = 'inactive', updated_at = now()
+            WHERE s.id = (SELECT student_profile_id FROM enrolment WHERE id = $1::bigint) AND s.status = 'pending_approval'
+              AND NOT EXISTS (SELECT 1 FROM enrolment o WHERE o.student_profile_id = s.id AND o.deleted_at IS NULL AND o.status IN ('active', 'pending_approval'))`,
+          [enrolmentId]);
+        if (hasLead) await this.activity(c, Number(e.lead_id), actorId, `Enrolment ${e.enrolment_no} rejected`);
       });
       return { id: enrolmentId, status: 'rejected' };
     }
@@ -555,8 +625,10 @@ export class EnrolmentService {
           WHERE id = $1::bigint AND status = 'pending_approval'`,
         [enrolmentId],
       );
-      await this.winLead(c, lead, actorId, e.enrolment_no);
-      await this.activity(c, Number(e.lead_id), actorId, `Enrolment ${e.enrolment_no} approved — active`);
+      if (hasLead) {
+        await this.winLead(c, lead, actorId, e.enrolment_no);
+        await this.activity(c, Number(e.lead_id), actorId, `Enrolment ${e.enrolment_no} approved — active`);
+      }
     });
     // the fee plan set up at sale closure is built now that the enrolment is active
     if (e.plan_setup && this.plans) {
@@ -566,6 +638,7 @@ export class EnrolmentService {
         await this.db.query(`UPDATE enrolment SET plan_setup = NULL WHERE id = $1::bigint`, [enrolmentId]);
       } catch { /* the plan can still be set up by hand from Fee Management */ }
     }
+    await this.ensureStudent(enrolmentId, actorId);
     return { id: enrolmentId, status: 'active' };
   }
 

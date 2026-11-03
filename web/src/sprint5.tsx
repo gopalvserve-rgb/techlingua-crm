@@ -13,7 +13,7 @@
  *   · no Razorpay capture — an "online" payment is one the client reconciled by hand;
  *   · no dues/ageing, no installment schedule, no refunds.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -26,7 +26,7 @@ import {
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
 import { DateRange, fmtDateTimeIST, presetRange } from './daterange';
 import { RowMenu, RowMenuItem } from './rowactions';
-import { EnrolLevelPicker, FeeConfigFields, FilterMulti, LevelSelection, feePlanBody, useFeeConfig } from './dyn';
+import { EnrolLevelPicker, FeeConfigFields, FilterMulti, LevelSelection, ScreenCtx, feePlanBody, useFeeConfig } from './dyn';
 import { EnrolmentActions, FeeCards, PAYMENT_STATUSES, ReversePaymentModal, enrolmentCells, enrolmentColumns } from './enrolmentfees';
 import { useScope } from './scope';
 import { askConfirm, askText } from './askdialog';
@@ -884,7 +884,12 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
 
   useEffect(() => {
     if (!lead) { setLeadRow(null); return; }
-    api.get<any>(`/leads/${lead}`).then((r) => setLeadRow(r?.lead ?? r)).catch(() => setLeadRow(null));
+    api.get<any>(`/leads/${lead}`).then((r) => {
+      const row = r?.lead ?? r;
+      setLeadRow(row);
+      // client 31 Oct (1): the lead's owner fills the Counsellor, still changeable
+      if (row?.owner_id && !(prefill?.counsellor_id && lead === prefill?.lead_id)) setCounsellor(String(row.owner_id));
+    }).catch(() => setLeadRow(null));
   }, [lead]);
   const branchName = leadRow ? (ref.branches.find((b: any) => Number(b.id) === Number(leadRow.branch_id))?.name ?? leadRow.branch_name ?? '—') : '';
   const verticalName = leadRow ? (ref.verticals.find((v: any) => Number(v.id) === Number(leadRow.vertical_id))?.name ?? leadRow.vertical_name ?? '—') : '';
@@ -1256,8 +1261,12 @@ export function EnrolmentApprovals() {
 
 export function SaleClosure() {
   const { can } = useAuth();
+  const ref = useRef_();
+  // opened from Counsellor Performance: ?counsellor_id= (+ the leaderboard's range)
+  const nav0 = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [fCounsellor, setFCounsellor] = useState<number | null>(Number(nav0.get('counsellor_id')) || null);
   // SHARED date range on the enrolment date (created_at). Default All time so nothing is hidden.
-  const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  const [range, setRange] = useState<{ from?: string; to?: string }>({ from: nav0.get('from') || undefined, to: nav0.get('to') || undefined });
   const eq = new URLSearchParams();
   if (range.from) eq.set('from', range.from);
   if (range.to) eq.set('to', range.to);
@@ -1274,6 +1283,7 @@ export function SaleClosure() {
   const [edit, setEdit] = useState<any>(null);
   const ql = q.trim().toLowerCase();
   const rows = (data ?? []).filter((e) =>
+    (!fCounsellor || Number(e.counsellor_id) === fCounsellor) &&
     (!fPay.length || fPay.includes(String(e.payment_status))) &&
     (!fStatus.length || fStatus.includes(String(e.status))) &&
     (!ql || [e.enrolment_no, e.lead_name, e.lead_phone, e.student_id, e.course_name].some((v) => String(v ?? '').toLowerCase().includes(ql))));
@@ -1297,6 +1307,11 @@ export function SaleClosure() {
           options={[['active', 'Active'], ['pending_approval', 'Pending approval'], ['completed', 'Completed'], ['cancelled', 'Cancelled'], ['rejected', 'Rejected']].map(([id, name]) => ({ id, name })) as any}
           onChange={setFStatus as any} />
         <DateRange value={range} onChange={setRange} idPrefix="enrol-dr" />
+        {fCounsellor ? (
+          <button className="btn sm" onClick={() => setFCounsellor(null)} data-testid="closure-counsellor-chip" title="Show every counsellor">
+            Counsellor: {ref.users.find((u) => Number(u.id) === fCounsellor)?.name ?? `#${fCounsellor}`} <Ic k="x" />
+          </button>
+        ) : null}
       </div>
 
       {/* client 4 Sep — the cards follow the selected date range (default: this month) */}
@@ -1532,6 +1547,15 @@ export function CounsellorPerformance() {
 
   const tat = (m: number | null) => (m === null ? '—' : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`);
   const pctVal = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${v}%`);
+  // client 31 Oct (6): the counsellor and each number open the records behind them
+  const screen = useContext(ScreenCtx);
+  const toLeads = (uid: number) => screen?.go('leads', 'all', { owner_id: uid, created_from: range.from, created_to: range.to });
+  const toSales = (uid: number) => screen?.go('perf', 'closure', { counsellor_id: uid, from: range.from, to: range.to });
+  const link = (label: string, onClick: () => void, title: string): Cell => ({
+    node: <a className="cell-link" role="link" tabIndex={0} title={title} onClick={onClick}
+      onKeyDown={(ev) => { if (ev.key === 'Enter') onClick(); }}>{label}</a>,
+    sort: Number(label.replace(/[^\d.-]/g, '')) || label,
+  });
 
   return (
     <>
@@ -1559,7 +1583,7 @@ export function CounsellorPerformance() {
         { lab: 'Leads Assigned', val: String(s?.leads ?? 0), ic: 'leads' },
         { lab: 'Leads Contacted', val: String(s?.leads_contacted ?? 0), ic: 'wa' },
         { lab: 'Enrolments', val: String(s?.enrolments ?? 0), ic: 'check' },
-        { lab: CONVERSION_LABEL_COUNSELLOR, val: s ? pctVal(s.conversion_pct) : '—', ic: 'target' },
+        { lab: CONVERSION_LABEL_COUNSELLOR, val: s ? (s.leads > 0 ? pctVal(s.conversion_pct) : '—') : '—', ic: 'target' },
       ]} />
       {/* Row 2 — Financial & Productivity */}
       <Kpis items={[
@@ -1570,20 +1594,21 @@ export function CounsellorPerformance() {
       ]} />
 
       <TableCard
-        title="Leaderboard" icon="perf"
-        cols={['#', 'Counsellor', 'Leads', 'Contacted', 'Activity', 'Conv%', 'Enrol', 'Meetings', 'Revenue booked', 'Collected', 'TAT', 'Adherence']}
+        title="Leaderboard" icon="perf" listKey="counsellor-performance" serial
+        cols={['Counsellor', 'Leads', 'Contacted', 'Activity', 'Conv%', 'Enrol', 'Meetings', 'Revenue booked', 'Collected', 'TAT', 'Adherence']}
         empty="Leaderboard fills as leads & closures accumulate"
-        rows={rows.map((r, i): Cell[] => [
-          String(i + 1),
-          { node: <b>{r.user_name}</b> },
-          String(r.leads),
-          String(r.leads_contacted ?? 0),
+        rows={rows.map((r): Cell[] => [
+          { node: <a className="cell-link" role="link" tabIndex={0} title={`Open ${r.user_name}'s leads`}
+            onClick={() => toLeads(r.user_id)} onKeyDown={(ev) => { if (ev.key === 'Enter') toLeads(r.user_id); }}><b>{r.user_name}</b></a>, sort: String(r.user_name ?? '').toLowerCase() },
+          link(String(r.leads), () => toLeads(r.user_id), `Open ${r.user_name}'s leads`),
+          link(String(r.leads_contacted ?? 0), () => toLeads(r.user_id), `Open ${r.user_name}'s leads`),
           String(r.activities),
-          { b: [`${r.conversion_pct}%`, r.conversion_pct >= 20 ? 'b-green' : r.conversion_pct >= 10 ? 'b-indigo' : 'b-gray'] },
-          String(r.enrolments),
+          // no leads in the range: a conversion % would be a made-up number
+          r.leads > 0 ? { b: [`${r.conversion_pct}%`, r.conversion_pct >= 20 ? 'b-green' : r.conversion_pct >= 10 ? 'b-indigo' : 'b-gray'] } : '—',
+          link(String(r.enrolments), () => toSales(r.user_id), `Open ${r.user_name}'s enrolments`),
           String(r.meetings ?? 0),
-          { mono: fmtINR(r.revenue_minor) },
-          { mono: fmtINR(r.collected_minor) },
+          link(fmtINR(r.revenue_minor), () => toSales(r.user_id), `Open ${r.user_name}'s enrolments`),
+          link(fmtINR(r.collected_minor), () => toSales(r.user_id), `Open ${r.user_name}'s enrolments`),
           tat(r.tat_median_minutes),
           r.adherence_pct === null ? '—' : `${r.adherence_pct}%`,
         ])}
@@ -1647,7 +1672,9 @@ export function CollectModal({ enrolmentId, installmentId, leadId, defaultAmount
         amount,
         mode,
         reference: reference || null,
-        received_at: receivedAt ? new Date(`${receivedAt}T${new Date().toISOString().slice(11, 19)}Z`).toISOString() : undefined,
+        // the bare day: the server reads it as an Indian calendar day (today = now). Gluing on the
+        // UTC clock made a payment taken before 05:30 IST land 'in the future' (client, 1 Nov).
+        received_at: receivedAt || undefined,
         note: note || null,
         // dev/115 — a per-installment Collect targets THIS installment first, overflow oldest-due.
         installment_id: installmentId || undefined,
@@ -1900,7 +1927,7 @@ export function EditPaymentModal({ r, onClose, onSaved }: { r: any; onClose: () 
   const [amount, setAmount] = useState((Number(r.amount_minor) / 100).toFixed(2));
   const [mode, setMode] = useState<string>(r.mode);
   const [reference, setReference] = useState<string>(r.reference || '');
-  const [receivedAt, setReceivedAt] = useState<string>(new Date(r.received_at).toISOString().slice(0, 10));
+  const [receivedAt, setReceivedAt] = useState<string>(new Date(new Date(r.received_at).getTime() + 330 * 60000).toISOString().slice(0, 10));
   const [note, setNote] = useState<string>(r.note || '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');

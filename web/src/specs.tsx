@@ -263,7 +263,7 @@ const APP_FULL: ModuleItem[] = [
     { id: 'onlinepay', label: 'Online Payments', spec: { dyn: 'onlinePayments',
       sub: 'Send a Razorpay payment link for a fee or instalment. When the student pays, the payment and receipt are recorded automatically.' } },
     { id: 'plans', label: 'Payment Plans', spec: { dyn: 'paymentPlans',
-      sub: 'Instalment plans for an enrolment — full, instalments, EMI or custom — with due dates. Payments clear the oldest due first.' } },
+      sub: 'Instalment plans for an enrolment — full payment, instalments or custom — with due dates. Payments clear the oldest due first.' } },
     { id: 'dues', label: 'Fee Management', spec: { dyn: 'feeDues',
       sub: 'Outstanding fees by student with ageing (not due, 0–30, 31–60, 61–90, 90+ days), plus automatic due reminders.' } },
     { id: 'scholar', label: 'Scholarships', spec: { dyn: 'scholarships',

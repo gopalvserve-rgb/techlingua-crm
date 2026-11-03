@@ -13,7 +13,7 @@ import { useState, type CSSProperties } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
-import { Cell, TableCard } from './renderer';
+import { Cell, DonutChart, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { fmtINR, minorToInput } from './money';
 import { rowActions, DetailModal, KV } from './rowactions';
@@ -44,10 +44,13 @@ const METRICS: Array<[string, string]> = [
 /*  PAGE                                                                 */
 /* ==================================================================== */
 export function TargetIncentive() {
-  const [tab, setTab] = useState<'targets' | 'plans' | 'teams'>('targets');
+  const [tab, setTab] = useState<'dashboard' | 'targets' | 'plans' | 'teams'>('dashboard');
   return (
     <>
       <div className="seg" style={{ marginBottom: 12 }}>
+        <button className={`seg-btn${tab === 'dashboard' ? ' on' : ''}`} onClick={() => setTab('dashboard')} data-testid="ti-tab-dashboard">
+          <Ic k="perf" />Dashboard
+        </button>
         <button className={`seg-btn${tab === 'targets' ? ' on' : ''}`} onClick={() => setTab('targets')}>
           <Ic k="target" />Targets
         </button>
@@ -58,7 +61,154 @@ export function TargetIncentive() {
           <Ic k="users" />Teams
         </button>
       </div>
-      {tab === 'targets' ? <Targets /> : tab === 'plans' ? <IncentivePlans /> : <Teams />}
+      {tab === 'dashboard' ? <TargetsDashboard /> : tab === 'targets' ? <Targets /> : tab === 'plans' ? <IncentivePlans /> : <Teams />}
+    </>
+  );
+}
+
+/* ==================================================================== */
+/*  FILTERS (client 31 Oct, point 7) — shared by Dashboard and Targets    */
+/* ==================================================================== */
+type TFilter = { q: string; targetFor: string; period: string; branch: string; vertical: string; from: string; to: string; status: string };
+const NO_FILTER: TFilter = { q: '', targetFor: '', period: '', branch: '', vertical: '', from: '', to: '', status: '' };
+/** The headline achievement of a target: the average % over the metrics it actually sets. */
+export function targetAchievement(t: any): number {
+  const keys: Array<[string, string]> = [['admissions', 'admissions'], ['revenue_minor', 'revenue'], ['collection_minor', 'collection'],
+    ['leads', 'leads'], ['walkins', 'walkins'], ['meetings', 'meetings']];
+  const set = keys.filter(([k]) => Number(t?.targets?.[k] ?? 0) > 0);
+  if (!set.length) return 0;
+  return Math.round(set.reduce((a, [, p]) => a + Math.min(100, Number(t?.pct?.[p] ?? 0)), 0) / set.length);
+}
+const statusOf = (t: any) => (targetAchievement(t) >= 100 ? 'achieved' : targetAchievement(t) >= 50 ? 'on_track' : 'behind');
+
+function useTargetFilter() {
+  const [f, setF] = useState<TFilter>(NO_FILTER);
+  const apply = (rows: any[]) => rows.filter((t) => {
+    const ql = f.q.trim().toLowerCase();
+    if (ql && ![t.name, t.label].some((v) => String(v ?? '').toLowerCase().includes(ql))) return false;
+    if (f.targetFor && t.target_for !== f.targetFor) return false;
+    if (f.period && t.period_type !== f.period) return false;
+    if (f.branch && String(t.branch_id ?? '') !== f.branch) return false;
+    if (f.vertical && String(t.vertical_id ?? '') !== f.vertical) return false;
+    // a target counts when its period overlaps the chosen window
+    if (f.from && String(t.period_end).slice(0, 10) < f.from) return false;
+    if (f.to && String(t.period_start).slice(0, 10) > f.to) return false;
+    if (f.status && statusOf(t) !== f.status) return false;
+    return true;
+  });
+  return { f, setF, apply };
+}
+
+function TargetFilterBar({ f, setF }: { f: TFilter; setF: (fn: (p: TFilter) => TFilter) => void }) {
+  const ref = useRef_();
+  const set = (k: keyof TFilter) => (e: { target: { value: string } }) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const active = Object.values(f).some(Boolean);
+  const sel = { width: 'auto', minWidth: 140 } as CSSProperties;
+  return (
+    <div className="filters" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }} data-testid="ti-filters">
+      <label className="fchip" style={{ minWidth: 180 }}><Ic k="search" />
+        <input value={f.q} onChange={set('q')} placeholder="Search target / employee"
+          style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', font: 'inherit', width: '100%' }} /></label>
+      <select className="ainp" style={sel} aria-label="Target for" value={f.targetFor} onChange={set('targetFor')}>
+        <option value="">All target types</option>{TARGET_FOR.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+      <select className="ainp" style={sel} aria-label="Period" value={f.period} onChange={set('period')}>
+        <option value="">All periods</option>{PERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+      <select className="ainp" style={sel} aria-label="Branch" value={f.branch} onChange={set('branch')}>
+        <option value="">All branches</option>{ref.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+      </select>
+      <select className="ainp" style={sel} aria-label="Vertical" value={f.vertical} onChange={set('vertical')}>
+        <option value="">All verticals</option>{ref.verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+      </select>
+      <select className="ainp" style={sel} aria-label="Status" value={f.status} onChange={set('status')}>
+        <option value="">All statuses</option><option value="achieved">Achieved (100%+)</option>
+        <option value="on_track">On track (50–99%)</option><option value="behind">Behind (under 50%)</option>
+      </select>
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+        <Ic k="calendar" />From <input type="date" className="ainp" style={{ width: 'auto' }} aria-label="Period from" value={f.from} onChange={set('from')} />
+        To <input type="date" className="ainp" style={{ width: 'auto' }} aria-label="Period to" value={f.to} onChange={set('to')} />
+      </span>
+      {active && <button className="btn sm" onClick={() => setF(() => NO_FILTER)}><Ic k="x" />Clear</button>}
+    </div>
+  );
+}
+
+/* ==================================================================== */
+/*  DASHBOARD (client 31 Oct, point 7) — KPIs over the filtered targets  */
+/* ==================================================================== */
+function TargetsDashboard() {
+  const { data } = useFetch<any[]>('/performance/target-defs', []);
+  const { f, setF, apply } = useTargetFilter();
+  const rows = apply(data ?? []);
+  const sum = (k: string, side: 'actuals' | 'targets') => rows.reduce((a, t) => a + Number(t?.[side]?.[k] ?? 0), 0);
+  const achieved = rows.filter((t) => statusOf(t) === 'achieved').length;
+  const pending = rows.length - achieved;
+  const avg = rows.length ? Math.round(rows.reduce((a, t) => a + targetAchievement(t), 0) / rows.length) : 0;
+  const rev = sum('revenue_minor', 'actuals'); const revT = sum('revenue_minor', 'targets');
+  const col = sum('collection_minor', 'actuals'); const colT = sum('collection_minor', 'targets');
+  const pctOf = (a: number, t: number) => (t > 0 ? `${Math.round((a * 100) / t)}% of ${t > 1000 ? money(t) : t}` : 'no target set');
+  const top = [...rows].sort((a, b) => targetAchievement(b) - targetAchievement(a)).slice(0, 5);
+  const forLabel = (t: string) => TARGET_FOR.find(([k]) => k === t)?.[1] ?? t;
+  const maxBar = Math.max(rev, revT, col, colT, 1);
+  return (
+    <>
+      <TargetFilterBar f={f} setF={setF} />
+      <Kpis items={[
+        { lab: 'Total Targets', val: String(rows.length), ic: 'target', delta: `${achieved} achieved · ${pending} pending`, tone: 'flat' },
+        { lab: 'Total Admissions', val: `${sum('admissions', 'actuals')} / ${sum('admissions', 'targets')}`, ic: 'check', delta: pctOf(sum('admissions', 'actuals'), sum('admissions', 'targets')), tone: 'flat' },
+        { lab: 'Total Revenue', val: money(rev), ic: 'rupee', delta: pctOf(rev, revT), tone: 'flat' },
+        { lab: 'Total Collection', val: money(col), ic: 'rupee', delta: pctOf(col, colT), tone: 'flat' },
+      ]} />
+      <div className="row2" style={{ gridTemplateColumns: '1fr 1fr 1fr', marginTop: 12 }}>
+        <div className="card" data-testid="ti-achievement">
+          <div className="card-head"><h3><Ic k="target" />Target Achievement</h3></div>
+          <div className="card-pad" style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+            <div style={{ width: 120 }}>
+              <DonutChart center={`${avg}%`} slices={[{ label: 'Achieved', pct: avg, color: 'var(--green)' }, { label: 'Remaining', pct: 100 - avg, color: 'var(--surface-3)' }]} />
+            </div>
+            <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
+              <div>Targets <b style={{ marginLeft: 8 }}>{rows.length}</b></div>
+              <div style={{ color: 'var(--green)' }}>Achieved <b style={{ marginLeft: 8 }}>{achieved}</b></div>
+              <div style={{ color: 'var(--amber)' }}>Pending <b style={{ marginLeft: 8 }}>{pending}</b></div>
+              <div className="sub">Average achievement across the metrics each target sets.</div>
+            </div>
+          </div>
+        </div>
+        <div className="card" data-testid="ti-revcol">
+          <div className="card-head"><h3><Ic k="rupee" />Revenue vs Collection</h3></div>
+          <div className="card-pad" style={{ display: 'grid', gap: 10 }}>
+            {([['Revenue achieved', rev, 'var(--primary)'], ['Revenue target', revT, 'var(--primary-soft)'],
+              ['Collected', col, 'var(--green)'], ['Collection target', colT, 'var(--surface-3)']] as Array<[string, number, string]>).map(([l, v, c]) => (
+              <div key={l}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span>{l}</span><b className="mono">{money(v)}</b></div>
+                <div style={{ height: 8, borderRadius: 4, background: 'var(--surface-2)', marginTop: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.round((v * 100) / maxBar)}%`, background: c }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="card" data-testid="ti-top">
+          <div className="card-head"><h3><Ic k="perf" />Top Target Performance</h3></div>
+          <div className="card-pad" style={{ display: 'grid', gap: 10 }}>
+            {!top.length ? <div className="empty-note">No targets match these filters.</div> : top.map((t) => {
+              const p = targetAchievement(t);
+              return (
+                <div key={t.id}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                    <span><b>{t.name}</b> <span className="sub">{forLabel(t.target_for)} · {t.label}</span></span><b>{p}%</b>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 4, background: 'var(--surface-2)', marginTop: 4, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${Math.min(100, p)}%`, background: barColor(p) }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop: 12 }}><TargetsTable rows={rows} /></div>
     </>
   );
 }
@@ -67,16 +217,26 @@ export function TargetIncentive() {
 /*  TARGETS                                                             */
 /* ==================================================================== */
 function Targets() {
-  const { can } = useAuth();
+  const { f, setF, apply } = useTargetFilter();
   const { data, reload } = useFetch<any[]>('/performance/target-defs', []);
+  return (
+    <>
+      <TargetFilterBar f={f} setF={setF} />
+      <TargetsTable rows={apply(data ?? [])} reload={reload} withNew />
+    </>
+  );
+}
+
+function TargetsTable({ rows, reload, withNew }: { rows: any[]; reload?: () => void; withNew?: boolean }) {
+  const { can } = useAuth();
   const [modal, setModal] = useState(false);
   const [edit, setEdit] = useState<any>(null);
   const [dash, setDash] = useState<any>(null);
-  const rows = data ?? [];
+  const after = () => reload?.();
 
   const del = async (t: any) => {
     if (!await askConfirm(`Delete the target "${t.name}"?`)) return;
-    try { await api.del(`/performance/target-defs/${t.id}`); toast('Target deleted'); reload(); }
+    try { await api.del(`/performance/target-defs/${t.id}`); toast('Target deleted'); after(); }
     catch (e) { toast((e as Error).message); }
   };
 
@@ -88,19 +248,22 @@ function Targets() {
 
   return (
     <>
-      <div className="page-actions">
-        {can('target.manage') && (
-          <button className="btn primary" onClick={() => setModal(true)}><Ic k="plus" />New target</button>
-        )}
-      </div>
+      {withNew && (
+        <div className="page-actions">
+          {can('target.manage') && (
+            <button className="btn primary" onClick={() => setModal(true)}><Ic k="plus" />New target</button>
+          )}
+        </div>
+      )}
       <TableCard
-        title="Targets" icon="target"
-        cols={['Name', 'Target for', 'Period', 'Admissions', 'Revenue', 'Collection', '']}
+        title="Targets" icon="target" listKey="ti-targets"
+        cols={['Name', 'Target for', 'Period', 'Achievement', 'Admissions', 'Revenue', 'Collection', '']}
         empty="No targets yet — create one to track progress against admissions, revenue, collection, leads, walk-ins & meetings"
         rows={rows.map((t): Cell[] => [
           { node: <b>{t.name}</b> },
           `${forLabel(t.target_for)} · ${t.label}`,
           periodLabel(t),
+          { b: [`${targetAchievement(t)}%`, barClass(targetAchievement(t))] },
           { b: [`${t.actuals.admissions}/${t.targets.admissions} · ${t.pct.admissions}%`, barClass(t.pct.admissions)] },
           { mono: `${money(t.actuals.revenue_minor)} / ${money(t.targets.revenue_minor)}` },
           { mono: `${money(t.actuals.collection_minor)} / ${money(t.targets.collection_minor)}` },
@@ -115,7 +278,7 @@ function Targets() {
           },
         ])}
       />
-      {(modal || edit) && <TargetModal initial={edit} onClose={() => { setModal(false); setEdit(null); }} onSaved={reload} />}
+      {(modal || edit) && <TargetModal initial={edit} onClose={() => { setModal(false); setEdit(null); }} onSaved={after} />}
       {dash && <TargetDashboardModal target={dash} onClose={() => setDash(null)} />}
     </>
   );

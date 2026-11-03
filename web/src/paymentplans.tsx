@@ -130,7 +130,7 @@ function duesActionItems(r: any, opts: { can: (p: string) => boolean; onChanged:
 }
 const asOpts = (vals: Array<[string, string]>) => vals.map(([id, name]) => ({ id, name }));
 
-const PLAN_TYPE_LABEL: Record<string, string> = { full: 'Full', installment: 'Installment', emi: 'Installments', custom: 'Custom' };
+const PLAN_TYPE_LABEL: Record<string, string> = { full: 'Full payment', installment: 'Instalments', emi: 'Instalments', custom: 'Custom' };
 // The enrolment's payment-plan INTENT code (enrolment.payment_plan) → a readable Fee Plan label.
 const FEE_PLAN_LABEL: Record<string, string> = { full: 'Full payment', emi_3: '3 installments', emi_6: '6 installments', custom: 'Custom' };
 const PLAN_STATUS_BADGE: Record<string, [string, string]> = {
@@ -483,7 +483,9 @@ export function FeeDuesScreen() {
   if (fBranches.length) sQs.set('branch_ids', fBranches.join(','));
   if (fVerticals.length) sQs.set('vertical_ids', fVerticals.join(','));
   const summary = useFetch<any>(`/fee-dues/summary?${sQs.toString()}`, [`${sQs.toString()}~${tick}`]);
-  const rows = list.data ?? [];
+  // client 31 Oct (12): one row per enrolment. The API lists each unpaid instalment; a student
+  // with 3 instalments due showed 3 times.
+  const rows = groupDuesByEnrolment(list.data ?? []);
   const s = summary.data;
 
   const owners = selectableUsers(ref.users ?? []);
@@ -541,7 +543,8 @@ export function FeeDuesScreen() {
           discount: ((Number(r.total_fee_minor ?? r.amount_minor) - Number(r.net_fee_minor ?? r.amount_minor)) / 100).toFixed(2),
           paid_to_date: (Number(r.enrolment_paid_minor ?? r.paid_minor ?? 0) / 100).toFixed(2),
           net_fee: (Number(r.net_fee_minor ?? r.amount_minor) / 100).toFixed(2),
-          fee_plan: FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '',
+          fee_plan: r.plan_label ?? FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '',
+          instalments_due: r.due_count ?? 1,
           due_fee: (Number(r.outstanding_minor) / 100).toFixed(2),
           balance: (Number(r.balance_minor ?? r.outstanding_minor) / 100).toFixed(2),
           status: r.course_status_label || r.course_status || '',
@@ -551,7 +554,8 @@ export function FeeDuesScreen() {
         cols={['Student', 'Roll Number', 'Enrolment', 'Branch', 'Vertical', 'Course', 'Level', 'Enrolment Date', 'Next Due Date', 'Total Fee', 'Net Fee', 'Fee Plan', 'Due Fee', 'Balance', 'Payment Status', 'Status', 'Ageing', 'Days overdue', 'Trainer', 'Owner', 'Actions']}
         empty="No outstanding dues — every active enrolment is paid up."
         rows={rows.map((r): Cell[] => [
-          { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div> : <div className="sub">Installment {r.seq_no}</div>}</div> },
+          { node: <div><b className="nm">{r.student_name}</b>{r.source === 'unplanned' ? <div className="sub">No plan</div>
+            : <div className="sub">{r.due_count > 1 ? `${r.due_count} instalments due · next #${r.seq_no}` : `Instalment ${r.seq_no}`}</div>}</div>, sort: String(r.student_name ?? '').toLowerCase() },
           { mono: r.roll_no || '—' },
           { mono: r.enrolment_no },
           r.branch_name || '—',
@@ -568,7 +572,7 @@ export function FeeDuesScreen() {
               return <span><b className="mono">{fmtINR(gross)}</b>{disc > 0 ? <div className="sub" style={{ color: 'var(--good)' }}>− {fmtINR(disc)} disc</div> : null}</span>;
             })() },
           { mono: fmtINR(Number(r.net_fee_minor ?? r.amount_minor)) },
-          FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '—',
+          r.plan_label ?? FEE_PLAN_LABEL[r.fee_plan] ?? r.fee_plan ?? '—',
           { mono: fmtINR(r.outstanding_minor) },
           // Balance = enrolment-level Net − everything receipted; also show paid-to-date (client 30-Aug).
           { node: (() => {
@@ -605,6 +609,22 @@ export function FeeDuesScreen() {
       {auditFor && <AuditHistoryModal enrolment={auditFor} onClose={() => setAuditFor(null)} />}
     </>
   );
+}
+
+/** client 31 Oct (12): fold the per-instalment dues of one enrolment into ONE row — the next
+ *  due instalment, the total still due, and the worst ageing among them. */
+export function groupDuesByEnrolment(rs: any[]): any[] {
+  const by = new Map<string, any>();
+  const sorted = [...rs].sort((a, b) => String(a.due_date ?? '').localeCompare(String(b.due_date ?? '')) || Number(a.seq_no) - Number(b.seq_no));
+  for (const r of sorted) {
+    const k = String(r.enrolment_id);
+    const g = by.get(k);
+    if (!g) { by.set(k, { ...r, due_count: 1, outstanding_minor: Number(r.outstanding_minor ?? 0) }); continue; }
+    g.due_count += 1;
+    g.outstanding_minor += Number(r.outstanding_minor ?? 0);
+    if (Number(r.overdue_days ?? 0) > Number(g.overdue_days ?? 0)) { g.overdue_days = r.overdue_days; g.bucket = r.bucket; }
+  }
+  return [...by.values()];
 }
 
 /** A dues row → the enrolment shape the shared fee ledger / audit modals read. */

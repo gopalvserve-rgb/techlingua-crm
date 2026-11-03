@@ -155,7 +155,10 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
         onDone?.(); onClose(); return;
       }
       setResult(r);
-      toast(`Converted to student ${r?.student_no ?? ''} — ${(r?.enrolments?.length ?? 0)} course enrollment(s) created, lead marked WON`);
+      const held = (r?.enrolments ?? []).filter((e: any) => e.status === 'pending_approval').length;
+      toast(held
+        ? `Converted to student ${r?.student_no ?? ''}. ${held} enrolment(s) wait for approval in Enrolment Approvals.`
+        : `Converted to student ${r?.student_no ?? ''} — ${(r?.enrolments?.length ?? 0)} course enrollment(s) created, lead marked WON`);
       onDone?.();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
@@ -164,7 +167,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
 
   return (
     <div className="add-scrim" style={{ zIndex: 320 }}>
-      <div className="add-modal" style={{ width: result ? 520 : 620 }}>
+      <div className="add-modal" style={{ width: result ? 560 : 820, maxWidth: '96vw' }}>
         <div className="ah">
           <h3><Ic k="students" />Convert to Student</h3>
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
@@ -186,9 +189,15 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                     <Ic k="grid" />
                     <div>
                       <div><b>{e.course_name}</b>{e.course_type ? <> · <span className="ttag">{e.course_type}</span></> : null} · <span className="mono">{e.enrolment_no}</span> · {money(e.net_fee_minor)}</div>
-                      <div className="sub" style={{ fontSize: 12 }}>
-                        Admission stage: <b>Course Selected</b> — awaiting Payment → Invoice → Approval → Confirmation → Admit
-                      </div>
+                      {e.status === 'pending_approval' ? (
+                        <div className="sub" style={{ fontSize: 12, color: 'var(--amber)' }} data-testid="convert-pending">
+                          <b>Waiting for approval</b> ({(e.pending_steps ?? []).join(', ')}). An approver decides in Performance &amp; Conversion › Enrolment Approvals.
+                        </div>
+                      ) : (
+                        <div className="sub" style={{ fontSize: 12 }}>
+                          Admission stage: <b>Course Selected</b> — awaiting Payment → Invoice → Approval → Confirmation → Admit
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -213,57 +222,73 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                 <b> different verticals</b>.
               </div>
               <b style={{ fontSize: 12 }}>Courses to enroll</b>
-              <table className="tbl" style={{ width: '100%', marginTop: 6 }}>
-                <thead><tr>
-                  <th style={{ textAlign: 'left' }}>Vertical</th>
-                  <th style={{ textAlign: 'left' }}>Course</th>
-                  <th style={{ textAlign: 'left' }}>Fee (₹)</th>
-                  <th style={{ textAlign: 'left' }}>Discount</th>
-                  <th style={{ textAlign: 'left' }}>Net</th>
-                  <th />
-                </tr></thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i}>
-                      <td>
-                        <select className="ainp" data-testid={`conv-vertical-${i}`} value={r.vertical_id}
+              {/* client 31 Oct (9): one card per course with full-width, labelled fields. The old
+                  6-column table squeezed the selects to "BCL_\" and "— Cou" in a 620px dialog. */}
+              {rows.map((r, i) => {
+                const m = rowMoney(i);
+                const perLevel = selLevelObjs(i).length > 0 && r.disc_scope === 'level';
+                return (
+                  <div key={i} className="card" style={{ padding: 12, marginTop: 8 }} data-testid={`conv-row-${i}`}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+                      <b style={{ fontSize: 12 }}>Course {i + 1}</b>
+                      {rows.length > 1 && (
+                        <button className="btn sm" style={{ marginLeft: 'auto' }} title="Remove this course" onClick={() => removeRow(i)}><Ic k="x" />Remove</button>
+                      )}
+                    </div>
+                    <div className="form-grid">
+                      <div className="fld">
+                        <label htmlFor={`conv-v-${i}`}>Vertical</label>
+                        <select id={`conv-v-${i}`} className="ainp" data-testid={`conv-vertical-${i}`} value={r.vertical_id}
                           onChange={(e) => setRow(i, { vertical_id: e.target.value, course_id: '', fee: '' })}>
-                          <option value="">— Vertical —</option>
+                          <option value="">— Choose vertical —</option>
                           {verticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
                         </select>
-                      </td>
-                      <td>
-                        <select className="ainp" data-testid={`conv-course-${i}`} value={r.course_id}
+                      </div>
+                      <div className="fld">
+                        <label htmlFor={`conv-c-${i}`}>Course <span className="star">*</span></label>
+                        <MasterQuickAdd type="course" onAdded={(row) => chooseCourse(i, String(row.id))} />
+                        <select id={`conv-c-${i}`} className="ainp" data-testid={`conv-course-${i}`} value={r.course_id}
                           onChange={(e) => chooseCourse(i, e.target.value)}>
-                          <option value="">— Course —</option>
+                          <option value="">{coursesFor(r.vertical_id).length ? '— Choose course —' : '— No course in this vertical yet —'}</option>
                           {coursesFor(r.vertical_id).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
-                        <div style={{ marginTop: 4 }}><MasterQuickAdd type="course" onAdded={(row) => chooseCourse(i, String(row.id))} /></div>
-                        {/* dev/143 (item 6) — Course Type on the enrolment (course_type master #186);
-                            defaults from the picked course, editable, persisted on the enrolment. */}
-                        <select className="ainp" style={{ marginTop: 4 }} data-testid={`conv-coursetype-${i}`}
+                      </div>
+                      {/* dev/143 (item 6) — Course Type on the enrolment (course_type master #186);
+                          defaults from the picked course, editable, persisted on the enrolment. */}
+                      <div className="fld">
+                        <label htmlFor={`conv-ct-${i}`}>Course type</label>
+                        <select id={`conv-ct-${i}`} className="ainp" data-testid={`conv-coursetype-${i}`}
                           value={r.course_type} onChange={(e) => setRow(i, { course_type: e.target.value })}>
-                          <option value="">— Course Type —</option>
+                          <option value="">— Course type —</option>
                           {(ref.courseTypes ?? []).map((ct: any) => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
                         </select>
-                        {(rowLevels[i] ?? []).length > 0 && (
-                          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }} data-testid={`conv-levels-${i}`}>
-                            <div className="sub" style={{ fontSize: 11 }}>Levels (select one or more):</div>
+                      </div>
+                      <div className="fld">
+                        <label htmlFor={`conv-f-${i}`}>Fee (₹)</label>
+                        <input id={`conv-f-${i}`} className="ainp" type="number" value={selLevelObjs(i).length ? String(rowGrossMinor(i) / 100) : r.fee}
+                          disabled={selLevelObjs(i).length > 0}
+                          onChange={(e) => setRow(i, { fee: e.target.value })} placeholder="0" data-testid={`conv-fee-${i}`} />
+                        {selLevelObjs(i).length > 0 && <div className="fhint">Sum of the selected levels.</div>}
+                      </div>
+                      {(rowLevels[i] ?? []).length > 0 && (
+                        <div className="fld span2" data-testid={`conv-levels-${i}`}>
+                          <label>Levels (select one or more)</label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                             {(rowLevels[i] ?? []).map((l: any) => {
                               const code = String(l.code); const on = (r.levels ?? []).includes(code);
-                              const levelScope = r.disc_scope === 'level';
                               return (
-                                <label key={code} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexWrap: 'wrap' }} data-testid={`conv-level-${i}-${code}`}>
+                                <label key={code} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, flexWrap: 'wrap' }} data-testid={`conv-level-${i}-${code}`}>
                                   <input type="checkbox" checked={on} onChange={(e) => toggleLevel(i, code, e.target.checked)} data-testid={`conv-level-cb-${i}-${code}`} />
-                                  <b>{code}</b><span style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
-                                  {levelScope && on && (
+                                  <b>{code}</b>{l.label && l.label !== code ? <span className="sub">{l.label}</span> : null}
+                                  <span className="mono" style={{ marginLeft: 'auto' }}>{fmtINR(Number(l.fee_minor || 0))}</span>
+                                  {perLevel && on && (
                                     <>
-                                      <select className="ainp" style={{ width: 52 }} value={r.level_disc?.[code]?.type || 'amount'}
+                                      <select className="ainp" style={{ width: 60 }} value={r.level_disc?.[code]?.type || 'amount'}
                                         onChange={(e) => setLevelDisc(i, code, { type: e.target.value as LevelDiscType })} data-testid={`conv-level-disctype-${i}-${code}`}>
                                         <option value="amount">₹</option>
                                         <option value="percent">%</option>
                                       </select>
-                                      <input className="ainp" type="number" style={{ width: 66 }} value={r.level_disc?.[code]?.value || ''}
+                                      <input className="ainp" type="number" style={{ width: 90 }} value={r.level_disc?.[code]?.value || ''}
                                         placeholder={(r.level_disc?.[code]?.type || 'amount') === 'percent' ? '%' : '₹'}
                                         onChange={(e) => setLevelDisc(i, code, { value: e.target.value })} data-testid={`conv-level-disc-${i}-${code}`} />
                                       <span className="sub" data-testid={`conv-level-net-${i}-${code}`}>Net {fmtINR(Number(l.fee_minor || 0) - perLevelDiscMinor(i, l))}</span>
@@ -272,43 +297,41 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                                 </label>
                               );
                             })}
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginTop: 2 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 2 }}>
                               <input type="checkbox" checked={r.disc_scope === 'level'} onChange={(e) => setRow(i, { disc_scope: e.target.checked ? 'level' : 'overall' })} data-testid={`conv-level-scope-${i}`} />
-                              <span className="sub">Discount per level (else one overall discount →)</span>
+                              <span className="sub">Discount per level (otherwise one discount on the total)</span>
                             </label>
                           </div>
-                        )}
-                      </td>
-                      <td><input className="ainp" type="number" style={{ width: 80 }} value={selLevelObjs(i).length ? String(rowGrossMinor(i) / 100) : r.fee}
-                        disabled={selLevelObjs(i).length > 0}
-                        onChange={(e) => setRow(i, { fee: e.target.value })} placeholder="0" data-testid={`conv-fee-${i}`} /></td>
-                      <td>
-                        {(selLevelObjs(i).length > 0 && r.disc_scope === 'level') ? (
-                          <span className="sub" style={{ fontSize: 11 }} data-testid={`conv-disc-perlevel-${i}`}>per level ↑</span>
+                        </div>
+                      )}
+                      <div className="fld">
+                        <label htmlFor={`conv-dt-${i}`}>Discount</label>
+                        {perLevel ? (
+                          <span className="sub" style={{ fontSize: 12 }} data-testid={`conv-disc-perlevel-${i}`}>Set per level above</span>
                         ) : (
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <select className="ainp" style={{ width: 64 }} value={r.disc_type}
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <select id={`conv-dt-${i}`} className="ainp" style={{ width: 110 }} value={r.disc_type}
                               onChange={(e) => setRow(i, { disc_type: e.target.value as EnrolDiscountType, disc_value: '' })} data-testid={`conv-disc-type-${i}`}>
-                              <option value="none">—</option>
-                              <option value="amount">₹</option>
-                              <option value="percent">%</option>
+                              <option value="none">None</option>
+                              <option value="amount">₹ Amount</option>
+                              <option value="percent">% Percent</option>
                             </select>
-                            <input className="ainp" type="number" style={{ width: 70 }} value={r.disc_value} disabled={r.disc_type === 'none'}
+                            <input className="ainp" type="number" value={r.disc_value} disabled={r.disc_type === 'none'} aria-label="Discount value"
                               onChange={(e) => setRow(i, { disc_value: e.target.value })} placeholder="0" data-testid={`conv-disc-value-${i}`} />
                           </div>
                         )}
-                      </td>
-                      <td data-testid={`conv-net-${i}`}>{(() => {
-                        const { gross, discount_minor, net_minor } = rowMoney(i);
-                        return <span title={`Total ${fmtINR(gross)} · Discount ${fmtINR(discount_minor)}`}>{fmtINR(net_minor)}</span>;
-                      })()}</td>
-                      <td>{rows.length > 1 && (
-                        <button className="ax" title="Remove" onClick={() => removeRow(i)}><Ic k="x" /></button>
-                      )}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                      <div className="fld">
+                        <label>Net fee</label>
+                        <div className="ainp mono" style={{ display: 'flex', alignItems: 'center' }} data-testid={`conv-net-${i}`}
+                          title={`Total ${fmtINR(m.gross)} · Discount ${fmtINR(m.discount_minor)}`}>
+                          {fmtINR(m.net_minor)}{m.discount_minor > 0 ? <span className="sub" style={{ marginLeft: 8 }}>after {fmtINR(m.discount_minor)} off</span> : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
               <button className="btn" style={{ marginTop: 8 }} data-testid="conv-add-course" onClick={addRow}>
                 <Ic k="plus" />Add another course
               </button>

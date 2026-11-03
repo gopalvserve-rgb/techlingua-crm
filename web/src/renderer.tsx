@@ -1,5 +1,6 @@
 /** Generic spec-driven block renderer — mirrors the prototype's renderBlock(). */
-import { CSSProperties, Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent, useState, useMemo } from 'react';
+import { CSSProperties, Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent, useState, useMemo, useRef, useEffect } from 'react';
+import type React from 'react';
 import { Block, KpiItem } from './specs';
 import { Ic, checkS } from './icons';
 import { useColumnVisibility, ColumnsButton } from './colprefs';
@@ -106,6 +107,37 @@ export interface TableSelect {
   /** toggle all visible rows */ onToggleAll: () => void;
 }
 
+/**
+ * A second horizontal scrollbar ABOVE a wide table (client 31 Oct, point 4: "table scroller not
+ * working"). The table's own scrollbar sits at the bottom of its box, which on Admissions & Enrolment
+ * starts below the KPI cards and filters, so it was off the bottom of the screen. This bar mirrors it
+ * and stays in sync both ways; it only appears when the table is wider than its box.
+ */
+function TopScrollbar({ target }: { target: React.RefObject<HTMLDivElement> }) {
+  const bar = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState({ sw: 0, cw: 0 });
+  useEffect(() => {
+    const el = target.current;
+    if (!el) return undefined;
+    const measure = () => setW((p) => (p.sw === el.scrollWidth && p.cw === el.clientWidth ? p : { sw: el.scrollWidth, cw: el.clientWidth }));
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    const t = el.querySelector('table');
+    if (t) ro?.observe(t);
+    const onScroll = () => { if (bar.current && bar.current.scrollLeft !== el.scrollLeft) bar.current.scrollLeft = el.scrollLeft; };
+    el.addEventListener('scroll', onScroll);
+    return () => { ro?.disconnect(); el.removeEventListener('scroll', onScroll); };
+  }, [target]);
+  if (w.sw <= w.cw + 1) return null;
+  return (
+    <div ref={bar} className="tbl-topscroll" aria-hidden="true" data-testid="table-top-scroll"
+      onScroll={(e) => { const el = target.current; if (el && el.scrollLeft !== e.currentTarget.scrollLeft) el.scrollLeft = e.currentTarget.scrollLeft; }}>
+      <div style={{ width: w.sw, height: 1 }} />
+    </div>
+  );
+}
+
 export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill, listKey, serial }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
@@ -153,6 +185,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
     : null;
   const span = shownCols.length + (sel ? 1 : 0) + (showSerial ? 1 : 0);
   const scrollCls = (sticky || fill) ? 'tbl-scroll' : 'scroll-x';
+  const scrollRef = useRef<HTMLDivElement>(null);
   // COLUMN SORT (S3): click a header to sort ascending, again for descending, a third time to
   // restore the server order. Row callbacks keep receiving the ORIGINAL row index.
   const [sortBy, setSortBy] = useState<{ col: number; dir: 1 | -1 } | null>(null);
@@ -180,7 +213,8 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
         </div>
       )}
       {af.bar}
-      <div className={scrollCls}>
+      <TopScrollbar target={scrollRef} />
+      <div className={scrollCls} ref={scrollRef}>
         <table className="tbl">
           <thead><tr>
             {sel && (

@@ -15,6 +15,28 @@ import { MessagingService } from '../messaging/messaging.service';
 import { ContentApprovalWorkflowService } from '../governance/content-approval.service';
 
 /**
+ * The date a payment was received. The form sends a bare day ("2026-11-01"), which JavaScript reads
+ * as UTC midnight = 05:30 IST: a payment recorded early in the morning (client, 1 Nov, 05:14) was
+ * refused as "in the future". A bare day is an Indian calendar day: today means now, an earlier day
+ * means noon IST that day, a later day is refused.
+ */
+export function receivedAtOf(raw: unknown, fallback: Date): Date {
+  if (raw == null || raw === '') return fallback;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const todayIST = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    if (s > todayIST) throw new BadRequestException('A payment cannot be received in the future.');
+    const d = s === todayIST ? new Date() : new Date(`${s}T12:00:00+05:30`);
+    if (Number.isNaN(d.getTime())) throw new BadRequestException('The received date is not a date.');
+    return d;
+  }
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) throw new BadRequestException('The received date is not a date.');
+  if (d.getTime() > Date.now() + 60_000) throw new BadRequestException('A payment cannot be received in the future.');
+  return d;
+}
+
+/**
  * LITE FEE — a collection entry and a receipt. That is the WHOLE Phase-1 scope
  * ("Lite finance (enabling enrolment): basic fee receipt + collection entry (full
  * accounting deferred to Phase 3)" — PROJECT_DOCUMENTATION §5).
@@ -307,9 +329,7 @@ export class FeeService {
     if (!opts.allowGateway && (dto?.gateway || dto?.gateway_payment_id)) {
       throw new BadRequestException('Online payment capture (Razorpay) is recorded automatically by the payment webhook — it cannot be entered by hand here. Record a manual online transfer with its UTR reference instead.');
     }
-    const receivedAt = dto?.received_at ? new Date(String(dto.received_at)) : new Date();
-    if (Number.isNaN(receivedAt.getTime())) throw new BadRequestException('The received date is not a date.');
-    if (receivedAt.getTime() > Date.now() + 60_000) throw new BadRequestException('A payment cannot be received in the future.');
+    const receivedAt = receivedAtOf(dto?.received_at, new Date());
 
     // scope-check the enrolment BEFORE we lock anything. The webhook capture path
     // (opts.system) is TRUSTED — it already resolved the enrolment from the payment row it
@@ -474,9 +494,7 @@ export class FeeService {
     if (dto?.gateway || dto?.gateway_payment_id) {
       throw new BadRequestException('Online payment capture (Razorpay) is recorded automatically by the payment webhook — it cannot be entered by hand here.');
     }
-    const receivedAt = dto?.received_at ? new Date(String(dto.received_at)) : new Date(existing.received_at);
-    if (Number.isNaN(receivedAt.getTime())) throw new BadRequestException('The received date is not a date.');
-    if (receivedAt.getTime() > Date.now() + 60_000) throw new BadRequestException('A payment cannot be received in the future.');
+    const receivedAt = receivedAtOf(dto?.received_at, new Date(existing.received_at));
     const note = dto?.note !== undefined ? (dto.note ?? null) : (existing.note ?? null);
 
     const orgId = await this.orgId();

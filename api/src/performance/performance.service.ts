@@ -77,7 +77,7 @@ export class PerformanceService {
   ) {}
 
   /**
-   * The leaderboard. `from`/`to` default to the current month.
+   * The leaderboard. No `from`/`to` means all time; `to` is inclusive (the whole day).
    *
    * One query. Every per-counsellor aggregate is a LATERAL against the SAME scoped user
    * set, so a counsellor cannot appear in one column and vanish from another.
@@ -112,8 +112,10 @@ export class PerformanceService {
     // Sprint-3 `$3`-cast lesson — an inferred parameter type is a live-only failure.
     const rows = await this.db.query<any>(
       `WITH win AS (
-         SELECT COALESCE($1::date, date_trunc('month', now())::date) AS d_from,
-                COALESCE($2::date, (date_trunc('month', now()) + INTERVAL '1 month')::date) AS d_to
+         -- client 31 Oct (6): no range is the "All time" button. It used to mean this month, so
+         -- leads imported last month showed 0 Leads Assigned and 0% conversion on All time.
+         SELECT COALESCE($1::date, '-infinity'::date) AS d_from,
+                COALESCE($2::date + 1, 'infinity'::date) AS d_to
        ),
        scoped_leads AS (
          SELECT l.id, l.owner_id, l.created_at
@@ -247,8 +249,10 @@ export class PerformanceService {
     const enrFilter = enrF.length ? ` AND ${enrF.join(' AND ')}` : '';
     const r = await this.db.one<any>(
       `WITH win AS (
-         SELECT COALESCE($1::date, date_trunc('month', now())::date) AS d_from,
-                COALESCE($2::date, (date_trunc('month', now()) + INTERVAL '1 month')::date) AS d_to
+         -- client 31 Oct (6): no range is the "All time" button. It used to mean this month, so
+         -- leads imported last month showed 0 Leads Assigned and 0% conversion on All time.
+         SELECT COALESCE($1::date, '-infinity'::date) AS d_from,
+                COALESCE($2::date + 1, 'infinity'::date) AS d_to
        )
        SELECT COALESCE(sum(fr.amount_minor), 0) AS collected_minor
          FROM fee_receipt fr

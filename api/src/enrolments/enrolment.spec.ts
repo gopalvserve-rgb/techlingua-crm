@@ -88,9 +88,10 @@ describe('DEF-S5-01 — approving an enrolment wins the RIGHT lead', () => {
     expect(activity.params[0]).toBe(31);             // on the LEAD
   });
 
-  it('winLead REFUSES a row with no lead id rather than updating something at random', async () => {
-    const { svc } = svcFor({ ...ENR_ROW, l_id: null });
-    await expect(svc.settleApproval(3, true, 7)).rejects.toThrow(/refusing to update an unknown row/);
+  it('an enrolment with no lead (added in Student Management, client 31 Oct) settles without touching any lead', async () => {
+    const { svc, issued } = svcFor({ ...ENR_ROW, l_id: null });
+    await expect(svc.settleApproval(3, true, 7)).resolves.toEqual({ id: 3, status: 'active' });
+    expect(issued.find((q) => /UPDATE lead/.test(q.sql))).toBeUndefined();
   });
 
   it('a lead already on the won stage is not re-stamped', async () => {

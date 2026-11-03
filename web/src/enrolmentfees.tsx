@@ -29,7 +29,7 @@ import { DetailModal, RowMenu, RowMenuItem } from './rowactions';
 import { fmtINR } from './money';
 import { fmtDateTimeIST } from './daterange';
 import { CollectModal } from './sprint5';
-import { FeeConfigFields, ViewEnrolmentModal, feePlanBody, useFeeConfig } from './dyn';
+import { EnrolmentFeeSetupModal, FeeConfigFields, ViewEnrolmentModal, feePlanBody, useFeeConfig } from './dyn';
 import { PlanDetailModal } from './paymentplans';
 import { askText } from './askdialog';
 
@@ -78,7 +78,7 @@ export function FeeCards({ range, origin, tick, onPending }: {
   if (range.to) p.set('to', range.to);
   if (origin) p.set('origin', origin);
   const { data: s } = useFetch<any>(`/enrolments/fee-cards?${p.toString()}`, [p.toString(), tick ?? 0]);
-  const period = range.from || range.to ? `${range.from ? dmy(range.from) : '…'} – ${range.to ? dmy(range.to) : 'today'}` : 'this month';
+  const period = range.from || range.to ? `${range.from ? dmy(range.from) : '…'} – ${range.to ? dmy(range.to) : 'today'}` : 'all time';
   return (
     <div data-testid="fee-cards">
       <Kpis items={[
@@ -139,7 +139,8 @@ export function enrolmentCells(e: any, o: EnrolmentColOpts & { actions: ReactNod
     { node: e.last_paid_at
         ? <span><span className="mono">{dmy(e.last_paid_at)}</span><div className="sub">{MODE[String(e.last_mode)] ?? e.last_mode ?? ''}</div></span>
         : <span className="sub">—</span>, sort: e.last_paid_at ?? '' },
-    PLAN_WORDS[String(e.payment_plan)] ?? e.payment_plan ?? '—',
+    // client 31 Oct (11): the current instalment plan, falling back to the intent typed at the desk
+    e.plan_label ?? PLAN_WORDS[String(e.payment_plan)] ?? e.payment_plan ?? '—',
     paymentStatusCell(e.payment_status),
     enrolmentStatusCell(e.status),
     ...(o.showOwner ? [e.counsellor_name ?? '—'] as Cell[] : []),
@@ -158,7 +159,7 @@ export function enrolmentCsvRow(e: any) {
     discount_type: e.discount_scope === 'level' ? 'per level' : e.discount_type === 'percent' ? `${e.discount_value}%` : e.discount_type || '',
     net_fee: (Number(e.net_fee_minor ?? 0) / 100).toFixed(2),
     paid: (Number(e.paid_minor ?? 0) / 100).toFixed(2), balance: (Number(e.balance_minor ?? 0) / 100).toFixed(2),
-    next_due: e.next_due_date ? dmy(e.next_due_date) : '', payment_plan: PLAN_WORDS[String(e.payment_plan)] ?? e.payment_plan ?? '',
+    next_due: e.next_due_date ? dmy(e.next_due_date) : '', payment_plan: e.plan_label ?? PLAN_WORDS[String(e.payment_plan)] ?? e.payment_plan ?? '',
     payment_status: e.payment_status || '',
     enrolment_status: e.status, counsellor: e.counsellor_name || '', enrolled_on: dmy(e.created_at),
   };
@@ -166,7 +167,7 @@ export function enrolmentCsvRow(e: any) {
 
 /* --------------------------------------------------------------- row actions */
 
-type Open = null | 'view' | 'ledger' | 'installments' | 'collect' | 'audit';
+type Open = null | 'view' | 'ledger' | 'installments' | 'collect' | 'audit' | 'feesetup';
 
 /** The primary button + ⋮ menu for one enrolment row. Owns its modals. */
 export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
@@ -186,7 +187,7 @@ export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
     try {
       const plans = await api.get<any[]>(`/payment-plans?enrolment_id=${eid}`);
       const p = (plans ?? []).find((x) => x.status !== 'superseded') ?? (plans ?? [])[0];
-      if (!p) { toast('No instalment plan on this enrolment yet — set one up from Fee Management (Fee setup).', true); return; }
+      if (!p) { toast('No instalment plan on this enrolment yet. Use Fee setup (instalment plan) in this menu.', true); return; }
       setPlanId(Number(p.id)); setOpen('installments');
     } catch (err) { toast((err as Error).message, true); }
   };
@@ -226,6 +227,10 @@ export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
     !!onDetails && { label: 'Details (student profile)', icon: 'user', onClick: () => onDetails!() },
     { label: 'Fee Ledger', icon: 'rupee', onClick: () => setOpen('ledger') },
     { label: 'Installments', icon: 'list', onClick: () => void installments() },
+    // client 31 Oct (3, 4): set up or change the instalment plan right here, the same Fee setup
+    // Fee Management opens (Sale Closure, Admissions & Enrolment, Master Directory)
+    can('payment_plan.create') && e.status !== 'cancelled' && e.status !== 'rejected'
+      && { label: 'Fee setup (instalment plan)', icon: 'cfg', onClick: () => setOpen('feesetup') },
     'divider',
     can('invoice.create') && { label: 'Create Invoice', icon: 'plus', onClick: () => void invoice('create') },
     can('invoice.read') && { label: 'View Invoice', icon: 'doc', onClick: () => void invoice('view') },
@@ -248,6 +253,7 @@ export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
       {open === 'ledger' && <FeeLedgerModal enrolment={e} onClose={() => setOpen(null)} onChanged={onChanged} />}
       {open === 'installments' && planId != null && <PlanDetailModal id={planId} onClose={() => setOpen(null)} onChanged={onChanged} />}
       {open === 'audit' && <AuditHistoryModal enrolment={e} onClose={() => setOpen(null)} />}
+      {open === 'feesetup' && <EnrolmentFeeSetupModal enrolmentId={eid} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); onChanged(); }} />}
     </span>
   );
 }
@@ -384,7 +390,7 @@ export function PlanHistory({ enrolmentId, tick }: { enrolmentId: number; tick?:
                 <td className="mono">v{r.version_no}</td>
                 <td>{fmtDateTimeIST(r.created_at)}</td>
                 <td><span className={`bdg ${lab[1]}`}>{lab[0]}</span>{r.reason ? <div className="sub" style={{ fontSize: 11 }}>{r.reason}</div> : null}</td>
-                <td>{r.plan_type ?? '—'}</td>
+                <td>{({ full: 'Full payment', installment: 'Instalments', emi: 'Instalments', custom: 'Custom' } as Record<string, string>)[String(r.plan_type)] ?? r.plan_type ?? '—'}</td>
                 <td style={{ textAlign: 'right' }}>{fmtINR(Number(r.total_minor))}</td>
                 <td style={{ textAlign: 'right' }}>{fmtINR(Number(r.paid_minor))}</td>
                 <td style={{ textAlign: 'right' }}>{fmtINR(Number(r.balance_minor))}</td>

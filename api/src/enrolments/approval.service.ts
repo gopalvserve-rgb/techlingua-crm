@@ -202,12 +202,13 @@ export class ApprovalService {
       `SELECT a.id, a.entity_type, a.entity_id, a.step_key, a.step_label, a.status, a.requested_by,
               a.requested_at, a.decided_at, a.note,
               e.enrolment_no, e.net_fee_minor, e.fee_minor, e.discount_minor, e.status AS enrolment_status,
-              l.full_name AS lead_name, c.name AS course_name,
+              COALESCE(l.full_name, sp.full_name) AS lead_name, c.name AS course_name,
               b.name AS branch_name, v.name AS vertical_name,
               ru.name AS requested_by_name, au.name AS approver_name
          FROM approval_request a
          LEFT JOIN enrolment e ON e.id = a.entity_id AND a.entity_type = 'enrolment'
          LEFT JOIN lead l ON l.id = e.lead_id
+         LEFT JOIN student sp ON sp.id = e.student_profile_id
          LEFT JOIN m_course c ON c.id = e.course_id
          LEFT JOIN branch b ON b.id = a.branch_id
          LEFT JOIN vertical v ON v.id = a.vertical_id
