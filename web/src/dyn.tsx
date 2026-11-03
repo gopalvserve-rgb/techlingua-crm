@@ -38,7 +38,7 @@ import type { VertPayments } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
 import { APP, isModuleHidden } from './specs';
 import { useScope } from './scope';
-import { DateRange, presetRange, matchPreset, fmtDMYIST, fmtDateTimeIST } from './daterange';
+import { DateRange, presetRange, matchPreset, fmtDMYIST, fmtDateTimeIST, istDay } from './daterange';
 import { ContactQuickActions } from './contactactions';
 import { FollowupFilter, FollowupValue, FU_PRESETS } from './followupfilter';
 import { StageConfigurator } from './stageconfig';
@@ -7136,13 +7136,13 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
       cfg.setPlan((kind === 'full' ? 'full' : kind === 'custom' ? 'custom' : 'installment') as FeePlanKind);
       if (existingPlan.num_installments) cfg.setCount(String(existingPlan.num_installments));
       if (Number(existingPlan.down_payment_minor) > 0) cfg.setDown(String(Number(existingPlan.down_payment_minor) / 100));
-      if (existingPlan.start_date) cfg.setStart(String(existingPlan.start_date).slice(0, 10));
+      if (existingPlan.start_date) cfg.setStart(istDay(existingPlan.start_date));
     }
     cfg.setFee(String(Number(e.gross_fee_minor ?? e.fee_minor ?? 0) / 100));
     cfg.setDiscType(dtp);
     cfg.setDiscValue(dtp === 'percent' ? String(Number(e.discount_value ?? 0))
       : dtp === 'amount' ? String(Number(e.discount_amount_minor ?? e.discount_minor ?? 0) / 100) : '');
-    if (e.start_date && !existingPlan?.start_date) cfg.setStart(String(e.start_date).slice(0, 10));
+    if (e.start_date && !existingPlan?.start_date) cfg.setStart(istDay(e.start_date));
     setLoaded(true);
   }
   const save = async () => {
@@ -7301,7 +7301,7 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
     discType: (enrolment.discount_type ?? 'none') as EnrolDiscountType,
     discValue: (enrolment.discount_type === 'percent') ? String(Number(enrolment.discount_value ?? 0))
       : (enrolment.discount_type === 'amount') ? String(Number(enrolment.discount_amount_minor ?? enrolment.discount_minor ?? 0) / 100) : '',
-    start: enrolment.start_date ? String(enrolment.start_date).slice(0, 10) : '',
+    start: enrolment.start_date ? istDay(enrolment.start_date) : '',
   });
   const [busy, setBusy] = useState(false);
   // LEVEL-WISE EDIT (dev/110) — a level-course enrolment shows its Level line-items with an editable
@@ -7775,7 +7775,7 @@ export function BatchModal({ initial, onClose, onSaved }: { initial?: any; onClo
   const [capacity, setCapacity] = useState<string>(String(initial?.capacity ?? ''));
   const [room, setRoom] = useState<string>(initial?.room ?? '');
   const [schedule, setSchedule] = useState<string>(initial?.schedule ?? '');
-  const [startDate, setStartDate] = useState<string>(initial?.start_date ? String(initial.start_date).slice(0, 10) : '');
+  const [startDate, setStartDate] = useState<string>(initial?.start_date ? istDay(initial.start_date) : '');
   const [endDate, setEndDate] = useState<string>(initial?.end_date ? String(initial.end_date).slice(0, 10) : '');
   const [status, setStatus] = useState<string>(initial?.status ? String(initial.status) : '');
   // Batch Type + Frequency + Class Days (081, client feedback). Frequency DERIVES class_days

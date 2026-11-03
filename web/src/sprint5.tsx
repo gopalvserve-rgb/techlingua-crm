@@ -24,7 +24,7 @@ import {
   DiscountType, LineDraft, computeTotals, fmtINR, minorToInput, parseRupees,
 } from './money';
 import { CONVERSION_LABEL_COUNSELLOR } from './metrics';
-import { DateRange, fmtDateTimeIST, presetRange } from './daterange';
+import { DateRange, fmtDateTimeIST, presetRange, istDay } from './daterange';
 import { RowMenu, RowMenuItem } from './rowactions';
 import { EnrolLevelPicker, FeeConfigFields, FilterMulti, LevelSelection, ScreenCtx, feePlanBody, useFeeConfig } from './dyn';
 import { EnrolmentActions, FeeCards, PAYMENT_STATUSES, ReversePaymentModal, enrolmentCells, enrolmentColumns } from './enrolmentfees';
@@ -1030,7 +1030,7 @@ function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
   const [plan, setPlan] = useState<string>(initial?.payment_plan ?? 'full');
   const [firstPayment, setFirstPayment] = useState<string>(minorToInput(initial?.first_payment_minor));
   const [planNote, setPlanNote] = useState<string>(initial?.plan_note ?? '');
-  const [startDate, setStartDate] = useState<string>(initial?.start_date ? String(initial.start_date).slice(0, 10) : '');
+  const [startDate, setStartDate] = useState<string>(initial?.start_date ? istDay(initial.start_date) : '');
   const [counsellor, setCounsellor] = useState<string>(String(initial?.counsellor_id ?? prefill?.counsellor_id ?? ''));
   const [remarks, setRemarks] = useState<string>(initial?.remarks ?? '');
   const [busy, setBusy] = useState(false);

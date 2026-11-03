@@ -204,3 +204,12 @@ export function DateRange({
     </div>
   );
 }
+
+/** A DATE column as yyyy-mm-dd for a date input. The API sends a date as IST midnight in UTC
+ *  ("2026-11-03T18:30:00.000Z" for 4 Nov), so cutting the string showed, and re-saved, the day
+ *  before (client 31 Oct testing). */
+export const istDay = (v: unknown): string => {
+  const s = String(v ?? '');
+  if (!s) return '';
+  return s.length > 10 ? new Date(new Date(s).getTime() + 330 * 60000).toISOString().slice(0, 10) : s;
+};

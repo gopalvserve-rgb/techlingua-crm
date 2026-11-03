@@ -14,7 +14,7 @@ import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
-import { DateRange, DateRangeValue } from './daterange';
+import { DateRange, DateRangeValue, istDay } from './daterange';
 import { fmtINR, minorToInput } from './money';
 import { downloadMatrixCsv } from './listtools';
 import { askConfirm, askText } from './askdialog';
@@ -841,7 +841,7 @@ function AgreementModal({ initial, franchises, onClose, onSaved }: { initial?: a
   const [fid, setFid] = useState<string>(String(initial?.franchise_id ?? (franchises[0]?.id ?? '')));
   const [no, setNo] = useState<string>(initial?.agreement_no ?? '');
   const [sign, setSign] = useState<string>(initial?.sign_date ? String(initial.sign_date).slice(0, 10) : '');
-  const [start, setStart] = useState<string>(initial?.start_date ? String(initial.start_date).slice(0, 10) : '');
+  const [start, setStart] = useState<string>(initial?.start_date ? istDay(initial.start_date) : '');
   const [end, setEnd] = useState<string>(initial?.end_date ? String(initial.end_date).slice(0, 10) : '');
   const [renew, setRenew] = useState<string>(initial?.renewal_date ? String(initial.renewal_date).slice(0, 10) : '');
   const [status, setStatus] = useState<string>(initial?.status ?? 'active');
