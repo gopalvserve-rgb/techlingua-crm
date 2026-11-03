@@ -7128,13 +7128,21 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => { setLoaded(false); }, [eid]);
-  if (e && !loaded) {
+  // wait for the plan list too, so the form opens on the plan in use (client 31 Oct, 11)
+  if (e && planFetch.data && !loaded) {
     const dtp = (e.discount_type ?? 'none') as EnrolDiscountType;
+    if (existingPlan) {
+      const kind = String(existingPlan.plan_type);
+      cfg.setPlan((kind === 'full' ? 'full' : kind === 'custom' ? 'custom' : 'installment') as FeePlanKind);
+      if (existingPlan.num_installments) cfg.setCount(String(existingPlan.num_installments));
+      if (Number(existingPlan.down_payment_minor) > 0) cfg.setDown(String(Number(existingPlan.down_payment_minor) / 100));
+      if (existingPlan.start_date) cfg.setStart(String(existingPlan.start_date).slice(0, 10));
+    }
     cfg.setFee(String(Number(e.gross_fee_minor ?? e.fee_minor ?? 0) / 100));
     cfg.setDiscType(dtp);
     cfg.setDiscValue(dtp === 'percent' ? String(Number(e.discount_value ?? 0))
       : dtp === 'amount' ? String(Number(e.discount_amount_minor ?? e.discount_minor ?? 0) / 100) : '');
-    if (e.start_date) cfg.setStart(String(e.start_date).slice(0, 10));
+    if (e.start_date && !existingPlan?.start_date) cfg.setStart(String(e.start_date).slice(0, 10));
     setLoaded(true);
   }
   const save = async () => {

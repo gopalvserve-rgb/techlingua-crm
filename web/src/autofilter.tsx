@@ -11,7 +11,8 @@ import type { Cell } from './renderer';
 
 export const AUTO_FILTER_SCREENS = new Set([
   'leads/scoring', 'leads/sla', 'leads/fields',
-  'perf/quotes', 'perf/targets',
+  // perf/targets has its own filter bar (client 31 Oct, 7)
+  'perf/quotes',
   'engage/wabot', 'engage/wabulk', 'engage/journeys', 'engage/templates', 'engage/smstpl', 'engage/notifevents',
   'finance/discounts', 'calls/recordings',
   'analytics/standard', 'analytics/forecasting',

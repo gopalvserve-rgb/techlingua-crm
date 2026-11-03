@@ -165,7 +165,7 @@ function TargetsDashboard() {
           <div className="card-head"><h3><Ic k="target" />Target Achievement</h3></div>
           <div className="card-pad" style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
             <div style={{ width: 120 }}>
-              <DonutChart center={`${avg}%`} slices={[{ label: 'Achieved', pct: avg, color: 'var(--green)' }, { label: 'Remaining', pct: 100 - avg, color: 'var(--surface-3)' }]} />
+              <DonutChart center={`${avg}%`} caption="achieved" slices={[{ label: 'Achieved', pct: avg, color: 'var(--green)' }, { label: 'Remaining', pct: 100 - avg, color: 'var(--surface-3)' }]} />
             </div>
             <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
               <div>Targets <b style={{ marginLeft: 8 }}>{rows.length}</b></div>

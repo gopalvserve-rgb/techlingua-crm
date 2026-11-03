@@ -96,7 +96,7 @@ export class EnrolmentService implements OnApplicationBootstrap {
   async ensureStudent(enrolmentId: number, actorId: number): Promise<number | null> {
     try {
       const e = await this.db.one<any>(
-        `SELECT id, lead_id, student_profile_id, status FROM enrolment WHERE id = $1::bigint AND deleted_at IS NULL`, [enrolmentId]);
+        `SELECT id, lead_id, student_profile_id, status, branch_id, vertical_id FROM enrolment WHERE id = $1::bigint AND deleted_at IS NULL`, [enrolmentId]);
       if (!e || e.status !== 'active') return null;
       let sid = e.student_profile_id ? Number(e.student_profile_id) : null;
       if (!sid && e.lead_id && this.students) {
@@ -111,6 +111,10 @@ export class EnrolmentService implements OnApplicationBootstrap {
       }
       if (sid) {
         await this.db.query(`UPDATE student SET status = 'active', updated_at = now() WHERE id = $1::bigint AND status = 'pending_approval'`, [sid]);
+        // the Roll Number for this enrolment's vertical, as Convert to Student mints it
+        if (e.vertical_id && this.students) {
+          await this.students.ensureRollNumber(sid, e.branch_id != null ? Number(e.branch_id) : null, Number(e.vertical_id), actorId);
+        }
       }
       return sid;
     } catch (err) {
@@ -122,12 +126,15 @@ export class EnrolmentService implements OnApplicationBootstrap {
   /** Sales closed before point 14 was fixed: give each active, student-less enrolment its student. */
   async backfillStudents(): Promise<number> {
     const rows = await this.db.query<{ id: string; created_by: string | null }>(
-      `SELECT id, created_by FROM enrolment
-        WHERE deleted_at IS NULL AND status = 'active' AND student_profile_id IS NULL AND lead_id IS NOT NULL
-        ORDER BY id`);
+      `SELECT e.id, e.created_by FROM enrolment e
+        WHERE e.deleted_at IS NULL AND e.status = 'active'
+          AND ((e.student_profile_id IS NULL AND e.lead_id IS NOT NULL)
+               OR (e.student_profile_id IS NOT NULL AND NOT EXISTS (
+                     SELECT 1 FROM student_vertical_id sv WHERE sv.student_id = e.student_profile_id AND sv.vertical_id = e.vertical_id)))
+        ORDER BY e.id`);
     let n = 0;
     for (const r of rows) if (await this.ensureStudent(Number(r.id), Number(r.created_by ?? 1))) n++;
-    if (n) this.log.log(`Student Management backfill: ${n} closed sale(s) now have their student`);
+    if (n) this.log.log(`Student Management backfill: ${n} closed sale(s) now have their student and Roll Number`);
     return n;
   }
 

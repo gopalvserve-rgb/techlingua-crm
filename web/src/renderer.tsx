@@ -481,7 +481,7 @@ function BlockView({ b }: { b: Block }): JSX.Element | null {
   }
 }
 
-export function DonutChart({ center, slices }: { center: string; slices: Array<{ label: string; pct: number; color: string }> }) {
+export function DonutChart({ center, slices, caption = 'collected' }: { center: string; slices: Array<{ label: string; pct: number; color: string }>; caption?: string }) {
   let off = 25;
   const segs = slices.map((s, i) => {
     const el = (
@@ -497,7 +497,7 @@ export function DonutChart({ center, slices }: { center: string; slices: Array<{
         <circle cx="21" cy="21" r="15.9" fill="transparent" stroke="var(--surface-3)" strokeWidth="6" />
         {segs}
         <text x="21" y="20.5" textAnchor="middle" fontSize="6" fontWeight="700" fill="var(--text)">{center}</text>
-        <text x="21" y="26" textAnchor="middle" fontSize="3" fill="var(--text-muted)">collected</text>
+        <text x="21" y="26" textAnchor="middle" fontSize="3" fill="var(--text-muted)">{caption}</text>
       </svg>
       <div className="donut-legend">
         {slices.map((s, i) => (

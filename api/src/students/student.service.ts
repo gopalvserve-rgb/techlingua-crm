@@ -2255,6 +2255,12 @@ export class StudentService {
    * MUST run inside the caller's transaction so the number rolls back with the enrolment.
    * Does NOT touch `student.student_no` (STU-) — that stays the master record identifier.
    */
+  /** The Roll Number of a student in one vertical, minted if missing (a student made from a closed
+   *  sale on Sale Closure had none, client 31 Oct). */
+  async ensureRollNumber(studentId: number, branchId: number | null, verticalId: number, actorId: number | null) {
+    return this.db.tx((c) => this.ensureVerticalId(c, studentId, branchId, verticalId, actorId));
+  }
+
   private async ensureVerticalId(
     c: any, studentId: number, branchId: number | null, verticalId: number, actorId: number | null,
   ): Promise<{ id: number; student_vertical_no: string; created: boolean }> {
@@ -2896,7 +2902,7 @@ export class StudentService {
         `SELECT COALESCE(sum(paid_minor), 0) AS p FROM installment WHERE plan_id = $1::bigint`, [pp.id]);
       if (Number(paid.rows[0].p) > 0) continue;                 // money applied -> leave the schedule alone
       const total = Number(pp.net_fee_minor);
-      const startDate = toDateString(pp.start_date) || new Date().toISOString().slice(0, 10);
+      const startDate = toDateString(pp.start_date) || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10) /* IST today */;
       let schedule;
       try {
         schedule = generateSchedule({

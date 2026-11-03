@@ -184,7 +184,10 @@ export interface PlanPreview { rows: PlanPreviewRow[]; sum_minor: number; balanc
 export function previewSchedule(inp: PlanPreviewInput): PlanPreview {
   const net = Math.trunc(Number(inp.net_minor) || 0);
   const down = Math.trunc(Number(inp.down_minor) || 0);
-  const start = inp.start_date && /^\d{4}-\d{2}-\d{2}/.test(inp.start_date) ? inp.start_date : new Date().toISOString().slice(0, 10);
+  const start = inp.start_date && /^\d{4}-\d{2}-\d{2}/.test(inp.start_date) ? inp.start_date
+    // today as an INDIAN date: the UTC date is still yesterday before 05:30 IST, which made a plan
+    // set up early in the morning start yesterday and show Overdue at once
+    : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   if (down > net) return { rows: [], sum_minor: 0, balances: false, error: 'The down payment cannot exceed the net fee.' };
   if (inp.plan_type === 'full') {
     const rows = [{ seq_no: 1, label: 'Full payment', due_date: start, amount_minor: net }];

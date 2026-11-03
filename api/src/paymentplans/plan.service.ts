@@ -189,7 +189,7 @@ export class PlanService {
     if (downPayment > total) throw new BadRequestException('The down payment cannot exceed the net fee.');
     const numInstallments = planType === 'full' ? 1 : Math.max(1, Math.trunc(Number(dto?.num_installments ?? 3)));
     if (numInstallments > 240) throw new BadRequestException('That is an unreasonable number of installments.');
-    const startDate = toDateString(dto?.start_date) || toDateString(e.start_date) || new Date().toISOString().slice(0, 10);
+    const startDate = toDateString(dto?.start_date) || toDateString(e.start_date) || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10) /* IST today */;
     const customDates = Array.isArray(dto?.custom_dates)
       ? dto.custom_dates.map((d: unknown) => toDateString(d)).filter(Boolean) as string[] : undefined;
     // CUSTOM amounts (item 4): the client typed each installment's amount. Accept paise
@@ -287,7 +287,7 @@ export class PlanService {
     if (downPayment > balance) throw new BadRequestException('The down payment cannot exceed the balance still to be paid.');
     const numInstallments = planType === 'full' ? 1 : Math.max(1, Math.trunc(Number(dto?.num_installments ?? 3)));
     if (numInstallments > 240) throw new BadRequestException('That is an unreasonable number of installments.');
-    const startDate = toDateString(dto?.start_date) || new Date().toISOString().slice(0, 10);
+    const startDate = toDateString(dto?.start_date) || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10) /* IST today */;
     const customDates = Array.isArray(dto?.custom_dates)
       ? dto.custom_dates.map((d: unknown) => toDateString(d)).filter(Boolean) as string[] : undefined;
     let customAmounts: number[] | undefined;
@@ -539,7 +539,7 @@ export class PlanService {
         `SELECT COALESCE(sum(paid_minor), 0) AS p FROM installment WHERE plan_id = $1::bigint`, [pp.id]);
       if (Number(paid.rows[0].p) > 0) continue;                 // money applied → leave the schedule alone
       const total = Number(pp.net_fee_minor);
-      const startDate = toDateString(pp.start_date) || new Date().toISOString().slice(0, 10);
+      const startDate = toDateString(pp.start_date) || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10) /* IST today */;
       let schedule;
       try {
         schedule = generateSchedule({

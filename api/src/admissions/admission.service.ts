@@ -299,7 +299,7 @@ export class AdmissionService {
     const a = await this.get(id, scope);
     if (a.status !== 'pending') throw new BadRequestException(`This admission is already ${a.status}.`);
     const studentDto = { ...(a.data ?? {}), branch_id: a.branch_id, vertical_id: a.vertical_id, course_id: a.course_id };
-    if (!studentDto.admission_date) studentDto.admission_date = new Date().toISOString().slice(0, 10);
+    if (!studentDto.admission_date) studentDto.admission_date = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10) /* IST today */;
     const student = await this.students.create(studentDto, me, scope);
     const admissionNo = await this.numbering.allocate('admission', { branch_id: Number(a.branch_id), vertical_id: Number(a.vertical_id) });
     await this.db.query(
