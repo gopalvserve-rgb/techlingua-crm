@@ -5,6 +5,7 @@ import type { Request, Response } from 'express';
 import { Public } from '../../rbac/rbac.decorators';
 import { ChannelService } from './channel.service';
 import { WebhookRejected, WebhookService } from './webhook.service';
+import { RoutingManifestService } from './routing-manifest.service';
 
 /**
  * THE PUBLIC CAPTURE ENDPOINTS. These are the only routes in the product that sit
@@ -25,7 +26,10 @@ import { WebhookRejected, WebhookService } from './webhook.service';
  */
 @Controller('webhooks')
 export class WebhookController {
-  constructor(private readonly hooks: WebhookService, private readonly channels: ChannelService) {}
+  constructor(
+    private readonly hooks: WebhookService, private readonly channels: ChannelService,
+    private readonly manifest: RoutingManifestService,
+  ) {}
 
   private meta(req: Request) {
     return {
@@ -193,6 +197,16 @@ export class WebhookController {
       const r = e as WebhookRejected;
       res.status(r.http ?? 500).type('text/plain').send(r.message ?? 'Callback failed');
     }
+  }
+
+  /** The pages and WhatsApp numbers this CRM receives, for SmartCRM's lead routing (bearer token). */
+  @Public() @Get('routing-manifest') @Header('Cache-Control', 'no-store')
+  async routingManifest(@Req() req: Request, @Res() res: Response) {
+    if (!await this.manifest.authorised(req.headers.authorization)) {
+      res.status(401).json({ error: 'A valid bearer token is required' });
+      return;
+    }
+    res.json(await this.manifest.build(req.hostname));
   }
 
   /** A liveness probe an integrator can curl before wiring anything up. */

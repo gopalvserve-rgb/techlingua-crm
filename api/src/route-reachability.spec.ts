@@ -216,6 +216,8 @@ const NOT_UI_DRIVEN: Record<string, string> = {
     'META LEAD ADS handshake — Facebook GETs this with hub.challenge to verify the webhook. The caller is Meta.',
   'POST /webhooks/meta/:key':
     'META LEAD ADS delivery — Meta POSTs leadgen_id with an X-Hub-Signature-256 HMAC over the raw body. The caller is Meta.',
+  'GET /webhooks/routing-manifest':
+    'SMARTCRM ROUTING MANIFEST — SmartCRM polls it every 15 min with a bearer token to route this CRM Facebook pages and WhatsApp numbers. The caller is SmartCRM.',
   'POST /webhooks/google/:key':
     'GOOGLE ADS lead-form delivery, authenticated by the google_key shared secret. The caller is Google.',
   'POST /webhooks/push/:key':

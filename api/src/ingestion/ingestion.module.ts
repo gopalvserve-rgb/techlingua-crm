@@ -12,6 +12,7 @@ import { ImportWorker } from './import.worker';
 import { ChannelService } from './channels/channel.service';
 import { ChannelController } from './channels/channel.controller';
 import { WebhookController } from './channels/webhook.controller';
+import { RoutingManifestService } from './channels/routing-manifest.service';
 import { WebhookService } from './channels/webhook.service';
 import { FbPagesService } from './channels/fb-pages.service';
 import { SheetWorker } from './channels/sheet.worker';
@@ -39,6 +40,7 @@ import { MarketplacePullWorker } from './channels/marketplace.worker';
   providers: [
     LeadIngestionService, LeadMergeService, ImportService, ImportWorker,
     ChannelService, WebhookService, FbPagesService, SheetWorker, MarketplacePullWorker,
+    RoutingManifestService,
   ],
   exports: [LeadIngestionService, LeadMergeService, ChannelService],
 })
