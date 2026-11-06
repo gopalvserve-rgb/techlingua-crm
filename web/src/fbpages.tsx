@@ -11,7 +11,7 @@
  * Both are read-only for a channel.read user (no write controls), same rule as channels.tsx.
  * No Page token is ever part of any payload these screens receive.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { Ic } from './icons';
 import { toast } from './refdata';
@@ -264,15 +264,19 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
   };
   useEffect(() => { setFormId(''); setMapping(null); loadForms(pageId); }, [pageId]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  const qRef = useRef<HTMLDivElement>(null);
   const openForm = async (fid: string) => {
     if (dirty && !await askConfirm('You have unsaved mapping changes. Discard them?')) return;
+    if (fid === formId) fid = '';   // a second click on the open form folds it away
     setFormId(fid); setMapping(null); setDirty(false);
     if (!fid) return;
+    setTimeout(() => qRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' }), 0);
     api.get<FbMappingResp>(`/channels/${channel.id}/fb/forms/${fid}/mapping?page_id=${encodeURIComponent(pageId)}`)
       .then((m) => {
         setMapping(m);
         setDraft(m.saved ? { ...m.field_map } : { ...m.suggested });
         setEnabled(m.is_enabled);
+        setTimeout(() => qRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' }), 0);
       })
       .catch((e) => toast((e as Error).message, true));
   };
@@ -313,6 +317,67 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
 
   const mappedNow = useMemo(() => (mapping ? mapping.questions.filter((q) => draft[q.key]).length : 0), [mapping, draft]);
   const selPage = pages?.find((p) => p.page_id === pageId);
+
+  // client 6 Nov 2026 — the questions open right UNDER the form clicked (a Page can have 49 forms;
+  // opening them below the whole list looked like the button did nothing) and scroll into view.
+  const questionsPanel = formId ? (
+    <div className="card" style={{ margin: 0 }} data-testid="fb-question-map">
+      <div className="card-head">
+        <h3><Ic k="grid" />{mapping ? `Questions — ${mapping.form.form_name}` : 'Loading questions…'}</h3>
+        {mapping && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span className="sub">{mappedNow}/{mapping.questions.length} mapped{mapping.saved ? '' : ' · suggested (not saved yet)'}</span>
+            {canManage && (
+              <>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                  <Switch on={enabled} disabled={busy} label="Form enabled" onChange={() => { setEnabled(!enabled); setDirty(true); }} />
+                  Enabled
+                </label>
+                <button className="btn" onClick={autoMap} title="Apply the suggested mapping"><Ic k="bolt" />Auto-map</button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      {mapping && !mapping.questions.length && (
+        <div className="empty-note">Facebook returned no questions for this form.</div>
+      )}
+      {mapping && mapping.questions.length > 0 && (
+        <table className="tbl">
+          <thead><tr><th>Question</th><th>Key</th><th>Type</th><th>CRM field</th></tr></thead>
+          <tbody>
+            {mapping.questions.map((q) => (
+              <tr key={q.key}>
+                <td><span className="nm">{q.label}</span></td>
+                <td><span className="mono sub">{q.key}</span></td>
+                <td><span className="bdg b-gray">{q.type}</span></td>
+                <td>
+                  <select className="ainp" aria-label={`Map ${q.label}`} value={draft[q.key] ?? ''} disabled={!canManage}
+                    onChange={(e) => { setDraft((d) => ({ ...d, [q.key]: e.target.value })); setDirty(true); }}>
+                    <option value="">— ignore —</option>
+                    {mapping.crm_fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {/* client 6 Nov 2026 — Page / Campaign / Ad are not questions on the form, so they
+          never appear above; Meta sends them with every lead and they are saved as-is. */}
+      {mapping && (
+        <div className="notice" data-testid="fb-auto-captured" style={{ margin: '12px 14px' }}>
+          <Ic k="bolt" />
+          <div>
+            <b>Captured automatically with every lead (no mapping needed):</b> Facebook Page,
+            Ad campaign, Ad set, Ad, Lead form and Platform (Facebook / Instagram).
+            They show as the <b>FB Page</b>, <b>FB Campaign</b> and <b>FB Ad</b> columns in Leads,
+            on the lead's details, and in the Leads export.
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
 
   return (
     <div className="add-scrim">
@@ -359,7 +424,7 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
                 <table className="tbl" data-testid="fb-forms-table">
                   <thead><tr><th>Form</th><th>Status</th><th>Mapped fields</th><th>Enabled</th><th></th></tr></thead>
                   <tbody>
-                    {forms.forms.map((f) => (
+                    {forms.forms.flatMap((f) => [
                       <tr key={f.form_id} className={f.form_id === formId ? 'on' : undefined}>
                         <td>
                           <span className="nm">{f.form_name}</span>
@@ -377,72 +442,20 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
                             <Ic k="pencil" />{canManage ? 'Map fields' : 'View mapping'}
                           </button>
                         </td>
-                      </tr>
-                    ))}
+                      </tr>,
+                      f.form_id === formId && (
+                        <tr key={`${f.form_id}-q`} className="fb-q-row">
+                          <td colSpan={5} style={{ padding: '4px 0 12px' }}>
+                            <div ref={qRef}>{questionsPanel}</div>
+                          </td>
+                        </tr>
+                      ),
+                    ])}
                   </tbody>
                 </table>
               )}
           </div>
 
-          {/* ---------------------------- questions ---------------------------- */}
-          {formId && (
-            <div className="card" style={{ margin: 0 }} data-testid="fb-question-map">
-              <div className="card-head">
-                <h3><Ic k="grid" />{mapping ? `Questions — ${mapping.form.form_name}` : 'Loading questions…'}</h3>
-                {mapping && (
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span className="sub">{mappedNow}/{mapping.questions.length} mapped{mapping.saved ? '' : ' · suggested (not saved yet)'}</span>
-                    {canManage && (
-                      <>
-                        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
-                          <Switch on={enabled} disabled={busy} label="Form enabled" onChange={() => { setEnabled(!enabled); setDirty(true); }} />
-                          Enabled
-                        </label>
-                        <button className="btn" onClick={autoMap} title="Apply the suggested mapping"><Ic k="bolt" />Auto-map</button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-              {mapping && !mapping.questions.length && (
-                <div className="empty-note">Facebook returned no questions for this form.</div>
-              )}
-              {mapping && mapping.questions.length > 0 && (
-                <table className="tbl">
-                  <thead><tr><th>Question</th><th>Key</th><th>Type</th><th>CRM field</th></tr></thead>
-                  <tbody>
-                    {mapping.questions.map((q) => (
-                      <tr key={q.key}>
-                        <td><span className="nm">{q.label}</span></td>
-                        <td><span className="mono sub">{q.key}</span></td>
-                        <td><span className="bdg b-gray">{q.type}</span></td>
-                        <td>
-                          <select className="ainp" aria-label={`Map ${q.label}`} value={draft[q.key] ?? ''} disabled={!canManage}
-                            onChange={(e) => { setDraft((d) => ({ ...d, [q.key]: e.target.value })); setDirty(true); }}>
-                            <option value="">— ignore —</option>
-                            {mapping.crm_fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {/* client 6 Nov 2026 — Page / Campaign / Ad are not questions on the form, so they
-                  never appear above; Meta sends them with every lead and they are saved as-is. */}
-              {mapping && (
-                <div className="notice" data-testid="fb-auto-captured" style={{ margin: '12px 14px' }}>
-                  <Ic k="bolt" />
-                  <div>
-                    <b>Captured automatically with every lead (no mapping needed):</b> Facebook Page,
-                    Ad campaign, Ad set, Ad, Lead form and Platform (Facebook / Instagram).
-                    They show as the <b>FB Page</b>, <b>FB Campaign</b> and <b>FB Ad</b> columns in Leads,
-                    on the lead's details, and in the Leads export.
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
         <div className="af">
           {dirty && <span className="fhint" style={{ marginRight: 'auto', color: 'var(--amber, #d97706)' }}>Unsaved changes</span>}

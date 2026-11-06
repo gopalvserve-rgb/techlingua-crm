@@ -204,6 +204,11 @@ describe('Facebook Form Mapping', () => {
     fireEvent.click(within(rows[0]).getByText('Map fields'));
     await waitFor(() => screen.getByTestId('fb-question-map'));
     expect(get).toHaveBeenCalledWith('/channels/1/fb/forms/F1/mapping?page_id=P1');
+    // client 6 Nov 2026 — the questions open right under the clicked form (inside the forms
+    // table, directly after its row), not below a long list where they looked like nothing happened
+    const qRow = screen.getByTestId('fb-question-map').closest('tr')!;
+    expect(screen.getByTestId('fb-forms-table').contains(qRow)).toBe(true);
+    expect(qRow.previousElementSibling).toBe(rows[0]);
 
     // nothing saved yet -> the suggestion is pre-filled, the custom question is "ignore"
     expect((screen.getByLabelText('Map Full name') as HTMLSelectElement).value).toBe('full_name');
