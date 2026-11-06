@@ -53,6 +53,7 @@ import { RedFlagModal } from './leadsheet';
 import { ConvertStudentModal, BulkConvertStudentsModal } from './convertstudent';
 import { AdmissionsScreen } from './admissions';
 import { CustomFieldsAdmin, fetchCfDefs, coerceCf, collectCf, type CfDef } from './customfields';
+import { adInfoOf } from './adinfo';
 import StartCalling from './calling';
 import CallLogs, { Recordings as CallRecordings, CallSettings, CallReport, CallLogsIncoming, CallLogsOutgoing, CallLogsMissed, Dialer } from './calls';
 import {
@@ -163,7 +164,7 @@ const fmtDate = (v?: string | null) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'Score', 'Lead Counsellor', 'Stage', 'Status', 'Last Call Disposition', 'Next follow-up', 'Created on'];
+const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'FB Page', 'FB Campaign', 'FB Ad', 'Score', 'Lead Counsellor', 'Stage', 'Status', 'Last Call Disposition', 'Next follow-up', 'Created on'];
 
 /* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
 const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
@@ -238,6 +239,8 @@ function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: '
     `${dn(l.vertical_name, l.vertical_deleted)} · ${dn(l.pipeline_name, l.pipeline_deleted)}`,
     dn(l.campaign_name, l.campaign_deleted) || '—',
     { b: [dn(l.source_name, l.source_deleted) || '—', 'b-indigo'] },
+    // client 6 Nov 2026 — the Facebook / Instagram ad the lead came from (lead.ad_info).
+    ...adCells(l),
     { node: (
       <span style={{ display: 'inline-flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
         <TempBadge temperature={l.temperature} score={l.score} />
@@ -259,6 +262,18 @@ function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: '
     { node: <span className="mono sub" style={overdue ? { color: 'var(--danger)' } : undefined}>{fmtDT(l.next_follow_up_at)}</span> },
     // dev/84 item 9 — Lead creation date (DD-MM-YYYY IST), sortable (Newest/Oldest) + exported.
     { node: <span className="mono sub">{fmtDateTimeIST(l.created_at)}</span> },
+  ];
+}
+
+/** FB Page · FB Campaign · FB Ad cells; the ad set and platform ride along as a tooltip. */
+function adCells(l: any): Cell[] {
+  const a = adInfoOf(l);
+  if (!a) return ['—', '—', '—'];
+  const tip = [a.adset ? `Ad set: ${a.adset}` : '', a.platform ? `Platform: ${a.platform}` : '', a.form ? `Form: ${a.form}` : ''].filter(Boolean).join(' · ');
+  return [
+    a.page || '—',
+    a.campaign || '—',
+    { node: <span title={tip || undefined}>{a.ad || '—'}{a.platform ? <span className="sub"> · {a.platform}</span> : null}</span> },
   ];
 }
 

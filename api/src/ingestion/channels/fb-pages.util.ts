@@ -206,3 +206,48 @@ export function mappedCount(
     return !!t && t !== IGNORE_TARGET;
   }).length;
 }
+
+/* ------------------------------------------------------------------ *
+ *  AD DETAILS (client, 6 Nov 2026) — which Page / campaign / ad brought the lead
+ * ------------------------------------------------------------------ */
+
+/** The leadgen fields asked of Meta: the answers plus the ad they came from. */
+export const META_LEAD_FIELDS =
+  'field_data,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,platform,is_organic';
+
+/** Stored on lead.ad_info (migration 130). Every key optional: Meta omits what it does not know. */
+export interface MetaAdInfo {
+  page?: string; page_id?: string;
+  campaign?: string; campaign_id?: string;
+  adset?: string; adset_id?: string;
+  ad?: string; ad_id?: string;
+  form?: string; form_id?: string;
+  platform?: string; organic?: boolean;
+}
+
+const PLATFORMS: Record<string, string> = { fb: 'Facebook', ig: 'Instagram', msg: 'Messenger', wa: 'WhatsApp', an: 'Audience Network' };
+
+/**
+ * Fold Meta's leadgen object (and what the CRM already knows: the Page, the form) into the
+ * ad_info bag. Blank values are dropped; null when nothing at all is known. Pure.
+ */
+export function metaAdInfo(
+  lead: Record<string, any> | null | undefined,
+  known: { page?: string; page_id?: string; form?: string; form_id?: string } = {},
+): MetaAdInfo | null {
+  const s = (v: unknown) => (v == null ? '' : String(v).trim());
+  const l = lead ?? {};
+  const plat = s(l.platform).toLowerCase();
+  const raw: Record<string, unknown> = {
+    page: s(known.page), page_id: s(known.page_id),
+    campaign: s(l.campaign_name), campaign_id: s(l.campaign_id),
+    adset: s(l.adset_name), adset_id: s(l.adset_id),
+    ad: s(l.ad_name), ad_id: s(l.ad_id),
+    form: s(known.form), form_id: s(l.form_id) || s(known.form_id),
+    platform: plat ? (PLATFORMS[plat] ?? plat) : '',
+  };
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) if (v) out[k] = v;
+  if (typeof l.is_organic === 'boolean') out.organic = l.is_organic;
+  return Object.keys(out).length ? (out as MetaAdInfo) : null;
+}

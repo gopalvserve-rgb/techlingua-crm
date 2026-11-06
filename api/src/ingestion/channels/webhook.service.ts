@@ -17,7 +17,8 @@ import {
   PROVIDERS,
 } from './providers';
 import {
-  FbPageEntry, IGNORE_TARGET, overlayFieldMap, pageTokenKey, storedPages, webhookPageId,
+  FbPageEntry, IGNORE_TARGET, META_LEAD_FIELDS, MetaAdInfo, metaAdInfo, overlayFieldMap, pageTokenKey,
+  storedPages, webhookPageId,
 } from './fb-pages.util';
 
 /** the public route family a provider serves (meta|google|form|push|null). */
@@ -238,11 +239,11 @@ export class WebhookService {
         // Meta normally sends only the leadgen_id -> fetch the answers from the Graph
         // API. The Lead Ads Testing Tool (and our smoke test) may inline field_data;
         // honour it when present so a test lead needs no extra round trip.
-        const fieldData: Array<{ name?: string; values?: unknown[] }> = Array.isArray(v?.field_data)
-          ? v.field_data
+        const fetched = Array.isArray(v?.field_data)
+          ? { field_data: v.field_data as Array<{ name?: string; values?: unknown[] }>, ad: {} as Record<string, any> }
           : await this.fetchMetaLead(leadgenId, token, graph);
 
-        const payload: IngestPayload = metaToPayload(fieldData, effectiveMap);
+        const payload: IngestPayload = metaToPayload(fetched.field_data, effectiveMap);
         payload.external_id = leadgenId || undefined;
 
         const out = await this.ingestion.ingest(payload, {
@@ -250,6 +251,11 @@ export class WebhookService {
           campaign_id: ch.campaign_id, source_id: ch.source_id,
           actor_id: null, external_key: leadgenId || null, duplicate_policy: 'campaign',
         });
+        // Page / campaign / ad set / ad / form the lead came from (never costs the lead)
+        await this.saveAdInfo(out, metaAdInfo(fetched.ad, {
+          page_id: pageId || String(v?.page_id ?? ''), page: stored?.page_name ?? '',
+          form_id: formId, form: formMap?.form_name ?? (await this.formName(formId, token, graph)),
+        }));
         outcomes.push(out);
         if (out.lead_id && !firstLead) firstLead = out.lead_id;
         notes.push(this.describe(out, leadgenId));
@@ -275,19 +281,61 @@ export class WebhookService {
     return { http: 200, body: { received: true, ingested: outcomes.filter((o) => o.status === 'created').length }, event_id: eventId, outcomes };
   }
 
-  /** Graph API: leadgen_id -> the answers the person actually typed. */
-  private async fetchMetaLead(leadgenId: string, token: string, graph: string) {
+  /**
+   * Graph API: leadgen_id -> the answers the person actually typed, plus the ad it came from
+   * (campaign / ad set / ad names and ids, platform). If Meta refuses the ad fields, the lead is
+   * fetched again without them: the answers matter more than the attribution.
+   */
+  private async fetchMetaLead(leadgenId: string, token: string, graph: string): Promise<{
+    field_data: Array<{ name?: string; values?: unknown[] }>; ad: Record<string, any>;
+  }> {
     if (!leadgenId) throw new IngestValidationError('Meta payload carried no leadgen_id');
     if (!token) throw new IngestValidationError('Page access token not configured — cannot fetch the lead from Meta');
-    const url = `https://graph.facebook.com/${graph}/${encodeURIComponent(leadgenId)}?access_token=${encodeURIComponent(token)}`;
-    const res = await this.http(url);
-    const text = await res.text();
+    const base = `https://graph.facebook.com/${graph}/${encodeURIComponent(leadgenId)}?access_token=${encodeURIComponent(token)}`;
+    let res = await this.http(`${base}&fields=${META_LEAD_FIELDS}`);
+    let text = await res.text();
+    if (!res.ok) {
+      res = await this.http(base);
+      text = await res.text();
+    }
     if (!res.ok) {
       throw new Error(`Meta Graph API returned ${res.status} for leadgen ${leadgenId}: ${text.slice(0, 200)}`);
     }
-    const json = JSON.parse(text) as { field_data?: Array<{ name?: string; values?: unknown[] }> };
+    const json = JSON.parse(text) as { field_data?: Array<{ name?: string; values?: unknown[] }> } & Record<string, any>;
     if (!json.field_data?.length) throw new IngestValidationError(`Meta returned no field_data for leadgen ${leadgenId}`);
-    return json.field_data;
+    return { field_data: json.field_data, ad: json };
+  }
+
+  /** A lead form's name (cached): the Graph `form_id -> name`, '' when Meta will not say. */
+  private readonly formNames = new Map<string, string>();
+  private async formName(formId: string, token: string, graph: string): Promise<string> {
+    if (!formId || !token) return '';
+    if (this.formNames.has(formId)) return this.formNames.get(formId)!;
+    try {
+      const res = await this.http(`https://graph.facebook.com/${graph}/${encodeURIComponent(formId)}?fields=name&access_token=${encodeURIComponent(token)}`);
+      const j: any = JSON.parse((await res.text()) || '{}');
+      const name = res.ok ? String(j?.name ?? '') : '';
+      if (name) this.formNames.set(formId, name);
+      return name;
+    } catch { return ''; }
+  }
+
+  /**
+   * Stamp the ad details on the lead: always on a new lead, and on a lead it was merged into only
+   * when that lead has none yet (the first ad that brought the person in keeps the credit).
+   */
+  private async saveAdInfo(out: IngestOutcome, info: MetaAdInfo | null): Promise<void> {
+    if (!info) return;
+    const id = out.status === 'created' ? out.lead_id : out.merged ? (out.lead_id ?? out.duplicate_of) : null;
+    if (!id) return;
+    try {
+      await this.db.query(
+        `UPDATE lead SET ad_info = $1 WHERE id = $2 AND ($3 OR ad_info IS NULL)`,
+        [JSON.stringify(info), id, out.status === 'created'],
+      );
+    } catch (e) {
+      this.log.warn(`ad_info for lead ${id} not saved (ignored): ${(e as Error).message}`);
+    }
   }
 
   /**

@@ -7,6 +7,7 @@ import { Ic, checkS } from './icons';
 import { AddMasterModal } from './mastermodal';
 import { AddModal, dedupeSources } from './forms';
 import { fetchLeadCfDefs, coerceCf, displayCf, CfDef } from './customfields';
+import { adInfoOf, adInfoRows } from './adinfo';
 import { PhoneInput } from './phonefield';
 import { copyToClipboard } from './contactactions';
 import { Avatar, TempBadge } from './renderer';
@@ -471,6 +472,12 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                   <span style={{ marginLeft: 8 }}>{lead.existing_student_name || `Student #${lead.existing_student_id}`}{lead.existing_student_no ? ` · ${lead.existing_student_no}` : ''}</span>
                 </div></div>
               )}
+              {/* client 6 Nov 2026 — the Facebook / Instagram ad this lead came from (read-only). */}
+              {adInfoRows(adInfoOf(lead)).map(([label, value]) => (
+                <div className="f" key={label} data-testid={`adinfo-${label}`}><label>{label}</label><div className="iv">
+                  <span>{value}</span>
+                </div></div>
+              ))}
             </div>
           </div>
           {cfDefs.length > 0 && (() => {

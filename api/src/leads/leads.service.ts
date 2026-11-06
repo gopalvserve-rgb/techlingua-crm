@@ -155,6 +155,7 @@ const LEAD_SELECT = `
          l.is_red_flagged, l.red_flagged_at,
          l.paused, l.paused_at,
          l.is_existing_student, l.existing_student_id,
+         l.ad_info,
          es.full_name AS existing_student_name, es.student_no AS existing_student_no,
          EXISTS (SELECT 1 FROM lead_sla s
                   WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now()) AS sla_breached,
@@ -370,6 +371,13 @@ export class LeadsService {
 
   private static yesNo(v: unknown): string { return v ? 'Yes' : 'No'; }
 
+  /** One value of lead.ad_info (JSONB; a string when the driver hands it over raw). */
+  private static ad(r: Record<string, unknown>, k: string): string {
+    let a: any = r.ad_info;
+    if (typeof a === 'string') { try { a = JSON.parse(a); } catch { a = null; } }
+    return a && typeof a === 'object' && a[k] != null ? String(a[k]) : '';
+  }
+
   /** Project a raw LEAD_SELECT row → ordered, human-readable export columns (names, not ids). */
   private static toExportRow(
     r: Record<string, unknown>,
@@ -390,6 +398,13 @@ export class LeadsService {
       'Pipeline': (r.pipeline_name as string) ?? '',
       'Campaign': (r.campaign_name as string) ?? '',
       'Source': (r.source_name as string) ?? '',
+      // client 6 Nov 2026 — the Facebook / Instagram ad the lead came from (migration 130)
+      'FB Page': LeadsService.ad(r, 'page'),
+      'FB Campaign': LeadsService.ad(r, 'campaign'),
+      'FB Ad Set': LeadsService.ad(r, 'adset'),
+      'FB Ad': LeadsService.ad(r, 'ad'),
+      'FB Form': LeadsService.ad(r, 'form'),
+      'Platform': LeadsService.ad(r, 'platform'),
       'Stage': (r.stage_name as string) ?? '',
       'Status': (r.status_name as string) ?? '',
       'Course': (r.course_name as string) ?? '',

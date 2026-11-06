@@ -428,6 +428,19 @@ export function FbFormMappingModal({ channel, canManage, onClose }: {
                   </tbody>
                 </table>
               )}
+              {/* client 6 Nov 2026 — Page / Campaign / Ad are not questions on the form, so they
+                  never appear above; Meta sends them with every lead and they are saved as-is. */}
+              {mapping && (
+                <div className="notice" data-testid="fb-auto-captured" style={{ margin: '12px 14px' }}>
+                  <Ic k="bolt" />
+                  <div>
+                    <b>Captured automatically with every lead (no mapping needed):</b> Facebook Page,
+                    Ad campaign, Ad set, Ad, Lead form and Platform (Facebook / Instagram).
+                    They show as the <b>FB Page</b>, <b>FB Campaign</b> and <b>FB Ad</b> columns in Leads,
+                    on the lead's details, and in the Leads export.
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
