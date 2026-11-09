@@ -399,7 +399,7 @@ export class PlanService {
       const kept = paidKept + earlier;
       await this.recordHistory(c, enrolmentId, newId, action, me.id,
         dto?.reason ? String(dto.reason).slice(0, 500)
-          : kept > 0 ? `Paid ${(kept / 100).toFixed(2)} kept as paid; balance ${(balance / 100).toFixed(2)} scheduled`
+          : kept > 0 ? `Paid ${inr(kept)} kept as paid; balance ${inr(balance)} scheduled`
           : action === 'resetup' ? 'Fee plan set up again' : null);
       return { id: newId, previous_plan_id: old ? Number(old.id) : null, paid_kept_minor: kept, balance_minor: balance, installments: seq - 1 };
     });
@@ -713,3 +713,6 @@ export function balanceSplit(netMinor: number, paidRowMinors: number[], receipts
   const balance = Math.trunc(netMinor) - paidKept - earlier;
   return { paidKept, earlier, balance: Math.max(0, balance), over: balance < 0 };
 }
+
+/** ₹1,23,456.00 for history notes. */
+const inr = (minor: number) => `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

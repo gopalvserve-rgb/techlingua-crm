@@ -7188,7 +7188,8 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
       const kind = String(existingPlan.plan_type);
       cfg.setPlan((kind === 'full' ? 'full' : kind === 'custom' ? 'custom' : 'installment') as FeePlanKind);
       if (existingPlan.num_installments) cfg.setCount(String(existingPlan.num_installments));
-      if (Number(existingPlan.down_payment_minor) > 0) cfg.setDown(String(Number(existingPlan.down_payment_minor) / 100));
+      // the old down payment is already PAID once money came in: never pre-fill it into the re-plan
+      if (Number(existingPlan.down_payment_minor) > 0 && !(Number(e.paid_minor ?? 0) > 0)) cfg.setDown(String(Number(existingPlan.down_payment_minor) / 100));
       if (existingPlan.start_date) cfg.setStart(istDay(existingPlan.start_date));
     }
     cfg.setFee(String(Number(e.gross_fee_minor ?? e.fee_minor ?? 0) / 100));
@@ -7365,7 +7366,7 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
       const kind = String(existingPlan.plan_type);
       cfg.setPlan((kind === 'full' ? 'full' : kind === 'custom' ? 'custom' : 'installment') as FeePlanKind);
       if (existingPlan.num_installments) cfg.setCount(String(existingPlan.num_installments));
-      if (Number(existingPlan.down_payment_minor) > 0) cfg.setDown(String(Number(existingPlan.down_payment_minor) / 100));
+      if (Number(existingPlan.down_payment_minor) > 0 && !(Number(enrolment.paid_minor ?? 0) > 0)) cfg.setDown(String(Number(existingPlan.down_payment_minor) / 100));
       if (existingPlan.start_date) cfg.setStart(istDay(existingPlan.start_date));
     }
     cfg.setPaidMinor(Number(enrolment.paid_minor ?? 0));

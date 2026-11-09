@@ -51,8 +51,12 @@ export type RowMenuItem =
  * position anchored to the trigger, so a table's overflow never clips it.
  */
 export function RowMenu({ items, label = 'Actions' }: { items: Array<RowMenuItem | false | null | undefined>; label?: string }) {
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  // client 10 Nov: on a row near the bottom of the screen the menu ran off the viewport (Delete,
+  // Audit History… unreachable). It now opens UPWARD when there is more room above, and scrolls
+  // inside itself when it is taller than the space it has.
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number; maxH: number } | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
   const open = pos != null;
   const kept = items.filter((x): x is RowMenuItem => !!x);
   // collapse leading/trailing/adjacent dividers so gated-off items never leave a stray rule
@@ -66,19 +70,25 @@ export function RowMenu({ items, label = 'Actions' }: { items: Array<RowMenuItem
   const toggle = () => {
     if (open) { setPos(null); return; }
     const r = btn.current!.getBoundingClientRect();
-    setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    const right = Math.max(8, window.innerWidth - r.right);
+    const want = shown.reduce((h, it) => h + (it === 'divider' ? 9 : 34), 12);
+    const below = window.innerHeight - r.bottom - 12;
+    const above = r.top - 12;
+    if (want > below && above > below) setPos({ bottom: window.innerHeight - r.top + 4, right, maxH: Math.max(120, above) });
+    else setPos({ top: r.bottom + 4, right, maxH: Math.max(120, below) });
   };
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setPos(null);
+    // scrolling INSIDE the menu must not close it; scrolling the page still does
+    const close = (e?: Event) => { if (e && pop.current && e.target instanceof Node && pop.current.contains(e.target)) return; setPos(null); };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    window.addEventListener('resize', close as () => void);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('resize', close as () => void);
       window.removeEventListener('keydown', onKey);
     };
   }, [open]);
@@ -91,7 +101,8 @@ export function RowMenu({ items, label = 'Actions' }: { items: Array<RowMenuItem
       {open && pos && createPortal(
         <>
           <div className="rowmenu-backdrop" onClick={() => setPos(null)} />
-          <div className="rowmenu-pop" role="menu" style={{ top: pos.top, right: pos.right }}>
+          <div ref={pop} className="rowmenu-pop" role="menu" data-testid="rowmenu-pop"
+            style={{ top: pos.top, bottom: pos.bottom, right: pos.right, maxHeight: pos.maxH, overflowY: 'auto' }}>
             {shown.map((it, i) => (it === 'divider'
               ? <div className="rowmenu-div" key={`d${i}`} />
               : (
