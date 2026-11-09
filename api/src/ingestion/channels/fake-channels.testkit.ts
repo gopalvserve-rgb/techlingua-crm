@@ -56,6 +56,11 @@ export function makeChannelDb(channels: any[], init: Partial<FakeState> = {}) {
       const hit = cst.channels.find((c) => Number(c.id) === Number(params[0]) && !c.deleted_at);
       return hit ? [hit] : [];
     }
+    // one Page, one channel (client 9 Nov): the other Meta channels, to see who monitors a Page
+    if (/^SELECT (id, )?name, config FROM capture_channel WHERE provider = 'meta' AND deleted_at IS NULL AND id <> \$1/.test(s)) {
+      return cst.channels.filter((c) => c.provider === 'meta' && !c.deleted_at && Number(c.id) !== Number(params[0]))
+        .map((c) => ({ id: c.id, name: c.name, config: c.config }));
+    }
     if (s.startsWith('INSERT INTO webhook_event')) {
       const [org_id, channel_id, provider, public_key, method, ip, origin, raw, signature_ok,
         status, reason, external_key, lead_id, duration_ms] = params as any[];

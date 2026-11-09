@@ -21,12 +21,55 @@ export function cellSortKey(c: Cell): string | number {
   else if ('b' in c) s = c.b[0];
   else if ('mono' in c) s = c.mono;
   else if (c.sort != null) return c.sort;
-  else return '';
-  const t = s.trim();
-  if (/^-?\s*₹?\s*-?[\d,]+(\.\d+)?\s*%?$/.test(t)) return Number(t.replace(/[₹,%\s]/g, ''));
-  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t;
+  // client 5 Nov (6): a rich cell (avatar + name, a badge in a span, a date in a span…) with no
+  // explicit `sort` used to sort as '' — the header click did nothing. Sort by what it SHOWS.
+  else s = nodeText(c.node);
+  return textSortKey(s);
+}
+
+/** The sort value of displayed text: money / counts / % by value, dates by time, else text. */
+export function textSortKey(raw: string): string | number {
+  const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (t === '' || t === '—' || t === '-') return '';
+  if (/^[−-]?\s*₹?\s*[−-]?[\d,]+(\.\d+)?\s*%?$/.test(t)) {
+    const neg = /[−-]/.test(t);
+    const n = Number(t.replace(/[₹,%\s−-]/g, ''));
+    return neg ? -n : n;
+  }
+  // ₹ amount followed by more text ("₹2,000 · 2 instalments") sorts by the amount
+  const money = /^₹\s*([\d,]+(\.\d+)?)/.exec(t);
+  if (money) return Number(money[1].replace(/,/g, ''));
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return Date.parse(t.slice(0, 10) + 'T' + (/\d{2}:\d{2}/.exec(t.slice(10))?.[0] ?? '00:00') + ':00Z');
+  // the app's IST convention DD-MM-YYYY [HH:mm] (fmtDMYIST / fmtDateTimeIST)
+  const dmy = /^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{2}):(\d{2}))?/.exec(t);
+  if (dmy) return Date.UTC(+dmy[3], +dmy[2] - 1, +dmy[1], +(dmy[4] ?? 0), +(dmy[5] ?? 0));
   const d = /^\d{1,2} [A-Za-z]{3},? \d{4}/.test(t) ? Date.parse(t.replace(',', '')) : NaN;
   return Number.isFinite(d) ? d : t.toLowerCase();
+}
+
+/** The visible text of a React node (elements walked through their children). */
+export function nodeText(n: ReactNode): string {
+  if (n == null || typeof n === 'boolean') return '';
+  if (typeof n === 'string' || typeof n === 'number') return String(n);
+  if (Array.isArray(n)) return n.map(nodeText).filter(Boolean).join(' ');
+  if (typeof n === 'object' && 'props' in (n as any)) {
+    const el = n as any;
+    const p = el.props ?? {};
+    // a select shows its chosen option; an input its value
+    if (el.type === 'select' || el.type === 'input') {
+      if (el.type === 'select') {
+        const opts: any[] = ([] as any[]).concat(p.children ?? []).flat(3);
+        const hit = opts.find((o) => o && o.props && String(o.props.value) === String(p.value ?? p.defaultValue ?? ''));
+        if (hit) return nodeText(hit.props.children);
+      }
+      return p.value != null ? String(p.value) : '';
+    }
+    const inner = nodeText(p.children);
+    if (inner) return inner;
+    // a component with no children (Avatar, a badge component…) — use a readable prop
+    for (const k of ['name', 'label', 'title', 'value', 'text']) if (typeof p[k] === 'string' || typeof p[k] === 'number') return String(p[k]);
+  }
+  return '';
 }
 
 export function renderCell(c: Cell, i?: number): ReactNode {

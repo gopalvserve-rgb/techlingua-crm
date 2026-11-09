@@ -88,9 +88,11 @@ export class ChannelService {
               (SELECT count(*) FROM webhook_event e
                 WHERE e.channel_id = c.id AND e.status IN ('rejected','failed')
                   AND e.created_at > now() - INTERVAL '24 hours') AS failures_24h,
-              (SELECT count(*) FROM lead_ingest_record r
-                WHERE r.source_id = c.source_id AND r.channel IN ('webhook','form','sheet')
-                  AND r.created_at > now() - INTERVAL '30 days') AS leads_30d
+              -- client 9 Nov: leads THIS channel created (two channels on one source both
+              -- showed the source's total, so the same leads looked like they were in both)
+              (SELECT count(DISTINCT e.lead_id) FROM webhook_event e
+                WHERE e.channel_id = c.id AND e.status = 'ingested' AND e.lead_id IS NOT NULL
+                  AND e.created_at > now() - INTERVAL '30 days') AS leads_30d
          FROM capture_channel c
          JOIN branch b   ON b.id = c.branch_id
          JOIN vertical v ON v.id = c.vertical_id

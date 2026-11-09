@@ -83,12 +83,32 @@ export class FbPagesService {
     return this.view(await this.metaChannel(channelId));
   }
 
+  /**
+   * Other ACTIVE Meta channels that monitor this Page (client 9 Nov: "BCL Meta" and "BCL Meta1"
+   * both monitored British College of Language, so the leads "moved" to the new channel).
+   */
+  async otherMonitors(channelId: number, pageId: string): Promise<Array<{ id: number; name: string }>> {
+    const rows = await this.db.query<{ id: string; name: string; config: any }>(
+      `SELECT id, name, config FROM capture_channel
+        WHERE provider = 'meta' AND deleted_at IS NULL AND id <> $1::bigint`, [channelId]);
+    return rows.filter((r) => storedPages(r.config).some((p) => p.page_id === String(pageId) && p.monitored))
+      .map((r) => ({ id: Number(r.id), name: String(r.name) }));
+  }
+
   /** Monitor a Page: subscribe our app to its `leadgen` field. */
   async subscribe(channelId: number, pageId: string) {
     const ch = await this.metaChannel(channelId);
     const pages = this.effectivePages(ch);
     const page = pages.find((p) => p.page_id === String(pageId));
     if (!page) throw new NotFoundException('That Facebook Page is not connected to this channel.');
+    // ONE PAGE, ONE CHANNEL: a lead can only be routed to one channel, so a second channel on
+    // the same Page silently takes its leads over. Refuse, and say where the Page lives.
+    const taken = await this.otherMonitors(channelId, page.page_id);
+    if (taken.length) {
+      throw new BadRequestException(
+        `"${page.page_name || page.page_id}" is already monitored by channel "${taken.map((t) => t.name).join('", "')}". `
+        + 'A Facebook Page feeds one channel only: use that channel, or switch the Page off there first (Pages → switch off).');
+    }
     const token = this.tokenFor(ch, this.channels.secretsOf(ch), page.page_id);
     if (!token) throw new BadRequestException('No Page token stored for this Page — re-authorise with Facebook first.');
 
@@ -125,7 +145,13 @@ export class FbPagesService {
 
     const now = new Date().toISOString();
     let warning: string | null = null;
-    if (token) {
+    // The leadgen subscription is per Page at Facebook, not per channel: while ANOTHER channel
+    // still monitors this Page, unsubscribing would cut that channel off too. Only our gate flips.
+    const stillUsed = await this.otherMonitors(channelId, page.page_id);
+    let keptFor: string | null = null;
+    if (stillUsed.length) {
+      keptFor = stillUsed.map((t) => t.name).join(', ');
+    } else if (token) {
       try {
         await this.graph('DELETE',
           `${FB_GRAPH_BASE}/${encodeURIComponent(page.page_id)}/subscribed_apps?access_token=${encodeURIComponent(token)}`);
@@ -134,12 +160,13 @@ export class FbPagesService {
       warning = 'No Page token stored — could not tell Facebook to unsubscribe.';
     }
     Object.assign(page, {
-      monitored: false, subscribed: warning ? page.subscribed : false, checked_at: now, last_error: warning,
+      monitored: false, subscribed: warning || keptFor ? page.subscribed : false, checked_at: now, last_error: warning,
     });
     await this.channels.mergeConfig(channelId, { pages });
     await this.event(ch, warning ? 'failed' : 'verified',
       `Facebook Page "${page.page_name}" (${page.page_id}) is no longer monitored`
-        + (warning ? ` — leads for it are now skipped, but Facebook's unsubscribe failed: ${warning}` : ' — unsubscribed from leadgen'),
+        + (keptFor ? ` here — it stays subscribed at Facebook because channel "${keptFor}" still monitors it`
+          : warning ? ` — leads for it are now skipped, but Facebook's unsubscribe failed: ${warning}` : ' — unsubscribed from leadgen'),
       { action: 'fb_unsubscribe', page_id: page.page_id, page_name: page.page_name });
     return { ...(await this.view(await this.metaChannel(channelId))), warning };
   }
@@ -157,6 +184,7 @@ export class FbPagesService {
     for (const p of pages.filter((x) => x.monitored)) {
       const token = this.tokenFor(ch, secrets, p.page_id);
       if (!token) continue;
+      if ((await this.otherMonitors(channelId, p.page_id)).length) continue;   // another channel still needs it
       try {
         await this.graph('DELETE',
           `${FB_GRAPH_BASE}/${encodeURIComponent(p.page_id)}/subscribed_apps?access_token=${encodeURIComponent(token)}`);

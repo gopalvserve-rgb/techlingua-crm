@@ -177,6 +177,13 @@ export class PlanService {
     );
     if (!e) throw new NotFoundException('Enrolment not found (or outside your access)');
     if (e.status !== 'active') throw new BadRequestException(`${e.enrolment_no} is ${e.status}; a payment plan can only be built on an active enrolment.`);
+    // client 5 Nov (1, 7): Fee setup on an enrolment that has ALREADY received money schedules
+    // only the balance; what is paid is kept as a paid row, never spread over new instalments.
+    if (dto?.balance_only && Number(e.paid_minor) > 0) {
+      const live = await this.db.one(`SELECT 1 FROM payment_plan WHERE enrolment_id = $1::bigint AND status = 'active' AND deleted_at IS NULL`, [enrolmentId]);
+      if (live) throw new ConflictException(`${e.enrolment_no} already has an active payment plan — use Re-setup plan to change it.`);
+      return this.replan(enrolmentId, null, dto, me, 'created');
+    }
 
     const planType = String(dto?.plan_type ?? 'installment') as PlanType;
     if (!PLAN_TYPES.includes(planType)) throw new BadRequestException('Choose a valid plan type: Full, Installment, EMI or Custom.');
@@ -263,7 +270,25 @@ export class PlanService {
     if (old.status !== 'active' && old.status !== 'completed') {
       throw new BadRequestException('Only the current payment plan can be set up again.');
     }
-    const enrolmentId = Number(old.enrolment_id);
+    return this.replan(Number(old.enrolment_id), old, dto, me, 'resetup');
+  }
+
+  /**
+   * THE BALANCE-ONLY RE-PLAN (client 5 Nov, points 1 + 7: "20,000 fee, 10,000 already paid by
+   * down payment or instalment -> only the 10,000 balance is re-scheduled, not the full fee").
+   *
+   * What has been paid is never re-scheduled:
+   *   - every paid / part-paid instalment of the old plan becomes a PAID row on the new plan,
+   *     and the receipts that paid it move with it (their allocation rows are re-pointed);
+   *   - money received but sitting on no instalment (paid before any plan existed, or spread in
+   *     without a receipt link when a plan was built after the money) becomes ONE paid row,
+   *     "Paid · received before this plan", backed by those receipts. It is NOT spread over the
+   *     new instalments, which is what made the old flow re-schedule the full fee.
+   * Only `net - everything paid` is scheduled on the new terms (down payment, count, custom
+   * amounts all apply to that balance). `old` is null when an enrolment that has already
+   * received money gets its FIRST plan.
+   */
+  private async replan(enrolmentId: number, old: any | null, dto: any, me: { id: number }, action: PlanHistoryAction) {
     const e = await this.db.one<any>(
       `SELECT e.id, e.net_fee_minor, e.status, e.enrolment_no, e.start_date,
               COALESCE((SELECT sum(fr.amount_minor) FROM fee_receipt fr
@@ -272,11 +297,11 @@ export class PlanService {
     if (!e) throw new NotFoundException('Enrolment not found');
     if (e.status !== 'active') throw new BadRequestException(`${e.enrolment_no} is ${e.status}; its fee plan cannot be set up again.`);
 
-    const paidRows = (old.installments ?? []).filter((i: any) => Number(i.paid_minor) > 0);
-    const paidKept = paidRows.reduce((a: number, i: any) => a + Number(i.paid_minor), 0);
+    const paidRows = (old?.installments ?? []).filter((i: any) => Number(i.paid_minor) > 0);
     const net = Number(e.net_fee_minor);
-    const balance = net - paidKept;
-    if (balance < 0) throw new BadRequestException('More has been paid than the current net fee — record a refund instead of re-planning.');
+    const split = balanceSplit(net, paidRows.map((i: any) => Number(i.paid_minor)), Number(e.receipts_minor));
+    if (split.over) throw new BadRequestException('More has been paid than the current net fee — record a refund instead of re-planning.');
+    const { paidKept, earlier, balance } = split;
 
     const planType = String(dto?.plan_type ?? 'installment') as PlanType;
     if (!PLAN_TYPES.includes(planType)) throw new BadRequestException('Choose a valid plan type: Full, Installment, EMI or Custom.');
@@ -284,7 +309,7 @@ export class PlanService {
     if (!FREQUENCIES.includes(frequency)) throw new BadRequestException('Choose a valid frequency.');
     if (planType === 'full') frequency = 'once';
     const downPayment = this.minor(dto?.down_payment, dto?.down_payment_minor, 'Down payment');
-    if (downPayment > balance) throw new BadRequestException('The down payment cannot exceed the balance still to be paid.');
+    if (downPayment > balance) throw new BadRequestException(`The down payment cannot exceed the balance still to be paid (${(balance / 100).toFixed(2)}).`);
     const numInstallments = planType === 'full' ? 1 : Math.max(1, Math.trunc(Number(dto?.num_installments ?? 3)));
     if (numInstallments > 240) throw new BadRequestException('That is an unreasonable number of installments.');
     const startDate = toDateString(dto?.start_date) || new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10) /* IST today */;
@@ -303,47 +328,111 @@ export class PlanService {
           num_installments: effInstallments, frequency, start_date: startDate as string,
           custom_dates: customDates, custom_amounts: customAmounts,
         });
-      } catch (err) { throw new BadRequestException((err as Error).message); }
+      } catch (err) {
+        const m = (err as Error).message;
+        // custom amounts are checked against the BALANCE here: say so in rupees
+        throw new BadRequestException(customAmounts?.length
+          ? `The instalment amounts must add up to the balance still to be paid, ${(balance / 100).toFixed(2)} (already paid ${((paidKept + earlier) / 100).toFixed(2)} is kept). ${m}`
+          : m);
+      }
     }
 
     const orgId = await this.orgId();
     return this.db.tx(async (c) => {
       // the old plan steps aside first (one ACTIVE plan per enrolment is a unique index)
-      await c.query(`UPDATE payment_plan SET status = 'superseded', updated_at = now() WHERE id = $1::bigint`, [planId]);
-      const r = await c.query<{ id: string }>(
-        `INSERT INTO payment_plan (org_id, enrolment_id, plan_type, frequency, total_minor,
-                                   down_payment_minor, num_installments, start_date, note, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,$9,$10) RETURNING id`,
-        [orgId, enrolmentId, planType, frequency, net, downPayment,
-          schedule.filter((x) => x.label !== 'Down payment').length || 1, startDate, dto?.note ?? null, me.id]);
-      const newId = Number(r.rows[0].id);
+      if (old) await c.query(`UPDATE payment_plan SET status = 'superseded', updated_at = now() WHERE id = $1::bigint`, [Number(old.id)]);
+      let newId: number;
+      try {
+        const r = await c.query<{ id: string }>(
+          `INSERT INTO payment_plan (org_id, enrolment_id, plan_type, frequency, total_minor,
+                                     down_payment_minor, num_installments, start_date, note, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,$9,$10) RETURNING id`,
+          [orgId, enrolmentId, planType, frequency, net, downPayment,
+            schedule.filter((x) => x.label !== 'Down payment').length || 1, startDate, dto?.note ?? null, me.id]);
+        newId = Number(r.rows[0].id);
+      } catch (err) {
+        if ((err as { code?: string })?.code === '23505') {
+          throw new ConflictException(`${e.enrolment_no} already has an active payment plan — use Re-setup plan to change it.`);
+        }
+        throw err;
+      }
       let seq = 1;
-      // 1) the paid history, as it happened — allocations move with it
-      for (const old of paidRows) {
+      const paidIds: Array<{ id: number; amount: number }> = [];
+      // 1) the paid history, as it happened: allocations move with it
+      for (const o of paidRows) {
+        const label = String(o.label ?? '').startsWith('Paid · ') ? String(o.label) : `Paid · ${o.label ?? `Installment ${o.seq_no}`}`;
         const ins = await c.query<{ id: string }>(
           `INSERT INTO installment (plan_id, enrolment_id, seq_no, due_date, amount_minor, paid_minor, label, status)
            VALUES ($1,$2,$3,$4::date,$5,$5,$6,'paid') RETURNING id`,
-          [newId, enrolmentId, seq++, toDateString(old.due_date), Number(old.paid_minor), `Paid · ${old.label ?? `Installment ${old.seq_no}`}`]);
-        await c.query(`UPDATE installment_payment SET installment_id = $2::bigint WHERE installment_id = $1::bigint`, [Number(old.id), Number(ins.rows[0].id)]);
+          [newId, enrolmentId, seq++, toDateString(o.due_date), Number(o.paid_minor), label]);
+        const nid = Number(ins.rows[0].id);
+        await c.query(`UPDATE installment_payment SET installment_id = $2::bigint WHERE installment_id = $1::bigint`, [Number(o.id), nid]);
+        paidIds.push({ id: nid, amount: Number(o.paid_minor) });
       }
-      // 2) the unpaid balance on the new terms
+      // 2) money received that no instalment showed yet: one paid row, never re-scheduled
+      if (earlier > 0) {
+        const first = await c.query<{ d: string | null }>(
+          `SELECT to_char(min(received_at) AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') AS d
+             FROM fee_receipt WHERE enrolment_id = $1::bigint AND deleted_at IS NULL`, [enrolmentId]);
+        const ins = await c.query<{ id: string }>(
+          `INSERT INTO installment (plan_id, enrolment_id, seq_no, due_date, amount_minor, paid_minor, label, status)
+           VALUES ($1,$2,$3,$4::date,$5,$5,$6,'paid') RETURNING id`,
+          [newId, enrolmentId, seq++, first.rows[0]?.d ?? startDate, earlier, 'Paid · received before this plan']);
+        paidIds.push({ id: Number(ins.rows[0].id), amount: earlier });
+      }
+      // 3) back every paid row with the receipts that paid it (rows spread in with no receipt
+      //    link, i.e. a plan built after the money, get one now) so a later reversal stays exact
+      await this.linkFreeReceipts(c, enrolmentId, paidIds);
+      // 4) the unpaid balance on the new terms
       for (const row of schedule) {
         await c.query(
           `INSERT INTO installment (plan_id, enrolment_id, seq_no, due_date, amount_minor, label)
            VALUES ($1,$2,$3,$4::date,$5,$6)`,
           [newId, enrolmentId, seq++, row.due_date, row.amount_minor, row.label]);
       }
-      // money received but never allocated to the old schedule (e.g. paid before any plan)
-      const unallocated = Math.min(Number(e.receipts_minor) - paidKept, balance);
-      if (unallocated > 0) await this.spread(c, newId, unallocated);
-      // the old plan's rows are now history (snapshot below); drop them so nothing double-counts
-      await c.query(`DELETE FROM installment WHERE plan_id = $1::bigint`, [planId]);
-      await c.query(`UPDATE payment_plan SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint`, [planId, me.id]);
+      if (old) {
+        // the old plan's rows are now history (snapshot kept); drop them so nothing double-counts
+        await c.query(`DELETE FROM installment WHERE plan_id = $1::bigint`, [Number(old.id)]);
+        await c.query(`UPDATE payment_plan SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint`, [Number(old.id), me.id]);
+      }
       await this.recomputePlanStatus(c, newId);
-      await this.recordHistory(c, enrolmentId, newId, 'resetup', me.id,
-        dto?.reason ? String(dto.reason).slice(0, 500) : `Fee plan set up again: paid ${(paidKept / 100).toFixed(2)} kept, balance ${(balance / 100).toFixed(2)} re-scheduled`);
-      return { id: newId, previous_plan_id: planId, paid_kept_minor: paidKept, balance_minor: balance, installments: seq - 1 };
+      const kept = paidKept + earlier;
+      await this.recordHistory(c, enrolmentId, newId, action, me.id,
+        dto?.reason ? String(dto.reason).slice(0, 500)
+          : kept > 0 ? `Paid ${(kept / 100).toFixed(2)} kept as paid; balance ${(balance / 100).toFixed(2)} scheduled`
+          : action === 'resetup' ? 'Fee plan set up again' : null);
+      return { id: newId, previous_plan_id: old ? Number(old.id) : null, paid_kept_minor: kept, balance_minor: balance, installments: seq - 1 };
     });
+  }
+
+  /**
+   * Attach receipt money that sits on no instalment yet to the given paid rows, oldest receipt
+   * first, up to each row's paid amount less what already backs it.
+   */
+  private async linkFreeReceipts(c: PoolClient, enrolmentId: number, rows: Array<{ id: number; amount: number }>): Promise<void> {
+    if (!rows.length) return;
+    const free = (await c.query<{ id: string; rest: string }>(
+      `SELECT fr.id, fr.amount_minor - COALESCE((
+                SELECT sum(ip.amount_minor) FROM installment_payment ip
+                  JOIN installment i ON i.id = ip.installment_id
+                  JOIN payment_plan pp ON pp.id = i.plan_id
+                 WHERE ip.fee_receipt_id = fr.id AND pp.deleted_at IS NULL AND pp.status <> 'superseded'), 0) AS rest
+         FROM fee_receipt fr
+        WHERE fr.enrolment_id = $1::bigint AND fr.deleted_at IS NULL
+        ORDER BY fr.received_at, fr.id`, [enrolmentId])).rows
+      .map((r) => ({ id: Number(r.id), rest: Number(r.rest) })).filter((r) => r.rest > 0);
+    for (const row of rows) {
+      const backed = Number((await c.query<{ s: string }>(
+        `SELECT COALESCE(sum(amount_minor), 0) AS s FROM installment_payment WHERE installment_id = $1::bigint`, [row.id])).rows[0]?.s ?? 0);
+      let gap = row.amount - backed;
+      for (const f of free) {
+        if (gap <= 0) break;
+        if (f.rest <= 0) continue;
+        const take = Math.min(gap, f.rest);
+        await c.query(`INSERT INTO installment_payment (installment_id, fee_receipt_id, amount_minor) VALUES ($1,$2,$3)`, [row.id, f.id, take]);
+        f.rest -= take; gap -= take;
+      }
+    }
   }
 
   /** Every version of an enrolment's payment terms, oldest first. */
@@ -352,11 +441,35 @@ export class PlanService {
     const w = this.resolver.buildScopeWhere(scope, PLAN_SCOPE_COLS, params);
     const ok = await this.db.one(`SELECT 1 FROM enrolment e WHERE e.id = $1::bigint AND e.deleted_at IS NULL AND ${w}`, params);
     if (!ok) throw new NotFoundException('Enrolment not found (or outside your access)');
-    return this.db.query<any>(
-      `SELECT h.id, h.version_no, h.action, h.plan_type, h.total_minor, h.paid_minor, h.balance_minor,
+    const rows = await this.db.query<any>(
+      `SELECT h.id, h.version_no, h.action, h.plan_id, h.plan_type, h.total_minor, h.paid_minor, h.balance_minor,
               h.schedule, h.reason, h.created_at, u.name AS actor_name
          FROM payment_plan_history h LEFT JOIN "user" u ON u.id = h.actor_id
         WHERE h.enrolment_id = $1::bigint ORDER BY h.version_no, h.id`, [enrolmentId]);
+    // client 5 Nov (5): a version is a snapshot of the moment it was made, so a down payment
+    // collected AFTER the plan was created still read "₹0 · pending". The version that IS the
+    // current plan now shows the live schedule: what is paid shows paid.
+    const live = await this.db.one<{ id: string }>(
+      `SELECT id FROM payment_plan WHERE enrolment_id = $1::bigint AND deleted_at IS NULL
+          AND status IN ('active','completed') ORDER BY id DESC LIMIT 1`, [enrolmentId]);
+    const cur = live ? [...rows].reverse().find((r) => Number(r.plan_id) === Number(live.id)) : null;
+    if (cur) {
+      const inst = await this.db.query<any>(
+        `SELECT seq_no, label, due_date, amount_minor, paid_minor,
+                CASE WHEN status = 'waived' THEN 'waived'
+                     WHEN paid_minor >= amount_minor THEN 'paid'
+                     WHEN due_date < (now() AT TIME ZONE 'Asia/Kolkata')::date THEN 'overdue'
+                     WHEN paid_minor > 0 THEN 'partial' ELSE 'pending' END AS status
+           FROM installment WHERE plan_id = $1::bigint ORDER BY seq_no`, [Number(live!.id)]);
+      const paid = inst.reduce((a: number, x: any) => a + Number(x.paid_minor), 0);
+      const total = inst.reduce((a: number, x: any) => a + Number(x.amount_minor), 0);
+      cur.live = true;
+      cur.paid_minor = paid;
+      cur.balance_minor = total - paid;
+      cur.schedule = inst.map((x: any) => ({ seq_no: Number(x.seq_no), label: x.label, due_date: toDateString(x.due_date),
+        amount_minor: Number(x.amount_minor), paid_minor: Number(x.paid_minor), status: x.status }));
+    }
+    return rows;
   }
 
   /** Snapshot the enrolment's CURRENT plan into payment_plan_history (same client / tx). */
@@ -583,4 +696,20 @@ export async function recordPlanHistory(c: { query: (sql: string, params?: unkno
       [org, enrolmentId, planId, ver, action, pp?.plan_type ?? null, total, paid, total - paid,
         JSON.stringify(rows.map((x: any) => ({ seq_no: Number(x.seq_no), label: x.label, due_date: toDateString(x.due_date),
           amount_minor: Number(x.amount_minor), paid_minor: Number(x.paid_minor), status: x.status }))), reason, actorId]);
+}
+
+/**
+ * How a re-plan splits the money (pure, so the arithmetic is unit-tested):
+ *   paidKept: what the old plan's paid / part-paid instalments carry (kept as paid rows)
+ *   earlier:  receipts on the enrolment beyond that, on no instalment yet (one paid row)
+ *   balance:  net - both, the only amount the new terms schedule
+ * `over` when more has been received than the net fee (a refund case, not a re-plan).
+ */
+export function balanceSplit(netMinor: number, paidRowMinors: number[], receiptsMinor: number): {
+  paidKept: number; earlier: number; balance: number; over: boolean;
+} {
+  const paidKept = paidRowMinors.reduce((a, x) => a + Math.max(0, Math.trunc(x)), 0);
+  const earlier = Math.max(0, Math.trunc(receiptsMinor) - paidKept);
+  const balance = Math.trunc(netMinor) - paidKept - earlier;
+  return { paidKept, earlier, balance: Math.max(0, balance), over: balance < 0 };
 }

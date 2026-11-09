@@ -1871,7 +1871,7 @@ export function FeeCollection() {
         empty="No payments recorded yet" />
       <TableCard
         title="Fee Receipt Records" icon="rupee"
-        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Payment Mode', 'Reference', 'Received Date', 'Total Outstanding', 'Status', 'Branch', 'Vertical', 'Course', 'Actions']}
+        cols={['Receipt', 'Student', 'Enrolment', 'Amount', 'Payment Mode', 'Reference', 'Received Date', 'Due After Payment', 'Current Due', 'Status', 'Branch', 'Vertical', 'Course', 'Actions']}
         empty="No payments recorded yet"
         rows={rows.map((r): Cell[] => {
           const reversed = r.reversal_status === 'reversed';
@@ -1884,8 +1884,10 @@ export function FeeCollection() {
           { b: [r.mode.toUpperCase(), 'b-indigo'] },
           r.reference ? { mono: r.reference } : '—',
           { node: <span className="mono">{dt(r.received_at)}</span>, sort: r.received_at },
-          // S8 (client 4 Sep) — what the student still owes on this enrolment today
-          r.balance_minor != null ? { mono: fmtINR(Number(r.balance_minor)) } : '—',
+          // client 5 Nov (2): what was still due right AFTER this receipt (each receipt its own
+          // figure), then what the student owes on the enrolment today
+          reversed || r.balance_minor == null ? '—' : { mono: fmtINR(Math.max(0, Number(r.balance_minor))) },
+          r.current_balance_minor != null ? { mono: fmtINR(Math.max(0, Number(r.current_balance_minor))) } : '—',
           reversed ? { b: ['Reversed', 'b-rose'] } : r.reversal_status === 'requested' ? { b: ['Reversal requested', 'b-amber'] } : { b: ['Posted', 'b-green'] },
           r.branch_name || '—',
           r.vertical_name || '—',

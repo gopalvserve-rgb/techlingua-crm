@@ -172,4 +172,18 @@ export class EnrolmentController {
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
     return this.svc.remove(id, me, scope);
   }
+
+  /** client 5 Nov (4): what deleting this enrolment will do (receipts reversed, invoice blocks). */
+  @Get(':id/delete-impact')
+  @RequirePermission('enrolment.delete')
+  deleteImpact(@Param('id', ParseIntPipe) id: number, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.impactOfRemove(id, scope);
+  }
+
+  /** client 5 Nov (4): delete any enrolment, with a reason (required when money was received). */
+  @Post(':id/delete')
+  @RequirePermission('enrolment.delete')
+  removeWithReason(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) {
+    return this.svc.remove(id, me, scope, dto);
+  }
 }

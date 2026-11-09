@@ -136,9 +136,15 @@ export class FeeService {
       `SELECT fr.id, fr.receipt_no, fr.amount_minor, fr.mode, fr.reference, fr.received_at, fr.note,
               fr.reversal_status, fr.reversal_reason, fr.reversed_at, fr.reversal_requested_at,
               fr.enrolment_id, e.enrolment_no, e.net_fee_minor,
-              -- S8 (client 4 Sep): the enrolment's total outstanding today, next to each receipt
+              -- client 5 Nov (2): what was STILL DUE right after THIS receipt (receipts in issue
+              -- order, (received_at, id), the same order as.at.ts uses for the receipt PDF), not the
+              -- enrolment's balance today repeated on every row. current_balance_minor = today's.
               (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)
-                 - COALESCE((SELECT sum(x.amount_minor) FROM fee_receipt x WHERE x.enrolment_id = e.id AND x.deleted_at IS NULL), 0)) AS balance_minor,
+                 - COALESCE((SELECT sum(x.amount_minor) FROM fee_receipt x
+                              WHERE x.enrolment_id = e.id AND x.deleted_at IS NULL
+                                AND (x.received_at, x.id) <= (fr.received_at, fr.id)), 0)) AS balance_minor,
+              (e.net_fee_minor + COALESCE(e.exam_fee_minor, 0)
+                 - COALESCE((SELECT sum(x.amount_minor) FROM fee_receipt x WHERE x.enrolment_id = e.id AND x.deleted_at IS NULL), 0)) AS current_balance_minor,
               COALESCE(l.full_name, sp.full_name) AS lead_name, c.name AS course_name,
               b.name AS branch_name, v.name AS vertical_name, u.name AS received_by_name,
               ca.workflow_status AS approval_status,

@@ -6564,6 +6564,9 @@ export interface FeeConfig {
   grossMinor: number; dv: number; discount_minor: number; net_minor: number;
   downMinor: number; customAmounts: number[]; customDates: string[];
   sched: ReturnType<typeof previewSchedule>; planIntent: string;
+  /** client 5 Nov (1, 7): money already received on this enrolment. It stays paid; the plan
+   *  schedules only `planBase_minor` = net - paid. 0 for a new enrolment. */
+  paidMinor: number; setPaidMinor: (v: number) => void; planBase_minor: number;
 }
 export function useFeeConfig(init?: {
   fee?: string; discType?: EnrolDiscountType; discValue?: string; plan?: FeePlanKind;
@@ -6577,14 +6580,16 @@ export function useFeeConfig(init?: {
   const [down, setDown] = useState(init?.down ?? '');
   const [rows, setRows] = useState<Array<{ amount: string; date: string }>>([{ amount: '', date: '' }]);
   const [start, setStart] = useState(init?.start ?? '');
+  const [paidMinor, setPaidMinor] = useState(0);
   const grossMinor = Math.round(Number(fee || 0) * 100);
   const dv = discType === 'percent' ? Number(discValue || 0) : Math.round(Number(discValue || 0) * 100);
   const { discount_minor, net_minor } = enrolDiscount(grossMinor, discType, dv);
   const downMinor = Math.round(Number(down || 0) * 100);
   const customAmounts = rows.map((r) => Math.round(Number(r.amount || 0) * 100));
   const customDates = rows.map((r) => r.date).filter(Boolean);
+  const planBase_minor = Math.max(0, net_minor - paidMinor);
   const sched = previewSchedule({
-    plan_type: plan, net_minor, down_minor: downMinor,
+    plan_type: plan, net_minor: planBase_minor, down_minor: downMinor,
     num_installments: Math.max(1, Number(count) || 1), start_date: start || undefined,
     custom_amounts_minor: plan === 'custom' ? customAmounts : undefined,
     custom_dates: plan === 'custom' && customDates.length === rows.length ? rows.map((r) => r.date) : undefined,
@@ -6594,7 +6599,7 @@ export function useFeeConfig(init?: {
     : 'custom';
   return { fee, setFee, discType, setDiscType, discValue, setDiscValue, plan, setPlan, count, setCount,
     down, setDown, rows, setRows, start, setStart, grossMinor, dv, discount_minor, net_minor, downMinor,
-    customAmounts, customDates, sched, planIntent };
+    customAmounts, customDates, sched, planIntent, paidMinor, setPaidMinor, planBase_minor };
 }
 /** Build the POST /payment-plans body from a FeeConfig (shared by all three surfaces). */
 export function feePlanBody(cfg: FeeConfig, enrolmentId: number) {
@@ -6605,7 +6610,27 @@ export function feePlanBody(cfg: FeeConfig, enrolmentId: number) {
     custom_amounts_minor: cfg.plan === 'custom' ? cfg.customAmounts : undefined,
     custom_dates: cfg.plan === 'custom' && cfg.customDates.length === cfg.rows.length ? cfg.rows.map((r) => r.date) : undefined,
     start_date: cfg.start || null,
+    // money already received is kept as paid; only the balance is scheduled (server re-plans)
+    ...(cfg.paidMinor > 0 ? { balance_only: true } : {}),
   };
+}
+
+/** Save the configured plan: re-set up the current one (paid kept, balance re-scheduled), or
+ *  create the first one (balance only when money was already received). */
+export async function savePlan(enrolmentId: number, existingPlan: any | null | undefined, cfg: FeeConfig): Promise<void> {
+  const body: any = feePlanBody(cfg, enrolmentId);
+  if (existingPlan) {
+    delete body.enrolment_id; delete body.balance_only;
+    await api.post(`/payment-plans/${existingPlan.id}/resetup`, body);
+  } else {
+    await api.post('/payment-plans', body);
+  }
+}
+
+/** What makes a plan different: if none of this moved, saving must not re-plan. */
+export function feePlanSig(cfg: FeeConfig): string {
+  return JSON.stringify([cfg.plan, cfg.plan === 'installment' ? Number(cfg.count) || 1 : 0, cfg.downMinor, cfg.start || '',
+    cfg.plan === 'custom' ? cfg.rows : [], cfg.net_minor]);
 }
 /** The discount + payment-plan + net + schedule preview fields. `showFee` renders the editable
  *  gross-fee input (Enroll + Edit); Fee setup on the dues list shows the fee read-only above). */
@@ -6661,8 +6686,20 @@ export function FeeConfigFields({ cfg, disabled, showFee = true, hideDiscount = 
           <div>Gross fee: <b data-testid="enrol-gross">{fmtINR(cfg.grossMinor)}</b></div>
           <div>Discount: <b style={{ color: 'var(--red, #b91c1c)' }} data-testid="enrol-discamt">− {fmtINR(cfg.discount_minor)}</b></div>
           <div>Net fee after discount: <b style={{ color: 'var(--green, #15803d)' }} data-testid="enrol-net">{fmtINR(cfg.net_minor)}</b></div>
+          {cfg.paidMinor > 0 && <>
+            <div>Already paid: <b data-testid="enrol-paid">{fmtINR(cfg.paidMinor)}</b></div>
+            <div>Balance to schedule: <b style={{ color: 'var(--indigo, #4f46e5)' }} data-testid="enrol-balance">{fmtINR(cfg.planBase_minor)}</b></div>
+          </>}
         </div>
       </div>
+      {cfg.paidMinor > 0 && (
+        <div className="fld" style={{ gridColumn: '1 / -1' }}>
+          <div className="notice" style={{ marginTop: 0 }} data-testid="enrol-paid-note"><Ic k="rupee" /><div>
+            <b>{fmtINR(cfg.paidMinor)}</b> already received stays exactly as paid (down payment / instalments paid so far).
+            Only the balance <b>{fmtINR(cfg.planBase_minor)}</b> is re-scheduled with the plan below.
+          </div></div>
+        </div>
+      )}
       {/* dev/103 — Discount Master cap hint + over-cap warning */}
       {!hideDiscount && capCtx && capMinor != null && (
         <div className="fld" style={{ gridColumn: '1 / -1' }} data-testid="enrol-cap-hint">
@@ -6697,7 +6734,7 @@ export function FeeConfigFields({ cfg, disabled, showFee = true, hideDiscount = 
         <input id="ae-start" className="ainp" type="date" value={cfg.start} disabled={disabled} onChange={(e) => cfg.setStart(e.target.value)} /></div>
       {cfg.plan === 'custom' && (
         <div className="fld" style={{ gridColumn: '1 / -1' }}>
-          <label>Custom installments (amounts + due dates must total the payable after down payment)</label>
+          <label>Custom installments (amounts + due dates must total {cfg.paidMinor > 0 ? 'the balance' : 'the payable'} after down payment)</label>
           <table className="minitbl" style={{ width: '100%' }}>
             <thead><tr><th>#</th><th>Amount (₹)</th><th>Due date</th><th /></tr></thead>
             <tbody>{cfg.rows.map((r, i) => (
@@ -6725,7 +6762,8 @@ export function FeeConfigFields({ cfg, disabled, showFee = true, hideDiscount = 
               <td style={{ textAlign: 'right', fontWeight: 700, color: cfg.sched.balances ? 'var(--green,#15803d)' : 'var(--red,#b91c1c)' }} data-testid="enrol-sched-total">{fmtINR(cfg.sched.sum_minor)}</td>
             </tr></tfoot>
           </table>
-          {!cfg.sched.balances && <div className="form-err" style={{ marginTop: 4 }}>{cfg.sched.error || `The schedule must total the net fee ${fmtINR(cfg.net_minor)}.`}</div>}
+          {!cfg.sched.balances && <div className="form-err" style={{ marginTop: 4 }}>{cfg.sched.error || (cfg.paidMinor > 0
+            ? `The schedule must total the balance ${fmtINR(cfg.planBase_minor)}.` : `The schedule must total the net fee ${fmtINR(cfg.net_minor)}.`)}</div>}
         </div>
       )}
     </>
@@ -7138,7 +7176,7 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
   const enr = useFetch<any>(eid ? `/enrolments/${eid}` : null, [eid]);
   const planFetch = useFetch<any[]>(eid ? `/payment-plans?enrolment_id=${eid}` : null, [eid]);
   const e = enr.data;
-  const existingPlan = (planFetch.data ?? []).find((p: any) => p.status === 'active');
+  const existingPlan = (planFetch.data ?? []).find((p: any) => p.status === 'active') ?? (planFetch.data ?? []).find((p: any) => p.status === 'completed');
   const cfg = useFeeConfig();
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -7154,6 +7192,7 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
       if (existingPlan.start_date) cfg.setStart(istDay(existingPlan.start_date));
     }
     cfg.setFee(String(Number(e.gross_fee_minor ?? e.fee_minor ?? 0) / 100));
+    cfg.setPaidMinor(Number(e.paid_minor ?? 0));
     cfg.setDiscType(dtp);
     cfg.setDiscValue(dtp === 'percent' ? String(Number(e.discount_value ?? 0))
       : dtp === 'amount' ? String(Number(e.discount_amount_minor ?? e.discount_minor ?? 0) / 100) : '');
@@ -7170,15 +7209,13 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
         fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
         payment_plan: cfg.planIntent, start_date: cfg.start || undefined,
       });
-      // 2) (re)build the payment plan. A plan with money applied cannot be replaced — the
-      //    discount still saves and we say so; else swap it for the freshly configured schedule.
-      if (existingPlan) {
-        try { await api.del(`/payment-plans/${existingPlan.id}`); }
-        catch (de) { toast(`Fee saved. The existing plan was kept — ${(de as Error).message}`, true); onSaved(); return; }
-      }
-      try { await api.post('/payment-plans', feePlanBody(cfg, eid)); }
-      catch (pe) { toast(`Fee saved; payment plan not created — ${(pe as Error).message}`, true); onSaved(); return; }
-      toast('Fee setup saved.'); onSaved();
+      // 2) (re)build the payment plan (client 5 Nov, 1 + 7). An existing plan is RE-SET UP:
+      //    what is paid stays paid and only the balance takes the new terms. A first plan on an
+      //    enrolment that already received money does the same (balance_only).
+      try { await savePlan(eid, existingPlan, cfg); }
+      catch (pe) { toast(`Fee saved; payment plan not changed — ${(pe as Error).message}`, true); onSaved(); return; }
+      toast(cfg.paidMinor > 0 ? `Fee setup saved — ${fmtINR(cfg.paidMinor)} paid kept, balance ${fmtINR(cfg.planBase_minor)} scheduled.` : 'Fee setup saved.');
+      onSaved();
     } catch (err) { toast((err as Error).message, true); } finally { setBusy(false); }
   };
   return (
@@ -7308,7 +7345,7 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
   const ref = useRef_();
   const statusCat = useFetch<any[]>(`/students/enrolment-status-catalog`, []);
   const planFetch = useFetch<any[]>(`/payment-plans?enrolment_id=${enrolment.id}`, [enrolment.id]);
-  const existingPlan = (planFetch.data ?? []).find((p: any) => p.status === 'active');
+  const existingPlan = (planFetch.data ?? []).find((p: any) => p.status === 'active') ?? (planFetch.data ?? []).find((p: any) => p.status === 'completed');
   const [courseId, setCourseId] = useState(String(enrolment.course_id ?? ''));
   const [status, setStatus] = useState(String(enrolment.course_status ?? ''));
   const cfg = useFeeConfig({
@@ -7319,6 +7356,22 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
     start: enrolment.start_date ? istDay(enrolment.start_date) : '',
   });
   const [busy, setBusy] = useState(false);
+  // client 5 Nov (1, 7): open on the plan in use (it used to start at "Full payment" and replace
+  // an instalment plan on every save) and on what is already paid, so only the balance re-plans.
+  const [planLoaded, setPlanLoaded] = useState(false);
+  const [baseSig, setBaseSig] = useState<string | null>(null);
+  if (planFetch.data && !planLoaded) {
+    if (existingPlan) {
+      const kind = String(existingPlan.plan_type);
+      cfg.setPlan((kind === 'full' ? 'full' : kind === 'custom' ? 'custom' : 'installment') as FeePlanKind);
+      if (existingPlan.num_installments) cfg.setCount(String(existingPlan.num_installments));
+      if (Number(existingPlan.down_payment_minor) > 0) cfg.setDown(String(Number(existingPlan.down_payment_minor) / 100));
+      if (existingPlan.start_date) cfg.setStart(istDay(existingPlan.start_date));
+    }
+    cfg.setPaidMinor(Number(enrolment.paid_minor ?? 0));
+    setPlanLoaded(true);
+  }
+  useEffect(() => { if (planLoaded && baseSig == null) setBaseSig(feePlanSig(cfg)); }, [planLoaded, baseSig]); // eslint-disable-line react-hooks/exhaustive-deps
   // LEVEL-WISE EDIT (dev/110) — a level-course enrolment shows its Level line-items with an editable
   // per-level discount + add/remove (same picker as Enroll), seeded from the saved levels. The fee
   // then comes from the levels, not the free-text fee input. A no-level enrolment keeps the classic
@@ -7366,13 +7419,11 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
         payment_plan: cfg.planIntent, start_date: cfg.start || undefined,
         ...(hasLevels && lvl?.hasLevels ? { levels: lvl.levels, discount_scope: lvl.scope } : {}),
       });
-      // 2) reconcile the payment plan (replace when it carries no payments)
-      if (existingPlan) {
-        try { await api.del(`/payment-plans/${existingPlan.id}`); await api.post('/payment-plans', feePlanBody(cfg, Number(enrolment.id))); }
+      // 2) the payment plan: re-planned only when its terms or the net fee moved, and then on the
+      //    BALANCE only (paid stays paid). A first plan is created the same way.
+      if (!existingPlan || feePlanSig(cfg) !== baseSig) {
+        try { await savePlan(Number(enrolment.id), existingPlan, cfg); }
         catch (pe) { toast(`Saved. Payment plan unchanged — ${(pe as Error).message}`, true); }
-      } else {
-        try { await api.post('/payment-plans', feePlanBody(cfg, Number(enrolment.id))); }
-        catch (pe) { toast(`Saved; payment plan not created — ${(pe as Error).message}`, true); }
       }
       // 3) per-course status — only if the user changed it; the endpoint enforces approval rules
       if (status && status !== String(enrolment.course_status ?? '')) {

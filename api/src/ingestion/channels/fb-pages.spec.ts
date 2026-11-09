@@ -409,6 +409,28 @@ describe('Facebook Page Monitor — service', () => {
     expect(cst.events.at(-1).reason).toMatch(/no longer monitored/);
   });
 
+  // client 9 Nov — "BCL Meta" and a new "BCL Meta1" both monitored the same Page
+  it('subscribe: a Page already monitored by ANOTHER channel is refused — one Page, one channel', async () => {
+    const other = multiPage({ id: 2, name: 'BCL Meta', public_key: 'K2',
+      config: { pages: [{ page_id: 'P2', page_name: 'School B', monitored: true, subscribed: true }] } });
+    const { hooks, fb, cst } = makeWebhook([multiPage({ name: 'BCL Meta1' }), other]);
+    const g = graphStub(() => ({ success: true })); hooks.http = g.http;
+    await expect(fb.subscribe(1, 'P2')).rejects.toThrow(/already monitored by channel "BCL Meta"/);
+    expect(g.calls).toHaveLength(0);
+    expect(cst.channels[0].config.pages[1].monitored).toBe(false);
+  });
+
+  it('unsubscribe: while another channel still monitors the Page, Facebook is NOT unsubscribed', async () => {
+    const other = multiPage({ id: 2, name: 'BCL Meta', public_key: 'K2' });   // also monitors P1
+    const { hooks, fb, cst } = makeWebhook([multiPage({ name: 'BCL Meta1' }), other]);
+    const g = graphStub(() => ({ success: true })); hooks.http = g.http;
+    const out = await fb.unsubscribe(1, 'P1');
+    expect(g.calls).toHaveLength(0);                       // no DELETE /subscribed_apps
+    expect(out.pages[0].monitored).toBe(false);            // our gate on THIS channel closed
+    expect(cst.channels[1].config.pages[0].monitored).toBe(true);
+    expect(cst.events.at(-1).reason).toMatch(/stays subscribed at Facebook because channel "BCL Meta" still monitors it/);
+  });
+
   it('unsubscribe: our gate closes even when Facebook errors — with a warning', async () => {
     const { hooks, fb, cst } = makeWebhook([multiPage()]);
     hooks.http = graphStub(() => new Error('token expired')).http;

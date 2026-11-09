@@ -19,7 +19,7 @@
  *
  * A posted payment is never edited or deleted from here — only reversed, with a reason.
  */
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -167,7 +167,7 @@ export function enrolmentCsvRow(e: any) {
 
 /* --------------------------------------------------------------- row actions */
 
-type Open = null | 'view' | 'ledger' | 'installments' | 'collect' | 'audit' | 'feesetup';
+type Open = null | 'view' | 'ledger' | 'installments' | 'collect' | 'audit' | 'feesetup' | 'delete';
 
 /** The primary button + ⋮ menu for one enrolment row. Owns its modals. */
 export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
@@ -240,6 +240,9 @@ export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
     active && !paid && { label: 'Send Reminder', icon: 'bell', onClick: () => void remind() },
     { label: 'Audit History', icon: 'clock', onClick: () => setOpen('audit') },
     ...(extra ?? []),
+    // client 5 Nov (4): any enrolment can be deleted (receipts are reversed, not erased)
+    can('enrolment.delete') && 'divider',
+    can('enrolment.delete') && { label: 'Delete enrolment', icon: 'trash', danger: true, onClick: () => setOpen('delete') },
   ];
 
   return (
@@ -254,7 +257,57 @@ export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
       {open === 'installments' && planId != null && <PlanDetailModal id={planId} onClose={() => setOpen(null)} onChanged={onChanged} />}
       {open === 'audit' && <AuditHistoryModal enrolment={e} onClose={() => setOpen(null)} />}
       {open === 'feesetup' && <EnrolmentFeeSetupModal enrolmentId={eid} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); onChanged(); }} />}
+      {open === 'delete' && <DeleteEnrolmentModal enrolment={e} onClose={() => setOpen(null)} onDone={() => { setOpen(null); onChanged(); }} />}
     </span>
+  );
+}
+
+/* --------------------------------------------------------- delete enrolment */
+
+/** client 5 Nov (4) — delete ANY enrolment. Says up front what happens to the money: each receipt
+ *  is marked Reversed (kept on record), the plan is cancelled; an issued GST invoice blocks it. */
+export function DeleteEnrolmentModal({ enrolment: e, onClose, onDone }: { enrolment: any; onClose: () => void; onDone: () => void }) {
+  const eid = Number(e.id ?? e.enrolment_id);
+  const imp = useFetch<any>(`/enrolments/${eid}/delete-impact`, [eid]);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const d = imp.data;
+  const blocked = (d?.blocked_by ?? []).length > 0;
+  const go = async () => {
+    if (d?.reason_required && !reason.trim()) { toast('Give a reason — the payments on it will be marked Reversed.', true); return; }
+    setBusy(true);
+    try {
+      const r = await api.post<any>(`/enrolments/${eid}/delete`, { reason: reason.trim() || undefined });
+      toast(`Enrolment ${d?.enrolment_no ?? e.enrolment_no} deleted${r?.receipts_reversed ? ` — ${r.receipts_reversed} receipt(s) reversed` : ''}.`);
+      onDone();
+    } catch (err) { toast((err as Error).message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Delete enrolment — ${e.enrolment_no ?? ''}`} icon="trash" onClose={onClose} width={520}
+      footer={<button className="btn primary" disabled={busy || !d || blocked} onClick={go} data-testid="enr-delete-confirm"
+        style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}><Ic k="trash" />Delete enrolment</button>}>
+      {!d ? <div className="empty-note">{imp.loading ? 'Checking…' : 'Could not check this enrolment — it may be outside your access.'}</div> : (
+        <div data-testid="enr-delete-body">
+          <div className="notice warn" style={{ marginBottom: 10 }}><Ic k="shield" /><div>
+            <b>{e.lead_name ?? e.student_name ?? ''}</b> · {e.course_name ?? ''} · <span className="mono">{d.enrolment_no}</span> will be removed from every list.
+            {d.receipts > 0
+              ? <> Its <b>{d.receipts} payment{d.receipts === 1 ? '' : 's'} ({fmtINR(d.received_minor)})</b> — {d.receipt_nos.join(', ')} — will be marked <b>Reversed</b> with your reason: kept on record, no longer counted as collected.</>
+              : ' No payment has been received on it.'}
+            {' '}Its payment plan is cancelled{d.draft_invoices ? ' and the draft invoice deleted' : ''}.
+          </div></div>
+          {blocked && (
+            <div className="form-err" role="alert" data-testid="enr-delete-blocked">
+              GST invoice {d.blocked_by.join(', ')} has been issued for this enrolment. Cancel it first (Invoices → Cancel), then delete.
+            </div>
+          )}
+          {!blocked && (
+            <div className="fld"><label htmlFor="enr-del-reason">Reason{d.reason_required ? <span className="star"> *</span> : ' (optional)'}</label>
+              <textarea id="enr-del-reason" className="ainp" rows={3} value={reason} onChange={(ev) => setReason(ev.target.value)}
+                placeholder="e.g. Duplicate enrolment / student withdrew before classes / entered against the wrong student" data-testid="enr-delete-reason" /></div>
+          )}
+        </div>
+      )}
+    </DetailModal>
   );
 }
 
@@ -329,7 +382,7 @@ export function FeeLedgerModal({ enrolment: e, onClose, onChanged }: { enrolment
           <div><span className="kl">Balance</span><span className="kvv">{fmtINR(Number(e.balance_minor ?? 0))}</span></div>
         </div>
         <TableCard title="Payments received" icon="list" serial
-          cols={['Receipt', 'Received Date', 'Payment Mode', 'Reference', 'Amount', 'Status', 'Actions']}
+          cols={['Receipt', 'Received Date', 'Payment Mode', 'Reference', 'Amount', 'Due After Payment', 'Status', 'Actions']}
           empty="No payments received yet."
           rows={rows.map((r): Cell[] => {
             const reversed = r.reversal_status === 'reversed';
@@ -340,6 +393,8 @@ export function FeeLedgerModal({ enrolment: e, onClose, onChanged }: { enrolment
               MODE[String(r.mode)] ?? r.mode,
               r.reference || '—',
               { node: <span className="mono" style={strike}>{fmtINR(Number(r.amount_minor))}</span>, sort: Number(r.amount_minor) },
+              // client 5 Nov (2): the balance right after this payment
+              reversed || r.balance_minor == null ? '—' : { mono: fmtINR(Math.max(0, Number(r.balance_minor))) },
               { node: reversed
                   ? <span><span className="bdg b-rose">Reversed</span><div className="sub" style={{ fontSize: 11 }}>{r.reversal_reason}</div></span>
                   : r.reversal_status === 'requested'
@@ -372,22 +427,31 @@ const HIST_LABEL: Record<string, [string, string]> = {
   level_added: ['Level added', 'b-green'], deleted: ['Plan deleted', 'b-rose'],
 };
 
+const INST_LABEL: Record<string, string> = { paid: 'Paid', partial: 'Part paid', pending: 'Pending', overdue: 'Overdue', waived: 'Waived' };
+const INST_CLS: Record<string, string> = { paid: 'b-green', partial: 'b-amber', pending: 'b-gray', overdue: 'b-rose', waived: 'b-slate' };
+
 export function PlanHistory({ enrolmentId, tick }: { enrolmentId: number; tick?: number }) {
   const h = useFetch<any[]>(`/payment-plans/history?enrolment_id=${enrolmentId}`, [enrolmentId, tick ?? 0]);
-  const [open, setOpen] = useState<number | null>(null);
   const rows = h.data ?? [];
+  // the current plan's schedule opens by default, so what is paid is visible at a glance
+  const [open, setOpen] = useState<number | null>(null);
+  const liveId = rows.find((r: any) => r.live)?.id ?? null;
+  const [seeded, setSeeded] = useState(false);
+  useEffect(() => { if (!seeded && liveId != null) { setOpen(liveId); setSeeded(true); } }, [liveId, seeded]);
   return (
     <div style={{ marginTop: 14 }} data-testid="plan-history">
       <div className="sechead" style={{ marginBottom: 6 }}>Payment terms history</div>
       {!rows.length ? <div className="empty-note">No payment plan has been set up yet.</div> : (
         <table className="minitbl" style={{ width: '100%' }}>
-          <thead><tr><th>Version</th><th>When</th><th>What</th><th>Plan</th><th style={{ textAlign: 'right' }}>Total</th><th style={{ textAlign: 'right' }}>Paid then</th><th style={{ textAlign: 'right' }}>Balance</th><th>By</th><th /></tr></thead>
+          <thead><tr><th>Version</th><th>When</th><th>What</th><th>Plan</th><th style={{ textAlign: 'right' }}>Total</th><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>Balance</th><th>By</th><th /></tr></thead>
           <tbody>{rows.map((r: any) => {
             const lab = HIST_LABEL[String(r.action)] ?? [r.action, 'b-gray'];
             const sched: any[] = Array.isArray(r.schedule) ? r.schedule : [];
             return [
-              <tr key={r.id}>
-                <td className="mono">v{r.version_no}</td>
+              <tr key={r.id} data-testid={`plan-history-v${r.version_no}`}>
+                {/* client 5 Nov (5): the CURRENT plan shows live paid / pending; older versions
+                    show what they were when they were replaced */}
+                <td className="mono">v{r.version_no}{r.live ? <> <span className="bdg b-green" title="The plan in use — paid amounts as of now">Current</span></> : null}</td>
                 <td>{fmtDateTimeIST(r.created_at)}</td>
                 <td><span className={`bdg ${lab[1]}`}>{lab[0]}</span>{r.reason ? <div className="sub" style={{ fontSize: 11 }}>{r.reason}</div> : null}</td>
                 <td>{({ full: 'Full payment', installment: 'Instalments', emi: 'Instalments', custom: 'Custom' } as Record<string, string>)[String(r.plan_type)] ?? r.plan_type ?? '—'}</td>
@@ -403,7 +467,8 @@ export function PlanHistory({ enrolmentId, tick }: { enrolmentId: number; tick?:
                     <thead><tr><th>#</th><th>Label</th><th>Due</th><th style={{ textAlign: 'right' }}>Amount</th><th style={{ textAlign: 'right' }}>Paid</th><th>Status</th></tr></thead>
                     <tbody>{sched.map((s, i) => (
                       <tr key={i}><td>{s.seq_no}</td><td>{s.label ?? ''}</td><td>{dmy(s.due_date)}</td>
-                        <td style={{ textAlign: 'right' }}>{fmtINR(Number(s.amount_minor))}</td><td style={{ textAlign: 'right' }}>{fmtINR(Number(s.paid_minor))}</td><td>{s.status}</td></tr>
+                        <td style={{ textAlign: 'right' }}>{fmtINR(Number(s.amount_minor))}</td><td style={{ textAlign: 'right' }}>{fmtINR(Number(s.paid_minor))}</td>
+                        <td><span className={`bdg ${INST_CLS[String(s.status)] ?? 'b-gray'}`}>{INST_LABEL[String(s.status)] ?? s.status}</span></td></tr>
                     ))}</tbody>
                   </table>
                 </td></tr>

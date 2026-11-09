@@ -1213,6 +1213,14 @@ export class WebhookService {
       });
       return { pages: pages.length, primary: page.page_name, subscribed: false, others: pages.length - 1, list: listOut() };
     }
+    // one Page, one channel (client 9 Nov): never auto-monitor a Page another channel already has
+    const claimed = await this.db.query<{ name: string; config: any }>(
+      `SELECT name, config FROM capture_channel WHERE provider = 'meta' AND deleted_at IS NULL AND id <> $1::bigint`, [Number(ch.id)]);
+    const owner = claimed.find((r) => storedPages(r.config).some((p) => p.page_id === page.page_id && p.monitored));
+    if (owner) {
+      await this.channels.mergeConfig(ch.id, { page_id: page.page_id, page_name: page.page_name, pages: merged });
+      throw new Error(`Facebook Page "${page.page_name}" is already monitored by channel "${owner.name}" — a Page feeds one channel only. Use that channel, or switch the Page off there first.`);
+    }
     primary.monitored = true;
 
     let subscribed = false;

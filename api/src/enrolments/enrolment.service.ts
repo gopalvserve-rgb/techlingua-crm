@@ -9,7 +9,7 @@ import { requireDateString, assertDateRange } from '../common/date.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { DiscountMasterService } from '../finance/discount-master.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
-import { PlanService } from '../paymentplans/plan.service';
+import { PlanService, recordPlanHistory } from '../paymentplans/plan.service';
 import { StudentService } from '../students/student.service';
 import { stageOrdinal } from './admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from './discount.util';
@@ -855,13 +855,85 @@ export class EnrolmentService implements OnApplicationBootstrap {
     return { id, status: 'cancelled' };
   }
 
-  async remove(id: number, me: { id: number }, scope: ResolvedScope) {
+  /**
+   * DELETE AN ENROLMENT (client 5 Nov, point 4: "Delete for any enrolment, admission"). Any
+   * enrolment can go, including one with money against it. Nothing is erased from the books:
+   *   · each live receipt is REVERSED (kept, numbered, marked "Reversed — enrolment deleted:
+   *     <reason>"), so it drops out of every collection total exactly like Reverse Payment;
+   *   · the payment plan is cancelled (its versions stay in the payment terms history);
+   *   · a DRAFT invoice is deleted; pending approvals on it are cancelled.
+   * Refused only while an ISSUED / PAID GST invoice exists: a tax invoice is cancelled through
+   * Invoices first (a legal document cannot silently disappear). With money involved a reason
+   * is required. The enrolment itself is soft-deleted (deleted_at), as everywhere else.
+   */
+  async impactOfRemove(id: number, scope: ResolvedScope) {
     const cur = await this.get(id, scope);
-    if (Number(cur.paid_minor) > 0) {
-      throw new BadRequestException(`${cur.enrolment_no} has receipts against it and cannot be deleted.`);
+    const receipts = await this.db.query<any>(
+      `SELECT id, receipt_no, amount_minor FROM fee_receipt WHERE enrolment_id = $1::bigint AND deleted_at IS NULL ORDER BY received_at, id`, [id]);
+    const invoices = await this.db.query<any>(
+      `SELECT id, invoice_no, status FROM gst_invoice WHERE enrolment_id = $1::bigint AND deleted_at IS NULL AND status <> 'cancelled'`, [id]);
+    const issued = invoices.filter((i) => i.status === 'issued' || i.status === 'paid');
+    return {
+      id, enrolment_no: cur.enrolment_no,
+      receipts: receipts.length, received_minor: receipts.reduce((a, r) => a + Number(r.amount_minor), 0),
+      receipt_nos: receipts.map((r) => r.receipt_no),
+      draft_invoices: invoices.length - issued.length,
+      blocked_by: issued.map((i) => i.invoice_no || `Invoice #${i.id}`),
+      reason_required: receipts.length > 0,
+    };
+  }
+
+  async remove(id: number, me: { id: number }, scope: ResolvedScope, dto: any = {}) {
+    const cur = await this.get(id, scope);
+    const imp = await this.impactOfRemove(id, scope);
+    if (imp.blocked_by.length) {
+      throw new BadRequestException(
+        `${cur.enrolment_no} has GST invoice ${imp.blocked_by.join(', ')} issued. Cancel the invoice first (Invoices → Cancel), then delete the enrolment.`);
     }
-    await this.db.query(`UPDATE enrolment SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint`, [id, me.id]);
-    return { id, ok: true };
+    const reason = String(dto?.reason ?? '').trim();
+    if (imp.reason_required && !reason) {
+      throw new BadRequestException(
+        `${cur.enrolment_no} has ${imp.receipts} payment(s) of ₹${(imp.received_minor / 100).toFixed(2)} — give a reason; the receipts will be marked Reversed.`);
+    }
+    const why = `Enrolment ${cur.enrolment_no} deleted${reason ? ` — ${reason}` : ''}`.slice(0, 1000);
+    const orgId = Number(cur.org_id ?? (await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`))?.id);
+    await this.db.tx(async (c) => {
+      // 1) receipts: reversed, never erased (same columns as Reverse Payment)
+      const recs = await c.query<{ id: string; amount_minor: string; mode: string }>(
+        `UPDATE fee_receipt SET deleted_at = now(), deleted_by = $2::bigint, reversal_status = 'reversed',
+                reversal_reason = $3, reversed_by = $2::bigint, reversed_at = now(),
+                reversal_requested_by = COALESCE(reversal_requested_by, $2::bigint),
+                reversal_requested_at = COALESCE(reversal_requested_at, now())
+          WHERE enrolment_id = $1::bigint AND deleted_at IS NULL
+        RETURNING id, amount_minor, mode`, [id, me.id, why]);
+      for (const r of recs.rows) {
+        await c.query(`DELETE FROM installment_payment WHERE fee_receipt_id = $1::bigint`, [Number(r.id)]);
+        await c.query(
+          `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+           VALUES ($1, $2, 'fee_receipt', $3::bigint, 'update', $4, $5)`,
+          [orgId, me.id, Number(r.id), JSON.stringify({ amount_minor: Number(r.amount_minor), mode: r.mode }),
+            JSON.stringify({ reversal_status: 'reversed', reason: why })]);
+      }
+      // 2) payment plan(s): cancelled; the history keeps every version
+      const plans = await c.query<{ id: string }>(
+        `UPDATE payment_plan SET status = 'cancelled', deleted_at = now(), deleted_by = $2::bigint, updated_at = now()
+          WHERE enrolment_id = $1::bigint AND deleted_at IS NULL RETURNING id`, [id, me.id]);
+      if (plans.rows.length) await recordPlanHistory(c, id, null, 'deleted', me.id, why);
+      // 3) draft invoices go; pending approvals are withdrawn
+      await c.query(`UPDATE gst_invoice SET deleted_at = now(), deleted_by = $2::bigint
+                      WHERE enrolment_id = $1::bigint AND deleted_at IS NULL AND status = 'draft'`, [id, me.id]);
+      await c.query(`UPDATE approval_request SET status = 'rejected', decided_at = now(), note = 'Enrolment deleted'
+                      WHERE entity_type = 'enrolment' AND entity_id = $1::bigint AND status = 'pending'`, [id]);
+      // 4) the enrolment
+      await c.query(`UPDATE enrolment SET deleted_at = now(), deleted_by = $2::bigint, updated_at = now() WHERE id = $1::bigint`, [id, me.id]);
+      await c.query(
+        `INSERT INTO audit_log (org_id, actor_id, entity_type, entity_id, action, before, after)
+         VALUES ($1, $2, 'enrolment', $3::bigint, 'delete', $4, $5)`,
+        [orgId, me.id, id, JSON.stringify({ enrolment_no: cur.enrolment_no, status: cur.status, net_fee_minor: Number(cur.net_fee_minor) }),
+          JSON.stringify({ reason: reason || null, receipts_reversed: recs.rows.length })]);
+      if (cur.lead_id) await this.activity(c, Number(cur.lead_id), me.id, why + (recs.rows.length ? ` · ${recs.rows.length} receipt(s) reversed` : ''));
+    });
+    return { id, ok: true, receipts_reversed: imp.receipts };
   }
 
   /* ---------------------------------------------------------------- helpers */
