@@ -36,3 +36,17 @@ server owns the content-type + attachment disposition. The R2 public object exis
 Signed RELEASE APK for Play-Store / general distribution (keystore + `assembleRelease`) — the hosted
 artifact today is the DEBUG APK (installable via "unknown sources"). See dev/119 §"Remaining to ship
 a signed RELEASE APK".
+
+## 2026-11-10 — v2.4 (versionCode 6): points at connect.techlingua.net
+The v2.3 APK had the old Railway origin (`api-production-e25d9.up.railway.app`) baked into
+`assets/capacitor.config.json` (WebView `server.url` + `allowNavigation`) AND into
+`MainActivity.apiBase` (the native call-log / recording sync base). After the move to the
+dedicated server that Railway app was deleted, so the app showed Railway's "Application not
+found". Rebuilt on the dedicated server (apktool decode → both strings → `https://connect.techlingua.net`
+→ apktool build → zipalign → apksigner v1+v2+v3). Tools in `~/tools` (JDK 17, Android
+build-tools 34, apktool 2.9.3); work dir `~/apkbuild`.
+
+**Signing key:** the original debug keystore was lost, so v2.4 is signed with a NEW key,
+`~/apkbuild/keys/techlingua-crm.jks` (alias `techlingua`, password in `~/apkbuild/keys/.storepass`,
+both chmod-restricted, never in the repo). Users with v2.3 must uninstall once; every later
+build MUST be signed with this same key so it installs as an update. Back the key up.
