@@ -22,17 +22,21 @@ const Ctx = createContext<AuthCtx>(null as unknown as AuthCtx);
 export const useAuth = () => useContext(Ctx);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [me, setMe] = useState<Me | null>(null);
+  const [me, setMeState] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Persist the current user id for per-user client-side prefs (e.g. the column-visibility
-  // chooser keys off tlc.uid). Cleared on logout so a shared machine never leaks prefs.
-  useEffect(() => {
+  // Persist the current user id for per-user client-side prefs (the column-visibility chooser
+  // keys off tlc.uid). Client 10 Nov 2026: this used to be written in a useEffect, but React runs
+  // CHILD effects first — after a page refresh the Leads table read its saved columns before
+  // tlc.uid existed (the startup effect had even removed it), found nothing under "anon", and
+  // showed every column. Writing it synchronously, before `me` is set, fixes the order.
+  const setMe = (m: Me | null) => {
     try {
-      if (me?.user?.id != null) localStorage.setItem('tlc.uid', String(me.user.id));
+      if (m?.user?.id != null) localStorage.setItem('tlc.uid', String(m.user.id));
       else localStorage.removeItem('tlc.uid');
     } catch { /* private mode */ }
-  }, [me]);
+    setMeState(m);
+  };
 
   useEffect(() => {
     if (!getToken()) {

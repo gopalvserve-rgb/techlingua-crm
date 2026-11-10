@@ -4,10 +4,11 @@
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { InvoiceTemplateBuilder } from './invoicebuilder';
-import { CustomCourseName, CustomCourseOption, coursePayload, isCustomCourse, realCourseId } from './customcourse';
+import { CustomCourseName, CustomCourseOption, coursePayload, isCustomCourse, realCourseId, prettyCourse } from './customcourse';
 import type { ReactNode } from 'react';
 import { api, getToken } from './api';
 import { useAuth } from './auth';
+import { askConfirm } from './askdialog';
 import { Ic, checkS } from './icons';
 import {
   Avatar, BarsCard, Blocks, Cell, Funnel, HBars, Kpis, ListCard, TableCard, TempBadge, renderCell,
@@ -25,11 +26,11 @@ async function openPdfAuthed(path: string) {
   } catch (e: any) { toast(e.message, true); }
 }
 
-import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload, TASK_ENTITY_OPTS, TASK_ENTITY_KEY, TASK_STATUS_KEY, TASK_STATUS_LABEL } from './forms';
+import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload, TASK_ENTITY_OPTS, TASK_ENTITY_KEY, TASK_STATUS_KEY, TASK_STATUS_LABEL, courseAliasList } from './forms';
 import { PhoneInput } from './phonefield';
 import { AddMasterModal, MASTER_LABELS } from './mastermodal';
 import { StageTypeSelect, stageTypeClass, stageTypeLabel } from './stagetypes';
-import { RoleModal } from './rolemodal';
+import { RoleModal, CatalogModule, DEFAULT_LOCKED_ROLES, applyLevel, ModuleLevel } from './rolemodal';
 import {
   ConfirmModal, DetailModal, IncInactiveChip, KV, RowMenu, RowMenuItem, Section, fmtFull, rowActions, toggleCell,
 } from './rowactions';
@@ -166,7 +167,7 @@ const fmtDate = (v?: string | null) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const LEAD_COLS = ['Lead', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'FB Page', 'FB Campaign', 'FB Ad', 'Score', 'Lead Counsellor', 'Stage', 'Status', 'Last Call Disposition', 'Next follow-up', 'Created on'];
+const LEAD_COLS = ['Lead', 'Phone & Actions', 'Branch', 'Course', 'Vertical · Pipeline', 'Campaign', 'Source', 'FB Page', 'FB Campaign', 'FB Ad', 'Score', 'Lead Counsellor', 'Stage', 'Status', 'Last Call Disposition', 'Next follow-up', 'Created on'];
 
 /* Client update #4 — task/follow-up priority (colour-coded like lead priority). */
 const PRIO_CLASS: Record<string, string> = { high: 'b-rose', medium: 'b-amber', low: 'b-cyan' };
@@ -221,23 +222,37 @@ function PrioSelect({ id, value, onChanged, disabled }: { id: number; value?: st
   );
 }
 
-function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: 'notes') => void, openNotes?: (id: number) => void): Cell[] {
+function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: 'notes') => void, openNotes?: (id: number) => void,
+  onFlag?: (l: any) => void): Cell[] {
   const overdue = l.next_follow_up_at && new Date(l.next_follow_up_at) < new Date();
+  const calls = Number(l.call_count ?? 0);
   return [
+    // client 10 Nov 2026 (point 5) — the name with its call count underneath, then the phone
+    // number with every contact action beside it in its own column.
     { node: (
       <div className="cell-u">
         <Avatar name={l.full_name} />
         <div>
           <div className="nm">{l.full_name}</div>
-          <div className="sub mono" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span>{l.phone}</span>
-            <ContactQuickActions phone={l.phone} whatsapp={l.whatsapp_phone}
-              onNote={openNotes ? () => openNotes(Number(l.id)) : openLead ? () => openLead(Number(l.id), 'edit', 'notes') : undefined} />
-          </div>
+          {calls > 0 && (
+            <span className="call-pill" title={`${calls} call${calls === 1 ? '' : 's'} on this lead`} data-testid="lead-call-count">
+              <Ic k="calls" />×{calls}
+            </span>
+          )}
         </div>
-      </div>) },
+      </div>), sort: String(l.full_name ?? '') } as Cell,
+    { node: (
+      <div className="phone-acts">
+        <span className="mono">{l.phone}</span>
+        <ContactQuickActions phone={l.phone} whatsapp={l.whatsapp_phone}
+          onNote={openNotes ? () => openNotes(Number(l.id)) : openLead ? () => openLead(Number(l.id), 'view', 'notes') : undefined}
+          onFlag={onFlag ? () => onFlag(l) : undefined} flagged={!!l.is_red_flagged} />
+      </div>), sort: String(l.phone ?? '') } as Cell,
     dn(l.branch_name, l.branch_deleted) || '—',
-    l.course_name || '—',
+    // client 10 Nov 2026 (point 2) — no master course yet? show what Facebook / the import sent.
+    l.course_name || (l.course_text
+      ? { node: <span className="course-raw" title="As sent by Facebook / the import — add it as a Custom name in Course Management to link it">{prettyCourse(l.course_text)}</span> } as Cell
+      : '—'),
     `${dn(l.vertical_name, l.vertical_deleted)} · ${dn(l.pipeline_name, l.pipeline_deleted)}`,
     dn(l.campaign_name, l.campaign_deleted) || '—',
     { b: [dn(l.source_name, l.source_deleted) || '—', 'b-indigo'] },
@@ -1758,7 +1773,8 @@ function LeadsAll() {
             allChecked: allLoadedSelected,
             onToggleAll: toggleAllLoaded,
           }}
-          rows={rows.map((l) => [...leadRow(l, openLead, openNotes), rowActions({
+          rows={rows.map((l) => [...leadRow(l, openLead, openNotes,
+            canFlag ? (x) => setFlagLead({ id: Number(x.id), name: x.full_name, flagged: !!x.is_red_flagged }) : undefined), rowActions({
             onView: () => openLead(Number(l.id), 'view'),
             onEdit: canEditLead ? () => openLead(Number(l.id), 'edit') : undefined,
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
@@ -3160,6 +3176,8 @@ const courseEditSpec = (edit: any): EditSpec => ({
   // DEF-2: nothing is locked — every Add Course field is editable and prefilled.
   initialVals: {
     'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
+    // client 10 Nov 2026 — Custom names (what Facebook forms / imports send for this course)
+    'Custom Names': Array.isArray((edit.meta as any)?.aliases) ? (edit.meta as any).aliases.join(', ') : String((edit.meta as any)?.aliases ?? ''),
     'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
     'Standard Fee': (edit.meta as any)?.fee ?? '',
     'Standard Exam Fee': (edit.meta as any)?.exam_fee ?? '',
@@ -3197,6 +3215,7 @@ const courseEditSpec = (edit: any): EditSpec => ({
         course_type: vals['Course Type'] || undefined,
         // dev/100 (client): delivery_mode dropped from the course UI (meta value preserved by the spread).
         description: vals['Description'] || undefined,
+        aliases: courseAliasList(vals['Custom Names']) ?? [],
       },
       is_active: vals['Status'] !== 'Inactive',
     });
@@ -3263,7 +3282,16 @@ function Courses() {
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => [
           { mono: String(c.code ?? '—') } as Cell,
-          { node: <span className="nm">{c.name}</span> } as Cell,
+          { node: (
+            <span>
+              <span className="nm">{c.name}</span>
+              {/* client 10 Nov 2026 — Custom names used by Facebook forms / imports */}
+              {Array.isArray((c.meta as any)?.aliases) && (c.meta as any).aliases.length > 0 && (
+                <div className="sub" title="Custom names — leads that send any of these are linked to this course">
+                  aka {(c.meta as any).aliases.join(', ')}
+                </div>
+              )}
+            </span>), sort: String(c.name ?? '') } as Cell,
           String(nameOf(ref.verticals, (c.meta as any)?.vertical_id) ?? (c.meta as any)?.vertical ?? '—'),
           String((c.meta as any)?.course_type ?? '—'),
           String((c.meta as any)?.level ?? '—'),
@@ -3725,10 +3753,20 @@ function Roles() {
   const { can } = useAuth();
   const roles = useFetch<any[]>('/roles', [refreshTick]);
   const [grants, setGrants] = useState<Record<string, any[]>>({});
-  const [modal, setModal] = useState<{ roleId?: number; readOnly?: boolean } | null>(null);
+  const [modal, setModal] = useState<{ roleId?: number; readOnly?: boolean; focusModules?: string[] } | null>(null);
+  // client 10 Nov 2026 (point 6) — the module-level matrix is EDITABLE: click a cell for Full / Partial / No access.
+  const [catalog, setCatalog] = useState<CatalogModule[]>([]);
+  const [lockedRoles, setLockedRoles] = useState<string[]>(DEFAULT_LOCKED_ROLES);
+  const [cellMenu, setCellMenu] = useState<{ role: any; label: string; mods: string[]; x: number; y: number } | null>(null);
+  const [gTick, setGTick] = useState(0);
   const canEdit = can('role.update');
   const del = useDelete('Role', '/roles', () => { roles.reload(); bump(); });
-  const after = () => { roles.reload(); bump(); };
+  const after = () => { roles.reload(); bump(); setGTick((t) => t + 1); };
+  useEffect(() => {
+    api.get<{ catalog: CatalogModule[]; locked_roles?: string[] }>('/roles/permissions')
+      .then((r) => { setCatalog(r.catalog ?? []); if (Array.isArray(r.locked_roles)) setLockedRoles(r.locked_roles); })
+      .catch(() => setCatalog([]));
+  }, []);
   useEffect(() => {
     if (!roles.data) return;
     let dead = false;
@@ -3737,16 +3775,56 @@ function Roles() {
       api.get<any>(`/roles/${r.id}`).then((d) => [r.name, d.grants ?? []] as const).catch(() => [r.name, []] as const),
     )).then((pairs) => { if (!dead) setGrants(Object.fromEntries(pairs)); });
     return () => { dead = true; };
-  }, [roles.data]);
+  }, [roles.data, gTick]);
+  useEffect(() => {
+    if (!cellMenu) return;
+    const close = () => setCellMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('scroll', close, true);
+    document.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('scroll', close, true); document.removeEventListener('keydown', onKey); };
+  }, [cellMenu]);
 
   const mark = (roleName: string, modules: string[]) => {
     const g = (grants[roleName] ?? []).filter((x) => modules.includes(x.module));
     if (!g.length) return 'n';
-    return g.some((x) => x.record_scope === 'all') ? 'y' : 'p';
+    // Full = every action of every module in the group, on all records.
+    const total = catalog.filter((m) => modules.includes(m.module)).reduce((n, m) => n + m.actions.length, 0);
+    if (total && g.length >= total && g.every((x) => x.record_scope === 'all')) return 'y';
+    if (!total && g.some((x) => x.record_scope === 'all')) return 'y';
+    return 'p';
   };
-  const pm = (v: string, i: number) => (
-    <td key={i}><span className={`pm ${v}`}>{v === 'y' ? '✓' : v === 'p' ? '◐' : '–'}</span></td>
-  );
+  const roleRow = (roleName: string) => (roles.data ?? []).find((r) => r.name === roleName);
+  const cellEditable = (roleName: string) => canEdit && !!roleRow(roleName) && !lockedRoles.includes(roleName);
+  /** Full / No access for a whole module group, written straight to the role's matrix. */
+  const setGroupLevel = async (role: any, label: string, mods: string[], level: ModuleLevel) => {
+    const word = level === 'full' ? 'FULL access (every action, all records)' : 'NO access';
+    if (!await askConfirm(`Give ${role.name} ${word} to ${label}?`)) return;
+    try {
+      let entries: Record<string, string> = {};
+      (grants[role.name] ?? []).forEach((g: any) => { entries[g.permission_key] = g.record_scope; });
+      for (const m of catalog.filter((c) => mods.includes(c.module))) entries = applyLevel(m, entries, level);
+      await api.put(`/roles/${role.id}/permissions`, {
+        entries: Object.entries(entries).map(([permission_key, record_scope]) => ({ permission_key, record_scope })),
+      });
+      toast(`${role.name} · ${label}: ${level === 'full' ? 'Full access' : 'No access'}`);
+      after();
+    } catch (e: any) { toast(e.message, true); }
+  };
+  const pm = (roleName: string, label: string, mods: string[], i: number) => {
+    const v = mark(roleName, mods);
+    const editable = cellEditable(roleName);
+    return (
+      <td key={i} className={`pm-cell${editable ? ' editable' : ''}`} data-testid={`pm-${label}-${roleName}`}
+        title={editable ? `Change ${roleName} access to ${label}` : lockedRoles.includes(roleName) ? `${roleName} always has full access` : undefined}
+        onClick={editable ? (e) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          setCellMenu({ role: roleRow(roleName), label, mods, x: Math.min(r.left, window.innerWidth - 240), y: r.bottom + 4 });
+        } : undefined}>
+        <span className={`pm ${v}`}>{v === 'y' ? '✓' : v === 'p' ? '◐' : '–'}</span>
+      </td>
+    );
+  };
 
   return (
     <>
@@ -3757,7 +3835,7 @@ function Roles() {
             <thead><tr><th>Module</th>{MATRIX_ROLES.map((r) => <th key={r}>{r === 'Branch Manager' ? 'Branch Mgr' : r}</th>)}</tr></thead>
             <tbody>
               {MATRIX_ROWS.map(([label, mods]) => (
-                <tr key={label}><td>{label}</td>{MATRIX_ROLES.map((r, i) => pm(mark(r, mods), i))}</tr>
+                <tr key={label}><td>{label}</td>{MATRIX_ROLES.map((r, i) => pm(r, label, mods, i))}</tr>
               ))}
             </tbody>
           </table>
@@ -3765,9 +3843,27 @@ function Roles() {
             <span className="li"><span className="pm y">✓</span> Full</span>
             <span className="li"><span className="pm p">◐</span> Partial / scoped</span>
             <span className="li"><span className="pm n">–</span> No access</span>
+            {canEdit && <span className="li sub">Click a cell to change it · Super Admin / Organization Admin always have full access</span>}
           </div>
         </div>
       </div>
+      {cellMenu && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 399 }} onClick={() => setCellMenu(null)} />
+          <div className="pm-menu" role="menu" style={{ left: cellMenu.x, top: cellMenu.y }} data-testid="pm-menu">
+            <div className="pmh">{cellMenu.role.name} · {cellMenu.label}</div>
+            <button type="button" role="menuitem" onClick={() => { const c = cellMenu; setCellMenu(null); void setGroupLevel(c.role, c.label, c.mods, 'full'); }}>
+              <span className="pm y">✓</span> Full access
+            </button>
+            <button type="button" role="menuitem" onClick={() => { const c = cellMenu; setCellMenu(null); setModal({ roleId: Number(c.role.id), focusModules: c.mods }); }}>
+              <span className="pm p">◐</span> Partial — choose actions…
+            </button>
+            <button type="button" role="menuitem" onClick={() => { const c = cellMenu; setCellMenu(null); void setGroupLevel(c.role, c.label, c.mods, 'none'); }}>
+              <span className="pm n">–</span> No access
+            </button>
+          </div>
+        </>
+      )}
       <TableCard fill title="Roles" more={<ListActions onExport={() => downloadObjectsCsv('roles.csv', roles.data ?? [])} onRefresh={() => roles.reload()} />} cols={['Role', 'Type', 'Permissions', 'Users', 'Status', 'Actions']}
         rowClass={(i) => ((roles.data ?? [])[i]?.is_active === false ? 'row-inactive' : undefined)}
         rows={(roles.data ?? []).map((r) => [
@@ -3782,7 +3878,8 @@ function Roles() {
           }),
           rowActions({
             onView: () => setModal({ roleId: Number(r.id), readOnly: true }),
-            onEdit: canEdit && !r.is_system ? () => setModal({ roleId: Number(r.id) }) : undefined,
+            // client 10 Nov 2026 (point 7) — system roles are editable too, except the full-access admins
+            onEdit: canEdit && !(r.is_system && lockedRoles.includes(r.name)) ? () => setModal({ roleId: Number(r.id) }) : undefined,
             // system roles are not deletable (API 400) — no button on them
             onDelete: can('role.delete') && !r.is_system ? () => del.openDelete(Number(r.id), r.name) : undefined,
           }),
@@ -3792,7 +3889,7 @@ function Roles() {
         { t: 'Module-level', d: 'View/create/edit/delete/export' }, { t: 'Field-level', d: 'Hide sensitive fields' },
         { t: 'Record-level', d: 'Scoped by Branch/Pipeline/Campaign' }, { t: 'Manager partial', d: 'Live-monitor, view-only or edit' }] }]} />
       {modal && (
-        <RoleModal roleId={modal.roleId} readOnly={modal.readOnly}
+        <RoleModal roleId={modal.roleId} readOnly={modal.readOnly} focusModules={modal.focusModules}
           onClose={() => setModal(null)} onSaved={after} />
       )}
     </>

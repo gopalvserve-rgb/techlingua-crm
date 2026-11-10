@@ -13,7 +13,8 @@ import { Ic } from './icons';
 import { Cell, HBars, Kpis, TableCard, TempBadge, renderCell } from './renderer';
 import { toast, useFetch, useRef_, selectableUsers } from './refdata';
 import { ConfirmModal, DetailModal, KV, Section, fmtFull, rowActions } from './rowactions';
-import { AddModal, EditSpec, need } from './forms';
+import { AddModal, EditSpec, LeadLookup, need } from './forms';
+import { useDelete } from './deletemodal';
 import { AddMasterModal } from './mastermodal';
 import { ScreenCtx, FilterMulti } from './dyn';
 import { DateRange, presetRange, WEEK_START } from './daterange';
@@ -643,12 +644,18 @@ interface CalFeed {
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // week starts Monday (WEEK_START)
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-export function EventModal({ onClose, onSaved, initial, day }: {
+export function EventModal({ onClose, onSaved, initial, day, readOnly: startReadOnly }: {
   onClose: () => void; onSaved: () => void; initial?: CalEvent | null;
   /** yyyy-mm-dd of the date clicked on the grid: prefills Starts at 10:00 */
   day?: string;
+  /** client 10 Nov 2026 - the View action opens the event read-only (Edit flips it editable) */
+  readOnly?: boolean;
 }) {
   const { can } = useAuth();
+  const [ro, setRo] = useState(!!startReadOnly && !!initial);
+  // client 10 Nov 2026 - an event can be FOR a lead: search and attach it.
+  const [leadId, setLeadId] = useState<number | null>(initial?.lead_id ?? null);
+  const [leadLabel, setLeadLabel] = useState<string>(initial?.lead_name ?? '');
   const [title, setTitle] = useState(initial?.title ?? '');
   const [type, setType] = useState(initial?.type ?? 'meeting');
   const [starts, setStarts] = useState(initial?.starts_at ? toLocalDT(initial.starts_at) : day ? `${day}T10:00` : '');
@@ -667,6 +674,7 @@ export function EventModal({ onClose, onSaved, initial, day }: {
         starts_at: new Date(starts).toISOString(),
         ends_at: ends ? new Date(ends).toISOString() : null,
         location: location || null, notes: notes || null,
+        lead_id: leadId ?? null,
       };
       if (initial) await api.patch(`/calendar/${initial.id}`, body);
       else await api.post('/calendar', body);
@@ -692,10 +700,11 @@ export function EventModal({ onClose, onSaved, initial, day }: {
     <div className="add-scrim">
       <div className="add-modal">
         <div className="ah">
-          <h3><Ic k={initial ? 'pencil' : 'plus'} />{initial ? `Edit event — ${initial.title}` : 'Add event'}</h3>
+          <h3><Ic k={ro ? 'eye' : initial ? 'pencil' : 'plus'} />{ro ? `Event — ${initial!.title}` : initial ? `Edit event — ${initial.title}` : 'Add event'}</h3>
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
         </div>
         <div className="abody">
+          <fieldset disabled={ro} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="form-grid">
             <div className="fld span2">
               <label htmlFor="ev-title">Title <span className="star">*</span></label>
@@ -725,11 +734,32 @@ export function EventModal({ onClose, onSaved, initial, day }: {
               <label htmlFor="ev-loc">Location</label>
               <input id="ev-loc" className="ainp" value={location} onChange={(e) => setLocation(e.target.value)} />
             </div>
+            {/* client 10 Nov 2026 - link the event to a lead (optional) */}
+            <div className="fld span2" data-testid="ev-lead">
+              <label htmlFor="ev-lead">Lead <span className="fhint">optional - when this event is for a lead</span></label>
+              {ro
+                ? <div className="ainp" style={{ background: 'var(--surface-3)' }}>{leadLabel || '—'}</div>
+                : (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <LeadLookup inputId="ev-lead" value={leadLabel}
+                        onPick={(id, label) => { setLeadId(id ?? null); setLeadLabel(label); }} />
+                    </div>
+                    {leadId != null && (
+                      <button type="button" className="btn" title="Remove the lead" onClick={() => { setLeadId(null); setLeadLabel(''); }}><Ic k="x" /></button>
+                    )}
+                  </div>
+                )}
+              {!ro && leadLabel && leadId == null && (
+                <div className="fhint" style={{ color: 'var(--amber)', marginTop: 3 }}>Pick a lead from the list to link it</div>
+              )}
+            </div>
             <div className="fld span2">
               <label htmlFor="ev-notes">Notes</label>
               <textarea id="ev-notes" className="ainp" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
           </div>
+          </fieldset>
         </div>
         <div className="af">
           {initial && can('calendar.delete') && (
@@ -737,10 +767,58 @@ export function EventModal({ onClose, onSaved, initial, day }: {
               <Ic k="trash" />Delete
             </button>
           )}
+          <button className="btn" onClick={onClose}>{ro ? 'Close' : 'Cancel'}</button>
+          {ro
+            ? (can('calendar.update') && <button className="btn primary" onClick={() => setRo(false)}><Ic k="pencil" />Edit</button>)
+            : (
+              <button className="btn primary" disabled={busy} onClick={save}>
+                {busy ? 'Saving…' : initial ? 'Save changes' : 'Add event'}
+              </button>
+            )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** client 10 Nov 2026 - Calendar > Edit on a follow-up row: move its date / time and notes. */
+function FollowUpRescheduleModal({ fu, onClose, onSaved }: {
+  fu: { id: number; lead_name: string; scheduled_at: string; type_name?: string | null; notes?: string | null };
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [when, setWhen] = useState(toLocalDT(fu.scheduled_at));
+  const [notes, setNotes] = useState(fu.notes ?? '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!when) return toast('Date & time is required', true);
+    setBusy(true);
+    try {
+      await api.patch(`/follow-ups/${fu.id}`, { scheduled_at: new Date(when).toISOString(), notes: notes.trim() || undefined });
+      toast('Follow-up updated'); onSaved();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="add-scrim">
+      <div className="add-modal" style={{ width: 480 }}>
+        <div className="ah">
+          <h3><Ic k="pencil" />Edit follow-up — {fu.lead_name}</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          <div className="form-grid">
+            <div className="fld span2">
+              <label htmlFor="fu-when">{fu.type_name || 'Follow-up'} — date &amp; time <span className="star">*</span></label>
+              <input id="fu-when" className="ainp" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+            </div>
+            <div className="fld span2">
+              <label htmlFor="fu-notes">Notes</label>
+              <textarea id="fu-notes" className="ainp" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+          </div>
+        </div>
+        <div className="af">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={busy} onClick={save}>
-            {busy ? 'Saving…' : initial ? 'Save changes' : 'Add event'}
-          </button>
+          <button className="btn primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
         </div>
       </div>
     </div>
@@ -756,7 +834,8 @@ export function Calendar() {
   // This Month / Custom) now drive the calendar feed AND the total count, not just the visible month.
   const [range, setRange] = useState<{ from?: string; to?: string }>(() => monthWindow(new Date()));
   const [add, setAdd] = useState<{ day?: string } | null>(null);
-  const [editing, setEditing] = useState<CalEvent | null>(null);
+  const [editing, setEditing] = useState<{ ev: CalEvent; view?: boolean } | null>(null);
+  const [fuEdit, setFuEdit] = useState<CalFeed['follow_ups'][number] | null>(null);
   const [syncing, setSyncing] = useState(false);
   const canAdd = can('calendar.create');
 
@@ -774,6 +853,13 @@ export function Calendar() {
   const navMonth = (delta: number) => {
     const m = new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1);
     setCursor(m); setRange(monthWindow(m));
+  };
+  // client 10 Nov 2026 - View / Edit / Delete on the "In selected range" rows
+  const fuDel = useDelete('Follow-up', '/follow-ups', () => { feed.reload(); bump(); });
+  const delEvent = async (e: CalEvent) => {
+    if (!await askConfirm(`Delete the event “${e.title}”?`)) return;
+    try { await api.del(`/calendar/${e.id}`); toast('Event deleted'); feed.reload(); bump(); }
+    catch (err: any) { toast(err.message, true); }
   };
   const fuCount = feed.data?.follow_ups?.length ?? 0;
   const evCount = feed.data?.events?.length ?? 0;
@@ -874,7 +960,7 @@ export function Calendar() {
                     title={it.label}
                     onClick={(ev) => {
                       ev.stopPropagation();
-                      if (it.event) setEditing(it.event);
+                      if (it.event) setEditing({ ev: it.event, view: true });
                       else if (it.leadId) openLead(it.leadId);
                     }}>
                     {it.label}
@@ -895,7 +981,7 @@ export function Calendar() {
 
       <div id="cal-range-list" />
       <TableCard title={`In selected range — ${fuCount + evCount} result${fuCount + evCount === 1 ? '' : 's'}`} icon="cal"
-        cols={['When', 'What', 'Lead', 'Lead Counsellor', 'Type']}
+        cols={['When', 'What', 'Lead', 'Lead Counsellor', 'Type', 'Actions']}
         rows={[
           ...(feed.data?.follow_ups ?? []).map((f) => [
             { mono: fmtDT(f.scheduled_at), dim: false } as Cell,
@@ -904,19 +990,31 @@ export function Calendar() {
             f.owner_name || '—',
             { b: [f.overdue && f.status === 'pending' ? 'Overdue' : 'Follow-up',
               f.overdue && f.status === 'pending' ? 'b-rose' : 'b-indigo'] } as Cell,
+            rowActions({
+              onView: () => openLead(f.lead_id),
+              onEdit: can('followup.update') ? () => setFuEdit(f) : undefined,
+              onDelete: can('followup.delete') ? () => fuDel.openDelete(Number(f.id), `${f.type_name || 'Follow-up'} · ${f.lead_name}`) : undefined,
+            }),
           ]),
           ...(feed.data?.events ?? []).map((e) => [
             { mono: fmtDT(e.starts_at) } as Cell,
-            { node: <span className="nm" style={{ cursor: 'pointer' }} onClick={() => setEditing(e)}>{e.title}</span> } as Cell,
-            e.lead_name || '—',
+            { node: <span className="nm" style={{ cursor: 'pointer' }} onClick={() => setEditing({ ev: e, view: true })}>{e.title}</span> } as Cell,
+            e.lead_id ? { node: <span className="nm" style={{ cursor: 'pointer' }} onClick={() => openLead(Number(e.lead_id))}>{e.lead_name || `Lead #${e.lead_id}`}</span> } as Cell : '—',
             e.owner_name || '—',
             { b: [e.type.charAt(0).toUpperCase() + e.type.slice(1), 'b-cyan'] } as Cell,
+            rowActions({
+              onView: () => setEditing({ ev: e, view: true }),
+              onEdit: can('calendar.update') ? () => setEditing({ ev: e }) : undefined,
+              onDelete: can('calendar.delete') ? () => void delEvent(e) : undefined,
+            }),
           ]),
         ]}
         empty="Nothing scheduled this month" />
 
       {add && <EventModal day={add.day} onClose={() => setAdd(null)} onSaved={() => { feed.reload(); bump(); }} />}
-      {editing && <EventModal initial={editing} onClose={() => setEditing(null)} onSaved={() => { feed.reload(); bump(); }} />}
+      {editing && <EventModal initial={editing.ev} readOnly={editing.view} onClose={() => setEditing(null)} onSaved={() => { feed.reload(); bump(); }} />}
+      {fuEdit && <FollowUpRescheduleModal fu={fuEdit} onClose={() => setFuEdit(null)} onSaved={() => { setFuEdit(null); feed.reload(); bump(); }} />}
+      {fuDel.deleteModal}
     </>
   );
 }

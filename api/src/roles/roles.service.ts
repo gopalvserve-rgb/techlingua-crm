@@ -4,6 +4,9 @@ import { RecordScope } from '../rbac/rbac.types';
 import { PERMISSION_CATALOG } from '../rbac/permission-catalog';
 
 export interface RoleDto { name: string; description?: string }
+
+/** System roles whose matrix stays locked: they hold every permission by design. */
+export const LOCKED_ROLES = new Set(['Super Admin', 'Organization Admin']);
 export interface MatrixEntry {
   permission_key: string;
   record_scope: RecordScope;
@@ -37,6 +40,7 @@ export class RolesService {
       .then((perms) => ({
         catalog: PERMISSION_CATALOG,
         permissions: perms,
+        locked_roles: [...LOCKED_ROLES],
       }));
   }
 
@@ -89,14 +93,15 @@ export class RolesService {
    */
   async setMatrix(roleId: number, entries: MatrixEntry[]) {
     if (!Array.isArray(entries)) throw new BadRequestException('entries[] required');
-    const role = await this.db.one<{ id: string; is_system: boolean }>(
-      `SELECT id, is_system FROM role WHERE id = $1 AND deleted_at IS NULL`, [roleId],
+    const role = await this.db.one<{ id: string; is_system: boolean; name: string }>(
+      `SELECT id, is_system, name FROM role WHERE id = $1 AND deleted_at IS NULL`, [roleId],
     );
     if (!role) throw new NotFoundException('Role not found');
-    // OBS-01 (backlog #17): system-role matrices are locked at the API level, not
-    // just hidden in the UI — a direct PUT gets a clear 400.
-    if (role.is_system) {
-      throw new BadRequestException('System role permission matrices are locked and cannot be modified');
+    // OBS-01 (backlog #17) narrowed by the client (10 Nov 2026): every role's permissions are now
+    // editable — Branch Manager, Counsellor, Accountant, Trainer included — EXCEPT the full-access
+    // admin roles. Editing those could lock every administrator out of Roles & Permissions itself.
+    if (role.is_system && LOCKED_ROLES.has(String(role.name))) {
+      throw new BadRequestException(`The ${role.name} role always has full access — its permission matrix is locked and cannot be modified`);
     }
     const valid: RecordScope[] = ['own', 'team', 'branch', 'vertical', 'pipeline', 'campaign', 'all'];
 

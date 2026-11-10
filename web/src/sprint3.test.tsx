@@ -344,13 +344,18 @@ describe('Calendar — the in-app calendar works; the SYNC degrades cleanly', ()
     expect(document.querySelectorAll('.cal-dow').length).toBe(7);
   });
 
-  it('clicking a date opens Add event with that date; clicking an event opens Edit', async () => {
+  it('clicking a date opens Add event with that date; clicking an event opens it (View, then Edit)', async () => {
     ROUTES = { '/calendar': CAL_NOT_CONFIGURED };
     draw(<Calendar />);
     await screen.findByText(/In selected range/);
     const ev = [...document.querySelectorAll('.cal-ev')].find((e) => !e.classList.contains('fu')) as HTMLElement;
     fireEvent.click(ev);
+    // client 10 Nov 2026 — an event opens read-only first; Edit makes it editable
+    expect(await screen.findByText(/^Event —/)).toBeTruthy();
+    expect((document.getElementById('ev-title') as HTMLInputElement).matches(':disabled')).toBe(true);
+    fireEvent.click(document.querySelector('.add-modal .af .btn.primary') as HTMLElement);
     expect(await screen.findByText(/Edit event —/)).toBeTruthy();
+    expect((document.getElementById('ev-title') as HTMLInputElement).matches(':disabled')).toBe(false);
     fireEvent.click(screen.getByLabelText('Close'));
     const cell = document.querySelectorAll('.cal-cell')[10] as HTMLElement;
     fireEvent.click(cell);

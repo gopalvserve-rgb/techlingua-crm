@@ -155,7 +155,8 @@ const LEAD_SELECT = `
          l.is_red_flagged, l.red_flagged_at,
          l.paused, l.paused_at,
          l.is_existing_student, l.existing_student_id,
-         l.ad_info,
+         l.ad_info, l.course_text,
+         (SELECT count(*)::int FROM call_event ce WHERE ce.lead_id = l.id) AS call_count,
          es.full_name AS existing_student_name, es.student_no AS existing_student_no,
          EXISTS (SELECT 1 FROM lead_sla s
                   WHERE s.lead_id = l.id AND s.satisfied_at IS NULL AND s.due_at <= now()) AS sla_breached,
@@ -407,7 +408,7 @@ export class LeadsService {
       'Platform': LeadsService.ad(r, 'platform'),
       'Stage': (r.stage_name as string) ?? '',
       'Status': (r.status_name as string) ?? '',
-      'Course': (r.course_name as string) ?? '',
+      'Course': (r.course_name as string) ?? (r.course_text as string) ?? '',
       'City': (r.city_name as string) ?? '',
       'Temperature': temp,
       'Priority': LeadsService.titleCase(r.priority),

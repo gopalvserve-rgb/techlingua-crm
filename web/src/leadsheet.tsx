@@ -1,5 +1,5 @@
 /** Lead detail / edit slide-in sheet — ported 1:1 from the prototype's renderLead(). */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { LeadCallsTab } from './calls';
 import { useAuth } from './auth';
@@ -8,6 +8,7 @@ import { AddMasterModal } from './mastermodal';
 import { AddModal, dedupeSources } from './forms';
 import { fetchLeadCfDefs, coerceCf, displayCf, CfDef } from './customfields';
 import { adInfoOf, adInfoRows } from './adinfo';
+import { prettyCourse } from './customcourse';
 import { PhoneInput } from './phonefield';
 import { copyToClipboard } from './contactactions';
 import { Avatar, TempBadge } from './renderer';
@@ -113,6 +114,11 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
   const canFlag = can('lead.flag');
   const [extra, setExtra] = useState<Record<string, Named[]>>({});
   const [cfDefs, setCfDefs] = useState<CfDef[]>([]); // lead custom-field definitions (Aug 2026)
+  // client 10 Nov 2026 — Path, the Facebook ad details and Custom fields sit behind a
+  // "More details" toggle (closed in view mode, opened automatically for editing).
+  const [moreOpen, setMoreOpen] = useState(initialMode === 'edit');
+  useEffect(() => { if (mode === 'edit') setMoreOpen(true); }, [mode]);
+  const historyRef = useRef<HTMLDivElement>(null);
 
   const load = () => api.get<any>(`/leads/${leadId}`).then(setLead).catch((e) => { toast(e.message, true); onClose(); });
   const loadRedFlags = () => api.get<any[]>(`/leads/${leadId}/red-flags`).then(setRfList).catch(() => setRfList([]));
@@ -299,13 +305,14 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
           {/* dev/84 item 1 — in VIEW mode the only control is Edit (read-only otherwise). */}
           {!editing && canEditLead && <button className="qa" onClick={() => setMode('edit')}><Ic k="pencil" />Edit</button>}
           {/* dev/142 — Note is a header quick-action alongside Call/Copy/WhatsApp; opens the Notes tab (edit mode surfaces the add-note input). */}
-          <button className="qa" onClick={() => { if (canEditLead) setMode('edit'); setTab('notes'); }}><Ic k="note" />Note</button>
+          {/* client 10 Nov 2026 — Note no longer switches the whole lead into edit mode. */}
+          <button className="qa" onClick={() => { setTab('notes'); setTimeout(() => historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30); }}><Ic k="note" />Note</button>
           {/* UAT-R3 #23 — reassign the lead's owner to another (active, in-scope) user. */}
           {editing && can('lead.assign') && <button className="qa" onClick={() => setReassign(true)}><Ic k="users" />Reassign</button>}
           {/* Jul 2026 — transfer the lead to another Branch / Vertical / Campaign (re-parents its path). */}
           {editing && can('lead.transfer') && <button className="qa" onClick={() => setTransfer(true)}><Ic k="swap" />Transfer</button>}
           {/* Aug 2026 — RED FLAG: type a remark; records a red-flag entry + timeline + flag state. */}
-          {editing && canFlag && <button className="qa" onClick={() => setRedFlag(true)}
+          {canFlag && <button className="qa" onClick={() => setRedFlag(true)}
             style={lead.is_red_flagged ? { color: 'var(--red)' } : undefined}>
             <Ic k="flag" />{lead.is_red_flagged ? 'Red flag' : 'Red flag'}</button>}
           {/* Phase 2 — convert this lead to a STUDENT (creates the student record + marks the lead WON). */}
@@ -408,6 +415,13 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                     ? <div style={{ fontSize: 11, color: 'var(--success)', marginTop: 3 }}>Course fee: ₹{fee}</div>
                     : null;
                 })()}
+                {/* client 10 Nov 2026 — what Facebook / the import sent, when no master course matches */}
+                {lead.course_text && ed('course_id') == null && (
+                  <div data-testid="course-text-hint" style={{ fontSize: 11, color: 'var(--amber)', marginTop: 3 }}
+                    title="Add this as a Custom name of a course in Course Management and the lead links to it automatically">
+                    Lead said: <b>{prettyCourse(lead.course_text)}</b> — not in the Course master yet
+                  </div>
+                )}
               </div>
               <div className="f"><label>Budget{mlink('budget', 'budget_id')}</label><div className="iv">
                 {ref.budgets.length || extra['budget_id']?.length ? sel('budget_id', withExtra('budget_id', ref.budgets)) : <span>—</span>}
@@ -445,6 +459,19 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
               <div className="f"><label>Last call disposition</label><div className="iv">
                 <span>{lead.last_call_disposition_name || '—'}{lead.last_call_disposition_at ? ` · ${fmtDT(lead.last_call_disposition_at)}` : ''}</span>
               </div></div>
+            </div>
+          </div>
+          {/* client 10 Nov 2026 — MORE DETAILS: everything extra (path, Facebook ad, custom fields)
+              opens from this one toggle; Close / Edit follow at the END of it. */}
+          <div className="sheet-sec" data-testid="lead-more-details">
+            <button type="button" className="more-toggle" data-testid="more-details-toggle" aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((o) => !o)}>
+              <span className="mt-chev" style={{ transform: moreOpen ? 'rotate(90deg)' : undefined }}><Ic k="chev" /></span>
+              <span className="mt-t">More details</span>
+              <span className="mt-s">Path{adInfoOf(lead) ? ' · Facebook ad' : ''}{cfDefs.length ? ' · Custom fields' : ''}{lead.is_existing_student ? ' · Returning student' : ''}</span>
+            </button>
+            {moreOpen && (<>
+            <div className="kv" style={{ marginTop: 12 }}>
               {/* dev/95 item 5 — Branch & Vertical are EDITABLE here (re-parent). Editing them
                   walks the strict Branch › Vertical › Pipeline › Campaign cascade and moves the
                   lead on Save (keeps owner). Without edit + lead.transfer, the path is read-only. */}
@@ -479,7 +506,6 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                 </div></div>
               ))}
             </div>
-          </div>
           {cfDefs.length > 0 && (() => {
             // Custom fields (client, Aug 2026): each definition renders here, prefilled from
             // lead.custom_fields; edits merge back into the custom_fields JSONB on Save.
@@ -494,7 +520,7 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
               });
             };
             return (
-              <div className="sheet-sec" data-testid="lead-custom-fields">
+              <div data-testid="lead-custom-fields" style={{ marginTop: 16 }}>
                 <h5>Custom fields</h5>
                 <div className="kv">
                   {cfDefs.map((d) => (
@@ -526,6 +552,8 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
               </div>
             );
           })()}
+            </>)}
+          </div>
           {/* client Oct 2026 — the lead DETAILS are their own section and END here with Close / Edit
               (Save in edit mode); History follows as a separate section below. */}
           <div className="sheet-sec" data-testid="lead-details-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 0 }}>
@@ -535,8 +563,8 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
             {editing && <button className="btn primary" onClick={saveEdits} disabled={busy || !canUpdate}>{checkS}Save changes</button>}
           </div>
           <DuplicatePanel leadId={lead.id} onChanged={() => { load(); onChanged?.(); }} />
-          <div className="sheet-sec" data-testid="lead-history" style={{ borderTop: '1px solid var(--border, #e5e7eb)', paddingTop: 16 }}>
-            <h5>History</h5>
+          <div className="sheet-sec lead-history" data-testid="lead-history" ref={historyRef}>
+            <h5>History <span className="sub" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500 }}>· notes and red flags can be added without editing the lead</span></h5>
             <div className="seltabs">
               {([['activity', 'Activity'], ['notes', 'Notes'], ['redflag', 'Red Flag'], ['calls', 'Calls'], ['whatsapp', 'WhatsApp'], ['email', 'Email']] as const).map(([t, lbl]) => (
                 <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
@@ -561,7 +589,8 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
             )}
             {tab === 'notes' && (
               <>
-                {editing && <div className="kv"><div className="f s2"><label>Add note</label>
+                {/* client 10 Nov 2026 — anyone who can see the lead adds notes, without edit mode */}
+                {<div className="kv"><div className="f s2"><label>Add note</label>
                   <div className="iv">
                     <input placeholder="Type a note…" value={noteText}
                       onChange={(e) => setNoteText(e.target.value)}
@@ -583,7 +612,7 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
             )}
             {tab === 'redflag' && (
               <>
-                {editing && canFlag && (
+                {canFlag && (
                   <div className="kv"><div className="f s2"><label>Add a red-flag remark</label>
                     <div className="iv">
                       <input placeholder="Why is this lead red-flagged…" value={rfText}

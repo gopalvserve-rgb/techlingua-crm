@@ -189,7 +189,9 @@ export class LeadsController {
     return this.leads.transfer(id, dto ?? {}, u.id, s);
   }
 
-  @Post(':id/notes') @RequirePermission('lead.update') @ScopedEntity('lead')
+  // Client 10 Nov 2026 — History (notes) is open to EVERY user who can see the lead; editing the
+  // lead's details stays behind lead.update. The lead itself is still record-scoped.
+  @Post(':id/notes') @RequirePermission('lead.read') @ScopedEntity('lead')
   addNote(@Param('id', ParseIntPipe) id: number, @Body() body: { note: string }, @CurrentUser() u: U) {
     return this.leads.addNote(id, body?.note, u.id);
   }

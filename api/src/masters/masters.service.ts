@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { rematchLeadCourses } from '../courses/course-match';
 
 /**
  * Generic masters module: one API shape for every master table
@@ -120,7 +121,16 @@ export class MastersService {
       [Number(org!.id), dto.name.trim(), dto.code ?? null, dto.sort_order ?? null,
         JSON.stringify(dto.meta ?? {}), dto.parent_id ?? null, dto.is_active ?? null, actorId],
     );
+    if (type === 'course') await this.relinkLeadCourses();
     return rows[0];
+  }
+
+  /**
+   * Client 10 Nov 2026 (point 2) — a new course, or a new Custom name on one, links every lead whose
+   * Facebook / import course text now matches it. Best-effort: never fails the course save.
+   */
+  private async relinkLeadCourses() {
+    try { await rematchLeadCourses(this.db); } catch { /* the save already succeeded */ }
   }
 
   async update(type: string, id: number, dto: Partial<MasterDto> & { is_active?: boolean }) {
@@ -140,6 +150,7 @@ export class MastersService {
       `UPDATE ${t} SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} AND deleted_at IS NULL RETURNING *`, params,
     );
     if (!rows.length) throw new NotFoundException(`${type} #${id} not found`);
+    if (type === 'course') await this.relinkLeadCourses();
     return rows[0];
   }
 

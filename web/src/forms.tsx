@@ -322,7 +322,11 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     // course is created once under every picked Branch › Vertical (each copy still belongs to ONE
     // Branch → ONE Vertical in meta.branch_id / meta.vertical_id, so every course filter is unchanged).
     // On Edit they are the usual single cascading selects of that one course.
-    F('Course Name', 'text', 1), F('Course Code', 'text', 1), F('Branch', 'branchmulti', 1, 0, 'master · multi-select', 'branches'), F('Vertical', 'verticalmulti', 1, 0, 'filtered by Branch · multi-select', 'verticals'),
+    F('Course Name', 'text', 1), F('Course Code', 'text', 1),
+    // client 10 Nov 2026 (point 2) — the other names a Facebook form / lead import uses for this
+    // course; a lead whose course text matches any of them is linked to this course.
+    F('Custom Names', 'text', 0, 0, 'optional — comma-separated names Facebook forms / imports send for this course, e.g. french_language, French'),
+    F('Branch', 'branchmulti', 1, 0, 'master · multi-select', 'branches'), F('Vertical', 'verticalmulti', 1, 0, 'filtered by Branch · multi-select', 'verticals'),
     // Course LEVELS (enrollment re-model, batch 1) — a course can have MANY levels (A1, A2, …), each
     // with its OWN fee. "+ Add level" adds rows; empty falls back to the single Standard Fee below.
     // Replaces the old single "Course Level" descriptor. Persisted via PUT /courses/:id/levels.
@@ -723,6 +727,11 @@ SAVERS['students.courses'] = async (vals, ids) => {
     row: first,
   };
 };
+/** client 10 Nov 2026 — "french_language, French" -> ['french_language', 'French'] (deduped, blanks dropped). */
+export function courseAliasList(raw: unknown): string[] | undefined {
+  const list = [...new Set(String(raw ?? '').split(/[,\n]/).map((x) => x.trim()).filter(Boolean))];
+  return list.length ? list : undefined;
+}
 /** Create ONE course under one Branch › Vertical (+ its levels). */
 async function saveCourseUnder(vals: Vals, name: string, code: string, t: { branch_id: number; vertical_id: number }, levels: ReturnType<typeof levelsPayload>): Promise<Named> {
   const row = await api.post<Named>('/masters/course', {
@@ -743,6 +752,7 @@ async function saveCourseUnder(vals: Vals, name: string, code: string, t: { bran
       course_type: vals['Course Type'] || undefined,
       // dev/100 (client): delivery_mode dropped from the course UI (column kept in DB, not written here).
       description: vals['Description'] || undefined,
+      aliases: courseAliasList(vals['Custom Names']),
     },
     is_active: vals['Status'] !== 'Inactive',
   });

@@ -39,10 +39,13 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch { return false; }
 }
 
-export function ContactQuickActions({ phone, whatsapp, onNote, className }: {
+export function ContactQuickActions({ phone, whatsapp, onNote, onFlag, flagged, className }: {
   phone?: string | null;
   whatsapp?: string | null;
   onNote?: () => void;
+  /** client 10 Nov 2026 — red-flag action beside the number (shown red when already flagged) */
+  onFlag?: () => void;
+  flagged?: boolean;
   className?: string;
 }) {
   const tel = phoneDigits(phone);
@@ -70,6 +73,10 @@ export function ContactQuickActions({ phone, whatsapp, onNote, className }: {
         ? <button type="button" className="cqa-ic" title="Add note" aria-label="Add note"
             onClick={(e) => { stop(e); onNote(); }}><Ic k="note" /></button>
         : null}
+      {onFlag
+        ? <button type="button" className={`cqa-ic flag${flagged ? ' on' : ''}`} title={flagged ? 'Red flagged — add a remark' : 'Red flag'}
+            aria-label="Red flag" data-testid="cqa-flag" onClick={(e) => { stop(e); onFlag(); }}><Ic k="flag" /></button>
+        : (flagged ? <span className="cqa-ic flag on" title="Red flagged" aria-label="Red flagged"><Ic k="flag" /></span> : null)}
     </span>
   );
 }

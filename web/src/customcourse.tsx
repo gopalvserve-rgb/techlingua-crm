@@ -37,3 +37,12 @@ export function coursePayload(courseId: string, customName: string): { course_id
 
 /** A course id safe to hand to things that look a course up (levels, caps, batches). */
 export const realCourseId = (courseId: string) => (isCustomCourse(courseId) ? '' : courseId);
+
+/**
+ * Client 10 Nov 2026 — the course a Facebook form / import sent ("french_language") shown the way
+ * a person would write it ("French Language"). Display only; the stored text is kept as sent.
+ */
+export function prettyCourse(raw?: string | null): string {
+  const t = String(raw ?? '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.replace(/(^|\s)([a-z])/g, (_m, sp: string, c: string) => sp + c.toUpperCase());
+}

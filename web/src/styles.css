@@ -1184,3 +1184,45 @@ button.fchip{cursor:pointer}
 /* client 31 Oct (6) - a table value that opens the records behind it */
 .cell-link{color:var(--primary);cursor:pointer;text-decoration:none}
 .cell-link:hover{text-decoration:underline}
+
+/* client 10 Nov 2026 — lead drawer: "More details" toggle + a separate History block */
+.more-toggle{display:flex;align-items:center;gap:8px;width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;cursor:pointer;color:var(--text);font:inherit;text-align:left}
+.more-toggle:hover{border-color:var(--primary)}
+.more-toggle .mt-chev{display:inline-flex;transition:transform .15s;color:var(--text-muted)}
+.more-toggle .mt-chev svg{width:14px;height:14px}
+.more-toggle .mt-t{font-weight:700;font-size:12.5px;text-transform:uppercase;letter-spacing:.05em}
+.more-toggle .mt-s{font-size:11.5px;color:var(--text-muted);margin-left:auto}
+.sheet-sec.lead-history{margin-top:6px;border-top:2px solid var(--border-strong);padding-top:18px;background:var(--surface-1)}
+/* client 10 Nov 2026 (point 5) — lead row: call-count pill under the name, phone + actions column */
+.call-pill{display:inline-flex;align-items:center;gap:3px;margin-top:3px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--primary-soft);color:var(--primary)}
+.call-pill svg{width:11px;height:11px}
+.phone-acts{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.phone-acts .mono{font-size:12.5px}
+.cqa-ic.flag:hover{color:var(--red);border-color:var(--red)}
+.cqa-ic.flag.on{color:var(--red);border-color:var(--red);background:var(--red-soft)}
+.course-raw{color:var(--amber);font-style:italic}
+/* client 10 Nov 2026 (point 3) — frozen leading columns (set by useFrozenColumns) */
+.tbl .frz{position:sticky;z-index:1;background:var(--surface)}
+.tbl thead th.frz{z-index:3}
+.tbl tbody tr:hover td.frz{background:var(--surface-2)}
+.tbl .frz-last{box-shadow:inset -1px 0 0 var(--border-strong)}
+.tbl .frz-last::before{content:"";position:absolute;top:0;bottom:0;right:-8px;width:8px;pointer-events:none;background:linear-gradient(90deg,rgba(0,0,0,.10),transparent)}
+@media (max-width:640px){.tbl .frz{position:static}.tbl .frz-last::before{display:none}}
+/* client 10 Nov 2026 (points 6 & 7) — role permission levels */
+.lvsw{display:inline-flex;border:1px solid var(--border-strong);border-radius:8px;overflow:hidden}
+.lvsw button{border:0;background:var(--surface);color:var(--text-muted);font:inherit;font-size:11.5px;font-weight:600;padding:4px 10px;cursor:pointer;border-right:1px solid var(--border)}
+.lvsw button:last-child{border-right:0}
+.lvsw button:disabled{cursor:not-allowed;opacity:.6}
+.lvsw button.lv-full.on{background:var(--success-soft);color:var(--success)}
+.lvsw button.lv-part.on{background:var(--amber-soft);color:var(--amber)}
+.lvsw button.lv-none.on{background:var(--surface-3);color:var(--text)}
+.modexp{display:inline-flex;align-items:center;gap:6px;background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--text);cursor:pointer}
+.modexp svg{width:12px;height:12px}
+.rolemx .mod-row td{border-top:1px solid var(--border)}
+.rolemx .act-row td{background:var(--surface-2)}
+.matrix td.pm-cell.editable{cursor:pointer}
+.matrix td.pm-cell.editable:hover .pm{outline:2px solid var(--primary);outline-offset:2px}
+.pm-menu{position:fixed;z-index:400;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;box-shadow:0 14px 38px rgba(0,0,0,.3);padding:6px;min-width:220px}
+.pm-menu .pmh{font-size:11px;font-weight:700;color:var(--text-muted);padding:4px 8px 6px}
+.pm-menu button{display:flex;width:100%;align-items:center;gap:8px;background:none;border:0;padding:7px 8px;border-radius:7px;font:inherit;font-size:12.5px;color:var(--text);cursor:pointer;text-align:left}
+.pm-menu button:hover{background:var(--surface-2)}

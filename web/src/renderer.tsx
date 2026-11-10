@@ -1,10 +1,53 @@
 /** Generic spec-driven block renderer — mirrors the prototype's renderBlock(). */
-import { CSSProperties, Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent, useState, useMemo, useRef, useEffect } from 'react';
+import { CSSProperties, Fragment, ReactNode, KeyboardEvent as ReactKeyboardEvent, useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
 import type React from 'react';
 import { Block, KpiItem } from './specs';
 import { Ic, checkS } from './icons';
 import { useColumnVisibility, ColumnsButton } from './colprefs';
 import { useAutoFilter } from './autofilter';
+
+/**
+ * Client 10 Nov 2026 (point 3) — FREEZE the leading columns of a table: the select checkbox, the
+ * serial number and the first `dataCols` data columns stay put while the rest scrolls sideways.
+ * Offsets come from the header cells' real widths and are re-measured on every render and resize,
+ * so it works for any table without per-screen widths. Rows with a different cell count (the
+ * "no records" row) are left alone.
+ */
+export function useFrozenColumns(tableRef: { current: HTMLTableElement | null }, count: number) {
+  useLayoutEffect(() => {
+    const t = tableRef.current;
+    if (!t) return;
+    const apply = () => {
+      const rowsEls = Array.from(t.rows);
+      const head = rowsEls[0];
+      if (!head) return;
+      const n = Math.min(count, head.cells.length - 1); // always leave one column to scroll
+      const lefts: number[] = [];
+      let acc = 0;
+      for (let i = 0; i < n; i++) { lefts.push(acc); acc += head.cells[i].getBoundingClientRect().width; }
+      for (const r of rowsEls) {
+        const same = r.cells.length === head.cells.length;
+        for (let i = 0; i < r.cells.length; i++) {
+          const c = r.cells[i] as HTMLElement;
+          if (same && i < n) {
+            c.classList.add('frz');
+            c.classList.toggle('frz-last', i === n - 1);
+            const px = `${lefts[i]}px`;
+            if (c.style.left !== px) c.style.left = px;
+          } else if (c.classList.contains('frz')) {
+            c.classList.remove('frz', 'frz-last');
+            c.style.left = '';
+          }
+        }
+      }
+    };
+    apply();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => apply());
+    ro.observe(t);
+    return () => ro.disconnect();
+  });
+}
 
 /* A table/list cell: plain string, badge {b:[text,klass]}, mono {mono}, or raw node */
 export type Cell = string | number | { b: [string, string] } | { mono: string; dim?: boolean } | { node: ReactNode; sort?: string | number };
@@ -247,6 +290,9 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
     });
   }, [rows, sortBy, af.active, af.passes]);
   const clickSort = (col: number) => setSortBy((s) => (!s || s.col !== col ? { col, dir: 1 } : s.dir === 1 ? { col, dir: -1 } : null));
+  // client 10 Nov 2026 (point 3) — the checkbox / # columns plus the first TWO data columns are frozen.
+  const tableRef = useRef<HTMLTableElement>(null);
+  useFrozenColumns(tableRef, (sel ? 1 : 0) + (showSerial ? 1 : 0) + Math.min(2, shownIdx.length));
   return (
     <div className={`card${fill ? ' tbl-fill' : ''}`}>
       {(title || colsBtn) && (
@@ -258,7 +304,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
       {af.bar}
       <TopScrollbar target={scrollRef} />
       <div className={scrollCls} ref={scrollRef}>
-        <table className="tbl">
+        <table className="tbl" ref={tableRef}>
           <thead><tr>
             {sel && (
               <th style={{ width: 34 }}>

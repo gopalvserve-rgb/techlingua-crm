@@ -17,6 +17,7 @@ import { NotificationEventService } from '../notificationevents/notification-eve
 import { MERGEABLE_FIELDS } from './merge.util';
 import { toDateString } from '../common/date.util';
 import { sourceForCampaign } from '../hierarchy/source-attach.util';
+import { buildCourseKeyMap, CourseRow, lookupCourse } from '../courses/course-match';
 
 /** Campaign duplicacy_config (migration 002). */
 export interface DuplicacyConfig {
@@ -50,6 +51,7 @@ export interface NormalisedLead {
   whatsapp_phone: string | null;
   dob: string | null;
   state_id: number | null; city_id: number | null; course_id: number | null;
+  course_text?: string | null;
   qualification_id: number | null; budget_id: number | null;
   status_id: number | null; stage_id: number | null;
   priority: 'low' | 'med' | 'high'; temperature: 'hot' | 'warm' | 'cold' | null; score: number;
@@ -230,29 +232,16 @@ export class LeadIngestionService {
    * eligible ones a better-scoped match overwrites an unscoped same-named course.
    */
   private async loadCourseMaster(branchId: number, verticalId: number): Promise<Map<string, number>> {
-    const rows = await this.db.query<{ id: string; name: string; code: string | null; branch_id: string | null; vertical_id: string | null }>(
-      `SELECT id, name, code,
+    const rows = await this.db.query<CourseRow>(
+      `SELECT id, name, code, meta,
               NULLIF(meta->>'branch_id','')::bigint   AS branch_id,
               NULLIF(meta->>'vertical_id','')::bigint AS vertical_id
          FROM m_course WHERE deleted_at IS NULL AND is_active`,
     );
-    const rank = (r: { branch_id: string | null; vertical_id: string | null }): number => {
-      const branchOk = r.branch_id == null || Number(r.branch_id) === branchId;
-      const verticalOk = r.vertical_id == null || Number(r.vertical_id) === verticalId;
-      if (!branchOk || !verticalOk) return -1; // pinned elsewhere — not a course of THIS import
-      return (r.branch_id != null ? 1 : 0) + (r.vertical_id != null ? 1 : 0);
-    };
-    const map = new Map<string, number>();
-    const eligible = rows.map((r) => ({ r, rk: rank(r) })).filter((x) => x.rk >= 0).sort((a, b) => a.rk - b.rk);
-    // Client UAT (Aug 2026): a lead CSV may reference a course by its master CODE (preferred) OR by
-    // its name — both resolve here, case-insensitive/trimmed, scoped to the import's Branch+Vertical
-    // exactly like the name path. Register both keys for each eligible course (ascending scope rank,
-    // so a better-scoped course overwrites an unscoped same-keyed one). Name keys are registered
-    // AFTER code keys so, on the rare collision of one course's code with another's name, the
-    // literal name still resolves to its own course.
-    for (const { r } of eligible) { const code = String(r.code ?? '').trim().toLowerCase(); if (code) map.set(code, Number(r.id)); }
-    for (const { r } of eligible) map.set(String(r.name).trim().toLowerCase(), Number(r.id));
-    return map;
+    // Client UAT (Aug 2026): a lead CSV may reference a course by its master CODE or its name.
+    // Client 10 Nov 2026: also by any Course Management "Custom name" (meta.aliases), and every
+    // key is matched format-insensitively ("french_language" == "French Language").
+    return buildCourseKeyMap(rows, branchId, verticalId);
   }
 
   // ---- normalisation / validation (pure over the target) -------------------
@@ -292,7 +281,7 @@ export class LeadIngestionService {
       if (!strict) { unresolved?.push([label, v]); return null; }
       return notFound();
     }
-    const hit = target.masters[kind].get(v.toLowerCase());
+    const hit = kind === 'course' ? lookupCourse(target.masters[kind], v) ?? undefined : target.masters[kind].get(v.toLowerCase());
     if (hit == null) {
       if (!strict) { unresolved?.push([label, v]); return null; }
       return notFound();
@@ -386,6 +375,10 @@ export class LeadIngestionService {
       // an unparseable date must not fail the whole ingest — it just means no birthday journey
       dob: toDateString(p.dob) ?? null,
       state_id, city_id, course_id, qualification_id, budget_id, status_id,
+      // client 10 Nov 2026 — the course exactly as the source sent it (shown when no master
+      // course matches yet; Course Management custom names link it later).
+      course_text: p.course != null && String(p.course).trim() !== '' && !/^\d+$/.test(String(p.course).trim())
+        ? String(p.course).trim().slice(0, 200) : null,
       stage_id, priority, temperature, score,
       next_follow_up_at: this.date(p.next_follow_up_at),
       note,
@@ -768,8 +761,8 @@ export class LeadIngestionService {
                              owner_id, next_follow_up_at, last_activity_at, is_duplicate,
                              state_id, city_id, course_id, qualification_id, budget_id, custom_fields,
                              created_by, ingest_batch_id, external_id, duplicate_of_id,
-                             is_existing_student, existing_student_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,now(),$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
+                             is_existing_student, existing_student_id, course_text)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,now(),$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)
            RETURNING *`,
           [target.org_id, target.branch_id, target.vertical_id, target.pipeline_id, target.campaign_id, target.source_id,
             lead.full_name, lead.phone, lead.email, lead.alt_phone, lead.whatsapp_phone, lead.dob, lead.status_id, lead.stage_id,
@@ -777,7 +770,7 @@ export class LeadIngestionService {
             lead.state_id, lead.city_id, lead.course_id, lead.qualification_id, lead.budget_id,
             JSON.stringify(lead.custom_fields), ctx.actor_id, ctx.batch_id ?? null, lead.external_id,
             dup ? Number(dup.id) : null,
-            !!existingStudent, existingStudent ? Number(existingStudent.id) : null],
+            !!existingStudent, existingStudent ? Number(existingStudent.id) : null, lead.course_text ?? null],
         );
         const row = ins.rows[0];
         const leadId = Number(row.id);

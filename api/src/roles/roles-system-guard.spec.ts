@@ -7,7 +7,7 @@ import { RolesService } from './roles.service';
  * UI hides the editor. Custom roles keep working.
  */
 
-function makeDb(role: { id: string; is_system: boolean } | null) {
+function makeDb(role: { id: string; is_system: boolean; name?: string } | null) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const clientQuery = jest.fn(async (sql: string, p: unknown[] = []) => {
     calls.push({ sql, params: p });
@@ -25,13 +25,25 @@ function makeDb(role: { id: string; is_system: boolean } | null) {
 describe('RolesService.setMatrix — system-role lock (OBS-01)', () => {
   const ENTRIES = [{ permission_key: 'lead.read', record_scope: 'all' as const }];
 
-  it('system role -> 400, matrix untouched', async () => {
-    const db = makeDb({ id: '1', is_system: true });
+  it('Super Admin (system, full access) -> 400, matrix untouched', async () => {
+    const db = makeDb({ id: '1', is_system: true, name: 'Super Admin' });
     const svc = new RolesService(db as any);
     const err = await svc.setMatrix(1, ENTRIES).catch((e) => e);
     expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toMatch(/System role .* locked/i);
+    expect(err.message).toMatch(/locked/i);
     expect(db.tx).not.toHaveBeenCalled(); // no DELETE/INSERT ever ran
+  });
+
+  it('Organization Admin is locked too', async () => {
+    const db = makeDb({ id: '2', is_system: true, name: 'Organization Admin' });
+    await expect(new RolesService(db as any).setMatrix(2, ENTRIES)).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.tx).not.toHaveBeenCalled();
+  });
+
+  it('client 10 Nov 2026 — other system roles (Counsellor) are editable', async () => {
+    const db = makeDb({ id: '5', is_system: true, name: 'Counsellor' });
+    await expect(new RolesService(db as any).setMatrix(5, ENTRIES)).resolves.toEqual({ role_id: 5, granted: 1 });
+    expect(db.tx).toHaveBeenCalled();
   });
 
   it('custom role -> matrix replaced atomically', async () => {
