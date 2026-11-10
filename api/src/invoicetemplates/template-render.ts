@@ -144,9 +144,9 @@ export function renderInvoiceTemplate(cfg: InvoiceTemplateConfig, data: InvoiceT
       sectionTitle(cfg.sections.find((s) => s.key === 'fee_table')?.title ?? '');
       const hide = new Set<string>(data.supply === 'inter' ? ['cgst', 'sgst'] : ['igst']);
       const CAT: Record<string, { width: number; align: 'left' | 'right' | 'center' }> = {
-        sno: { width: 5, align: 'center' }, description: { width: 26, align: 'left' }, course: { width: 16, align: 'left' }, fee_type: { width: 10, align: 'left' },
+        sno: { width: 6.5, align: 'center' }, description: { width: 26, align: 'left' }, course: { width: 16, align: 'left' }, fee_type: { width: 10, align: 'left' },
         hsn_sac: { width: 9, align: 'left' }, qty: { width: 5, align: 'right' }, course_fee: { width: 11, align: 'right' }, discount: { width: 10, align: 'right' },
-        taxable: { width: 11, align: 'right' }, tax_rate: { width: 6, align: 'right' }, cgst: { width: 9, align: 'right' }, sgst: { width: 9, align: 'right' },
+        taxable: { width: 11, align: 'right' }, tax_rate: { width: 7.5, align: 'right' }, cgst: { width: 9, align: 'right' }, sgst: { width: 9, align: 'right' },
         igst: { width: 9, align: 'right' }, total: { width: 12, align: 'right' },
       };
       const cols = cfg.columns.filter((c) => c.visible && !hide.has(c.key));

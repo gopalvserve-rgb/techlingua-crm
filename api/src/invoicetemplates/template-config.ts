@@ -73,7 +73,7 @@ export const PAYMENT_FIELDS: FieldDef[] = [
 export type ColKey = 'sno' | 'description' | 'course' | 'fee_type' | 'hsn_sac' | 'qty' | 'course_fee'
   | 'discount' | 'taxable' | 'tax_rate' | 'cgst' | 'sgst' | 'igst' | 'total';
 export const COLUMN_CATALOG: Array<FieldDef & { key: ColKey; width: number; align: 'left' | 'right' | 'center' }> = [
-  { key: 'sno', label: 'S. No.', visible: true, width: 5, align: 'center' },
+  { key: 'sno', label: 'S. No.', visible: true, width: 6.5, align: 'center' },
   { key: 'description', label: 'Fee Description', visible: true, width: 26, align: 'left' },
   { key: 'course', label: 'Course / Program', visible: false, width: 16, align: 'left' },
   { key: 'fee_type', label: 'Fee Type', visible: false, width: 10, align: 'left' },
@@ -82,7 +82,7 @@ export const COLUMN_CATALOG: Array<FieldDef & { key: ColKey; width: number; alig
   { key: 'course_fee', label: 'Rate', visible: true, width: 11, align: 'right' },
   { key: 'discount', label: 'Discount', visible: false, width: 10, align: 'right' },
   { key: 'taxable', label: 'Taxable', visible: true, width: 11, align: 'right' },
-  { key: 'tax_rate', label: 'GST %', visible: true, width: 6, align: 'right' },
+  { key: 'tax_rate', label: 'GST %', visible: true, width: 7.5, align: 'right' },
   { key: 'cgst', label: 'CGST', visible: true, width: 9, align: 'right' },
   { key: 'sgst', label: 'SGST', visible: true, width: 9, align: 'right' },
   { key: 'igst', label: 'IGST', visible: true, width: 9, align: 'right' },

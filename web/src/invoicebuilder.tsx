@@ -250,6 +250,7 @@ export function InvoiceTemplateBuilder() {
       } else {
         if (!await askConfirm(`Delete the template "${tpl.name}"? Issued invoices keep their design.`)) return;
         await api.del(`/invoice-templates/${tpl.id}`); toast('Template deleted.'); setSelId(null); setTpl(null); setCfg(null);
+        if (lastUrl.current) { URL.revokeObjectURL(lastUrl.current); lastUrl.current = null; } setPdfUrl(null);
       }
       list.reload(); setVerTick((x) => x + 1); if (what !== 'delete') await load(tpl.id);
     } catch (e) { toast((e as Error).message, true); }
