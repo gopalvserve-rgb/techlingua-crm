@@ -33,6 +33,7 @@ import { QuotationsModule } from './quotations/quotations.module';
 import { EnrolmentsModule } from './enrolments/enrolments.module';
 import { FeesModule } from './fees/fees.module';
 import { InvoicesModule } from './invoices/invoices.module';
+import { InvoiceTemplatesModule } from './invoicetemplates/invoice-templates.module';
 import { PlansModule } from './paymentplans/plans.module';
 import { PaymentsModule } from './payments/payments.module';
 import { RefundsModule } from './refunds/refunds.module';
@@ -105,6 +106,7 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     QuotationsModule,   // line items, discounts, tax shown (NOT GST — Phase 3), PDF, send, revisions
     EnrolmentsModule,   // sale closure + the OPTIONAL per-step approval queue (default OFF)
     FeesModule,         // LITE fee receipt + collection entry (Razorpay capture = Phase 3)
+    InvoiceTemplatesModule, // client 5 Nov 2026 — Fee Invoice Template Builder (versions, per-branch defaults)
     InvoicesModule,     // Phase 3 Batch 1 — GST tax invoices (CGST/SGST vs IGST, HSN, place of supply, FY numbering, PDF)
     PlansModule,        // Phase 3 Batch 2 — payment plans + installment schedule, fee dues & ageing (IST), auto reminders
     PaymentsModule,     // Phase 3 Batch 3 — Razorpay online collection (per vertical) + partial payments + auto-receipts + webhook

@@ -499,6 +499,9 @@ const APP_FULL: ModuleItem[] = [
     // dev/143 item 5 — Template Setup (document/ID formats). Reachable from Administration › Settings area.
     { id: 'templates', label: 'Template Setup', spec: { dyn: 'templateSetup',
       sub: 'Header, logo, footer and terms for every document — fee invoice, receipt, student and employee ID cards, quotation, certificate and marksheet.' } },
+    // client 5 Nov 2026 — Fee Invoice Template Builder (versions, per-branch defaults, live PDF preview)
+    { id: 'invoicebuilder', label: 'Fee Invoice Builder', spec: { dyn: 'invoiceTemplateBuilder',
+      sub: 'Design the fee invoice: branding, fields, fee table columns, totals, payment details, footer and terms — drag to arrange, live A4 preview, publish versions, per-branch templates.' } },
     // Client request — Finance Settings: discount / scholarship / capping limit, BOTH by
     // percentage and by amount, org-wide or per vertical. Enforced everywhere a discount
     // is applied (quotation line, enrolment). Only a permitted user changes the caps.

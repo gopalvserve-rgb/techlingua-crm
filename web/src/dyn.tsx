@@ -3,6 +3,7 @@
  * Each component matches the corresponding prototype screen's blocks & columns 1:1.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { InvoiceTemplateBuilder } from './invoicebuilder';
 import { CustomCourseName, CustomCourseOption, coursePayload, isCustomCourse, realCourseId } from './customcourse';
 import type { ReactNode } from 'react';
 import { api, getToken } from './api';
@@ -8453,6 +8454,7 @@ function TemplateSetup() {
                     <td>{t.updated_at ? fmtFull(t.updated_at) : '—'}</td>
                     <td>
                       <button className="btn sm" data-testid={`tpl-edit-${t.type}`} onClick={() => setEdit(t)}><Ic k="edit" />Edit</button>
+                      {t.type === 'fee_invoice' && <a className="btn sm primary" style={{ marginLeft: 6 }} href={`${location.pathname.replace(/\/[^/]+$/, '')}/invoicebuilder`} data-testid="tpl-open-builder"><Ic k="grid" />Open builder</a>}
                     </td>
                   </tr>
                 ))}
@@ -8511,6 +8513,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   bulkWhatsApp: BulkWhatsApp,
   settings: Settings,
   templateSetup: TemplateSetup,
+  invoiceTemplateBuilder: InvoiceTemplateBuilder,
   financeSettings: FinanceSettings,
   discountMaster: DiscountMaster,
   // Phase 3 Batch 1 — GST tax invoices + finance dashboard

@@ -8,6 +8,7 @@ import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { rupeesToMinor, amountInWordsINR, formatINR } from '../common/money.util';
 import { computeGstLine, computeGstTotals, supplyTypeFor, GstLineComputed } from './gst.util';
 import { Letterhead, invoicePdf } from '../pdf/documents';
+import { InvoiceTemplateService } from '../invoicetemplates/invoice-template.service';
 import { DocTemplateService } from '../doctemplates/doc-template.service';
 import { assertDateRange } from '../common/date.util';
 import { NotificationEventService } from '../notificationevents/notification-event.service';
@@ -56,6 +57,8 @@ export class InvoiceService {
     private readonly pdfAssets?: PdfAssetService,
     /** dev/143 item 5 — Template Setup overrides for the Fee Invoice PDF. Optional (unit tests). */
     private readonly docTemplates?: DocTemplateService,
+    /** client 5 Nov 2026 — Fee Invoice Template Builder (published designs, per-invoice version). Optional. */
+    private readonly invoiceTemplates?: InvoiceTemplateService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -220,8 +223,11 @@ export class InvoiceService {
     const gi = await this.get(id, scope);
     const lh = this.letterheadOf(gi);
     lh.tpl = this.docTemplates ? await this.docTemplates.overridesFor('fee_invoice') : null;
+    // client 5 Nov 2026: an invoice renders with the template VERSION it was issued with (a draft
+    // previews the current default); one issued before templates existed keeps the built-in layout.
+    const tpl = this.invoiceTemplates ? await this.invoiceTemplates.configForInvoice(gi) : null;
     const out = {
-      buffer: invoicePdf(gi as any, lh),
+      buffer: tpl ? this.invoiceTemplates!.render(tpl, await this.invoiceTemplates!.invoiceData(gi)) : invoicePdf(gi as any, lh),
       filename: `${String(gi.invoice_no || 'invoice-draft').replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`,
     };
     // Persist ISSUED invoices only — a draft has no final number and gets re-serialised on issue.
@@ -312,13 +318,17 @@ export class InvoiceService {
     const gi = await this.get(id, scope);
     if (gi.status !== 'draft') throw new BadRequestException(`${gi.invoice_no || 'This invoice'} is already ${gi.status}.`);
     if (!gi.seller_gstin) throw new BadRequestException('Set the GSTIN on this invoice\u2019s Vertical (Administration \u203a Verticals \u203a Edit) or its Branch before issuing a tax invoice.');
+    // the published invoice design this invoice is issued with — stamped, so republishing a
+    // template later never changes an issued invoice (client 5 Nov 2026)
+    const tplVersion = this.invoiceTemplates ? await this.invoiceTemplates.versionForBranch(gi.branch_id ? Number(gi.branch_id) : null) : null;
     const out = await this.db.tx(async (c) => {
       const invoiceNo = await this.numbering.allocate('invoice', { branch_id: Number(gi.branch_id), vertical_id: Number(gi.vertical_id) }, c);
       await c.query(
         `UPDATE gst_invoice SET invoice_no = $2::varchar, status = 'issued', invoice_date = CURRENT_DATE,
-                                issued_at = now(), issued_by = $3::bigint, updated_at = now()
+                                issued_at = now(), issued_by = $3::bigint, updated_at = now(),
+                                template_version_id = $4::bigint
           WHERE id = $1::bigint`,
-        [id, invoiceNo, me.id],
+        [id, invoiceNo, me.id, tplVersion?.id ?? null],
       );
       return { id, invoice_no: invoiceNo, status: 'issued' };
     });
