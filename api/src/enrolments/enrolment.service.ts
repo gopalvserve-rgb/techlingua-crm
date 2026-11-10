@@ -10,6 +10,7 @@ import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { DiscountMasterService } from '../finance/discount-master.service';
 import { RbacDataService } from '../rbac/rbac-data.service';
 import { PlanService, recordPlanHistory } from '../paymentplans/plan.service';
+import { resolveCustomCourse } from '../courses/custom-course';
 import { StudentService } from '../students/student.service';
 import { stageOrdinal } from './admission-journey.util';
 import { computeEnrolmentDiscount, EnrolmentDiscountType } from './discount.util';
@@ -439,6 +440,14 @@ export class EnrolmentService implements OnApplicationBootstrap {
     if (!leadId) throw new BadRequestException('Choose the lead being enrolled.');
 
     const lead = await this.leadInScope(leadId, scope);
+    // client 5 Nov (3): a course typed by hand becomes a Courses-master row under the lead's
+    // Branch › Vertical (or reuses the one with that name), then enrols like any other course.
+    const customCourseId = await resolveCustomCourse(this.db, dto, {
+      org_id: Number(lead.org_id), branch_id: lead.branch_id != null ? Number(lead.branch_id) : null,
+      vertical_id: lead.vertical_id != null ? Number(lead.vertical_id) : null,
+      fee_minor: dto?.fee_minor != null ? Number(dto.fee_minor) : null, actor_id: me.id,
+    });
+    if (customCourseId) dto = { ...dto, course_id: customCourseId };
     // SALE CLOSURE LEVELS (client 3 Sep, F1): one or more levels of the course, the total fee
     // = Σ level fees, the discount on the overall total (₹ or %) or per level (₹ or % each).
     const lv = await this.resolveSaleLevels(dto);

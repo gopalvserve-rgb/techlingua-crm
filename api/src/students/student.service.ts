@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { resolveCustomCourse } from '../courses/custom-course';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -2405,10 +2406,9 @@ export class StudentService {
 
   async addEnrolment(id: number, dto: any, me: { id: number }, scope: ResolvedScope) {
     const student = await this.get(id, scope);
-    const courseId = dto?.course_id ? Number(dto.course_id) : null;
-    if (!courseId) throw new BadRequestException('Choose a course to enrol into.');
-    const course = await this.db.one<any>(`SELECT id, name, code FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
-    if (!course) throw new BadRequestException('Unknown course.');
+    if (!(dto?.course_id && String(dto.course_id) !== '__custom') && !String(dto?.custom_course_name ?? '').trim()) {
+      throw new BadRequestException('Choose a course to enrol into.');
+    }
     // A student may be enrolled into ANOTHER vertical (the Branch>Vertical>Course cascade). Default
     // to the student's own branch/vertical; honour an explicit vertical_id/branch_id when given.
     let enrolVerticalId = student.vertical_id != null ? Number(student.vertical_id) : null;
@@ -2422,6 +2422,14 @@ export class StudentService {
       enrolBranchId = Number(dto.branch_id);
     }
     if (enrolVerticalId == null) throw new BadRequestException('A vertical is required for this enrolment.');
+    // client 5 Nov (3): a hand-typed course becomes a master row under this Branch › Vertical
+    const customCourseId = await resolveCustomCourse(this.db, dto, {
+      org_id: Number(student.org_id), branch_id: enrolBranchId, vertical_id: enrolVerticalId,
+      fee_minor: dto?.fee_minor != null ? Number(dto.fee_minor) : null, actor_id: me.id,
+    });
+    const courseId = customCourseId ?? Number(dto.course_id);
+    const course = await this.db.one<any>(`SELECT id, name, code FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [courseId]);
+    if (!course) throw new BadRequestException('Unknown course.');
     const batchId = dto?.batch_id != null && String(dto.batch_id).trim() !== '' ? Number(dto.batch_id) : null;
     if (batchId != null) {
       const b = await this.db.one<any>(
@@ -2551,7 +2559,14 @@ export class StudentService {
 
     // Course — stays within the enrolment's own vertical (a vertical/branch move is Course Transfer).
     let courseId = enr.course_id != null ? Number(enr.course_id) : null;
-    if (dto?.course_id !== undefined && dto.course_id !== null && String(dto.course_id).trim() !== '') {
+    // client 5 Nov (3): a hand-typed course (custom_course_name) replaces the course
+    const customCourseId = await resolveCustomCourse(this.db, dto, {
+      org_id: Number(enr.org_id), branch_id: enr.branch_id != null ? Number(enr.branch_id) : null,
+      vertical_id: enr.vertical_id != null ? Number(enr.vertical_id) : null,
+      fee_minor: dto?.fee_minor != null ? Number(dto.fee_minor) : null, actor_id: me.id,
+    });
+    if (customCourseId) courseId = customCourseId;
+    else if (dto?.course_id !== undefined && dto.course_id !== null && String(dto.course_id).trim() !== '') {
       const cid = Number(dto.course_id);
       const course = await this.db.one<any>(`SELECT id FROM m_course WHERE id = $1::bigint AND deleted_at IS NULL`, [cid]);
       if (!course) throw new BadRequestException('Unknown course.');

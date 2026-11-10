@@ -14,6 +14,7 @@
  *   · no dues/ageing, no installment schedule, no refunds.
  */
 import { useContext, useEffect, useMemo, useState } from 'react';
+import { CustomCourseName, CustomCourseOption, coursePayload, isCustomCourse, realCourseId } from './customcourse';
 import { api, getToken } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -897,6 +898,7 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
     || String((c.meta as any).vertical_id) === String(leadRow.vertical_id)
     || ((c.meta as any)?.vertical_ids ?? []).map(String).includes(String(leadRow.vertical_id)));
 
+  const [customCourse, setCustomCourse] = useState('');
   const pickCourse = (id: string) => {
     setCourseId(id);
     const c = (ref.courses as any[]).find((x) => String(x.id) === id);
@@ -914,6 +916,7 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
     setErr('');
     if (!lead) { setErr('Choose the lead being enrolled.'); return; }
     if (!courseId) { setErr('Choose a course.'); return; }
+    if (isCustomCourse(courseId) && customCourse.trim().length < 2) { setErr('Type the custom course name.'); return; }
     if (lvl?.hasLevels && !lvl.levels.length) { setErr('Select at least one level of this course.'); return; }
     if (cfg.plan !== 'full' && !cfg.sched.balances) { setErr(cfg.sched.error || 'The instalments must total the net fee.'); return; }
     setBusy(true);
@@ -924,7 +927,7 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
       const res = await api.post<any>('/enrolments', {
         lead_id: lead,
         quotation_id: prefill?.quotation_id ?? undefined,
-        course_id: Number(courseId),
+        ...coursePayload(courseId, customCourse),
         fee_minor: lvl?.hasLevels ? lvl.totalMinor : cfg.grossMinor,
         discount_type: levelWise ? undefined : cfg.discType, discount_value: levelWise ? undefined : cfg.dv,
         ...(lvl?.hasLevels ? { levels: lvl.levels, discount_scope: lvl.scope } : {}),
@@ -983,8 +986,10 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
               <select id="sc-course" className="ainp" value={courseId} onChange={(e) => pickCourse(e.target.value)} disabled={!lead} data-testid="closure-course">
                 <option value="">{lead ? '— Choose course —' : '— Choose the lead first —'}</option>
                 {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {lead && <CustomCourseOption />}
               </select>
             </div>
+            <CustomCourseName courseId={courseId} value={customCourse} onChange={setCustomCourse} disabled={busy} idPrefix="sc" />
             <div className="fld">
               <label htmlFor="sc-counsellor">Counsellor</label>
               <select id="sc-counsellor" className="ainp" value={counsellor} onChange={(e) => setCounsellor(e.target.value)}>
@@ -992,9 +997,9 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
                 {ref.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
-            <EnrolLevelPicker courseId={courseId} disabled={busy} onChange={onLevels} />
+            <EnrolLevelPicker courseId={realCourseId(courseId)} disabled={busy} onChange={onLevels} />
             <FeeConfigFields cfg={cfg} disabled={busy || !courseId} showFee={!lvl?.hasLevels} hideDiscount={!!(lvl?.hasLevels && lvl.scope === 'level')}
-              capCtx={leadRow ? { branch_id: Number(leadRow.branch_id) || null, vertical_id: Number(leadRow.vertical_id) || null, course_id: Number(courseId) || null } : undefined} />
+              capCtx={leadRow ? { branch_id: Number(leadRow.branch_id) || null, vertical_id: Number(leadRow.vertical_id) || null, course_id: Number(realCourseId(courseId)) || null } : undefined} />
             <div className="fld span2">
               <label htmlFor="sc-remarks">Remarks</label>
               <textarea id="sc-remarks" className="ainp" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} />

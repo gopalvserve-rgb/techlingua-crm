@@ -3,6 +3,7 @@
  * Each component matches the corresponding prototype screen's blocks & columns 1:1.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { CustomCourseName, CustomCourseOption, coursePayload, isCustomCourse, realCourseId } from './customcourse';
 import type { ReactNode } from 'react';
 import { api, getToken } from './api';
 import { useAuth } from './auth';
@@ -6940,6 +6941,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
   }, [courseId, vertId]);
 
   // Choosing a course auto-fills the fee from the Course master (editable).
+  const [customCourse, setCustomCourse] = useState('');
   const chooseCourse = (cid: string) => {
     setCourseId(cid); setBatchId('');
     const c = coursesAll.find((x: any) => Number(x.id) === Number(cid));
@@ -6950,6 +6952,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
     if (!branchId) { toast('Choose a branch.', true); return; }
     if (!vertId) { toast('Choose a vertical.', true); return; }
     if (!courseId) { toast('Choose a course.', true); return; }
+    if (isCustomCourse(courseId) && customCourse.trim().length < 2) { toast('Type the custom course name.', true); return; }
     if (lvl?.hasLevels && !lvl.levels.length) { toast('Select at least one level for this course.', true); return; }
     if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
@@ -6958,7 +6961,7 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
       //    A level-course sends its selected levels[] + discount_scope; ONE enrolment covers them,
       //    Total = Σ level fees. A no-level course sends its single fee (unchanged).
       const enr = await api.post<any>(`/students/${student.id}/enrolments`, {
-        course_id: Number(courseId), batch_id: batchId ? Number(batchId) : null,
+        ...coursePayload(courseId, customCourse), batch_id: batchId ? Number(batchId) : null,
         vertical_id: vertId ? Number(vertId) : undefined, branch_id: branchId ? Number(branchId) : undefined,
         fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
         payment_plan: cfg.planIntent, start_date: cfg.start || null,
@@ -6999,8 +7002,10 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
           <select id="ae-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => chooseCourse(e.target.value)} data-testid="enrol-course">
             <option value="">— Choose course —</option>
             {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {vertId && <CustomCourseOption />}
           </select>
         </div>
+        <CustomCourseName courseId={courseId} value={customCourse} onChange={setCustomCourse} disabled={busy} idPrefix="ae" />
         <div className="fld">
           <label htmlFor="ae-batch">Batch</label>
           <select id="ae-batch" className="ainp" value={batchId} disabled={busy} onChange={(e) => setBatchId(e.target.value)}>
@@ -7009,12 +7014,12 @@ export function AddEnrolmentModal({ student, onClose, onDone }: { student: any; 
           </select>
         </div>
         {/* LEVELS (batch 2) — only shown for a course that has levels; fee auto-sums from them */}
-        <EnrolLevelPicker courseId={courseId} disabled={busy} onChange={onLevels} />
+        <EnrolLevelPicker courseId={realCourseId(courseId)} disabled={busy} onChange={onLevels} />
         {/* DISCOUNT · NET · PAYMENT PLAN · SCHEDULE — shared with Fee setup + Edit enrollment.
             For a level-course the fee comes from the levels, so hide the editable fee input; a
             level-wise discount hides the overall discount (it is entered per level above). */}
         <FeeConfigFields cfg={cfg} disabled={busy} showFee={!lvl?.hasLevels} hideDiscount={lvl?.hasLevels && lvl.scope === 'level'}
-          capCtx={{ branch_id: Number(branchId) || null, vertical_id: Number(vertId) || null, course_id: Number(courseId) || null }} />
+          capCtx={{ branch_id: Number(branchId) || null, vertical_id: Number(vertId) || null, course_id: Number(realCourseId(courseId)) || null }} />
       </div>
     </DetailModal>
   );
@@ -7397,6 +7402,7 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
   const courses = (ref.courses ?? []).filter((c: any) =>
     String((c.meta as any)?.vertical_id ?? '') === String(enrolment.vertical_id ?? '') ||
     Number(c.id) === Number(enrolment.course_id));
+  const [customCourse, setCustomCourse] = useState('');
   const chooseCourse = (cid: string) => {
     setCourseId(cid);
     const c = (ref.courses ?? []).find((x: any) => Number(x.id) === Number(cid));
@@ -7405,6 +7411,7 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
   const statusOpts = (statusCat.data ?? []).filter((o: any) => canManageSensitive || !o.requires_approval);
   const save = async () => {
     if (!courseId) { toast('Choose a course.', true); return; }
+    if (isCustomCourse(courseId) && customCourse.trim().length < 2) { toast('Type the custom course name.', true); return; }
     if (hasLevels && lvl?.hasLevels && !lvl.levels.length) { toast('Keep at least one level on this enrolment.', true); return; }
     if (cfg.plan !== 'full' && !cfg.sched.balances) { toast(cfg.sched.error || 'The installments must sum to the net fee.', true); return; }
     setBusy(true);
@@ -7415,7 +7422,7 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
       //    A level-course enrolment sends its edited levels[] + discount_scope (dev/110): the server
       //    re-syncs the level line-items (add/remove + per-level discount) and recomputes Total/Net.
       await api.patch(`/students/${student.id}/enrolments/${enrolment.id}`, {
-        course_id: Number(courseId),
+        ...coursePayload(courseId, customCourse),
         fee_minor: cfg.grossMinor, discount_type: cfg.discType, discount_value: cfg.dv,
         payment_plan: cfg.planIntent, start_date: cfg.start || undefined,
         ...(hasLevels && lvl?.hasLevels ? { levels: lvl.levels, discount_scope: lvl.scope } : {}),
@@ -7446,8 +7453,10 @@ export function EditEnrolmentModal({ student, enrolment, canManageSensitive, onC
           <select id="ee-course" className="ainp" value={courseId} disabled={busy} onChange={(e) => chooseCourse(e.target.value)} data-testid="enrol-edit-course">
             <option value="">— Choose course —</option>
             {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <CustomCourseOption />
           </select>
         </div>
+        <CustomCourseName courseId={courseId} value={customCourse} onChange={setCustomCourse} disabled={busy} idPrefix="ee" />
         <div className="fld"><label htmlFor="ee-status">Course status</label>
           <select id="ee-status" className="ainp" value={status} disabled={busy} onChange={(e) => setStatus(e.target.value)} data-testid="enrol-edit-status">
             {statusOpts.map((o: any) => <option key={o.code} value={o.code}>{o.label}</option>)}
