@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -314,6 +315,10 @@ export class BatchService {
       // Item 3 — optional course-level targeting (only when the course has levels).
       await this.syncBatchLevels(c, orgId, id, courseId, dto?.level_ids);
       return { id, batch_code: code, status, status_is_manual: isManual };
+    }).then(async (r) => {
+      // client 11 Nov 2026 — staff Notification Settings: "New Batch → Batch created"
+      await staffEvents()?.emitBatch('batch_created', Number(r.id), { actor_id: me.id });
+      return r;
     });
   }
 
@@ -361,6 +366,11 @@ export class BatchService {
     }
     // If the dates moved and the batch is NOT manually pinned, re-derive its status now.
     await this.refreshBatchStatuses();
+    // client 11 Nov 2026 — "New Timetable → Timetable published": the batch's timetable
+    // (schedule / days / frequency / dates) changed.
+    if (['schedule', 'frequency', 'class_days', 'start_date', 'end_date'].some((k) => dto?.[k] !== undefined)) {
+      await staffEvents()?.emitBatch('timetable_published', id, { actor_id: me.id, what: dto?.schedule ? String(dto.schedule).slice(0, 120) : undefined });
+    }
     return { id };
   }
 

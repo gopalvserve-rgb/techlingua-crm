@@ -49,6 +49,8 @@ import LeadImport from './leadimport';
 import Channels from './channels';
 import WhatsAppAccount from './whatsappaccount';
 import { NotificationEvents } from './notifevents';
+import { NotificationSettings } from './notifsettings';
+import { LeadSearchModal } from './leadsearch';
 import ApiModule from './apimodule';
 import { LeadTransferModal, BulkTransferModal, BulkReassignModal, BulkPauseModal } from './leadtransfer';
 import { ListActions, exportLeads, BulkDeleteModal, useTableSelect, useBulkDelete, BulkBar, downloadObjectsCsv } from './listtools';
@@ -67,7 +69,7 @@ import {
   BulkWhatsApp, Journeys, Settings, SmsTemplates, Templates,
 } from './sprint4';
 import {
-  CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure, EnrolmentApprovals, CollectModal, ReceiptViewModal,
+  CounsellorPerformance, FeeCollection, MonthlyTargets, Quotations, SaleClosure, EnrolmentApprovals, CollectModal, ReceiptViewModal, TrainingModeField,
 } from './sprint5';
 import { TargetIncentive } from './targetincentive';
 import { fmtINR, enrolDiscount, previewSchedule, EnrolDiscountType } from './money';
@@ -1588,6 +1590,9 @@ function LeadsAll() {
   const canAssign = can('lead.assign');
   const canFlag = can('lead.flag');
   const [flagLead, setFlagLead] = useState<{ id: number; name?: string; flagged?: boolean } | null>(null);
+  // client 11 Nov 2026 — "search any lead" (lead.search, separate from the user's own lead scope)
+  const canSearchAll = can('lead.search');
+  const [searchAll, setSearchAll] = useState(false);
   // Calling CRM (dev/139) — lightweight "Log disposition" control on a lead row.
   const [logLead, setLogLead] = useState<{ id: number; name?: string } | null>(null);
   const canConvert = can('student.create');
@@ -1733,6 +1738,13 @@ function LeadsAll() {
           onClick={() => setF((x) => ({ ...x, dup: !x.dup }))}>
           <Ic k="refresh" />Duplicates
         </button>
+        {canSearchAll && (
+          <button className="fchip" data-testid="search-all-leads" onClick={() => setSearchAll(true)}
+            title="Find any lead by name, phone or email — even one that is not yours">
+            <Ic k="search" />Search all leads
+          </button>
+        )}
+        {searchAll && <LeadSearchModal onClose={() => setSearchAll(false)} onOpen={(id) => openLead(id)} />}
         {/* Red flag filter (client, Aug 2026) — leads currently red-flagged. */}
         <button className={`fchip${f.redflag ? ' on' : ''}`} data-testid="redflag-filter"
           onClick={() => setF((x) => ({ ...x, redflag: !x.redflag }))}
@@ -1786,6 +1798,7 @@ function LeadsAll() {
             ],
           })])}
           empty="No leads in scope yet — add a lead or connect a source"
+          serialStart={page * PAGE_SIZE}
           onRowClick={(i) => openLead(Number(rows[i].id))} />
       )}
       {/* Modern view — the SaaS "A3" rich-row/card layout on this app's tokens. */}
@@ -5138,6 +5151,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
     branch_id: String(initial?.branch_id ?? ''), vertical_id: String(initial?.vertical_id ?? ''),
     course_id: String(initial?.course_id ?? ''), owner_id: String(initial?.owner_id ?? ''),
     placement_course_type: initial?.placement_course_type ?? '',
+    training_mode: initial?.training_mode ?? '',
   }));
   // "Same as Permanent" starts on only when an existing record already mirrors them.
   const [same, setSame] = useState<boolean>(!!initial && !!initial.permanent_address && initial.permanent_address === initial.current_address);
@@ -5215,6 +5229,7 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
       board_university: f.board_university || null, passing_year: f.passing_year || null, previous_institution: f.previous_institution || null,
       branch_id: num(f.branch_id), vertical_id: num(f.vertical_id), course_id: num(f.course_id), owner_id: num(f.owner_id),
       placement_course_type: f.placement_course_type ?? '',
+      training_mode: f.training_mode || null,
       custom_fields: collectCf(cfDefs, (key) => cfVals[key]),
     };
     try {
@@ -5312,6 +5327,8 @@ export function StudentModal({ initial, onClose, onSaved }: { initial?: any; onC
                 {selectableUsers(ref.users, f.owner_id).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
+            {/* client 11 Nov 2026 — Training Mode (Training Mode master) on the student */}
+            <TrainingModeField id="st-tmode" value={f.training_mode} onChange={(v) => up('training_mode', v)} disabled={busy} />
           </div>
           {/* -------------------------------- Contact --------------------------------- */}
           <div className="sec-title">Contact</div>
@@ -7360,6 +7377,15 @@ export function EnrolmentFeeSetupModal({ enrolmentId, onClose, onSaved }: { enro
  * fee, discount, net, plan, status and dates. No inputs, no save — pure display, built from the
  * enrolment row the Course Enrollment list already has (same shape used by the Edit modal).
  */
+/** client 11 Nov 2026 — "Due fee shows 0 although only the down payment + one instalment were paid".
+ *  The enrolments list API sends balance_minor (not outstanding_minor), so the View window read a
+ *  missing field and printed ₹0. Due = whatever the row carries, else Net + Exam − Paid. */
+export function enrolmentDueMinor(e: any): number {
+  if (e?.outstanding_minor != null) return Math.max(0, Number(e.outstanding_minor));
+  if (e?.balance_minor != null) return Math.max(0, Number(e.balance_minor));
+  return Math.max(0, Number(e?.net_fee_minor ?? 0) + Number(e?.exam_fee_minor ?? 0) - Number(e?.paid_minor ?? 0));
+}
+
 export function ViewEnrolmentModal({ enrolment: e, studentId, onClose }: { enrolment: any; studentId?: number; onClose: () => void }) {
   const money = (minor: any) => fmtINR(Number(minor ?? 0), { symbol: true });
   // LEVEL HISTORY (client, Oct 2026) — a separate trail of when and how each level came onto this
@@ -7396,8 +7422,9 @@ export function ViewEnrolmentModal({ enrolment: e, studentId, onClose }: { enrol
           ['Discount', discLabel],
           ['Net Fee', <b>{money(e.net_fee_minor)}</b>],
           ['Fee Plan', e.payment_plan ?? '—'],
+          ['Training Mode', e.training_mode ?? '—'],
           ['Paid', money(e.paid_minor ?? 0)],
-          ['Due Fee', <b style={{ color: Number(e.outstanding_minor ?? 0) > 0 ? '#b91c1c' : '#15803d' }}>{money(e.outstanding_minor ?? 0)}</b>],
+          ['Due Fee', <b style={{ color: enrolmentDueMinor(e) > 0 ? '#b91c1c' : '#15803d' }} data-testid="enrol-view-due">{money(enrolmentDueMinor(e))}</b>],
           ['Status', e.course_status ? renderCell(studentStatusCell(e.course_status)) : '—'],
           ['Batch', e.batch_name ?? '—'],
           ['Start / Created', e.start_date ? dt(e.start_date) : dt(e.created_at)],
@@ -8607,6 +8634,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   smsTemplates: SmsTemplates,
   journeys: Journeys,
   notificationEvents: NotificationEvents,
+  notifSettings: NotificationSettings,
   bulkWhatsApp: BulkWhatsApp,
   settings: Settings,
   templateSetup: TemplateSetup,

@@ -224,7 +224,7 @@ function TopScrollbar({ target }: { target: React.RefObject<HTMLDivElement> }) {
   );
 }
 
-export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill, listKey, serial }: {
+export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = 'list', rowClass, sticky, select, fill, listKey, serial, serialStart = 0 }: {
   title?: string; cols: string[]; rows: Cell[][]; more?: ReactNode; empty?: string;
   onRowClick?: (rowIndex: number) => void; icon?: string;
   /** optional per-row tint class (e.g. error-log severity highlighting) */
@@ -244,6 +244,8 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
   /** client 30-Aug: prepend a 1-based Serial No column. Auto-on for any main list
    *  (has select / column chooser); pass serial={false} to suppress, serial={true} to force. */
   serial?: boolean;
+  /** client 11 Nov 2026 — server-paged lists pass the page offset so # keeps counting (101, 102…) on page 2. */
+  serialStart?: number;
 }) {
   // A real listing shows the Columns chooser: any explicit listKey, or a `fill` full-page list
   // (auto-keyed off its title). Hooks run unconditionally; when off, every column stays visible.
@@ -343,7 +345,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
                       checked={sel.checked(ri)} onChange={() => sel.onToggle(ri)} />
                   </td>
                 )}
-                {showSerial && <td className="mono" style={{ color: 'var(--muted)' }}>{pos + 1}</td>}
+                {showSerial && <td className="mono" style={{ color: 'var(--muted)' }}>{serialStart + pos + 1}</td>}
                 {shownIdx.map((ci) => <td key={ci}>{renderCell(r[ci])}</td>)}
               </tr>
               );

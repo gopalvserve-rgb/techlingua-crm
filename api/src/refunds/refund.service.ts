@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -305,6 +306,8 @@ export class RefundService {
       lead_id: Number(e.lead_id), vertical_id: Number(e.vertical_id), dedupe: `refund:${id}`,
       vars: { refund_amount: formatINR(amount_minor), enrolment_no: e.enrolment_no, reason },
     });
+    // client 11 Nov 2026 — staff Notification Settings: "Refund → Refund initiated"
+    await staffEvents()?.emitEnrolment('refund_initiated', enrolmentId, { actor_id: me.id, title: `Refund initiated — ${formatINR(amount_minor)}`, what: reason });
     return { id, status: 'pending', requires_high: requiresHigh, amount_minor };
   }
 

@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service';
+import { StaffEventsService } from '../notifications/staff-events.service';
 import { ScoringService } from '../scoring/scoring.service';
 import { SlaService } from '../sla/sla.service';
 import { normalizePhone } from '../common/phone.util';
@@ -124,13 +125,44 @@ export class LeadIngestionService {
      * Optional so the in-memory test double can omit it.
      */
     private readonly notifEvents?: NotificationEventService,
+    /** client 11 Nov 2026 — staff Notification Settings (New Lead / Lead Assigned / New Enquiry). */
+    @Optional() private readonly staff?: StaffEventsService,
   ) {}
+
+  /** Staff bell/pop-up for an ingest (client 11 Nov 2026). Never throws. */
+  private async staffAfterIngest(outcome: IngestOutcome): Promise<boolean> {
+    if (!this.staff) return false;
+    try {
+      const leadId = Number(outcome.lead_id ?? outcome.duplicate_of ?? 0);
+      if (!leadId) return true;
+      const l = await this.db.one<any>(
+        `SELECT l.id, l.full_name, l.phone, l.owner_id, l.created_by, l.branch_id, l.vertical_id, c.name AS campaign
+           FROM lead l LEFT JOIN campaign c ON c.id = l.campaign_id WHERE l.id = $1`, [leadId]);
+      if (!l) return true;
+      const body = `${l.full_name}${l.phone ? ` · ${l.phone}` : ''}${l.campaign ? ` · ${l.campaign}` : ''}`;
+      const base = { lead_id: leadId, branch_id: Number(l.branch_id), vertical_id: Number(l.vertical_id), body, actor_id: l.created_by ? Number(l.created_by) : null };
+      if (outcome.status === 'created') {
+        const toOther = l.owner_id && String(l.owner_id) !== String(l.created_by ?? '');
+        if (toOther) {
+          await this.staff.safeEmit('lead_assigned', { ...base, owner_id: Number(l.owner_id), title: 'New lead assigned to you' });
+          await this.staff.safeEmit('lead_created', { ...base, owner_id: null, title: `New lead: ${l.full_name}` });
+        } else {
+          await this.staff.safeEmit('lead_created', { ...base, owner_id: l.owner_id ? Number(l.owner_id) : null, title: `New lead: ${l.full_name}` });
+        }
+      } else if (outcome.merged || outcome.status === 'duplicate' || outcome.duplicate_of) {
+        // the same person enquired again — the lead's counsellor should know
+        await this.staff.safeEmit('new_enquiry', { ...base, actor_id: null, owner_id: l.owner_id ? Number(l.owner_id) : null, title: `Enquiry received again: ${l.full_name}` });
+      }
+    } catch { /* never fails an ingest */ }
+    return true;
+  }
 
   /**
    * Fired after the ingest transaction has COMMITTED. Best-effort by design: a scoring
    * or SLA hiccup must never lose a lead that is already durably stored.
    */
   private async afterIngest(outcome: IngestOutcome): Promise<void> {
+    const staffHandled = await this.staffAfterIngest(outcome);
     const id = outcome?.lead_id;
     if (!id) return;
     if (outcome.status === 'created') {
@@ -151,7 +183,7 @@ export class LeadIngestionService {
       await this.notifEvents?.safeFire('new_lead_created', { lead_id: Number(id) });
       // Bell + pop-up to the counsellor the new lead was assigned to (round-robin / rule /
       // import / integration) — client, Oct 2026. Not to the person who created it themselves.
-      try {
+      if (!staffHandled) try {
         await this.db.query(
           `INSERT INTO notification (org_id, user_id, type, severity, title, body, link_type, link_id, meta)
            SELECT l.org_id, l.owner_id, 'assignment', 'info', 'New lead assigned to you',

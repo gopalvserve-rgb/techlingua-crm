@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -144,6 +145,11 @@ export class AttendanceService {
         vars: { batch_name: b.name, date },
       });
     }
+    // client 11 Nov 2026 — staff Notification Settings: "Attendance Submitted → Attendance recorded"
+    await staffEvents()?.emitBatch('attendance_recorded', batchId, {
+      actor_id: me.id, dedupe: `${batchId}:${date}`,
+      what: `${date} · ${marked} marked${absentStudents.length ? ` · ${absentStudents.length} absent` : ''}`,
+    });
     return { marked, absent: absentStudents.length, parent_notified: notified };
   }
 

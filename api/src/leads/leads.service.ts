@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { StaffEventsService } from '../notifications/staff-events.service';
 import { sourceForCampaign } from '../hierarchy/source-attach.util';
 import { DatabaseService } from '../database/database.service';
 import { LeadIngestionService } from '../ingestion/lead-ingestion.service';
@@ -209,6 +210,8 @@ export class LeadsService {
     // dev/132 ITEM C — in-app popup/bell notifications for lead created/assigned + red flag.
     // Optional + trailing so hand-constructed unit doubles stay unchanged.
     private readonly notifier?: NotifierService,
+    /** client 11 Nov 2026 — staff Notification Settings (Lead Assigned …). */
+    @Optional() private readonly staff?: StaffEventsService,
   ) {}
 
   /** Hard cap on the size of ONE bulk action / select-all, so a runaway selection cannot
@@ -526,7 +529,8 @@ export class LeadsService {
     // A lead given to SOMEONE ELSE is already notified by the shared ingestion (afterIngest) —
     // only the own-lead / unassigned cases are notified here, so nobody gets the bell twice.
     const assignedToOther = lead.owner_id && String(lead.owner_id) !== String(lead.created_by ?? actorId);
-    if (!assignedToOther) try {
+    // with Notification Settings the shared ingestion fires New Lead / Lead Assigned for every channel
+    if (!assignedToOther && !this.staff) try {
       const notifyUser = lead.owner_id ? Number(lead.owner_id) : actorId;
       await this.notifier?.notify({
         userId: notifyUser, type: lead.owner_id ? 'assignment' : 'system', severity: 'info',
@@ -1251,12 +1255,82 @@ export class LeadsService {
     return { ...saved, ...(rescored ?? {}) };
   }
 
+  /**
+   * client 11 Nov 2026 — SEARCH ANY LEAD. Searches inside the lead.search scope (usually wider
+   * than the user's own lead.read scope). Returns only identification columns + who owns it, and
+   * `in_scope` = whether the caller may open it normally.
+   */
+  async searchAll(scope: ResolvedScope, q: string, grants?: any) {
+    const term = q.trim();
+    if (term.length < 3) throw new BadRequestException('Type at least 3 characters to search.');
+    const params: unknown[] = [];
+    const where = this.resolver.buildScopeWhere(scope, LEAD_SCOPE_COLS, params);
+    let readWhere = '1=0';
+    if (grants) {
+      const read = this.resolver.resolve(grants, 'lead.read');
+      read.franchiseBranchIds = scope.franchiseBranchIds ?? null;
+      readWhere = this.resolver.buildScopeWhere(read, LEAD_SCOPE_COLS, params);
+    }
+    params.push(`%${term}%`);
+    const like = `$${params.length}`;
+    const digits = term.replace(/\D/g, '');
+    params.push(digits.length >= 4 ? `%${digits.slice(-10)}%` : null);
+    const dl = `$${params.length}`;
+    return this.db.query(
+      `SELECT l.id, l.full_name, l.phone, l.email, l.created_at, l.owner_id,
+              u.name AS owner_name, b.name AS branch_name, v.name AS vertical_name,
+              st.name AS stage_name, co.name AS course_name, (${readWhere}) AS in_scope
+         FROM lead l
+         JOIN branch b ON b.id = l.branch_id
+         JOIN vertical v ON v.id = l.vertical_id
+         LEFT JOIN pipeline_stage st ON st.id = l.stage_id
+         LEFT JOIN "user" u ON u.id = l.owner_id
+         LEFT JOIN m_course co ON co.id = l.course_id
+        WHERE ${where} AND l.deleted_at IS NULL
+          AND (l.full_name ILIKE ${like} OR l.email ILIKE ${like}
+               OR (${dl}::text IS NOT NULL AND (l.phone LIKE ${dl} OR l.whatsapp_phone LIKE ${dl} OR l.alt_phone LIKE ${dl})))
+        ORDER BY l.created_at DESC
+        LIMIT 25`,
+      params,
+    );
+  }
+
+  /** Read-only summary of a lead reached through search-any-lead (no edit, no contact actions). */
+  async peek(id: number) {
+    const l = await this.db.one<any>(
+      `SELECT l.id, l.full_name, l.phone, l.email, l.created_at, l.updated_at, l.course_text,
+              u.name AS owner_name, b.name AS branch_name, v.name AS vertical_name, p.name AS pipeline_name,
+              c.name AS campaign_name, s.name AS source_name, st.name AS stage_name, ms.name AS status_name,
+              co.name AS course_name,
+              (SELECT min(f.scheduled_at) FROM follow_up f WHERE f.lead_id = l.id AND f.status = 'pending' AND f.deleted_at IS NULL) AS next_followup_at
+         FROM lead l
+         JOIN branch b ON b.id = l.branch_id JOIN vertical v ON v.id = l.vertical_id
+         JOIN pipeline p ON p.id = l.pipeline_id JOIN campaign c ON c.id = l.campaign_id
+         JOIN source s ON s.id = l.source_id
+         LEFT JOIN pipeline_stage st ON st.id = l.stage_id LEFT JOIN m_status ms ON ms.id = l.status_id
+         LEFT JOIN "user" u ON u.id = l.owner_id LEFT JOIN m_course co ON co.id = l.course_id
+        WHERE l.id = $1 AND l.deleted_at IS NULL`, [id]);
+    if (!l) throw new NotFoundException('lead not found');
+    const activity = await this.db.query(
+      `SELECT a.type, a.note, a.created_at, a.actor_name
+         FROM lead_activity a
+        WHERE a.lead_id = $1 ORDER BY a.created_at DESC LIMIT 10`, [id]);
+    return { ...l, activity };
+  }
+
   /** In-app notification (bell count + toast) to a lead's new owner. Best-effort. */
   async notifyAssigned(leadId: number, ownerId: number, how: 'assigned' | 'transferred' | 'new') {
     try {
       const l = await this.db.one<any>(
-        `SELECT l.full_name, l.phone, c.name AS campaign FROM lead l LEFT JOIN campaign c ON c.id = l.campaign_id WHERE l.id = $1`, [leadId]);
+        `SELECT l.full_name, l.phone, l.branch_id, l.vertical_id, c.name AS campaign FROM lead l LEFT JOIN campaign c ON c.id = l.campaign_id WHERE l.id = $1`, [leadId]);
       const title = how === 'transferred' ? 'Lead transferred to you' : how === 'new' ? 'New lead assigned to you' : 'Lead assigned to you';
+      if (this.staff) {
+        await this.staff.safeEmit('lead_assigned', {
+          owner_id: ownerId, lead_id: leadId, branch_id: Number(l?.branch_id) || null, vertical_id: Number(l?.vertical_id) || null,
+          title, body: `${l?.full_name ?? `Lead #${leadId}`}${l?.phone ? ` · ${l.phone}` : ''}${l?.campaign ? ` · ${l.campaign}` : ''}`,
+        });
+        return;
+      }
       await this.notifier?.notify({
         userId: ownerId, type: 'assignment', severity: 'info', title,
         body: `${l?.full_name ?? `Lead #${leadId}`}${l?.phone ? ` · ${l.phone}` : ''}${l?.campaign ? ` · ${l.campaign}` : ''}`,

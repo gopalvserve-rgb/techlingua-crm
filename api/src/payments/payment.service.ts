@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
 import { createHmac } from 'crypto';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
@@ -418,6 +419,14 @@ export class PaymentService {
 
   /** Notify the enrolment's counsellor that money came in (in-app always; email/SMS/WA per matrix). */
   private async notifyPaid(p: any, rec: { id: number; receipt_no: string }) {
+    // client 11 Nov 2026 — with Notification Settings, "Fee Receipt → Payment received" decides who hears.
+    const se = staffEvents();
+    if (se && (await se.rule('payment_received'))) {
+      await se.emitEnrolment('payment_received', Number(p.enrolment_id), {
+        title: `Payment received online — ${formatINR(Number(p.amount_minor))}`, what: `Receipt ${rec.receipt_no}`,
+      });
+      return;
+    }
     const u = await this.db.one<any>(`SELECT counsellor_id, enrolment_no FROM enrolment WHERE id = $1`, [p.enrolment_id]);
     if (!u?.counsellor_id) return;
     await this.notifier.notify({

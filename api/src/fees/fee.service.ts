@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -446,6 +447,11 @@ export class FeeService {
         });
       }
     }
+    // client 11 Nov 2026 — staff Notification Settings: "Fee Receipt → Payment received"
+    await staffEvents()?.emitEnrolment('payment_received', enrolmentId, {
+      actor_id: me.id, title: `Payment received — ${formatINR(out.amount_minor)}`,
+      what: `${out.receipt_no} · balance ${formatINR(out.balance_minor)}`,
+    });
     return out;
   }
 

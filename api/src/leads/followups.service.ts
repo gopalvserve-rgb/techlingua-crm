@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { StaffEventsService } from '../notifications/staff-events.service';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
@@ -170,6 +171,8 @@ export class FollowUpsService {
     private readonly settings: SettingsService,
     // dev/132 ITEM C — in-app popup when a task/follow-up is assigned to a colleague.
     private readonly notifier?: NotifierService,
+    /** client 11 Nov 2026 — staff Notification Settings ("Follow-up scheduled"). */
+    @Optional() private readonly staff?: StaffEventsService,
   ) {}
 
   async list(scope: ResolvedScope, f: FollowUpFilters, userId: number) {
@@ -416,7 +419,16 @@ export class FollowUpsService {
     });
     await this.scoring.safeRescore(dto.lead_id);
     // dev/132 ITEM C — bell/toast to the assignee when a task is assigned to someone else.
-    if (owner !== actorId) {
+    if (this.staff) {
+      const l = await this.db.one<any>(`SELECT full_name, branch_id, vertical_id FROM lead WHERE id = $1`, [dto.lead_id]);
+      const when = created?.scheduled_at ? new Date(created.scheduled_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
+      await this.staff.safeEmit('followup_scheduled', {
+        owner_id: owner, actor_id: actorId, lead_id: Number(dto.lead_id),
+        branch_id: Number(l?.branch_id) || null, vertical_id: Number(l?.vertical_id) || null,
+        title: `Follow-up scheduled: ${l?.full_name ?? `lead #${dto.lead_id}`}`,
+        body: `${when}${dto.notes ? ` — ${String(dto.notes).slice(0, 140)}` : ''}`,
+      });
+    } else if (owner !== actorId) {
       try {
         await this.notifier?.notify({ userId: owner, type: 'assignment', severity: 'info',
           title: 'New task assigned to you',

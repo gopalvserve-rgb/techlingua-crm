@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
+import { trainingMode } from '../common/training-mode';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
@@ -582,6 +584,15 @@ export class EnrolmentService implements OnApplicationBootstrap {
       } catch (e) { planError = (e as Error).message; }
     }
     const studentId = steps.length ? null : await this.ensureStudent(out.id, me.id);
+    // client 11 Nov 2026 — Training Mode (from the Training Mode master) on the sale.
+    if (dto?.training_mode !== undefined) {
+      await this.db.query(`UPDATE enrolment SET training_mode = $2 WHERE id = $1::bigint`, [out.id, trainingMode(dto.training_mode)]);
+      if (studentId) await this.db.query(`UPDATE student SET training_mode = COALESCE($2, training_mode) WHERE id = $1::bigint`, [studentId, trainingMode(dto.training_mode)]);
+    }
+    // client 11 Nov 2026 — staff Notification Settings: "Course Enrolment → Enrolment completed"
+    await staffEvents()?.emitEnrolment('enrolment_completed', Number(out.id), {
+      actor_id: me.id, title: steps.length ? `Enrolment submitted for approval — ${out.enrolment_no}` : undefined,
+    });
     return {
       ...out, status, pending_steps: steps.map((s) => s.label),
       student_id: studentId, plan_id: planId, plan_error: planError, plan_pending_approval: !!(dto?.plan_setup && steps.length),
@@ -752,6 +763,9 @@ export class EnrolmentService implements OnApplicationBootstrap {
       // computed live everywhere as net − paid, so it reconciles regardless).
       if (this.plans && Number(cur.net_fee_minor) !== netAfterApplied) {
         try { await this.plans.reconcileToNet(c, id); } catch { /* plan reconcile is best-effort */ }
+      }
+      if (dto?.training_mode !== undefined) {
+        await c.query(`UPDATE enrolment SET training_mode = $2 WHERE id = $1::bigint`, [id, trainingMode(dto.training_mode)]);
       }
       await this.activity(c, Number(cur.lead_id), me.id, `Enrolment ${cur.enrolment_no} updated`);
       if (discountChanged && appStatus === 'pending') {

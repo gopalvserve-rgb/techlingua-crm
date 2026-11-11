@@ -1,9 +1,10 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { SettingsService } from '../common/settings.service';
 import { ScoringService } from '../scoring/scoring.service';
 import { NotifierService } from './notifier.service';
 import { ManagerResolverService } from './manager-resolver.service';
+import { StaffEventsService } from './staff-events.service';
 
 /**
  * THE SPRINT-3 WORKER — reminders · overdue escalation · SLA breaches · score ageing.
@@ -48,7 +49,16 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
     private readonly notifier: NotifierService,
     private readonly managers: ManagerResolverService,
     private readonly scoring: ScoringService,
+    // client 11 Nov 2026 — Notification Settings: follow-up upcoming / due / overdue timing,
+    // channels, priority and hierarchy escalation come from staff_notif_rule when present.
+    @Optional() private readonly staff?: StaffEventsService,
   ) {}
+
+  /** Minutes from a staff rule (when that rule exists), else the escalation policy's value. */
+  private async ruleMinutes(key: string, fallback: number): Promise<number> {
+    const r = this.staff ? await this.staff.rule(key) : null;
+    return r ? Number(r.delay_minutes) : fallback;
+  }
 
   onModuleInit() {
     if (process.env.SPRINT3_WORKER === '0') { this.log.warn('reminder worker disabled (SPRINT3_WORKER=0)'); return; }
@@ -72,6 +82,11 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
       const p = await this.policy();
       const reminders = p.enabled ? (await this.sweepReminders(p)) + (await this.sweepEventReminders(p)) : 0;
       const escalations = p.enabled ? await this.sweepEscalations(p) : 0;
+      if (this.staff) {
+        await this.sweepDueNow();
+        await this.staff.sweepFees();
+        await this.staff.processQueue(ReminderWorker.BATCH);
+      }
       const breaches = await this.sweepSlaBreaches();
       const rescored = await this.scoring.ageingSweep(ReminderWorker.BATCH);
       return { reminders, escalations, breaches, rescored };
@@ -102,10 +117,11 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
           AND COALESCE(f.remind_at, f.scheduled_at - ($1 || ' minutes')::interval) <= now()
         ORDER BY f.scheduled_at
         LIMIT $2`,
-      [String(p.reminder_lead_minutes ?? 30), ReminderWorker.BATCH],
+      [String(await this.ruleMinutes('followup_upcoming', Number(p.reminder_lead_minutes ?? 30))), ReminderWorker.BATCH],
     );
 
     let fired = 0;
+    const upRule = this.staff ? await this.staff.rule('followup_upcoming') : null;
     for (const f of due) {
       const ok = await this.db.tx(async (c) => {
         // THE CLAIM — if another replica already reminded, this returns nothing.
@@ -115,8 +131,17 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
         );
         if (!claim.rowCount) return false;
         const when = new Date(f.scheduled_at).toLocaleString('en-IN', {
-          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata',
         });
+        if (upRule && this.staff) {
+          await this.staff.deliverEvent('followup_upcoming', Number(f.owner_id), {
+            title: `${f.type_name || 'Follow-up'} due soon: ${f.lead_name}`,
+            body: `Scheduled for ${when}.${f.notes ? ` — ${String(f.notes).slice(0, 120)}` : ''}`,
+            lead_id: Number(f.lead_id), link: { type: 'lead', id: Number(f.lead_id) },
+            cond: `followup:${Number(f.id)}`, meta: { follow_up_id: Number(f.id) },
+          }, c);
+          return true;
+        }
         await this.notifier.notify({
           userId: Number(f.owner_id),
           type: 'reminder',
@@ -178,6 +203,40 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
     return fired;
   }
 
+  /**
+   * client 11 Nov 2026 — "Follow-up due now" (at the scheduled time, High). Exactly once per
+   * follow-up via due_notified_at; only follow-ups that came due in the last 6 hours, so
+   * switching the rule on never floods anyone with history.
+   */
+  async sweepDueNow(): Promise<number> {
+    if (!this.staff || !(await this.staff.active('followup_due'))) return 0;
+    const rows = await this.db.query(
+      `SELECT f.id, f.lead_id, f.owner_id, f.scheduled_at, f.notes, l.full_name AS lead_name, ft.name AS type_name
+         FROM follow_up f
+         JOIN lead l ON l.id = f.lead_id
+         LEFT JOIN m_followup_type ft ON ft.id = f.type_id
+        WHERE f.status = 'pending' AND f.due_notified_at IS NULL AND f.owner_id IS NOT NULL
+          AND f.deleted_at IS NULL AND f.is_active AND l.deleted_at IS NULL AND l.paused IS NOT TRUE
+          AND f.scheduled_at <= now() AND f.scheduled_at > now() - interval '6 hours'
+        ORDER BY f.scheduled_at LIMIT $1`, [ReminderWorker.BATCH]);
+    let fired = 0;
+    for (const f of rows) {
+      const ok = await this.db.tx(async (c) => {
+        const claim = await c.query(`UPDATE follow_up SET due_notified_at = now() WHERE id = $1 AND due_notified_at IS NULL RETURNING id`, [Number(f.id)]);
+        if (!claim.rowCount) return false;
+        await this.staff!.deliverEvent('followup_due', Number(f.owner_id), {
+          title: `${f.type_name || 'Follow-up'} due now: ${f.lead_name}`,
+          body: f.notes ? String(f.notes).slice(0, 140) : 'It is time for this follow-up.',
+          lead_id: Number(f.lead_id), link: { type: 'lead', id: Number(f.lead_id) },
+          cond: `followup:${Number(f.id)}`, meta: { follow_up_id: Number(f.id) },
+        }, c);
+        return true;
+      });
+      if (ok) fired++;
+    }
+    return fired;
+  }
+
   /* --------------------------- 2. OVERDUE ESCALATION --------------------------- */
 
   /**
@@ -211,12 +270,15 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
                OR ($3 > 0 AND f.escalated_at <= now() - ($3 || ' minutes')::interval))
         ORDER BY f.scheduled_at
         LIMIT $4`,
-      [String(p.overdue_after_minutes ?? 120), maxLevels, repeat, ReminderWorker.BATCH],
+      [String(await this.ruleMinutes('followup_overdue', Number(p.overdue_after_minutes ?? 120))), maxLevels, repeat, ReminderWorker.BATCH],
     );
 
     let fired = 0;
+    // With a "Follow-up missed" rule the owner is told on the rule's channels and the MANAGERS
+    // hear about it through the rule's hierarchy escalation (Reports-To chain), not all at once.
+    const odRule = this.staff ? await this.staff.rule('followup_overdue') : null;
     for (const f of rows) {
-      const managerIds = actions.includes('notify_manager') || actions.includes('reassign_to_manager')
+      const managerIds = (!odRule && actions.includes('notify_manager')) || actions.includes('reassign_to_manager')
         ? await this.managers.managersFor(Number(f.lead_id), Number(f.owner_id))
         : [];
 
@@ -236,14 +298,19 @@ export class ReminderWorker implements OnModuleInit, OnModuleDestroy {
         const title = `Overdue follow-up: ${f.lead_name}`;
         const body = `${f.type_name || 'Follow-up'} was due ${overdueMin} min ago and is still open.`;
 
-        if (actions.includes('notify_owner')) {
+        if (odRule && this.staff) {
+          await this.staff.deliverEvent('followup_overdue', Number(f.owner_id), {
+            title, body, lead_id: Number(f.lead_id), link: { type: 'lead', id: Number(f.lead_id) },
+            cond: `followup:${Number(f.id)}`, meta: { follow_up_id: Number(f.id), level },
+          }, c);
+        } else if (actions.includes('notify_owner')) {
           await this.notifier.notify({
             userId: Number(f.owner_id), type: 'escalation', severity: 'warn', title,
             body, link: { type: 'lead', id: Number(f.lead_id) },
             meta: { follow_up_id: Number(f.id), level },
           }, c);
         }
-        if (actions.includes('notify_manager') && managerIds.length) {
+        if (!odRule && actions.includes('notify_manager') && managerIds.length) {
           await this.notifier.notifyMany(managerIds, {
             type: 'escalation', severity: 'warn',
             title: `Escalation — ${f.lead_name}`,

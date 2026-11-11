@@ -1,4 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
+import { trainingMode } from '../common/training-mode';
 import { resolveCustomCourse } from '../courses/custom-course';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
@@ -1565,6 +1567,15 @@ export class StudentService {
         student_id: Number(out.id), vertical_id: verticalId, dedupe: `batch:${out.id}:${out.batch_id}`,
       });
     }
+    if (trainingMode(dto?.training_mode)) {
+      await this.db.query(`UPDATE student SET training_mode = $2 WHERE id = $1::bigint`, [Number(out.id), trainingMode(dto.training_mode)]);
+    }
+    // client 11 Nov 2026 — staff Notification Settings: "New Student → Student registered"
+    await staffEvents()?.safeEmit('student_registered', {
+      owner_id: dto?.owner_id ? Number(dto.owner_id) : null, actor_id: me.id,
+      branch_id: branchId, vertical_id: verticalId,
+      title: `Student registered — ${String(nameFromPairs)}`, body: String(out.student_no ?? ''),
+    });
     return out;
   }
 
@@ -1671,6 +1682,20 @@ export class StudentService {
       const createdEnrolments = courseRows.length
         ? await this.createConvertEnrolments(Number(out.id), leadId, lead, courseRows, me)
         : [];
+      // client 11 Nov 2026 — Training Mode per selected course (and on the student itself).
+      for (let i = 0; i < createdEnrolments.length; i++) {
+        const tm = trainingMode(courseRows[i]?.training_mode);
+        if (tm) await this.db.query(`UPDATE enrolment SET training_mode = $2 WHERE id = $1::bigint`, [Number(createdEnrolments[i].id), tm]);
+      }
+      const studentMode = trainingMode(dto?.training_mode ?? courseRows.find((r) => r?.training_mode)?.training_mode);
+      if (studentMode) await this.db.query(`UPDATE student SET training_mode = $2 WHERE id = $1::bigint`, [Number(out.id), studentMode]);
+      // client 11 Nov 2026 — staff Notification Settings: New Student / Course Enrolment
+      await staffEvents()?.safeEmit('student_registered', {
+        owner_id: ownerId, actor_id: me.id, lead_id: leadId,
+        branch_id: Number(lead.branch_id), vertical_id: Number(lead.vertical_id),
+        title: `Student registered — ${lead.full_name}`, body: String(out.student_no ?? ''),
+      });
+      for (const ce of createdEnrolments) await staffEvents()?.emitEnrolment('enrolment_completed', Number(ce.id), { actor_id: me.id });
       return { ...out, already: false, lead_id: leadId, enrolments: createdEnrolments };
     } catch (e) {
       if ((e as { code?: string })?.code === '23505' && String((e as Error).message).includes('uq_student_lead')) {
@@ -1741,6 +1766,8 @@ export class StudentService {
       set('batch_id', bid);
     }
     if (dto?.remarks !== undefined) set('remarks', dto.remarks ?? null);
+    // client 11 Nov 2026 — Training Mode on Edit Student
+    if (dto?.training_mode !== undefined) set('training_mode', trainingMode(dto.training_mode));
 
     if (!sets.length) return { id, unchanged: true };
     params.push(id);

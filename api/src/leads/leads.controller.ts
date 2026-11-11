@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Req } from '@nestjs/common';
 import { CreateLeadDto, LeadsService } from './leads.service';
 import { CreateFollowUpDto, FollowUpsService } from './followups.service';
 import { LeadMergeService } from '../ingestion/merge.service';
@@ -80,6 +80,14 @@ export class LeadsController {
     return this.leads.exportRows(s, parseLeadFilters(q));
   }
 
+  /** client 11 Nov 2026 — SEARCH ANY LEAD (lead.search, separate from lead.read): find a lead by
+   *  name / phone / email across the lead.search scope even if it belongs to someone else. Each
+   *  hit says whether it is inside the caller's own lead.read scope (open it) or not (peek only). */
+  @Get('search-all') @RequirePermission('lead.search')
+  searchAll(@CurrentScope() s: ResolvedScope, @Query('q') q: string, @Req() req: any) {
+    return this.leads.searchAll(s, String(q ?? ''), req.userGrants);
+  }
+
   @Get('select-ids') @RequirePermission('lead.read')
   selectIds(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string | string[]>) {
     return this.leads.selectIds(s, parseLeadFilters(q));
@@ -126,6 +134,10 @@ export class LeadsController {
   bulkDelete(@Body() dto: { lead_ids?: number[] }, @CurrentUser() u: U, @CurrentScope() s: ResolvedScope) {
     return this.leads.bulkDelete(dto?.lead_ids, u.id, s);
   }
+
+  /** client 11 Nov 2026 — read-only summary of a lead found by "search any lead". */
+  @Get(':id/peek') @RequirePermission('lead.search') @ScopedEntity('lead')
+  peek(@Param('id', ParseIntPipe) id: number) { return this.leads.peek(id); }
 
   @Get(':id') @RequirePermission('lead.read') @ScopedEntity('lead')
   get(@Param('id', ParseIntPipe) id: number) { return this.leads.get(id); }

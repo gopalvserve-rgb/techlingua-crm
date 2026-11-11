@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
@@ -340,6 +341,8 @@ export class InvoiceService {
       dedupe: `inv:${id}`,
       vars: { invoice_no: out.invoice_no, amount: formatINR(Number(gi.total_minor)), enrolment_no: gi.enrolment_no ?? null },
     });
+    // client 11 Nov 2026 — staff Notification Settings: "Fee Invoice → Invoice generated"
+    if (gi.enrolment_id) await staffEvents()?.emitEnrolment('invoice_generated', Number(gi.enrolment_id), { actor_id: me.id, what: `${out.invoice_no} · ${formatINR(Number(gi.total_minor))}` });
     return out;
   }
 

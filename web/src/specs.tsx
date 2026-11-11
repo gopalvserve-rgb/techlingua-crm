@@ -496,6 +496,9 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Soft-deleted records across every module — deleted rows are hidden from lists, dropdowns & KPIs while their children stay intact. Review impact and restore (Super Admin / Org Admin).' } },
     { id: 'settings', label: 'Settings', spec: { dyn: 'settings',
       sub: 'Channels & credentials (SMTP per vertical · WhatsApp · SMS · Razorpay per vertical · AI keys — encrypted at rest), business hours, holidays, numbering series, automation guardrails and the notification matrix.' } },
+    // client 11 Nov 2026 — Settings › System Settings › Notifications (staff alerts per event).
+    { id: 'notifsettings', label: 'Notification Settings', spec: { dyn: 'notifSettings',
+      sub: 'Staff alerts for every event — bell, pop-up, sound, desktop, email and WhatsApp; who receives each one, its priority, when it goes and how it escalates up the reporting hierarchy.' } },
     // dev/143 item 5 — Template Setup (document/ID formats). Reachable from Administration › Settings area.
     { id: 'templates', label: 'Template Setup', spec: { dyn: 'templateSetup',
       sub: 'Header, logo, footer and terms for every document — fee invoice, receipt, student and employee ID cards, quotation, certificate and marksheet.' } },

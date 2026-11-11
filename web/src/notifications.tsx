@@ -13,7 +13,7 @@ import { toast } from './refdata';
 
 export interface Notif {
   id: number;
-  type: 'reminder' | 'escalation' | 'assignment' | 'sla_breach' | 'handout' | 'system';
+  type: 'reminder' | 'escalation' | 'assignment' | 'sla_breach' | 'handout' | 'system' | 'event';
   severity: 'info' | 'warn' | 'error';
   title: string;
   body?: string | null;
@@ -21,6 +21,43 @@ export interface Notif {
   link_id?: number | null;
   read_at?: string | null;
   created_at: string;
+  /** client 11 Nov 2026 — Notification Settings: per-event pop-up / sound / desktop + priority */
+  meta?: { toast?: boolean; sound?: boolean; desktop?: boolean; priority?: string; event_key?: string; escalation_level?: number } | null;
+  priority?: string | null;
+}
+
+type Popup = Notif & { prio: string };
+const PRIO_LABEL: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
+/** how long a pop-up stays (ms); a critical one stays until dismissed */
+const PRIO_MS: Record<string, number> = { low: 6000, medium: 9000, high: 15000, critical: 0 };
+
+/** A short two-tone chime — WebAudio, no asset to load. Silently does nothing when blocked. */
+export function playChime(prio = 'medium') {
+  try {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const tones = prio === 'critical' ? [880, 660, 880] : prio === 'high' ? [880, 660] : [740];
+    tones.forEach((f, i) => {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + i * 0.18);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + i * 0.18 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.18 + 0.16);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + i * 0.18); o.stop(ctx.currentTime + i * 0.18 + 0.17);
+    });
+    setTimeout(() => { try { ctx.close(); } catch { /* ignore */ } }, 1200);
+  } catch { /* sound is a nicety */ }
+}
+
+/** Desktop / browser notification (only once the user has allowed it for this site). */
+export function desktopNotify(n: Pick<Notif, 'title' | 'body' | 'id'>, onClick?: () => void) {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const dn = new Notification(n.title, { body: n.body ?? '', tag: `tlc-${n.id}`, icon: '/favicon.ico' });
+    dn.onclick = () => { window.focus(); onClick?.(); dn.close(); };
+  } catch { /* unsupported */ }
 }
 
 const ICON: Record<string, string> = {
@@ -47,6 +84,8 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
   // dev/132 ITEM C — ids we've already surfaced as a popup toast. `null` until the first poll,
   // which SEEDS the set silently (so logging in never floods the screen with old unread rows).
   const seenRef = useRef<Set<number> | null>(null);
+  const [popups, setPopups] = useState<Popup[]>([]);
+  const dismiss = useCallback((id: number) => setPopups((ps) => ps.filter((p) => p.id !== id)), []);
 
   const poll = useCallback(async () => {
     try {
@@ -63,12 +102,21 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
         for (const n of [...list].reverse()) {
           if (!seenRef.current.has(n.id)) {
             seenRef.current.add(n.id);
-            toast(`${n.title}${n.body ? ` — ${n.body}` : ''}`, n.severity === 'error');
+            const m = n.meta ?? {};
+            const prio = String(n.priority ?? m.priority ?? (n.severity === 'error' ? 'high' : 'medium'));
+            // client 11 Nov 2026 — each event's rule decides pop-up / sound / desktop
+            if (m.toast !== false) {
+              setPopups((ps) => [...ps.filter((p) => p.id !== n.id), { ...n, prio }].slice(-4));
+              const ms = PRIO_MS[prio] ?? 9000;
+              if (ms) setTimeout(() => dismiss(n.id), ms);
+            }
+            if (m.sound) playChime(prio);
+            if (m.desktop) desktopNotify(n, () => { if (n.link_type === 'lead' && n.link_id && onOpenLead) onOpenLead(Number(n.link_id)); });
           }
         }
       }
     } catch { /* the bell must never break the shell */ }
-  }, []);
+  }, [dismiss, onOpenLead]);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -79,7 +127,7 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
 
   useEffect(() => {
     void poll();
-    const t = setInterval(() => { void poll(); }, 45_000);   // ITEM C — poll unread every 45s for popups
+    const t = setInterval(() => { void poll(); }, 30_000);   // poll unread every 30s for popups
     return () => clearInterval(t);
   }, [poll]);
 
@@ -113,8 +161,29 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
     } catch (e: any) { toast(e.message, true); }
   };
 
+  const openPopup = async (p: Popup) => {
+    dismiss(p.id);
+    try { await api.patch(`/notifications/${p.id}/read`); setUnread((u) => Math.max(0, u - 1)); } catch { /* non-fatal */ }
+    if (p.link_type === 'lead' && p.link_id && onOpenLead) onOpenLead(Number(p.link_id));
+  };
+
   return (
     <div ref={wrap} style={{ position: 'relative' }}>
+      {popups.length > 0 && (
+        <div className="npop-stack" role="status" aria-live="polite" data-testid="notif-popups">
+          {popups.map((p) => (
+            <div key={p.id} className={`npop prio-${p.prio}`} data-testid="notif-popup">
+              <div className={`ic-t ${TONE[p.severity] || 'b-indigo'}`}><Ic k={ICON[p.type] || 'bell'} /></div>
+              <div className="gr" onClick={() => void openPopup(p)} style={{ cursor: p.link_id ? 'pointer' : 'default' }}>
+                <div className="t1">{p.title}</div>
+                {p.body ? <div className="t2">{p.body}</div> : null}
+                <span className={`bdg prio-b-${p.prio}`}>{PRIO_LABEL[p.prio] ?? p.prio}</span>
+              </div>
+              <button className="ax" aria-label="Dismiss" onClick={() => dismiss(p.id)}><Ic k="x" /></button>
+            </div>
+          ))}
+        </div>
+      )}
       <button className="icon-btn" title="Notifications" aria-label="Notifications"
         data-unread={unread} onClick={() => setOpen((o) => !o)}>
         <Ic k="bell" />

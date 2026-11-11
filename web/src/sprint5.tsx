@@ -854,6 +854,24 @@ export function Quotations() {
  * `Net fee` is DERIVED and read-only — the client never types a net that could disagree
  * with its own fee and discount, and the API recomputes it regardless.
  */
+/** client 11 Nov 2026 — Training Mode, from Administration › Masters › Training Modes. */
+export function TrainingModeField({ id, value, onChange, disabled }: { id: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  const ref = useRef_();
+  const modes: any[] = (ref as any).trainings ?? [];
+  const known = modes.some((m) => String(m.name) === value);
+  return (
+    <div className="fld">
+      <label htmlFor={id}>Training Mode</label>
+      <select id={id} className="ainp" value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} data-testid={`${id}`}>
+        <option value="">—</option>
+        {modes.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        {value && !known ? <option value={value}>{value}</option> : null}
+      </select>
+      <div className="fhint">From the Training Mode master.</div>
+    </div>
+  );
+}
+
 export function EnrolmentModal(props: {
   initial?: any; prefill?: any; onClose: () => void; onSaved?: () => void;
 }) {
@@ -878,6 +896,8 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
   const [courseId, setCourseId] = useState<string>(String(prefill?.course_id ?? ''));
   const [counsellor, setCounsellor] = useState<string>(String(prefill?.counsellor_id ?? ''));
   const [remarks, setRemarks] = useState('');
+  // client 11 Nov 2026 — Training Mode (Training Mode master) on the sale
+  const [trainingMode, setTrainingMode] = useState<string>(prefill?.training_mode ?? '');
   const [lvl, setLvl] = useState<LevelSelection | null>(null);
   const cfg = useFeeConfig(prefill?.fee_minor != null ? { fee: String(Number(prefill.fee_minor) / 100) } : undefined);
   const [busy, setBusy] = useState(false);
@@ -888,6 +908,9 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
     api.get<any>(`/leads/${lead}`).then((r) => {
       const row = r?.lead ?? r;
       setLeadRow(row);
+      // the lead's own Training Mode (lead form custom field) pre-fills the sale
+      const lm = row?.custom?.training_mode ?? row?.training_mode;
+      if (lm && !trainingMode) setTrainingMode(String(lm));
       // client 31 Oct (1): the lead's owner fills the Counsellor, still changeable
       if (row?.owner_id && !(prefill?.counsellor_id && lead === prefill?.lead_id)) setCounsellor(String(row.owner_id));
     }).catch(() => setLeadRow(null));
@@ -903,6 +926,7 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
     setCourseId(id);
     const c = (ref.courses as any[]).find((x) => String(x.id) === id);
     cfg.setFee(c ? String((c.meta as any)?.fee ?? '') : '');
+    if (!trainingMode && (c?.meta as any)?.mode) setTrainingMode(String((c!.meta as any).mode));
   };
   const onLevels = (p: LevelSelection) => {
     setLvl(p);
@@ -935,6 +959,7 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
         start_date: cfg.start || null,
         counsellor_id: counsellor ? Number(counsellor) : null,
         remarks: remarks || null,
+        training_mode: trainingMode || null,
         plan_setup: plan,
       });
       if (res?.plan_error) toast(`${res.enrolment_no} enrolled; instalment plan not created — ${res.plan_error}`, true);
@@ -997,6 +1022,7 @@ function SaleClosureModal({ prefill, onClose, onSaved }: { prefill?: any; onClos
                 {ref.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
             </div>
+            <TrainingModeField id="sc-tmode" value={trainingMode} onChange={setTrainingMode} disabled={busy} />
             <EnrolLevelPicker courseId={realCourseId(courseId)} disabled={busy} onChange={onLevels} />
             <FeeConfigFields cfg={cfg} disabled={busy || !courseId} showFee={!lvl?.hasLevels} hideDiscount={!!(lvl?.hasLevels && lvl.scope === 'level')}
               capCtx={leadRow ? { branch_id: Number(leadRow.branch_id) || null, vertical_id: Number(leadRow.vertical_id) || null, course_id: Number(realCourseId(courseId)) || null } : undefined} />
@@ -1038,6 +1064,7 @@ function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
   const [startDate, setStartDate] = useState<string>(initial?.start_date ? istDay(initial.start_date) : '');
   const [counsellor, setCounsellor] = useState<string>(String(initial?.counsellor_id ?? prefill?.counsellor_id ?? ''));
   const [remarks, setRemarks] = useState<string>(initial?.remarks ?? '');
+  const [trainingMode, setTrainingMode] = useState<string>(initial?.training_mode ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -1078,6 +1105,7 @@ function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
         start_date: startDate || null,
         counsellor_id: counsellor ? Number(counsellor) : null,
         remarks: remarks || null,
+        training_mode: trainingMode || null,
       };
       const r = initial?.id
         ? await api.patch(`/enrolments/${initial.id}`, body)
@@ -1147,6 +1175,7 @@ function EnrolmentEditModal({ initial, prefill, onClose, onSaved }: {
               </select>
               <div className="fhint">Who this admission counts for on the leaderboard and against a target.</div>
             </div>
+            <TrainingModeField id="e-tmode" value={trainingMode} onChange={setTrainingMode} disabled={busy} />
             <div className="fld">
               <label htmlFor="e-fee">Total fee (₹) <span className="star">*</span></label>
               <input id="e-fee" className="ainp" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0.00" />

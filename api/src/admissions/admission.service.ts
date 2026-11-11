@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { staffEvents } from '../notifications/staff-events.service';
 import { randomBytes } from 'crypto';
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
@@ -245,6 +246,12 @@ export class AdmissionService {
          VALUES ($1::bigint,$2::bigint,$3,$4,$5,$6,$7,$8)`,
         [orgId, admissionId, d.doc_type, d.file_name, d.mime, d.size_bytes, r2Key ? null : d.content, r2Key]);
     }
+    // client 11 Nov 2026 — staff Notification Settings: "New Application → Application created"
+    await staffEvents()?.safeEmit('application_created', {
+      branch_id: branchId, vertical_id: verticalId,
+      title: `New application — ${String(data.full_name).slice(0, 120)}`,
+      body: [data.phone, data.email].filter(Boolean).join(' · ') || undefined,
+    });
     return { ok: true, reference: admissionId, documents: docs.length };
   }
 

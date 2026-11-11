@@ -21,6 +21,8 @@ type LevelDiscType = 'amount' | 'percent';
 interface ConvRow {
   vertical_id: string; course_id: string; course_type: string; fee: string; disc_type: EnrolDiscountType; disc_value: string;
   levels: string[]; disc_scope: 'overall' | 'level'; level_disc: Record<string, { type: LevelDiscType; value: string }>;
+  /** client 11 Nov 2026 — Training Mode master name */
+  training_mode?: string;
 }
 const newRow = (o: Partial<ConvRow> = {}): ConvRow =>
   ({ vertical_id: '', course_id: '', course_type: '', fee: '', disc_type: 'none', disc_value: '', levels: [], disc_scope: 'overall', level_disc: {}, ...o });
@@ -120,6 +122,14 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
     return { gross, discount_minor, net_minor };
   };
 
+  // Training Mode: what the user picked, else the lead's own, else the course's default mode.
+  const rowMode = (r: ConvRow): string => {
+    if (r.training_mode !== undefined) return r.training_mode;
+    const lm = lead?.custom?.training_mode ?? lead?.training_mode;
+    if (lm) return String(lm);
+    const c = (ref.courses as any[]).find((x) => String(x.id) === String(r.course_id));
+    return String((c?.meta as any)?.mode ?? '');
+  };
   const validRows = rows.filter((r) => r.course_id);
   const convert = async () => {
     setErr(''); setBusy(true);
@@ -133,6 +143,7 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
           vertical_id: r.vertical_id ? Number(r.vertical_id) : undefined,
           course_id: Number(r.course_id),
           course_type: r.course_type || undefined,
+          training_mode: rowMode(r) || undefined,
           fee_minor: gross || (r.fee !== '' ? Math.round(Number(r.fee) * 100) : undefined),
           discount_type: r.disc_type,
           discount_value: r.disc_type === 'percent' ? Number(r.disc_value || 0)
@@ -261,6 +272,16 @@ export function ConvertStudentModal({ leadId, leadName, onDone, onClose, onOpenJ
                           value={r.course_type} onChange={(e) => setRow(i, { course_type: e.target.value })}>
                           <option value="">— Course type —</option>
                           {(ref.courseTypes ?? []).map((ct: any) => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
+                        </select>
+                      </div>
+                      {/* client 11 Nov 2026 — Training Mode (Training Mode master) per course */}
+                      <div className="fld">
+                        <label htmlFor={`conv-tm-${i}`}>Training mode</label>
+                        <select id={`conv-tm-${i}`} className="ainp" data-testid={`conv-trainingmode-${i}`}
+                          value={rowMode(r)} onChange={(e) => setRow(i, { training_mode: e.target.value })}>
+                          <option value="">—</option>
+                          {((ref as any).trainings ?? []).map((m: any) => <option key={m.id} value={m.name}>{m.name}</option>)}
+                          {rowMode(r) && !((ref as any).trainings ?? []).some((m: any) => m.name === rowMode(r)) ? <option value={rowMode(r)}>{rowMode(r)}</option> : null}
                         </select>
                       </div>
                       <div className="fld">
