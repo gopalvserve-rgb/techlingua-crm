@@ -229,7 +229,7 @@ export class EnrolmentService implements OnApplicationBootstrap {
                WHERE cp.enrolment_id = e.id AND cp.deleted_at IS NULL AND cp.status IN ('active', 'completed')
                ORDER BY cp.id DESC LIMIT 1) AS plan_label,
               e.fee_minor, e.discount_minor, e.net_fee_minor, e.first_payment_minor,
-              e.created_at, e.lead_id, e.quotation_id, e.course_id, e.course_type, e.student_profile_id, e.branch_id, e.vertical_id,
+              e.created_at, e.lead_id, e.quotation_id, e.course_id, e.course_type, e.training_mode, e.student_profile_id, e.branch_id, e.vertical_id,
               EXISTS (SELECT 1 FROM admission a WHERE a.student_id = e.student_profile_id AND a.deleted_at IS NULL) AS from_admission,
               COALESCE(l.full_name, sp.full_name) AS lead_name, COALESCE(l.phone, sp.phone) AS lead_phone,
               c.name AS course_name, b.name AS branch_name, v.name AS vertical_name,

@@ -16,7 +16,7 @@ export class NotificationService {
     if (opts.unread) where += ` AND n.read_at IS NULL`;
     params.push(Math.min(Number(opts.limit) || 30, 100));
     return this.db.query(
-      `SELECT n.id, n.type, n.severity, n.title, n.body, n.link_type, n.link_id, n.meta,
+      `SELECT n.id, n.type, n.severity, n.priority, n.title, n.body, n.link_type, n.link_id, n.meta,
               n.read_at, n.created_at
          FROM notification n
         WHERE ${where}

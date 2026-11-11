@@ -1312,9 +1312,9 @@ export class LeadsService {
         WHERE l.id = $1 AND l.deleted_at IS NULL`, [id]);
     if (!l) throw new NotFoundException('lead not found');
     const activity = await this.db.query(
-      `SELECT a.type, a.note, a.created_at, a.actor_name
+      `SELECT a.type, a.note, a.occurred_at AS created_at, a.actor_name
          FROM lead_activity a
-        WHERE a.lead_id = $1 ORDER BY a.created_at DESC LIMIT 10`, [id]);
+        WHERE a.lead_id = $1 ORDER BY a.occurred_at DESC LIMIT 10`, [id]);
     return { ...l, activity };
   }
 
