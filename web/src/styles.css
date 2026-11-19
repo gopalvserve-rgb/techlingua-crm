@@ -1326,3 +1326,8 @@ html[data-theme="dark"] .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-3:#199e7
 .db-pubbox{margin-top:12px;padding:10px;border:1px dashed var(--border-strong);border-radius:10px}
 @media (max-width:1000px){.db-body{grid-template-columns:1fr;overflow:auto}.db-steps{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}
   .db-step{min-width:190px}.db-preview{min-height:520px}}
+
+/* ---- Shared Documents folders (client 12 Nov 2026) ---- */
+.doc-folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin:0 0 12px}
+.doc-folder{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-1);cursor:pointer}
+.doc-folder:hover{border-color:var(--primary)}

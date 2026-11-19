@@ -53,7 +53,7 @@ export class InsightsService {
   // ------------------------------------------------------- keyword tracking
   async keywords() {
     return this.db.query<any>(
-      `SELECT id, keyword, category, is_active, created_at FROM tracked_keyword WHERE deleted_at IS NULL ORDER BY lower(keyword)`);
+      `SELECT id, keyword, category, is_active, alert, created_at FROM tracked_keyword WHERE deleted_at IS NULL ORDER BY lower(keyword)`);
   }
 
   async addKeyword(dto: any, actorId: number) {
@@ -62,14 +62,14 @@ export class InsightsService {
     const dupe = await this.db.one(`SELECT 1 FROM tracked_keyword WHERE lower(keyword) = lower($1) AND deleted_at IS NULL`, [kw]);
     if (dupe) throw new BadRequestException(`"${kw}" is already tracked.`);
     return this.db.one<any>(
-      `INSERT INTO tracked_keyword (org_id, keyword, category, created_by) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [await this.orgId(), kw.slice(0, 80), dto?.category ? String(dto.category).slice(0, 40) : null, actorId]);
+      `INSERT INTO tracked_keyword (org_id, keyword, category, created_by, alert) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [await this.orgId(), kw.slice(0, 80), dto?.category ? String(dto.category).slice(0, 40) : null, actorId, dto?.alert === true]);
   }
 
   async updateKeyword(id: number, dto: any) {
     await this.db.query(
-      `UPDATE tracked_keyword SET is_active = COALESCE($2, is_active), category = COALESCE($3, category) WHERE id = $1`,
-      [id, dto?.is_active === undefined ? null : !!dto.is_active, dto?.category ?? null]);
+      `UPDATE tracked_keyword SET is_active = COALESCE($2, is_active), category = COALESCE($3, category), alert = COALESCE($4, alert) WHERE id = $1`,
+      [id, dto?.is_active === undefined ? null : !!dto.is_active, dto?.category ?? null, dto?.alert === undefined ? null : !!dto.alert]);
     return { id, ok: true };
   }
 
@@ -101,6 +101,10 @@ export class InsightsService {
              FROM ai_analysis a
             WHERE a.deleted_at IS NULL AND (a.input_text ILIKE $1 OR a.summary_text ILIKE $1)${window('a.created_at', p)}
            UNION ALL
+           SELECT 'call', t.lead_id, COALESCE(t.call_at, t.created_at)
+             FROM call_transcript t
+            WHERE t.deleted_at IS NULL AND t.transcript ILIKE $1${window('COALESCE(t.call_at, t.created_at)', p)}
+           UNION ALL
            SELECT CASE WHEN la.type = 'message' THEN 'whatsapp' ELSE 'note' END, la.lead_id, la.occurred_at
              FROM lead_activity la
             WHERE la.note ILIKE $1 AND la.type IN ('note', 'message', 'call_log', 'disposition', 'follow_up')${window('la.occurred_at', p)}
@@ -125,6 +129,10 @@ export class InsightsService {
            SELECT 'Call / AI' AS source, a.subject_id AS lead_id, a.created_at AS at,
                   left(COALESCE(a.summary_text, a.input_text), 240) AS text
              FROM ai_analysis a WHERE a.deleted_at IS NULL AND (a.input_text ILIKE $1 OR a.summary_text ILIKE $1)${window('a.created_at', p)}
+           UNION ALL
+           SELECT 'Call transcript', t.lead_id, COALESCE(t.call_at, t.created_at),
+                  left(substr(t.transcript, greatest(1, strpos(lower(t.transcript), lower(trim(both '%' from $1::text))) - 80)), 240)
+             FROM call_transcript t WHERE t.deleted_at IS NULL AND t.transcript ILIKE $1${window('COALESCE(t.call_at, t.created_at)', p)}
            UNION ALL
            SELECT CASE WHEN la.type = 'message' THEN 'WhatsApp' ELSE 'Note' END, la.lead_id, la.occurred_at, left(la.note, 240)
              FROM lead_activity la WHERE la.note ILIKE $1 AND la.type IN ('note', 'message', 'call_log', 'disposition', 'follow_up')${window('la.occurred_at', p)}

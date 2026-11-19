@@ -21,6 +21,7 @@ import { ConfirmModal, DetailModal } from './rowactions';
 import { DateRange } from './daterange';
 import { fmtINR } from './money';
 import { askConfirm, askText } from './askdialog';
+import { LeadLookup } from './forms';
 
 const dmy = (v?: unknown) => (v ? new Date(String(v)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const dt = (v?: unknown) => (v ? new Date(String(v)).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
@@ -370,6 +371,7 @@ const fmtSize = (n: number) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` :
 
 export function SharedDocs() {
   const { can } = useAuth();
+  // 12 Nov 2026 — folders inside folders (breadcrumbs), preview, versions, edit / move, lead / student link
   const [folder, setFolder] = useState('');
   const [q, setQ] = useState('');
   const [tick, setTick] = useState(0);
@@ -377,81 +379,171 @@ export function SharedDocs() {
   const list = useFetch<any>(`/shared-docs?${qs}`, [qs.toString(), tick]);
   const [up, setUp] = useState(false);
   const [del, setDel] = useState<any>(null);
+  const [edit, setEdit] = useState<any>(null);
+  const [ver, setVer] = useState<any>(null);
+  const [prev, setPrev] = useState<{ url: string; mime: string; title: string } | null>(null);
   const after = () => setTick((t) => t + 1);
-  const download = async (d: any) => {
-    try {
-      const res = await fetch(`/api/shared-docs/${d.id}/download`, { headers: { Authorization: `Bearer ${getToken()}` } });
-      if (!res.ok) throw new Error(`Download failed (${res.status})`);
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement('a'); a.href = url; a.download = d.file_name; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30000); after();
-    } catch (e) { toast((e as Error).message, true); }
+  const fetchBlob = async (path: string) => {
+    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message ?? `Failed (${res.status})`);
+    return res.blob();
   };
+  const saveBlob = (b: Blob, name: string) => { const url = URL.createObjectURL(b); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000); };
+  const download = async (d: any) => { try { saveBlob(await fetchBlob(`/shared-docs/${d.id}/download`), d.file_name); after(); } catch (e) { toast((e as Error).message, true); } };
+  const preview = async (d: any) => {
+    try { const b = await fetchBlob(`/shared-docs/${d.id}/preview`); setPrev({ url: URL.createObjectURL(b), mime: b.type || d.mime, title: d.title }); }
+    catch (e) { toast((e as Error).message, true); }
+  };
+  const folders: any[] = list.data?.folders ?? [];
+  const byId = new Map(folders.map((f) => [String(f.id), f]));
+  const crumbs: any[] = [];
+  for (let f = byId.get(folder); f; f = f.parent_id ? byId.get(String(f.parent_id)) : undefined) crumbs.unshift(f);
+  const children = folders.filter((f) => (folder && folder !== 'none' ? String(f.parent_id ?? '') === folder : f.parent_id == null));
   const newFolder = async () => {
-    const name = await askText('Folder name');
+    const name = await askText(folder && folder !== 'none' ? `New folder inside "${byId.get(folder)?.name}"` : 'Folder name');
     if (!name?.trim()) return;
-    try { await api.post('/shared-docs/folders', { name }); toast('Folder created'); after(); } catch (e) { toast((e as Error).message, true); }
+    try { await api.post('/shared-docs/folders', { name, parent_id: folder && folder !== 'none' ? Number(folder) : undefined }); toast('Folder created'); after(); } catch (e) { toast((e as Error).message, true); }
+  };
+  const renameFolder = async (f: any) => {
+    const name = await askText('Rename folder', f.name);
+    if (!name?.trim()) return;
+    try { await api.patch(`/shared-docs/folders/${f.id}`, { name }); toast('Folder renamed'); after(); } catch (e) { toast((e as Error).message, true); }
   };
   const delFolder = async (id: number) => {
-    try { await api.del(`/shared-docs/folders/${id}`); toast('Folder deleted'); setFolder(''); after(); } catch (e) { toast((e as Error).message, true); }
+    try { await api.del(`/shared-docs/folders/${id}`); toast('Folder deleted'); after(); } catch (e) { toast((e as Error).message, true); }
   };
   const remove = async () => {
     try { await api.del(`/shared-docs/${del.id}`); toast('Document deleted'); setDel(null); after(); } catch (e) { toast((e as Error).message, true); }
   };
   const SHARE: Record<string, string> = { all: 'Everyone', branch: 'Branch', vertical: 'Vertical', role: 'Role' };
-  const folders: any[] = list.data?.folders ?? [];
+  const PREVIEWABLE = /^(application\/pdf|image\/(png|jpe?g|gif|webp)|text\/plain)/;
+  const folderPath = (id: unknown) => { const out: string[] = []; for (let f = byId.get(String(id ?? '')); f; f = f.parent_id ? byId.get(String(f.parent_id)) : undefined) out.unshift(f.name); return out.join(' › '); };
   return (
     <>
       {can('shared_doc.upload') && <div className="page-actions">
-        <button className="btn" onClick={newFolder}><Ic k="plus" />New folder</button>
+        <button className="btn" onClick={newFolder} data-testid="doc-new-folder"><Ic k="plus" />New folder</button>
         <button className="btn primary" onClick={() => setUp(true)} data-testid="doc-upload"><Ic k="plus" />Upload document</button></div>}
       <div className="filters">
         <label className="fchip"><Ic k="search" /><input placeholder="Search documents" value={q} onChange={(e) => setQ(e.target.value)} style={{ background: 'none', border: 'none', outline: 'none', font: 'inherit', color: 'var(--text)' }} /></label>
-        <button className={`fchip${folder === '' ? ' on' : ''}`} onClick={() => setFolder('')}>All folders</button>
+        <button className={`fchip${folder === '' ? ' on' : ''}`} onClick={() => setFolder('')}>All documents</button>
         <button className={`fchip${folder === 'none' ? ' on' : ''}`} onClick={() => setFolder('none')}>Unfiled</button>
-        {folders.map((f) => (
-          <span key={f.id} className={`fchip${folder === String(f.id) ? ' on' : ''}`} style={{ cursor: 'pointer' }} onClick={() => setFolder(String(f.id))}>
-            <Ic k="doc" />{f.name} ({f.files}){can('shared_doc.delete') && Number(f.files) === 0
-              ? <a title="Delete folder" onClick={(e) => { e.stopPropagation(); void delFolder(Number(f.id)); }} style={{ marginLeft: 4 }}>×</a> : null}
-          </span>))}
       </div>
+      {folder && folder !== 'none' ? (
+        <div className="sub" style={{ margin: '4px 0 8px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }} data-testid="doc-crumbs">
+          <a style={{ cursor: 'pointer' }} onClick={() => setFolder('')}>All documents</a>
+          {crumbs.map((c) => <span key={c.id}> › <a style={{ cursor: 'pointer', fontWeight: String(c.id) === folder ? 700 : 400 }} onClick={() => setFolder(String(c.id))}>{c.name}</a></span>)}
+        </div>
+      ) : null}
+      {folder !== 'none' && children.length ? (
+        <div className="doc-folders" data-testid="doc-folders">
+          {children.map((f) => (
+            <div key={f.id} className="doc-folder" onClick={() => setFolder(String(f.id))} role="button" data-testid={`doc-folder-${f.id}`}>
+              <Ic k="doc" /><div style={{ flex: 1, minWidth: 0 }}><b>{f.name}</b><div className="sub">{f.files} file(s){Number(f.subfolders) ? ` · ${f.subfolders} folder(s)` : ''}</div></div>
+              {can('shared_doc.upload') ? <button className="icon-btn sm" title="Rename" onClick={(e) => { e.stopPropagation(); void renameFolder(f); }}><Ic k="pencil" /></button> : null}
+              {can('shared_doc.delete') && Number(f.files) === 0 && Number(f.subfolders) === 0
+                ? <button className="icon-btn sm" title="Delete folder" onClick={(e) => { e.stopPropagation(); void delFolder(Number(f.id)); }}><Ic k="trash" /></button> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <TableCard fill title="Shared documents" icon="doc" listKey="sharedDocs"
-        cols={['Title', 'File', 'Folder', 'Shared with', 'Size', 'Uploaded by', 'Date', 'Downloads', 'Actions']}
-        empty="No documents shared yet."
+        cols={['Title', 'File', 'Folder', 'Linked to', 'Shared with', 'Version', 'Size', 'Uploaded by', 'Date', 'Downloads', 'Actions']}
+        empty={folder && folder !== 'none' ? 'No documents in this folder.' : 'No documents shared yet.'}
         rows={(list.data?.rows ?? []).map((d: any): Cell[] => [
           { node: <div><b>{d.title}</b>{d.description ? <div className="sub">{d.description}</div> : null}</div> },
-          d.file_name, d.folder_name ?? '—',
+          d.file_name, folderPath(d.folder_id) || '—',
+          d.lead_name ? `Lead: ${d.lead_name}` : d.student_name ? `Student: ${d.student_name}` : '—',
           `${SHARE[d.share_scope] ?? d.share_scope}${d.branch_name ? ` · ${d.branch_name}` : ''}${d.vertical_name ? ` · ${d.vertical_name}` : ''}${d.role_name ? ` · ${d.role_name}` : ''}`,
-          fmtSize(Number(d.size_bytes)), d.uploaded_by_name ?? '—', dmy(d.created_at), { mono: String(d.downloads) },
+          `v${d.version_no ?? 1}`, fmtSize(Number(d.size_bytes)), d.uploaded_by_name ?? '—', dmy(d.updated_at ?? d.created_at), { mono: String(d.downloads) },
           { node: <span style={{ display: 'inline-flex', gap: 4 }}>
+            {PREVIEWABLE.test(String(d.mime ?? '')) ? <button className="icon-btn sm" title="Preview" onClick={() => void preview(d)} data-testid={`doc-preview-${d.id}`}><Ic k="eye" /></button> : null}
             <button className="icon-btn sm" title="Download" onClick={() => void download(d)}><Ic k="download" /></button>
+            <button className="icon-btn sm" title="Versions" onClick={() => setVer(d)} data-testid={`doc-versions-${d.id}`}><Ic k="restore" /></button>
+            {can('shared_doc.upload') && <button className="icon-btn sm" title="Edit / move" onClick={() => setEdit(d)} data-testid={`doc-edit-${d.id}`}><Ic k="pencil" /></button>}
             {can('shared_doc.delete') && <button className="icon-btn sm" title="Delete" onClick={() => setDel(d)}><Ic k="trash" /></button>}</span> },
         ])} />
       {up && <DocUploadModal folders={folders} defaultFolder={folder && folder !== 'none' ? folder : ''} onClose={() => setUp(false)} onDone={() => { setUp(false); after(); }} />}
+      {edit && <DocUploadModal folders={folders} defaultFolder={edit.folder_id ? String(edit.folder_id) : ''} doc={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); after(); }} />}
+      {ver && <DocVersionsModal doc={ver} canUpload={can('shared_doc.upload')} onClose={() => setVer(null)} onChanged={after} fetchBlob={fetchBlob} saveBlob={saveBlob} />}
+      {prev && (
+        <DetailModal title={prev.title} icon="eye" onClose={() => { URL.revokeObjectURL(prev.url); setPrev(null); }} width={900}>
+          {prev.mime.startsWith('image/') ? <img src={prev.url} alt={prev.title} style={{ maxWidth: '100%' }} data-testid="doc-preview-img" />
+            : <iframe title={prev.title} src={prev.url} style={{ width: '100%', height: '70vh', border: 'none' }} data-testid="doc-preview-frame" />}
+        </DetailModal>
+      )}
       {del && <ConfirmModal title="Delete document" danger confirmLabel="Delete" body={<>Delete <b>{del.title}</b>?</>} onConfirm={remove} onClose={() => setDel(null)} />}
     </>
   );
 }
 
-function DocUploadModal({ folders, defaultFolder, onClose, onDone }: { folders: any[]; defaultFolder: string; onClose: () => void; onDone: () => void }) {
-  const ref = useRef_();
-  const roles = useFetch<any[]>('/roles');
+/** Version history: upload a new version (the old one is kept), download any earlier version. */
+function DocVersionsModal({ doc, canUpload, onClose, onChanged, fetchBlob, saveBlob }: {
+  doc: any; canUpload: boolean; onClose: () => void; onChanged: () => void; fetchBlob: (p: string) => Promise<Blob>; saveBlob: (b: Blob, n: string) => void;
+}) {
+  const [tick, setTick] = useState(0);
+  const v = useFetch<any[]>(`/shared-docs/${doc.id}/versions`, [doc.id, tick]);
   const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState('');
-  const [desc, setDesc] = useState('');
-  const [folderId, setFolderId] = useState(defaultFolder);
-  const [scope, setScope] = useState('all');
-  const [target, setTarget] = useState('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const save = async () => {
-    if (!file) { toast('Choose a file', true); return; }
+  const upload = async () => {
+    if (!file) return;
     if (file.size > 15 * 1024 * 1024) { toast('Files up to 15 MB', true); return; }
     setBusy(true);
     try {
       const base64 = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(file); });
+      await api.post(`/shared-docs/${doc.id}/versions`, { note: note || undefined, file: { name: file.name, mime: file.type || 'application/octet-stream', base64 } });
+      toast('New version uploaded'); setFile(null); setNote(''); setTick((t) => t + 1); onChanged();
+    } catch (e) { toast((e as Error).message, true); } finally { setBusy(false); }
+  };
+  return (
+    <DetailModal title={`Versions — ${doc.title}`} icon="restore" onClose={onClose} width={640}>
+      <div className="sub" style={{ marginBottom: 8 }}>Current: <b>v{doc.version_no ?? 1}</b> · {doc.file_name}</div>
+      {canUpload ? (
+        <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+          <div className="form-grid">
+            <div className="fld"><label>New file</label><input type="file" className="ainp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} data-testid="doc-ver-file" /></div>
+            <div className="fld"><label>What changed (optional)</label><input className="ainp" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+          </div>
+          <button className="btn primary" disabled={busy || !file} onClick={upload} data-testid="doc-ver-upload"><Ic k="up" />{busy ? 'Uploading…' : 'Upload new version'}</button>
+        </div>
+      ) : null}
+      {(v.data ?? []).length === 0 ? <div className="empty-note">No earlier versions.</div> : (
+        <table className="tbl"><thead><tr><th>Version</th><th>File</th><th>Note</th><th>Uploaded</th><th>Replaced</th><th /></tr></thead>
+          <tbody>{(v.data ?? []).map((x: any) => (
+            <tr key={x.id}><td>v{x.version_no}</td><td>{x.file_name}</td><td>{x.note ?? '—'}</td><td>{dmy(x.created_at)}{x.uploaded_by_name ? ` · ${x.uploaded_by_name}` : ''}</td><td>{dmy(x.replaced_at)}</td>
+              <td><button className="icon-btn sm" title="Download this version" onClick={async () => { try { saveBlob(await fetchBlob(`/shared-docs/${doc.id}/versions/${x.id}/download`), x.file_name); } catch (e) { toast((e as Error).message, true); } }}><Ic k="download" /></button></td></tr>
+          ))}</tbody></table>
+      )}
+    </DetailModal>
+  );
+}
+
+function DocUploadModal({ folders, defaultFolder, doc, onClose, onDone }: { folders: any[]; defaultFolder: string; doc?: any; onClose: () => void; onDone: () => void }) {
+  const ref = useRef_();
+  const roles = useFetch<any[]>('/roles');
+  const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState(doc?.title ?? '');
+  const [desc, setDesc] = useState(doc?.description ?? '');
+  const [folderId, setFolderId] = useState(defaultFolder);
+  const [scope, setScope] = useState(doc?.share_scope ?? 'all');
+  const [target, setTarget] = useState(doc ? String(doc.branch_id ?? doc.vertical_id ?? doc.role_id ?? '') : '');
+  const [leadId, setLeadId] = useState<number | undefined>(doc?.lead_id ? Number(doc.lead_id) : undefined);
+  const [leadLabel, setLeadLabel] = useState(doc?.lead_name ?? '');
+  const [busy, setBusy] = useState(false);
+  const pathOf = (f: any) => { const byId = new Map(folders.map((x) => [String(x.id), x])); const out: string[] = []; for (let c = f; c; c = c.parent_id ? byId.get(String(c.parent_id)) : undefined) out.unshift(c.name); return out.join(' › '); };
+  const save = async () => {
+    const share = { share_scope: scope, branch_id: scope === 'branch' ? target : undefined, vertical_id: scope === 'vertical' ? target : undefined, role_id: scope === 'role' ? target : undefined };
+    setBusy(true);
+    try {
+      if (doc) {
+        await api.patch(`/shared-docs/${doc.id}`, { title, description: desc, folder_id: folderId || null, ...share, lead_id: leadId ?? null });
+        toast('Document updated'); onDone(); return;
+      }
+      if (!file) { toast('Choose a file', true); return; }
+      if (file.size > 15 * 1024 * 1024) { toast('Files up to 15 MB', true); return; }
+      const base64 = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(file); });
       await api.post('/shared-docs', {
-        title: title || file.name, description: desc || undefined, folder_id: folderId || undefined, share_scope: scope,
-        branch_id: scope === 'branch' ? target : undefined, vertical_id: scope === 'vertical' ? target : undefined, role_id: scope === 'role' ? target : undefined,
+        title: title || file.name, description: desc || undefined, folder_id: folderId || undefined, ...share, lead_id: leadId,
         file: { name: file.name, mime: file.type || 'application/octet-stream', base64 },
       });
       toast('Document uploaded'); onDone();
@@ -459,20 +551,23 @@ function DocUploadModal({ folders, defaultFolder, onClose, onDone }: { folders: 
   };
   const opts = scope === 'branch' ? ref.branches : scope === 'vertical' ? ref.verticals : scope === 'role' ? (roles.data ?? []) : [];
   return (
-    <DetailModal title="Upload document" icon="doc" onClose={onClose} width={560}
-      footer={<button className="btn primary" disabled={busy || !file} onClick={save} data-testid="doc-save"><Ic k="check" />{busy ? 'Uploading…' : 'Upload'}</button>}>
+    <DetailModal title={doc ? 'Edit document' : 'Upload document'} icon="doc" onClose={onClose} width={560}
+      footer={<button className="btn primary" disabled={busy || (!doc && !file)} onClick={save} data-testid="doc-save"><Ic k="check" />{busy ? 'Saving…' : doc ? 'Save' : 'Upload'}</button>}>
       <div className="form-grid">
-        <div className="fld span2"><label>File * <span className="fhint">up to 15 MB</span></label>
-          <input type="file" className="ainp" onChange={(e) => { const f = e.target.files?.[0] ?? null; setFile(f); if (f && !title) setTitle(f.name); }} data-testid="doc-file" /></div>
-        <div className="fld span2"><label>Title</label><input className="ainp" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
+        {!doc ? <div className="fld span2"><label>File * <span className="fhint">up to 15 MB</span></label>
+          <input type="file" className="ainp" onChange={(e) => { const f = e.target.files?.[0] ?? null; setFile(f); if (f && !title) setTitle(f.name); }} data-testid="doc-file" /></div> : null}
+        <div className="fld span2"><label>Title</label><input className="ainp" value={title} onChange={(e) => setTitle(e.target.value)} data-testid="doc-title" /></div>
         <div className="fld span2"><label>Description</label><input className="ainp" value={desc} onChange={(e) => setDesc(e.target.value)} /></div>
         <div className="fld"><label>Folder</label>
-          <select className="ainp" value={folderId} onChange={(e) => setFolderId(e.target.value)}><option value="">— None —</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div>
+          <select className="ainp" value={folderId} onChange={(e) => setFolderId(e.target.value)} data-testid="doc-folder"><option value="">— None —</option>
+            {folders.map((f) => ({ f, path: pathOf(f) })).sort((a, b) => a.path.localeCompare(b.path)).map(({ f, path }) => <option key={f.id} value={f.id}>{path}</option>)}</select></div>
         <div className="fld"><label>Share with</label>
           <select className="ainp" value={scope} onChange={(e) => { setScope(e.target.value); setTarget(''); }}>
             <option value="all">Everyone</option><option value="branch">A branch</option><option value="vertical">A vertical</option><option value="role">A role</option></select></div>
         {scope !== 'all' && <div className="fld span2"><label>{scope === 'branch' ? 'Branch' : scope === 'vertical' ? 'Vertical' : 'Role'} *</label>
           <select className="ainp" value={target} onChange={(e) => setTarget(e.target.value)}><option value="">— Choose —</option>{(opts as any[]).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></div>}
+        <div className="fld span2"><label htmlFor="doc-lead">Link to a lead (optional)</label>
+          <LeadLookup inputId="doc-lead" value={leadLabel} onPick={(id, label) => { setLeadId(id); setLeadLabel(label); }} /></div>
       </div>
     </DetailModal>
   );
@@ -633,6 +728,8 @@ export function KeywordTracking() {
     catch (e) { toast((e as Error).message, true); }
   };
   const toggle = async (k: any) => { try { await api.patch(`/insights/keywords/${k.id}`, { is_active: !k.is_active }); setTick((t) => t + 1); } catch (e) { toast((e as Error).message, true); } };
+  // 12 Nov 2026 — alert the counsellor + managers when this word is said on a call
+  const toggleAlert = async (k: any) => { try { await api.patch(`/insights/keywords/${k.id}`, { alert: !k.alert }); setTick((t) => t + 1); toast(k.alert ? 'Call alert off' : 'You will be alerted when this is said on a call'); } catch (e) { toast((e as Error).message, true); } };
   const remove = async (k: any) => { try { await api.del(`/insights/keywords/${k.id}`); setTick((t) => t + 1); } catch (e) { toast((e as Error).message, true); } };
   const rows: any[] = rep.data?.rows ?? [];
   const max = Math.max(1, ...rows.map((r) => r.mentions));
@@ -649,7 +746,7 @@ export function KeywordTracking() {
       )}
       <HBars title="Mentions by keyword" rows={rows.map((r) => ({ label: `${r.keyword} — ${r.leads} lead(s)`, val: String(r.mentions), pct: Math.round((r.mentions * 100) / max), color: 'var(--indigo)' }))}
         empty="Add keywords to start tracking." />
-      <TableCard title="Tracked keywords" icon="intel" cols={['Keyword', 'Category', 'Mentions', 'Leads', 'Calls / AI', 'WhatsApp', 'Notes', 'Last seen', 'Status', 'Actions']}
+      <TableCard title="Tracked keywords" icon="intel" cols={['Keyword', 'Category', 'Mentions', 'Leads', 'Calls / AI', 'WhatsApp', 'Notes', 'Last seen', 'Status', 'Alert on calls', 'Actions']}
         empty="No keywords tracked yet."
         rows={(kws.data ?? []).map((k): Cell[] => {
           const r = rows.find((x) => x.id === Number(k.id));
@@ -657,6 +754,7 @@ export function KeywordTracking() {
             { node: <a style={{ cursor: 'pointer', color: 'var(--primary)' }} onClick={() => setFocus(String(k.id))}><b>{k.keyword}</b></a> },
             k.category ?? '—', { mono: String(r?.mentions ?? 0) }, { mono: String(r?.leads ?? 0) }, String(r?.calls ?? 0), String(r?.whatsapp ?? 0), String(r?.notes ?? 0),
             r?.last_at ? dt(r.last_at) : '—', { b: [k.is_active ? 'Active' : 'Paused', k.is_active ? 'b-green' : 'b-gray'] },
+            { node: can('ai.run') ? <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!k.alert} onChange={() => void toggleAlert(k)} data-testid={`kw-alert-${k.id}`} />{k.alert ? 'On' : 'Off'}</label> : (k.alert ? 'On' : 'Off') },
             { node: can('ai.run') ? <span style={{ display: 'inline-flex', gap: 4 }}>
               <button className="btn sm" onClick={() => void toggle(k)}>{k.is_active ? 'Pause' : 'Resume'}</button>
               <button className="icon-btn sm" title="Remove" onClick={() => void remove(k)}><Ic k="trash" /></button></span> : '—' },

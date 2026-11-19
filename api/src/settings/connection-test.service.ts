@@ -77,12 +77,23 @@ export class ConnectionTestService {
       case 'cloudflare': return this.cloudflare(cfg);
       case 'deepseek': return this.deepseek(cfg);
       case 'gemini': return this.gemini(cfg);
+      // 12 Nov 2026 — speech-to-text: list models / projects proves the key, nothing is transcribed
+      case 'openai_whisper': return this.bearerProbe('https://api.openai.com/v1/models', `Bearer ${cfg.secrets.api_key}`, 'OpenAI');
+      case 'deepgram': return this.bearerProbe('https://api.deepgram.com/v1/projects', `Token ${cfg.secrets.api_key}`, 'Deepgram');
       default:
         return Promise.resolve({ ok: false, message: `No connection test exists for "${cfg.provider}".` });
     }
   }
 
   // --------------------------------------------------------------- probes
+
+  /** A read-only GET with the key; 200 = the key works. */
+  private async bearerProbe(url: string, auth: string, label: string): Promise<TestResult> {
+    const r = await this.http(url, { headers: { Authorization: auth } });
+    if (r.ok) return { ok: true, message: `${label} accepted the key.` };
+    const body = await r.text();
+    return { ok: false, message: `${label} rejected the key (HTTP ${r.status}).`, detail: body.slice(0, 300) };
+  }
 
   /** Reads the phone number back from Meta — proves the token AND the phone id together. */
   private async whatsapp(cfg: ResolvedConfig): Promise<TestResult> {

@@ -75,7 +75,7 @@ export class SharedDocsController {
   constructor(private readonly svc: SharedDocsService) {}
 
   @Get() @RequirePermission('shared_doc.read')
-  list(@CurrentUser() me: Me, @Query() q: any) { return this.svc.list(Number(me.id), { folder_id: q?.folder_id, q: q?.q }); }
+  list(@CurrentUser() me: Me, @Query() q: any) { return this.svc.list(Number(me.id), { folder_id: q?.folder_id, q: q?.q, lead_id: q?.lead_id, student_id: q?.student_id }); }
 
   @Post() @RequirePermission('shared_doc.upload')
   upload(@Body() dto: any, @CurrentUser() me: Me) { return this.svc.upload(dto, Number(me.id)); }
@@ -85,6 +85,36 @@ export class SharedDocsController {
 
   @Delete('folders/:id') @RequirePermission('shared_doc.delete')
   deleteFolder(@Param('id', ParseIntPipe) id: number) { return this.svc.deleteFolder(id); }
+
+  // 12 Nov 2026 — rename / move a folder, edit / move a document, versions, preview
+  @Patch('folders/:id') @RequirePermission('shared_doc.upload')
+  renameFolder(@Param('id', ParseIntPipe) id: number, @Body() dto: any) { return this.svc.renameFolder(id, dto); }
+
+  @Patch(':id') @RequirePermission('shared_doc.upload')
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me) { return this.svc.update(id, dto, Number(me.id)); }
+
+  @Post(':id/versions') @RequirePermission('shared_doc.upload')
+  newVersion(@Param('id', ParseIntPipe) id: number, @Body() dto: any, @CurrentUser() me: Me) { return this.svc.newVersion(id, dto, Number(me.id)); }
+
+  @Get(':id/versions') @RequirePermission('shared_doc.read')
+  versions(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me) { return this.svc.versions(id, Number(me.id)); }
+
+  @Get(':id/versions/:versionId/download') @RequirePermission('shared_doc.read')
+  async downloadVersion(@Param('id', ParseIntPipe) id: number, @Param('versionId', ParseIntPipe) versionId: number, @CurrentUser() me: Me, @Res() res: Response) {
+    const f = await this.svc.downloadVersion(id, versionId, Number(me.id));
+    res.setHeader('Content-Type', f.mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(f.file_name)}"`);
+    res.end(f.content);
+  }
+
+  @Get(':id/preview') @RequirePermission('shared_doc.read')
+  async preview(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @Res() res: Response) {
+    const f = await this.svc.preview(id, Number(me.id));
+    res.setHeader('Content-Type', f.mime);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(f.file_name)}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(f.content);
+  }
 
   @Get(':id/download') @RequirePermission('shared_doc.read')
   async download(@Param('id', ParseIntPipe) id: number, @CurrentUser() me: Me, @Res() res: Response) {

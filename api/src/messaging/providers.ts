@@ -13,7 +13,7 @@
  * he pastes the values into Settings — no deploy.
  */
 
-export type MsgChannel = 'email' | 'sms' | 'whatsapp' | 'payment' | 'ai' | 'calendar' | 'storage';
+export type MsgChannel = 'email' | 'sms' | 'whatsapp' | 'payment' | 'ai' | 'calendar' | 'storage' | 'stt';
 
 export interface MsgFieldSpec {
   key: string;
@@ -297,6 +297,43 @@ const SPECS: MsgProviderSpec[] = [
     test: 'probe',
   },
 
+  /* ------------------------------------------------------- SPEECH-TO-TEXT */
+  // Client 12 Nov 2026 — call recordings → text for AI Insights / Communication Intelligence.
+  // ONE provider is active at a time (saving another replaces it). The client chooses.
+  {
+    key: 'openai_whisper',
+    channel: 'stt',
+    label: 'OpenAI Whisper',
+    blurb: 'Turns call recordings into text (Hindi, English and mixed). Charged by OpenAI per audio minute.',
+    perVertical: false,
+    config: [{ key: 'model', label: 'Model', type: 'text', placeholder: 'whisper-1' }],
+    secrets: [{ key: 'api_key', label: 'API key', type: 'password', required: true }],
+    setup: ['platform.openai.com › API keys › Create new secret key. Paste it here, then set the language in Communication Intelligence › Call Transcription.'],
+    test: 'probe',
+  },
+  {
+    key: 'deepgram',
+    channel: 'stt',
+    label: 'Deepgram',
+    blurb: 'Turns call recordings into text with speaker labels. Charged by Deepgram per audio minute.',
+    perVertical: false,
+    config: [{ key: 'model', label: 'Model', type: 'text', placeholder: 'nova-2' }],
+    secrets: [{ key: 'api_key', label: 'API key', type: 'password', required: true }],
+    setup: ['console.deepgram.com › API Keys › Create a New API Key. Paste it here.'],
+    test: 'probe',
+  },
+  {
+    key: 'sarvam',
+    channel: 'stt',
+    label: 'Sarvam AI',
+    blurb: 'Speech-to-text built for Indian languages, including Hindi-English mixed speech.',
+    perVertical: false,
+    config: [{ key: 'model', label: 'Model', type: 'text', placeholder: 'saarika:v2' }],
+    secrets: [{ key: 'api_key', label: 'API subscription key', type: 'password', required: true }],
+    setup: ['dashboard.sarvam.ai › API Keys. Paste the subscription key here.'],
+    test: 'none',
+  },
+
   /* --------------------------------------------------------------- CALENDAR */
   /**
    * THE GAP THIS CLOSES: calendar sync used to keep its OAuth client id AND CLIENT
@@ -399,10 +436,11 @@ export const CHANNEL_LABEL: Record<MsgChannel, string> = {
   ai: 'AI',
   calendar: 'Calendar sync',
   storage: 'Cloudflare storage',
+  stt: 'Speech-to-text',
 };
 
 /** Every channel the Settings screen renders, in the order it renders them. */
-export const ALL_CHANNELS: MsgChannel[] = ['whatsapp', 'sms', 'email', 'calendar', 'payment', 'storage', 'ai'];
+export const ALL_CHANNELS: MsgChannel[] = ['whatsapp', 'sms', 'email', 'calendar', 'payment', 'storage', 'ai', 'stt'];
 
 /**
  * CHANNELS WHERE SEVERAL PROVIDERS COEXIST, EACH WITH ITS OWN ROW (DEF-S5-04).

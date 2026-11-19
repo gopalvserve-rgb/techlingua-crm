@@ -81,6 +81,7 @@ import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 import { SupportTickets } from './support';
 import { CrossSell } from './crosssell';
 import { TemplateManagement } from './docbuilder';
+import { CallInsights, CallIntelOverview, CallRatings, CallSummaries, CallTranscription, QualityMonitoring } from './callintel';
 import { FinanceSettings } from './financesettings';
 import { DiscountMaster } from './discountmaster';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
@@ -8687,6 +8688,13 @@ export const DYN: Record<string, () => JSX.Element> = {
   supportTickets: SupportTickets,
   crossSell: CrossSell,
   aiIntelligence: AiIntelligence,
+  // client 12 Nov 2026 — Communication Intelligence screens (callintel.tsx)
+  callIntelOverview: CallIntelOverview,
+  callInsights: CallInsights,
+  callRatings: CallRatings,
+  qualityMonitoring: QualityMonitoring,
+  callTranscription: CallTranscription,
+  callSummaries: CallSummaries,
   studentDashboard: StudentDashboard,
   studentsList: StudentsList,
   batchesList: BatchesList,
