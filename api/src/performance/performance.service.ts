@@ -67,7 +67,19 @@ export interface PerfFilter { from?: string; to?: string; branchId?: number; ver
  * CALLS: the column exists in the prototype. It reports ACTIVITIES, and the UI labels
  * it "Activity". Telephony is out of scope (a standing project rule) — inventing a call
  * count from nothing would be the worst kind of green tick.
+ *
+ * CALLS, 12 Nov 2026: the counsellor phone app now logs every call (`call_event`), so the
+ * leaderboard ALSO counts real calls — made / connected (talk time > 0) / talk time — from
+ * that log, scoped exactly like the Calls screen (calls.service CALL_SCOPE_COLS, live-dup rows
+ * hidden). "Activity" stays what it was: timeline events.
  */
+
+/** The Calls screen's own scope map and live-row rule (calls.service.ts) — one definition. */
+const CALL_SCOPE_COLS = {
+  owner: 'cev.user_id', team: 'l.team_id', branch: 'l.branch_id',
+  vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id',
+};
+const CALL_IS_REAL = `cev.event <> 'dial_requested' AND cev.src IS DISTINCT FROM 'live-dup'`;
 
 @Injectable()
 export class PerformanceService {
@@ -97,16 +109,19 @@ export class PerformanceService {
       owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
       vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
     }, params);
+    const callWhere = this.resolver.buildScopeWhere(scope, CALL_SCOPE_COLS, params);
     // OPTIONAL dashboard filter (Branch / Vertical / Counsellor) — narrows WITHIN the
     // RBAC scope, it does not widen it. Each value is pushed once and the SAME $N is
     // reused for the lead and enrolment fragments (they filter the same records).
     const leadF: string[] = [];
     const enrF: string[] = [];
-    if (f.branchId) { params.push(f.branchId); leadF.push(`l.branch_id = $${params.length}`); enrF.push(`e.branch_id = $${params.length}`); }
-    if (f.verticalId) { params.push(f.verticalId); leadF.push(`l.vertical_id = $${params.length}`); enrF.push(`e.vertical_id = $${params.length}`); }
-    if (f.userId) { params.push(f.userId); leadF.push(`l.owner_id = $${params.length}`); enrF.push(`e.counsellor_id = $${params.length}`); }
+    const callF: string[] = [];
+    if (f.branchId) { params.push(f.branchId); leadF.push(`l.branch_id = $${params.length}`); enrF.push(`e.branch_id = $${params.length}`); callF.push(`l.branch_id = $${params.length}`); }
+    if (f.verticalId) { params.push(f.verticalId); leadF.push(`l.vertical_id = $${params.length}`); enrF.push(`e.vertical_id = $${params.length}`); callF.push(`l.vertical_id = $${params.length}`); }
+    if (f.userId) { params.push(f.userId); leadF.push(`l.owner_id = $${params.length}`); enrF.push(`e.counsellor_id = $${params.length}`); callF.push(`cev.user_id = $${params.length}`); }
     const leadFilter = leadF.length ? ` AND ${leadF.join(' AND ')}` : '';
     const enrFilter = enrF.length ? ` AND ${enrF.join(' AND ')}` : '';
+    const callFilter = callF.length ? ` AND ${callF.join(' AND ')}` : '';
 
     // `$1`/`$2` are the window; NULL means "no bound". The explicit ::date casts are the
     // Sprint-3 `$3`-cast lesson — an inferred parameter type is a live-only failure.
@@ -125,10 +140,18 @@ export class PerformanceService {
          SELECT e.id, e.counsellor_id, e.created_at, e.net_fee_minor, e.status
            FROM enrolment e WHERE e.deleted_at IS NULL AND ${enrWhere}${enrFilter}
        ),
+       scoped_calls AS (
+         SELECT cev.user_id, cev.duration_s, cev.call_start_at, cev.direction
+           FROM call_event cev LEFT JOIN lead l ON l.id = cev.lead_id
+          WHERE ${CALL_IS_REAL} AND ${callWhere}${callFilter}
+       ),
        people AS (
          SELECT DISTINCT owner_id AS user_id FROM scoped_leads WHERE owner_id IS NOT NULL
          UNION
          SELECT DISTINCT counsellor_id FROM scoped_enr WHERE counsellor_id IS NOT NULL
+         UNION
+         SELECT DISTINCT sc.user_id FROM scoped_calls sc, win w
+          WHERE sc.user_id IS NOT NULL AND sc.call_start_at >= w.d_from AND sc.call_start_at < w.d_to
        )
        SELECT p.user_id,
               u.name AS user_name,
@@ -154,6 +177,17 @@ export class PerformanceService {
               (SELECT count(*) FROM lead_activity la JOIN scoped_leads sl ON sl.id = la.lead_id, win w
                 WHERE la.actor_id = p.user_id
                   AND la.occurred_at >= w.d_from AND la.occurred_at < w.d_to) AS activities,
+              -- CALLS (12 Nov 2026) — from the phone app's call log
+              (SELECT count(*) FROM scoped_calls sc, win w
+                WHERE sc.user_id = p.user_id AND sc.call_start_at >= w.d_from AND sc.call_start_at < w.d_to) AS calls,
+              (SELECT count(*) FROM scoped_calls sc, win w
+                WHERE sc.user_id = p.user_id AND sc.direction = 'out'
+                  AND sc.call_start_at >= w.d_from AND sc.call_start_at < w.d_to) AS calls_out,
+              (SELECT count(*) FROM scoped_calls sc, win w
+                WHERE sc.user_id = p.user_id AND COALESCE(sc.duration_s, 0) > 0
+                  AND sc.call_start_at >= w.d_from AND sc.call_start_at < w.d_to) AS calls_connected,
+              (SELECT COALESCE(sum(sc.duration_s), 0) FROM scoped_calls sc, win w
+                WHERE sc.user_id = p.user_id AND sc.call_start_at >= w.d_from AND sc.call_start_at < w.d_to) AS talk_seconds,
               -- LEADS CONTACTED (Part 2 Row 1) — owned leads with >=1 activity logged
               -- in the window. "Contacted" honestly means "an activity was recorded",
               -- since telephony is out of scope and there is no call log to count.
@@ -211,6 +245,11 @@ export class PerformanceService {
         revenue_minor: Number(r.revenue_minor ?? 0),
         collected_minor: Number(r.collected_minor ?? 0),
         activities: Number(r.activities ?? 0),
+        calls: Number(r.calls ?? 0),
+        calls_out: Number(r.calls_out ?? 0),
+        calls_connected: Number(r.calls_connected ?? 0),
+        talk_seconds: Number(r.talk_seconds ?? 0),
+        connect_pct: Number(r.calls ?? 0) > 0 ? Math.round((Number(r.calls_connected ?? 0) * 1000) / Number(r.calls)) / 10 : null,
         leads_contacted: Number(r.leads_contacted ?? 0),
         meetings: Number(r.meetings ?? 0),
         followups_due: due,
@@ -267,8 +306,9 @@ export class PerformanceService {
   /** The KPI strip above the leaderboard — the same window, the same scope. */
   async summary(scope: ResolvedScope, f: PerfFilter = {}) {
     const rows = await this.leaderboard(scope, f);
-    const sum = (k: 'leads' | 'enrolments' | 'revenue_minor' | 'leads_contacted' | 'meetings') =>
+    const sum = (k: 'leads' | 'enrolments' | 'revenue_minor' | 'leads_contacted' | 'meetings' | 'calls' | 'calls_connected' | 'talk_seconds' | 'calls_out') =>
       rows.reduce((a, r) => a + (r[k] as number), 0);
+    const calls = sum('calls');
     const leads = sum('leads');
     const enrolments = sum('enrolments');
     // Follow-up adherence across the scoped set (Part 2 Row 2): kept-on-time / due.
@@ -284,10 +324,65 @@ export class PerformanceService {
       // NOT `sum('collected_minor')` — see collectedMinor(). This is the money, not the rows.
       collected_minor: await this.collectedMinor(scope, f),
       meetings: sum('meetings'),
+      calls,
+      calls_out: sum('calls_out'),
+      calls_connected: sum('calls_connected'),
+      talk_seconds: sum('talk_seconds'),
+      connect_pct: calls > 0 ? Math.round((sum('calls_connected') * 1000) / calls) / 10 : null,
       followups_due: due,
       followups_ontime: ontime,
       adherence_pct: due > 0 ? Math.round((ontime * 1000) / due) / 10 : null,
       best: rows[0] ? { user_name: rows[0].user_name, enrolments: rows[0].enrolments } : null,
+    };
+  }
+  /**
+   * TREND (12 Nov 2026) — leads, enrolments, calls and connected calls per day over the window
+   * (per month when the window is longer than 92 days). No window = the last 30 days. Same scope
+   * and Branch / Vertical / Counsellor filter as the leaderboard; dates are IST calendar days.
+   */
+  async trend(scope: ResolvedScope, f: PerfFilter = {}) {
+    const today = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    let to = toDateString(f.to) ?? today;
+    let from = toDateString(f.from) ?? null;
+    if (!from) { const d = new Date(`${to}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 29); from = d.toISOString().slice(0, 10); }
+    if (from > to) [from, to] = [to, from];
+    const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+    const bucket = days > 92 ? 'month' : 'day';
+    const fmt = bucket === 'month' ? 'YYYY-MM' : 'YYYY-MM-DD';
+    const params: unknown[] = [from, to];
+    const lw = this.resolver.buildScopeWhere(scope, { owner: 'l.owner_id', team: 'l.team_id', branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' }, params);
+    const ew = this.resolver.buildScopeWhere(scope, { owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id', vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id' }, params);
+    const cw = this.resolver.buildScopeWhere(scope, CALL_SCOPE_COLS, params);
+    const lf: string[] = []; const ef: string[] = []; const cf: string[] = [];
+    if (f.branchId) { params.push(f.branchId); lf.push(`l.branch_id = $${params.length}`); ef.push(`e.branch_id = $${params.length}`); cf.push(`l.branch_id = $${params.length}`); }
+    if (f.verticalId) { params.push(f.verticalId); lf.push(`l.vertical_id = $${params.length}`); ef.push(`e.vertical_id = $${params.length}`); cf.push(`l.vertical_id = $${params.length}`); }
+    if (f.userId) { params.push(f.userId); lf.push(`l.owner_id = $${params.length}`); ef.push(`e.counsellor_id = $${params.length}`); cf.push(`cev.user_id = $${params.length}`); }
+    const and = (xs: string[]) => (xs.length ? ` AND ${xs.join(' AND ')}` : '');
+    const IST = (c: string) => `to_char(${c} AT TIME ZONE 'Asia/Kolkata', '${fmt}')`;
+    const win = (c: string) => `(${c} AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $1::date AND $2::date`;
+    const rows = await this.db.query<any>(
+      `WITH b AS (
+         SELECT DISTINCT to_char(d, '${fmt}') AS k FROM generate_series($1::date, $2::date, '1 day') d
+       ),
+       ld AS (SELECT ${IST('l.created_at')} AS k, count(*) AS n FROM lead l
+               WHERE l.deleted_at IS NULL AND ${win('l.created_at')} AND ${lw}${and(lf)} GROUP BY 1),
+       ed AS (SELECT ${IST('e.created_at')} AS k, count(*) AS n FROM enrolment e
+               WHERE e.deleted_at IS NULL AND e.${ENROLMENT_COUNTS_AS_SOLD} AND ${win('e.created_at')} AND ${ew}${and(ef)} GROUP BY 1),
+       cd AS (SELECT ${IST('cev.call_start_at')} AS k, count(*) AS n,
+                     count(*) FILTER (WHERE COALESCE(cev.duration_s, 0) > 0) AS c,
+                     COALESCE(sum(cev.duration_s), 0) AS t
+                FROM call_event cev LEFT JOIN lead l ON l.id = cev.lead_id
+               WHERE ${CALL_IS_REAL} AND ${win('cev.call_start_at')} AND ${cw}${and(cf)} GROUP BY 1)
+       SELECT b.k AS label, COALESCE(ld.n, 0)::int AS leads, COALESCE(ed.n, 0)::int AS enrolments,
+              COALESCE(cd.n, 0)::int AS calls, COALESCE(cd.c, 0)::int AS connected, COALESCE(cd.t, 0)::bigint AS talk_seconds
+         FROM b LEFT JOIN ld ON ld.k = b.k LEFT JOIN ed ON ed.k = b.k LEFT JOIN cd ON cd.k = b.k
+        ORDER BY b.k`,
+      params,
+    );
+    return {
+      from, to, bucket,
+      points: rows.map((r) => ({ label: r.label, leads: Number(r.leads), enrolments: Number(r.enrolments),
+        calls: Number(r.calls), connected: Number(r.connected), talk_seconds: Number(r.talk_seconds) })),
     };
   }
 }

@@ -404,13 +404,20 @@ export function Funnel({ title, rows, empty }: { title: string; rows: Array<{ la
       <div className="card-pad">
         {rows.length === 0 ? <div className="empty-note">{empty || 'The funnel fills as leads arrive'}</div> : (
           <div className="funnel">
-            {rows.map((r, i) => (
-              <div className="fr" key={i}>
-                <div className="fl">{r.label}</div>
-                <div className="ft" style={{ width: `${Math.max(r.pct, 8)}%`, background: r.color }}>{r.val}</div>
-                <div className="fv">{r.sub || ''}</div>
-              </div>
-            ))}
+            {rows.map((r, i) => {
+              // a long note (e.g. the per-pipeline split of the entry step) goes on its own line
+              const long = (r.sub ?? '').length > 10;
+              return (
+                <div key={i}>
+                  <div className="fr" title={r.sub || undefined}>
+                    <div className="fl">{r.label}</div>
+                    <div className="ft" style={{ width: `${Math.max(r.pct, 8)}%`, background: r.color }}>{r.val}</div>
+                    <div className="fv">{long ? '' : (r.sub || '')}</div>
+                  </div>
+                  {long ? <div className="fnote">{r.sub}</div> : null}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

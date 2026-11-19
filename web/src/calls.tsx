@@ -144,12 +144,15 @@ export function CallLogsMissed() { return <CallLogs lockDir="missed" />; }
 
 export default function CallLogs({ lockDir }: { lockDir?: 'in' | 'out' | 'missed' } = {}) {
   const { can } = useAuth();
+  // 12 Nov 2026: Counselor Performance links here with ?user_id=&from=&to= (read once on mount)
+  const init = useMemo(() => new URLSearchParams(typeof window !== 'undefined' ? window.location.search : ''), []);
   const [q, setQ] = useState('');
   const [dir, setDir] = useState<string>(lockDir ?? '');
   const [addLead, setAddLead] = useState<string | null>(null);   // a missed call's number → new lead
   const [hasRec, setHasRec] = useState(false);
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [from, setFrom] = useState(init.get('from') ?? '');
+  const [to, setTo] = useState(init.get('to') ?? '');
+  const [userId, setUserId] = useState<string>(init.get('user_id') ?? '');
   const [disp, setDisp] = useState<number | null>(null);
   const sumF = useFetch<{ calls_today: number; connected: number; avg_duration: number; recordings: number }>('/calls/summary', []);
   const qs = useMemo(() => {
@@ -159,8 +162,9 @@ export default function CallLogs({ lockDir }: { lockDir?: 'in' | 'out' | 'missed
     if (hasRec) p.set('has_recording', 'true');
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    if (userId) p.set('user_id', userId);
     const s = p.toString(); return s ? `?${s}` : '';
-  }, [q, dir, hasRec, from, to]);
+  }, [q, dir, hasRec, from, to, userId]);
   const { data, loading, reload } = useCalls(qs);
   const rows = data?.rows ?? [];
   const s = sumF.data;
@@ -193,6 +197,10 @@ export default function CallLogs({ lockDir }: { lockDir?: 'in' | 'out' | 'missed
       <div className="card toolbar-surface">
         <div className="filter-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <input className="ainp" placeholder="Search name / phone" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 180 }} />
+          {userId ? (
+            <span className="chip on" data-testid="calls-user-chip">One counsellor{rows[0]?.user_name ? `: ${rows[0].user_name}` : ''}
+              <button className="icon-btn sm" title="Show every counsellor" onClick={() => setUserId('')}><Ic k="x" /></button></span>
+          ) : null}
           {!lockDir && (
             <select className="ainp" value={dir} onChange={(e) => setDir(e.target.value)}>
               <option value="">All directions</option>

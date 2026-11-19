@@ -14,6 +14,7 @@
  *   · no dues/ageing, no installment schedule, no refunds.
  */
 import { useContext, useEffect, useMemo, useState } from 'react';
+import { LineChart } from './charts';
 import { CustomCourseName, CustomCourseOption, coursePayload, isCustomCourse, realCourseId } from './customcourse';
 import { api, getToken } from './api';
 import { useAuth } from './auth';
@@ -1576,8 +1577,17 @@ export function CounsellorPerformance() {
 
   const { data } = useFetch<any[]>(`/performance/leaderboard?${q}`, [q]);
   const summary = useFetch<any>(`/performance/summary?${q}`, [q]);
+  // 12 Nov 2026 — trend (leads / calls / enrolments per day) + each counsellor's target vs achieved
+  const trend = useFetch<any>(`/performance/trend?${q}`, [q]);
+  const targets = useFetch<any[]>(`/performance/target-progress?${q}`, [q]);
   const rows = data ?? [];
   const s = summary.data;
+  const talk = (sec: number | null | undefined) => {
+    const v = Number(sec ?? 0);
+    if (!v) return '0m';
+    const h = Math.floor(v / 3600); const m = Math.round((v % 3600) / 60);
+    return h ? `${h}h ${m}m` : `${m}m`;
+  };
 
   const tat = (m: number | null) => (m === null ? '—' : m < 60 ? `${m}m` : `${Math.round(m / 60)}h`);
   const pctVal = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${v}%`);
@@ -1585,6 +1595,7 @@ export function CounsellorPerformance() {
   const screen = useContext(ScreenCtx);
   const toLeads = (uid: number) => screen?.go('leads', 'all', { owner_id: uid, created_from: range.from, created_to: range.to });
   const toSales = (uid: number) => screen?.go('perf', 'closure', { counsellor_id: uid, from: range.from, to: range.to });
+  const toCalls = (uid: number) => screen?.go('calls', 'overview', { user_id: uid, from: range.from, to: range.to });
   const link = (label: string, onClick: () => void, title: string): Cell => ({
     node: <a className="cell-link" role="link" tabIndex={0} title={title} onClick={onClick}
       onKeyDown={(ev) => { if (ev.key === 'Enter') onClick(); }}>{label}</a>,
@@ -1626,10 +1637,17 @@ export function CounsellorPerformance() {
         { lab: 'Meetings Scheduled', val: String(s?.meetings ?? 0), ic: 'clock' },
         { lab: 'Follow-up Adherence', val: s ? pctVal(s.adherence_pct) : '—', ic: 'perf' },
       ]} />
+      {/* Row 3 — Calls (12 Nov 2026: from the counsellor phone app's call log) */}
+      <Kpis items={[
+        { lab: 'Calls (made + received)', val: String(s?.calls ?? 0), ic: 'calls' },
+        { lab: 'Outgoing calls', val: String(s?.calls_out ?? 0), ic: 'phone' },
+        { lab: 'Connected', val: s ? `${s.calls_connected ?? 0}${s.connect_pct != null ? ` · ${s.connect_pct}%` : ''}` : '—', ic: 'check' },
+        { lab: 'Talk time', val: s ? talk(s.talk_seconds) : '—', ic: 'clock' },
+      ]} />
 
       <TableCard
         title="Leaderboard" icon="perf" listKey="counsellor-performance" serial
-        cols={['Counsellor', 'Leads', 'Contacted', 'Activity', 'Conv%', 'Enrol', 'Meetings', 'Revenue booked', 'Collected', 'TAT', 'Adherence']}
+        cols={['Counsellor', 'Leads', 'Contacted', 'Activity', 'Calls', 'Connected', 'Talk time', 'Conv%', 'Enrol', 'Meetings', 'Revenue booked', 'Collected', 'TAT', 'Adherence']}
         empty="Leaderboard fills as leads & closures accumulate"
         rows={rows.map((r): Cell[] => [
           { node: <a className="cell-link" role="link" tabIndex={0} title={`Open ${r.user_name}'s leads`}
@@ -1637,6 +1655,9 @@ export function CounsellorPerformance() {
           link(String(r.leads), () => toLeads(r.user_id), `Open ${r.user_name}'s leads`),
           link(String(r.leads_contacted ?? 0), () => toLeads(r.user_id), `Open ${r.user_name}'s leads`),
           String(r.activities),
+          link(String(r.calls ?? 0), () => toCalls(r.user_id), `Open ${r.user_name}'s calls`),
+          link(`${r.calls_connected ?? 0}${r.connect_pct != null ? ` (${r.connect_pct}%)` : ''}`, () => toCalls(r.user_id), `Open ${r.user_name}'s calls`),
+          { mono: talk(r.talk_seconds), sort: Number(r.talk_seconds ?? 0) } as Cell,
           // no leads in the range: a conversion % would be a made-up number
           r.leads > 0 ? { b: [`${r.conversion_pct}%`, r.conversion_pct >= 20 ? 'b-green' : r.conversion_pct >= 10 ? 'b-indigo' : 'b-gray'] } : '—',
           link(String(r.enrolments), () => toSales(r.user_id), `Open ${r.user_name}'s enrolments`),
@@ -1647,10 +1668,13 @@ export function CounsellorPerformance() {
           r.adherence_pct === null ? '—' : `${r.adherence_pct}%`,
         ])}
       />
+      <PerfTargets rows={targets.data ?? []} />
+      <PerfTrend data={trend.data} />
       <div className="card" style={{ marginTop: 12 }}>
         <div className="card-pad">
           <div className="sub" style={{ marginTop: 0 }}>
-            <b>Row 1 (Sales):</b> Leads Assigned · Leads Contacted (leads with a call, note or other activity logged) · Enrolments · Conversion % (enrolments / owned leads).
+            <b>Calls:</b> from the counsellor phone app's call log — Connected means the call had talk time; click a number to open those calls.
+            <b> Row 1 (Sales):</b> Leads Assigned · Leads Contacted (leads with a call, note or other activity logged) · Enrolments · Conversion % (enrolments / owned leads).
             <b> Row 2 (Financial &amp; Productivity):</b> Revenue Booked (net fee of approved enrolments) · Revenue Collected (cash receipted) · Meetings Scheduled (calendar meetings) · Follow-up Adherence (follow-ups completed on time). They are different numbers and are shown separately on purpose.
             All figures respect the calendar range and the Branch / Vertical / Counsellor filter above.
           </div>
@@ -2261,6 +2285,70 @@ export function ApprovalPolicyCard() {
         ))}
         <button className="btn primary" disabled={busy} onClick={save}><Ic k="check" />{busy ? 'Saving…' : 'Save'}</button>
       </div>
+    </div>
+  );
+}
+
+
+/* ---- Counselor Performance: target vs achieved + trend (client 12 Nov 2026) ---- */
+
+/** One counsellor's progress against their own target for the period (Performance › Targets). */
+function PerfTargets({ rows }: { rows: any[] }) {
+  if (!rows.length) {
+    return (
+      <div className="card" style={{ marginTop: 12 }}>
+        <div className="card-head"><h3><Ic k="target" />Target vs achieved</h3></div>
+        <div className="card-pad"><div className="empty-note">No counsellor has a target for this period yet — set one in Performance &amp; Conversion › Targets.</div></div>
+      </div>
+    );
+  }
+  const bar = (actual: number, target: number, money = false) => {
+    if (!target) return <span className="sub">—</span>;
+    const pct = Math.round((actual / target) * 100);
+    return (
+      <div title={`${pct}% of target`} style={{ minWidth: 120 }}>
+        <div style={{ fontSize: 12 }}><b>{money ? fmtINR(actual) : actual}</b> <span className="sub">/ {money ? fmtINR(target) : target}</span></div>
+        <div style={{ height: 6, background: 'var(--surface-3)', borderRadius: 4, marginTop: 3 }}>
+          <div style={{ height: 6, width: `${Math.min(pct, 100)}%`, background: pct >= 100 ? 'var(--success)' : 'var(--primary)', borderRadius: 4 }} />
+        </div>
+      </div>
+    );
+  };
+  const d = (v: string) => new Date(String(v).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  return (
+    <TableCard title="Target vs achieved" icon="target"
+      cols={['Counsellor', 'Period', 'Admissions', 'Revenue booked', 'Collection', 'Leads', 'Meetings']}
+      empty="No targets"
+      rows={rows.map((t): Cell[] => [
+        { node: <b>{t.user_name ?? t.label}</b> },
+        `${d(t.period_start)} – ${d(new Date(new Date(String(t.period_end).slice(0, 10)).getTime() - 86_400_000).toISOString())}`,
+        { node: bar(t.actuals.admissions, t.targets.admissions) },
+        { node: bar(t.actuals.revenue_minor, t.targets.revenue_minor, true) },
+        { node: bar(t.actuals.collection_minor, t.targets.collection_minor, true) },
+        { node: bar(t.actuals.leads, t.targets.leads) },
+        { node: bar(t.actuals.meetings, t.targets.meetings) },
+      ])}
+    />
+  );
+}
+
+/** Small multiples — leads, calls and enrolments per day (or month), one chart each so every
+ *  series keeps its own honest axis. */
+function PerfTrend({ data }: { data: any }) {
+  const pts: any[] = data?.points ?? [];
+  if (!pts.length) return null;
+  const n = (v: number) => Number(v).toLocaleString('en-IN');
+  const per = data.bucket === 'month' ? 'month' : 'day';
+  const charts: Array<[string, string]> = [['leads', `New leads per ${per}`], ['calls', `Calls per ${per}`], ['enrolments', `Enrolments per ${per}`]];
+  return (
+    <div className="perf-trend" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginTop: 12 }}>
+      {charts.map(([k, title]) => (
+        <div className="card" key={k} data-testid={`perf-trend-${k}`}>
+          <div className="card-head"><h3><Ic k="analytics" />{title}</h3>
+            <span className="sub">{n(pts.reduce((a, p) => a + Number(p[k] ?? 0), 0))} total</span></div>
+          <div className="card-pad"><LineChart data={pts.map((p) => ({ label: p.label, value: Number(p[k] ?? 0) }))} fmt={n} ariaLabel={title} height={180} /></div>
+        </div>
+      ))}
     </div>
   );
 }

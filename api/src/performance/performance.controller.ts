@@ -40,6 +40,24 @@ export class PerformanceController {
     return this.perf.summary(scope, perfFilter(q));
   }
 
+  // 12 Nov 2026 — leads / enrolments / calls per day for the trend chart
+  @Get('trend')
+  @RequirePermission('performance.read')
+  trend(@CurrentScope() scope: ResolvedScope, @Query() q: any) {
+    return this.perf.trend(scope, perfFilter(q));
+  }
+
+  // 12 Nov 2026 — each visible counsellor's own target for the period, with live actuals
+  @Get('target-progress')
+  @RequirePermission('performance.read')
+  async targetProgress(@CurrentScope() scope: ResolvedScope, @Query() q: any) {
+    const f = perfFilter(q);
+    const rows = await this.perf.leaderboard(scope, f);
+    const at = (typeof q?.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(q.from)) ? q.from
+      : new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    return this.targetDefs.userTargetsAt(rows.map((r) => r.user_id), at);
+  }
+
   // ----- Legacy Monthly Target (still feeds the Sprint-3 dashboard bar) -----
   @Get('targets')
   @RequirePermission('target.read')

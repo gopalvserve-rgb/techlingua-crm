@@ -13,7 +13,7 @@
  * statuses as follow-up tasks" and a second task screen with the same fields is the fork
  * that sentence forbids.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
@@ -23,6 +23,8 @@ import { UserPicker } from './userpicker';
 import { fmtINR } from './money';
 import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 import { DateRange } from './daterange';
+import { ScreenCtx } from './dyn';
+import { DonutChart, HBarChart, LineChart } from './charts';
 
 /* ==================================================================== */
 /*  shared                                                               */
@@ -50,12 +52,15 @@ export interface RptConfig {
   date_preset: string;
   date_from?: string;
   date_to?: string;
+  limit?: number;
+  chart?: { type: 'bar' | 'line' | 'pie'; measure?: string };
 }
 export interface RunOut {
   columns: RptColumn[]; rows: unknown[][]; row_count: number; grouped: boolean;
   truncated: boolean; entity_label: string;
   scope: { user_id: number; unrestricted: boolean; note: string };
   generated_at: string;
+  chart?: RptConfig['chart'] | null;
 }
 
 const RowBtns = ({ items }: { items: Array<[string, string, () => void]> }) => (
@@ -109,10 +114,44 @@ const PhaseNote = ({ children }: { children: React.ReactNode }) => (
 /*  THE REPORT GRID — one renderer, every screen                          */
 /* ==================================================================== */
 
+/** Format a chart value the way its column type says (money is paise on the wire). */
+const chartFmt = (type: string) => (v: number) => (type === 'money' ? fmtINR(Math.round(v))
+  : Number(v).toLocaleString('en-IN', { maximumFractionDigits: 1 }));
+
+/** Client 12 Nov 2026 — a grouped report draws the chart saved with it (bar / line / donut). The
+ *  category is the group column(s); the value is the chosen measure (default: the row count). */
+export function ReportChart({ out }: { out: RunOut }) {
+  const ch = out.chart;
+  if (!out.grouped || !ch || !out.rows.length) return null;
+  const countIdx = out.columns.findIndex((c) => c.key === '_count');
+  const groupIdx = out.columns.map((_, i) => i).filter((i) => i < countIdx);
+  let mIdx = out.columns.findIndex((c) => c.key === (ch.measure ?? '_count'));
+  if (mIdx < 0) mIdx = countIdx;
+  const measure = out.columns[mIdx];
+  let data = out.rows.map((r) => ({
+    label: groupIdx.map((i) => fmtCell(r[i], out.columns[i].type)).join(' · '),
+    value: Number(r[mIdx] ?? 0),
+  }));
+  const title = `${measure.label} by ${groupIdx.map((i) => out.columns[i].label).join(' · ')}`;
+  const fmt = chartFmt(measure.type);
+  if (ch.type === 'line') data = [...data].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  return (
+    <div className="card" style={{ marginBottom: 12 }} data-testid="report-chart">
+      <div className="card-head"><h3><Ic k="analytics" />{title}</h3></div>
+      <div className="card-pad">
+        {ch.type === 'pie' ? <DonutChart data={data} fmt={fmt} ariaLabel={title} />
+          : ch.type === 'line' ? <LineChart data={data.map((d) => ({ ...d, label: out.rows.length ? d.label : '' }))} fmt={fmt} ariaLabel={title} />
+            : <HBarChart data={data} fmt={fmt} ariaLabel={title} />}
+      </div>
+    </div>
+  );
+}
+
 export function ReportGrid({ out }: { out: RunOut | null }) {
   if (!out) return null;
   return (
     <>
+      <ReportChart out={out} />
       <TableCard
         title={`${out.entity_label} · ${out.row_count} row${out.row_count === 1 ? '' : 's'}`}
         cols={out.columns.map((c) => c.label)}
@@ -210,7 +249,18 @@ export function ReportBuilder() {
   const entity = entities.find((e) => e.key === entityKey);
 
   useEffect(() => {
-    if (!entityKey && entities.length) { setEntityKey(entities[0].key); setCfg(emptyConfig(entities[0])); }
+    if (entityKey || !entities.length) return;
+    // "Open in builder" from Reports hands a saved definition over (12 Nov 2026)
+    let handed: any = null;
+    try { handed = JSON.parse(sessionStorage.getItem('rb:load') ?? 'null'); sessionStorage.removeItem('rb:load'); } catch { handed = null; }
+    const e = handed && entities.find((x) => x.key === handed.entity);
+    if (e) {
+      setEntityKey(e.key);
+      setCfg({ ...emptyConfig(e), ...handed.config, filters: handed.config?.filters ?? [], group_by: handed.config?.group_by ?? [], sort: handed.config?.sort ?? [] });
+      setName(handed.name ? `${handed.name} (copy)` : '');
+      return;
+    }
+    setEntityKey(entities[0].key); setCfg(emptyConfig(entities[0]));
   }, [entities.length]);
 
   const pickEntity = (k: string) => {
@@ -225,9 +275,15 @@ export function ReportBuilder() {
   const toggleCol = (k: string) => setCfg((c) => ({
     ...c, columns: c.columns.includes(k) ? c.columns.filter((x) => x !== k) : [...c.columns, k],
   }));
-  const toggleGroup = (k: string) => setCfg((c) => ({
-    ...c, group_by: c.group_by.includes(k) ? c.group_by.filter((x) => x !== k) : [...c.group_by, k],
-  }));
+  const toggleGroup = (k: string) => setCfg((c) => {
+    const group_by = c.group_by.includes(k) ? c.group_by.filter((x) => x !== k) : [...c.group_by, k];
+    // a chart only exists for a grouped report
+    return { ...c, group_by, chart: group_by.length ? (c.chart ?? { type: 'bar', measure: '_count' }) : undefined };
+  });
+  // what a grouped report can plot: its row count, or the total / average of a picked measure
+  const measures = [{ key: '_count', label: 'Count of rows' },
+    ...(entity?.columns ?? []).filter((c) => cfg.columns.includes(c.key) && !cfg.group_by.includes(c.key) && c.aggregate && c.aggregate !== 'count')
+      .map((c) => ({ key: c.key, label: `${c.label} (${c.aggregate === 'avg' ? 'average' : 'total'})` }))];
 
   const opsFor = (colKey: string) => {
     const col = entity?.columns.find((c) => c.key === colKey);
@@ -339,6 +395,33 @@ export function ReportBuilder() {
             </div>
           </div>
 
+          {/* ---- chart (12 Nov 2026) */}
+          {cfg.group_by.length ? (
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              <div className="fld">
+                <label htmlFor="rb-chart">Chart</label>
+                <select id="rb-chart" className="ainp" data-testid="rb-chart" value={cfg.chart?.type ?? ''}
+                  onChange={(e) => setCfg((c) => ({ ...c, chart: e.target.value ? { type: e.target.value as 'bar' | 'line' | 'pie', measure: c.chart?.measure ?? '_count' } : undefined }))}>
+                  <option value="">No chart — table only</option>
+                  <option value="bar">Bar chart</option>
+                  <option value="line">Line chart (over time)</option>
+                  <option value="pie">Donut chart (share of total)</option>
+                </select>
+                <div className="hint">Line charts suit a month / day grouping; donut charts a handful of categories.</div>
+              </div>
+              {cfg.chart ? (
+                <div className="fld">
+                  <label htmlFor="rb-measure">Plot</label>
+                  <select id="rb-measure" className="ainp" value={cfg.chart.measure ?? '_count'}
+                    onChange={(e) => setCfg((c) => ({ ...c, chart: c.chart ? { ...c.chart, measure: e.target.value } : undefined }))}>
+                    {measures.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+                  </select>
+                  <div className="hint">Pick a money or number column above to plot its total.</div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* ---- filters */}
           <div className="fld" style={{ marginTop: 12 }}>
             <label>Filters</label>
@@ -448,6 +531,11 @@ export function ReportBuilder() {
 
 export function SavedReports() {
   const { can } = useAuth();
+  const screen = useContext(ScreenCtx);
+  const openInBuilder = (r: any) => {
+    try { sessionStorage.setItem('rb:load', JSON.stringify({ entity: r.entity, config: r.config ?? {}, name: r.name })); } catch { /* private mode */ }
+    screen?.go('analytics', 'builder');
+  };
   const [tick, setTick] = useState(0);
   const list = useFetch<any[]>('/reports', [tick]);
   const cat = useFetch<RptCatalog>('/reports/catalog', []);
@@ -469,7 +557,7 @@ export function SavedReports() {
   };
 
   const rows = (list.data ?? []).map((r) => [
-    { node: <span className="nm">{r.name}</span> } as Cell,
+    { node: <div><span className="nm">{r.name}</span>{r.description ? <div className="sub">{r.description}</div> : null}</div> } as Cell,
     { b: [r.entity_label, 'b-indigo'] } as Cell,
     r.is_standard ? { b: ['Standard', 'b-cyan'] } as Cell
       : r.is_mine ? { b: ['Mine', 'b-green'] } as Cell
@@ -479,6 +567,7 @@ export function SavedReports() {
     {
       node: <RowBtns items={[
         ['play', 'Run', () => run(r)],
+        ...(can('report.create') ? [['copy', r.is_standard ? 'Open a copy in Report Builder' : 'Open in Report Builder', () => openInBuilder(r)] as [string, string, () => void]] : []),
         ...(can('report.share') ? [['share', 'Share', () => setShare(r)] as [string, string, () => void]] : []),
         ...(can('report.schedule') ? [['clock', 'Schedule', () => setSched(r)] as [string, string, () => void]] : []),
         ...(can('report.delete') && !r.is_standard ? [['trash', 'Delete', () => remove(r)] as [string, string, () => void]] : []),
@@ -488,8 +577,11 @@ export function SavedReports() {
 
   return (
     <>
-      <TableCard title="Saved reports" cols={['Report', 'Data source', 'Owner', 'Shared with', 'Scheduled', '']}
+      <TableCard title="Reports" cols={['Report', 'Data source', 'Owner', 'Shared with', 'Scheduled', '']}
         rows={rows} empty="No saved reports yet — build one in Report Builder." />
+      <div className="sub" style={{ marginTop: 6 }}>
+        <b>Standard</b> reports are ready-made and run in your own access. Use <Ic k="copy" /> to open a copy in Report Builder and change it.
+      </div>
 
       {open ? (
         <div style={{ marginTop: 14 }}>
@@ -831,7 +923,8 @@ export function FunnelReport() {
   const rows = (d.data?.stages ?? []).map((s: any, i: number) => ({
     label: s.name,
     val: String(s.count),
-    sub: s.from_previous_pct == null ? '' : `${s.from_previous_pct}% of previous · ${s.dropped} dropped`,
+    sub: [s.parts?.length ? s.parts.map((p: any) => `${p.name} ${p.count}`).join(' · ') : '',
+      s.from_previous_pct == null ? '' : `${s.from_previous_pct}% of previous · ${s.dropped} dropped`].filter(Boolean).join(' — '),
     pct: s.of_first_pct ?? 0,
     color: COLORS[i % COLORS.length],
   }));

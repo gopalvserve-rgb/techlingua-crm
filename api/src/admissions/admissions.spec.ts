@@ -104,24 +104,24 @@ function makeService() {
 describe('Public admission submit — guarded intake', () => {
   it('a honeypot hit is silently accepted and creates nothing', async () => {
     const { svc, inserts } = makeService();
-    const out = await svc.submitPublic('k', { _hp: 'iamabot', full_name: 'X', phone: '+919812345678', branch_id: 1, vertical_id: 2 }, { ip: '1.1.1.1' });
+    const out = await svc.submitPublic('k', { _hp: 'iamabot', full_name: 'X', phone: '+919812345678', branch_id: 1, vertical_id: 2, course_text: 'German A1' }, { ip: '1.1.1.1' });
     expect(out).toEqual({ ok: true });
     expect(inserts.length).toBe(0);
   });
   it('rejects an invalid Aadhaar (must be 12 digits)', async () => {
     const { svc } = makeService();
-    await expect(svc.submitPublic('k', { full_name: 'A', phone: '+919812345678', aadhaar: '123', branch_id: 1, vertical_id: 2 }, { ip: '2.2.2.2' }))
+    await expect(svc.submitPublic('k', { full_name: 'A', phone: '+919812345678', aadhaar: '123', branch_id: 1, vertical_id: 2, course_text: 'German A1' }, { ip: '2.2.2.2' }))
       .rejects.toThrow(/Aadhaar/);
   });
   it('rejects an invalid Indian pincode (must be 6 digits)', async () => {
     const { svc } = makeService();
-    await expect(svc.submitPublic('k', { full_name: 'A', phone: '+919812345678', pincode: '12', branch_id: 1, vertical_id: 2 }, { ip: '3.3.3.3' }))
+    await expect(svc.submitPublic('k', { full_name: 'A', phone: '+919812345678', pincode: '12', branch_id: 1, vertical_id: 2, course_text: 'German A1' }, { ip: '3.3.3.3' }))
       .rejects.toThrow(/pincode/);
   });
   it('requires a name and a phone', async () => {
     const { svc } = makeService();
-    await expect(svc.submitPublic('k', { phone: '+919812345678', branch_id: 1, vertical_id: 2 }, { ip: '4.4.4.4' })).rejects.toThrow(/name/i);
-    await expect(svc.submitPublic('k', { full_name: 'A', branch_id: 1, vertical_id: 2 }, { ip: '4.4.4.5' })).rejects.toThrow(/mobile/i);
+    await expect(svc.submitPublic('k', { phone: '+919812345678', branch_id: 1, vertical_id: 2, course_text: 'German A1' }, { ip: '4.4.4.4' })).rejects.toThrow(/name/i);
+    await expect(svc.submitPublic('k', { full_name: 'A', branch_id: 1, vertical_id: 2, course_text: 'German A1' }, { ip: '4.4.4.5' })).rejects.toThrow(/mobile/i);
   });
   it('creates a pending admission for a valid submission', async () => {
     const { svc, inserts } = makeService();
@@ -132,9 +132,15 @@ describe('Public admission submit — guarded intake', () => {
     expect(payload.full_name).toBe('Riya Sharma');
     expect(payload.aadhaar).toBe('123456789012');   // whitespace stripped
   });
+  it('requires the course — picked from the vertical or typed (client 12 Nov 2026)', async () => {
+    const { svc } = makeService();
+    await expect(svc.submitPublic('k', { full_name: 'A', phone: '+919812345678', branch_id: 1, vertical_id: 2 }, { ip: '6.6.6.6' }))
+      .rejects.toThrow(/course/i);
+  });
+
   it('rate-limits abusive bursts (>20 / minute / ip+key)', async () => {
     const { svc } = makeService();
-    const body = { full_name: 'A', phone: '+919812345678', branch_id: 1, vertical_id: 2 };
+    const body = { full_name: 'A', phone: '+919812345678', branch_id: 1, vertical_id: 2, course_text: 'German A1' };
     let ok = 0; let blocked = 0;
     for (let i = 0; i < 25; i++) {
       try { await svc.submitPublic('kk', body, { ip: '9.9.9.9' }); ok++; } catch (e: any) { if (/Too many/.test(e.message)) blocked++; }
@@ -215,7 +221,7 @@ describe('Admission document attachments (education + KYC)', () => {
   it('rejects a submit whose attachment is a disallowed type', async () => {
     const { svc } = makeDocDb();
     await expect(svc.submitPublic('k', {
-      full_name: 'A', phone: '9812345678', branch_id: 1, vertical_id: 2,
+      full_name: 'A', phone: '9812345678', branch_id: 1, vertical_id: 2, course_text: 'German A1',
       documents: [{ doc_type: 'other', file_name: 'x.exe', mime: 'application/x-msdownload', content: b64('MZ') }],
     }, { ip: '5.5.5.8' })).rejects.toThrow(/PDF, JPG or PNG/);
   });

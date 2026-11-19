@@ -401,7 +401,7 @@ export function LeadSheet({ leadId, mode: initialMode = 'view', initialTab, onCl
                   // another campaign would put the lead on the wrong path
                   ? sel('source_id', withExtra('source_id', dedupeSources(ref.sources.filter((s: any) =>
                       s.campaign_id == null || Number(s.campaign_id) === Number(lead.campaign_id)
-                      || Number(s.id) === Number(lead.source_id)))), false)
+                      || Number(s.id) === Number(lead.source_id)), lead)), false)
                   : <span>{lead.source_name}{lead.source_deleted ? ' (deleted)' : ''}</span>}
               </div></div>
               <div className="f"><label>Course interest{mlink('course', 'course_id')}</label><div className="iv">

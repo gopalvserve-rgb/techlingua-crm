@@ -99,6 +99,11 @@ export class StorageService {
   }
 
   /** verticals/<vid>/logo/<uuid>-<filename> — the vertical brand logo (private, presigned). */
+  /** admission-forms/logo/<uuid>-<filename> — an online admission form's own header logo (12 Nov 2026). */
+  admissionFormLogoKey(fileName: string): string {
+    return `admission-forms/logo/${randomUUID()}-${this.safeName(fileName)}`;
+  }
+
   verticalLogoKey(verticalId: number, fileName: string): string {
     return `verticals/${verticalId}/logo/${randomUUID()}-${this.safeName(fileName)}`;
   }

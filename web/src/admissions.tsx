@@ -165,6 +165,7 @@ function AdmissionDetail({ id, onClose, onChanged, rd }: { id: number; onClose: 
           ['Status', a.status === 'approved' ? `Approved → ${a.student_no ?? 'student'}` : a.status === 'rejected' ? `Rejected${a.reject_reason ? ` · ${a.reject_reason}` : ''}` : 'Pending review'],
           ['Admission No.', dash(a.admission_no)],
           ['Placement', `${dash(a.branch_name)} › ${dash(a.vertical_name)}${a.course_name ? ` › ${a.course_name}` : ''}`],
+          ...(!a.course_name && data.course_text ? [['Course (typed by applicant)', <span style={{ color: 'var(--amber)' }}>{data.course_text}</span>] as [string, any]] : []),
           ['Reviewed by', dash(a.reviewed_by_name)],
         ]} />
       </Section>
@@ -319,16 +320,17 @@ function ApplicationLinksTab() {
   );
 }
 
-/* ---- Admissions & Enrolment — 4 tabs (client Sep-1) ------------------------- */
+/* ---- Admissions & Enrolment — 4 tabs (client Sep-1; order per client 12 Nov 2026:
+ *      Master Directory › Direct Enrolment › Online Application › Application Link) ---- */
 const ADM_TABS: Array<{ id: string; label: string; icon: string }> = [
-  { id: 'online', label: 'Online Applications', icon: 'doc' },
-  { id: 'direct', label: 'Direct Enrolments', icon: 'users' },
-  { id: 'links', label: 'Application Links', icon: 'link' },
   { id: 'master', label: 'Master Directory', icon: 'students' },
+  { id: 'direct', label: 'Direct Enrolments', icon: 'users' },
+  { id: 'online', label: 'Online Applications', icon: 'doc' },
+  { id: 'links', label: 'Application Links', icon: 'link' },
 ];
 export function AdmissionsScreen() {
   const { can } = useAuth();
-  const [tab, setTab] = useState('online');
+  const [tab, setTab] = useState('master');
   const [newEnrol, setNewEnrol] = useState(false);
   const [gen, setGen] = useState(0);
   const tabs = ADM_TABS.filter((t) => t.id !== 'links' || can('admission.manage'));
@@ -356,6 +358,52 @@ export function AdmissionsScreen() {
   );
 }
 
+/** Presign + PUT a header logo to R2; returns the r2_key to save on the link (12 Nov 2026). */
+async function uploadFormLogo(file: File): Promise<string> {
+  if (!/^image\/(png|jpe?g|webp|svg\+xml)$/.test(file.type)) throw new Error('The logo must be a JPG, PNG, WEBP or SVG image.');
+  if (file.size > 2 * 1024 * 1024) throw new Error('The logo must be under 2 MB.');
+  const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/admissions/forms/logo/upload-url', { file_name: file.name, content_type: file.type });
+  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+  if (!res.ok) throw new Error('Logo upload failed');
+  return r2_key;
+}
+
+const EMPTY_HEADER = { name: '', address: '', phone: '', email: '', logo_r2_key: '' };
+
+/** Logo, name, address, phone, email shown at the top of the public form. Blank = the vertical's. */
+function FormHeaderFields({ value, onChange, defaults }: { value: any; onChange: (h: any) => void; defaults: any }) {
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+  const set = (k: string, v: string) => onChange({ ...value, [k]: v });
+  const pick = async (e: any) => {
+    const f: File | undefined = e.target.files?.[0]; e.target.value = '';
+    if (!f) return;
+    setBusy(true);
+    try { const key = await uploadFormLogo(f); onChange({ ...value, logo_r2_key: key }); setPreview(URL.createObjectURL(f)); toast('Logo uploaded'); }
+    catch (err: any) { toast(err.message, true); } finally { setBusy(false); }
+  };
+  const logo = preview ?? (value.logo_r2_key ? null : defaults?.logo_url);
+  return (
+    <>
+      <div className="fhint" style={{ margin: '10px 0 6px' }}>Shown at the top of the form. Leave a field blank to use the vertical's details (Hierarchy › Verticals).</div>
+      <div className="form-grid">
+        <div className="fld"><label>Logo</label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {logo ? <img src={logo} alt="" style={{ height: 40, maxWidth: 120, objectFit: 'contain', border: '1px solid var(--border)', borderRadius: 6, padding: 2 }} />
+              : value.logo_r2_key ? <span className="bdg b-green">Own logo</span> : <span className="sub">No logo</span>}
+            <label className="btn sm" style={{ cursor: 'pointer' }}><Ic k="up" />{busy ? 'Uploading…' : 'Upload'}
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style={{ display: 'none' }} onChange={pick} data-testid="form-logo-input" /></label>
+            {value.logo_r2_key ? <button className="btn sm" onClick={() => { onChange({ ...value, logo_r2_key: '' }); setPreview(null); }}>Use vertical logo</button> : null}
+          </div></div>
+        <div className="fld"><label>Institute name</label><input className="ainp" placeholder={defaults?.name ?? ''} value={value.name ?? ''} onChange={(e) => set('name', e.target.value)} data-testid="form-h-name" /></div>
+        <div className="fld" style={{ gridColumn: '1 / -1' }}><label>Address</label><input className="ainp" placeholder={defaults?.address ?? ''} value={value.address ?? ''} onChange={(e) => set('address', e.target.value)} data-testid="form-h-address" /></div>
+        <div className="fld"><label>Contact phone</label><input className="ainp" placeholder={defaults?.phone ?? ''} value={value.phone ?? ''} onChange={(e) => set('phone', e.target.value)} data-testid="form-h-phone" /></div>
+        <div className="fld"><label>Contact email</label><input className="ainp" placeholder={defaults?.email ?? ''} value={value.email ?? ''} onChange={(e) => set('email', e.target.value)} data-testid="form-h-email" /></div>
+      </div>
+    </>
+  );
+}
+
 function FormLinksPanel({ rd }: { rd: any }) {
   const [tick, setTick] = useState(0);
   const list = useFetch<any[]>('/admissions/forms', [tick]);
@@ -364,17 +412,29 @@ function FormLinksPanel({ rd }: { rd: any }) {
   const [vertical, setVertical] = useState('');
   const [course, setCourse] = useState('');
   const [title, setTitle] = useState('');
+  const [header, setHeader] = useState<any>(EMPTY_HEADER);
+  const [editing, setEditing] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const after = () => setTick((t) => t + 1);
   const vOpts = rd.verticals.filter((vt: any) => !branch || Number(vt.branch_id) === Number(branch));
   const cOpts = rd.courses.filter((c: any) => (!vertical || Number(c.meta?.vertical_id) === Number(vertical)) && (!branch || Number(c.meta?.branch_id) === Number(branch)));
+  // what the header shows when a field is left blank (the vertical's, else the branch's details)
+  const defaults = useFetch<any>(branch && vertical ? `/admissions/forms/header-defaults?branch_id=${branch}&vertical_id=${vertical}` : null, [branch, vertical]);
 
   const publicUrl = (key: string) => `${window.location.origin}/admit/${key}`;
   const create = async () => {
+    if (!branch || !vertical) { toast('Choose the branch and vertical this form is for', true); return; }
     setBusy(true);
     try {
-      await api.post('/admissions/forms', { title: title || undefined, branch_id: branch || undefined, vertical_id: vertical || undefined, course_id: course || undefined });
-      toast('Form link created'); setTitle(''); setBranch(''); setVertical(''); setCourse(''); after();
+      await api.post('/admissions/forms', { title: title || undefined, branch_id: branch, vertical_id: vertical, course_id: course || undefined, header });
+      toast('Form link created'); setTitle(''); setBranch(''); setVertical(''); setCourse(''); setHeader(EMPTY_HEADER); after();
+    } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  const saveEdit = async () => {
+    setBusy(true);
+    try {
+      await api.patch(`/admissions/forms/${editing.id}`, { title: editing.title, header: editing.header, course_id: editing.course_id || null });
+      toast('Form link updated'); setEditing(null); after();
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
   const copy = (key: string) => { navigator.clipboard?.writeText(publicUrl(key)); toast('Public form URL copied'); };
@@ -387,21 +447,37 @@ function FormLinksPanel({ rd }: { rd: any }) {
       <Section title="Generate a link">
         <div className="form-grid">
           <div className="fld"><label>Title</label><input className="ainp" placeholder="Admission Form" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
-          <div className="fld"><label>Branch (optional — locks the form)</label>
-            <select className="ainp" value={branch} onChange={(e) => { setBranch(e.target.value); setVertical(''); setCourse(''); }}>
-              <option value="">Applicant chooses</option>{rd.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          <div className="fld"><label>Branch *</label>
+            <select className="ainp" value={branch} onChange={(e) => { setBranch(e.target.value); setVertical(''); setCourse(''); }} data-testid="form-branch">
+              <option value="">Select a branch</option>{rd.branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select></div>
-          <div className="fld"><label>Vertical (optional)</label>
-            <select className="ainp" value={vertical} onChange={(e) => { setVertical(e.target.value); setCourse(''); }} disabled={!branch}>
-              <option value="">Applicant chooses</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          <div className="fld"><label>Vertical *</label>
+            <select className="ainp" value={vertical} onChange={(e) => { setVertical(e.target.value); setCourse(''); }} disabled={!branch} data-testid="form-vertical">
+              <option value="">Select a vertical</option>{vOpts.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select></div>
-          <div className="fld"><label>Course (optional)</label><MasterQuickAdd type="course" onAdded={(row) => setCourse(String(row.id))} />
+          <div className="fld"><label>Course (optional — fixes the course)</label><MasterQuickAdd type="course" onAdded={(row) => setCourse(String(row.id))} />
             <select className="ainp" value={course} onChange={(e) => setCourse(e.target.value)} disabled={!vertical}>
-              <option value="">Applicant chooses</option>{cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="">Applicant chooses from the vertical's courses</option>{cOpts.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select></div>
         </div>
-        <div style={{ marginTop: 8 }}><button className="btn primary" onClick={create} disabled={busy}><Ic k="plus" />Create link</button></div>
+        {branch && vertical ? <FormHeaderFields value={header} onChange={setHeader} defaults={defaults.data} /> : null}
+        <div style={{ marginTop: 8 }}><button className="btn primary" onClick={create} disabled={busy || !branch || !vertical} data-testid="form-create"><Ic k="plus" />Create link</button></div>
       </Section>
+      {editing && (
+        <DetailModal title={`Edit form link — ${editing.title}`} icon="link" onClose={() => setEditing(null)} width={720}
+          footer={<div style={{ display: 'flex', gap: 8 }}><button className="btn" onClick={() => setEditing(null)}>Cancel</button>
+            <button className="btn primary" onClick={saveEdit} disabled={busy} data-testid="form-edit-save"><Ic k="check" />Save</button></div>}>
+          <div className="form-grid">
+            <div className="fld"><label>Title</label><input className="ainp" value={editing.title ?? ''} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></div>
+            <div className="fld"><label>Course (optional — fixes the course)</label>
+              <select className="ainp" value={editing.course_id ?? ''} onChange={(e) => setEditing({ ...editing, course_id: e.target.value })}>
+                <option value="">Applicant chooses from the vertical's courses</option>
+                {rd.courses.filter((c: any) => Number(c.meta?.vertical_id) === Number(editing.vertical_id)).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select></div>
+          </div>
+          <FormHeaderFields value={editing.header} onChange={(h) => setEditing({ ...editing, header: h })} defaults={editing.defaults} />
+        </DetailModal>
+      )}
       <Section title="Active links">
         {rows.length === 0 ? <div className="empty-note">No form links yet.</div> : rows.map((f: any) => (
           <div className="lrow" key={f.id}>
@@ -409,8 +485,16 @@ function FormLinksPanel({ rd }: { rd: any }) {
               <div className="t1"><b>{f.title}</b> {f.is_active ? <span className="bdg b-green">Active</span> : <span className="bdg b-gray">Inactive</span>} <span className="sub">· {f.submissions} submitted</span></div>
               <div className="t2 mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{publicUrl(f.form_key)}</div>
               <div className="t2 sub">{[f.branch_name, f.vertical_name, f.course_name].filter(Boolean).join(' › ') || 'Applicant chooses branch / vertical / course'}</div>
+              <div className="t2 sub" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {f.resolved_header?.logo_url ? <img src={f.resolved_header.logo_url} alt="" style={{ height: 18, maxWidth: 60, objectFit: 'contain' }} /> : null}
+                {[f.resolved_header?.name, f.resolved_header?.phone, f.resolved_header?.email].filter(Boolean).join(' · ') || 'No header details yet'}
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button className="btn sm" onClick={() => setEditing({ id: f.id, title: f.title, course_id: f.course_id ?? '', vertical_id: f.vertical_id,
+                header: { ...EMPTY_HEADER, ...(f.header ?? {}) },
+                defaults: { ...f.resolved_header, ...Object.fromEntries(Object.keys(f.header ?? {}).map((k) => [k, undefined])) } })}
+                data-testid={`form-edit-${f.id}`}><Ic k="pencil" />Edit</button>
               <button className="btn sm" onClick={() => copy(f.form_key)}><Ic k="link" />Copy URL</button>
               <button className="btn sm" onClick={() => window.open(publicUrl(f.form_key), '_blank', 'noopener')}><Ic k="eye" />Open</button>
               <button className="btn sm" onClick={() => toggle(f)}>{f.is_active ? 'Deactivate' : 'Activate'}</button>
@@ -444,11 +528,13 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
 
   const branches = d?.options?.branches ?? [];
   const verticals = useMemo(() => (d?.options?.verticals ?? []).filter((v: any) => !form.branch_id || Number(v.branch_id) === Number(form.branch_id)), [d, form.branch_id]);
-  // Public options: m_course has no branch/vertical columns (they map via a cascade), so the
-  // self-serve form offers the flat active-course list; staff confirm/adjust the course on approve.
-  const courses = useMemo(() => (d?.options?.courses ?? []), [d]);
-
   const fixed = d?.fixed ?? {};
+  // 12 Nov 2026: only the courses of the form's (or the chosen) vertical; a course that is not
+  // listed can be typed in ("Course name") — staff link it to the Course master on approve.
+  const vSel = fixed.vertical_id ?? form.vertical_id;
+  const courses = useMemo(() => (d?.options?.courses ?? []).filter((c: any) => !vSel || c.vertical_id == null || Number(c.vertical_id) === Number(vSel)), [d, vSel]);
+  const fixedCourse = fixed.course_id ? (d?.options?.courses ?? []).find((c: any) => Number(c.id) === Number(fixed.course_id)) : null;
+  const h = d?.header ?? {};
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
   // Attachments — validate each file (PDF/JPG/PNG, 5 MB) before it is accepted.
   const pickDoc = (doc_type: string, multiple: boolean) => (e: any) => {
@@ -475,6 +561,9 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
       if (fixed.branch_id) body.branch_id = fixed.branch_id;
       if (fixed.vertical_id) body.vertical_id = fixed.vertical_id;
       if (fixed.course_id) body.course_id = fixed.course_id;
+      if (!body.course_id && body.course_id_choice === 'other') delete body.course_id;
+      delete body.course_id_choice;
+      if (!body.course_id && !String(body.course_text ?? '').trim()) { toast('Please choose the course you are applying for.', true); setBusy(false); return; }
       const chosen: Array<{ f: File; t: string }> = [];
       for (const [t, arr] of Object.entries(docs)) for (const f of arr) chosen.push({ f, t });
       if (chosen.length > DOC_MAX_FILES) { toast(`Please attach at most ${DOC_MAX_FILES} files.`, true); setBusy(false); return; }
@@ -487,6 +576,16 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
   return (
     <div style={{ maxWidth: 720, margin: '24px auto', padding: '0 16px' }}>
       <div className="card" style={{ padding: 24 }}>
+        {(h.logo_url || h.name || h.address || h.phone || h.email) ? (
+          <div data-testid="adm-form-header" style={{ display: 'flex', gap: 14, alignItems: 'center', paddingBottom: 14, marginBottom: 14, borderBottom: '1px solid var(--border)' }}>
+            {h.logo_url ? <img src={h.logo_url} alt={h.name ?? 'Logo'} style={{ height: 64, maxWidth: 160, objectFit: 'contain' }} /> : null}
+            <div style={{ minWidth: 0 }}>
+              {h.name ? <div style={{ fontWeight: 700, fontSize: 18 }}>{h.name}</div> : null}
+              {h.address ? <div className="sub">{h.address}</div> : null}
+              {(h.phone || h.email) ? <div className="sub">{[h.phone && `Phone: ${h.phone}`, h.email && `Email: ${h.email}`].filter(Boolean).join('  ·  ')}</div> : null}
+            </div>
+          </div>
+        ) : null}
         <h2 style={{ marginTop: 0 }}>{d.title || 'Admission Form'}</h2>
         <div className="page-sub" style={{ marginBottom: 12 }}>Fill in your details below. Fields marked * are required.</div>
 
@@ -494,22 +593,37 @@ export function PublicAdmissionForm({ formKey }: { formKey: string }) {
         <input tabIndex={-1} autoComplete="off" value={form._hp} onChange={(e) => set('_hp', e.target.value)}
           style={{ position: 'absolute', left: '-9999px', width: 1, height: 1 }} aria-hidden="true" />
 
-        {!fixed.branch_id && (
-          <div className="form-grid" style={{ marginBottom: 8 }}>
-            <div className="fld"><label>Branch *</label>
-              <select className="ainp" value={form.branch_id ?? ''} onChange={(e) => { set('branch_id', e.target.value); set('vertical_id', ''); set('course_id', ''); }}>
-                <option value="">Select a branch</option>{branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select></div>
-            <div className="fld"><label>Vertical *</label>
-              <select className="ainp" value={form.vertical_id ?? ''} onChange={(e) => { set('vertical_id', e.target.value); set('course_id', ''); }} disabled={!form.branch_id}>
-                <option value="">Select</option>{verticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select></div>
-            <div className="fld"><label>Course</label>
-              <select className="ainp" value={form.course_id ?? ''} onChange={(e) => set('course_id', e.target.value)}>
-                <option value="">Select a course</option>{courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select></div>
-          </div>
-        )}
+        <div className="form-grid" style={{ marginBottom: 8 }}>
+          {!fixed.branch_id && (
+            <>
+              <div className="fld"><label>Branch *</label>
+                <select className="ainp" value={form.branch_id ?? ''} onChange={(e) => { set('branch_id', e.target.value); set('vertical_id', ''); set('course_id', ''); }}>
+                  <option value="">Select a branch</option>{branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select></div>
+              <div className="fld"><label>Vertical *</label>
+                <select className="ainp" value={form.vertical_id ?? ''} onChange={(e) => { set('vertical_id', e.target.value); set('course_id', ''); }} disabled={!form.branch_id}>
+                  <option value="">Select</option>{verticals.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select></div>
+            </>
+          )}
+          {fixedCourse ? (
+            <div className="fld"><label>Course</label><input className="ainp" value={fixedCourse.name} readOnly data-testid="adm-course-fixed" /></div>
+          ) : (
+            <>
+              <div className="fld"><label>Course name *</label>
+                <select className="ainp" data-testid="adm-course" value={form.course_id_choice === 'other' ? 'other' : (form.course_id ?? '')}
+                  onChange={(e) => { const v = e.target.value; setForm((f: any) => ({ ...f, course_id: v === 'other' ? '' : v, course_id_choice: v === 'other' ? 'other' : '', course_text: v === 'other' ? f.course_text : '' })); }}>
+                  <option value="">Select a course</option>
+                  {courses.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <option value="other">Other — type the course name</option>
+                </select></div>
+              {(form.course_id_choice === 'other' || courses.length === 0) && (
+                <div className="fld"><label>Type the course name *</label>
+                  <input className="ainp" data-testid="adm-course-text" value={form.course_text ?? ''} onChange={(e) => set('course_text', e.target.value)} placeholder="e.g. German A1" /></div>
+              )}
+            </>
+          )}
+        </div>
 
         {SECTIONS.map((sec) => (
           <div key={sec.title} style={{ marginTop: 8 }}>

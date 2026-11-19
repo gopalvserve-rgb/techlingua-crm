@@ -74,15 +74,73 @@ export class AdmissionService {
   async listForms(scope: ResolvedScope) {
     const params: unknown[] = [];
     const w = this.resolver.buildScopeWhere(scope, FORM_SCOPE_COLS, params);
-    return this.db.query<any>(
+    const rows = await this.db.query<any>(
       `SELECT f.id, f.title, f.form_key, f.is_active, f.submissions, f.branch_id, f.vertical_id, f.course_id, f.created_at,
-              b.name AS branch_name, v.name AS vertical_name, c.name AS course_name
+              f.header, b.name AS branch_name, v.name AS vertical_name, c.name AS course_name
          FROM admission_form f
          LEFT JOIN branch b ON b.id = f.branch_id
          LEFT JOIN vertical v ON v.id = f.vertical_id
          LEFT JOIN m_course c ON c.id = f.course_id
         WHERE f.deleted_at IS NULL AND ${w}
         ORDER BY f.created_at DESC`, params);
+    for (const r of rows) r.resolved_header = await this.resolveHeader(r);
+    return rows;
+  }
+
+  /* ---- header: logo, name, address, contact (client 12 Nov 2026) ---- */
+
+  private static readonly HEADER_KEYS = ['name', 'address', 'phone', 'email', 'logo_r2_key'] as const;
+  private static readonly IMG_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml']);
+
+  /** Whitelist + validate the header a link may carry. Blank = use the vertical's / branch's. */
+  private cleanHeader(raw: any): Record<string, string> {
+    const out: Record<string, string> = {};
+    if (!raw || typeof raw !== 'object') return out;
+    for (const k of AdmissionService.HEADER_KEYS) {
+      const v = raw[k];
+      if (v == null || String(v).trim() === '') continue;
+      out[k] = String(v).trim().slice(0, k === 'address' ? 400 : 200);
+    }
+    if (out.logo_r2_key && !out.logo_r2_key.startsWith('admission-forms/logo/') && !/^verticals\/\d+\/logo\//.test(out.logo_r2_key)) {
+      throw new BadRequestException('Upload the logo first (invalid logo key).');
+    }
+    if (out.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(out.email)) throw new BadRequestException('Enter a valid contact email.');
+    return out;
+  }
+
+  /** The header the applicant sees: the link's own values, else the vertical's, else the branch's. */
+  async resolveHeader(f: { header?: any; branch_id?: unknown; vertical_id?: unknown }) {
+    const h = (f.header && typeof f.header === 'object') ? f.header : {};
+    const v = f.vertical_id ? await this.db.one<any>(
+      `SELECT name, display_name, billing_address, phone, email, logo_r2_key FROM vertical WHERE id=$1::bigint`, [f.vertical_id]) : null;
+    const b = f.branch_id ? await this.db.one<any>(
+      `SELECT name, address, contact_number, email FROM branch WHERE id=$1::bigint`, [f.branch_id]) : null;
+    const pick = (...xs: unknown[]) => { for (const x of xs) if (x != null && String(x).trim() !== '') return String(x).trim(); return null; };
+    const logoKey = pick(h.logo_r2_key, v?.logo_r2_key);
+    let logo_url: string | null = null;
+    if (logoKey) { try { logo_url = await this.storage.presignGet(logoKey, 3600, 'logo'); } catch { logo_url = null; } }
+    return {
+      name: pick(h.name, v?.display_name, v?.name, b?.name),
+      address: pick(h.address, v?.billing_address, b?.address),
+      phone: pick(h.phone, v?.phone, b?.contact_number),
+      email: pick(h.email, v?.email, b?.email),
+      logo_url,
+      own_logo: !!h.logo_r2_key,
+    };
+  }
+
+  /** Presigned PUT for a form's header logo; the client PUTs the bytes, then sends the r2_key with the form. */
+  async formLogoUploadUrl(dto: { file_name?: string; content_type?: string }) {
+    const ct = String(dto?.content_type ?? '').toLowerCase();
+    if (ct && !AdmissionService.IMG_MIME.has(ct)) throw new BadRequestException('The logo must be a JPG, PNG, WEBP or SVG image.');
+    const key = this.storage.admissionFormLogoKey(String(dto?.file_name ?? 'logo.png'));
+    const url = await this.storage.presignPut(key, ct || 'image/png', 300);
+    return { url, r2_key: key, expires_in: 300 };
+  }
+
+  /** What a new link's header will show for a Branch › Vertical (the Create form pre-fills from it). */
+  headerDefaults(branchId?: unknown, verticalId?: unknown) {
+    return this.resolveHeader({ header: {}, branch_id: branchId ? Number(branchId) : null, vertical_id: verticalId ? Number(verticalId) : null });
   }
 
   private newKey(): string { return randomBytes(18).toString('base64url'); }
@@ -103,14 +161,17 @@ export class AdmissionService {
     const branchId = dto?.branch_id ? Number(dto.branch_id) : null;
     const verticalId = dto?.vertical_id ? Number(dto.vertical_id) : null;
     const courseId = dto?.course_id ? Number(dto.course_id) : null;
+    // 12 Nov 2026: every link follows a Branch › Vertical (its header, courses and the admission's placement)
+    if (!branchId || !verticalId) throw new BadRequestException('Choose the branch and vertical this form is for.');
     await this.validateFormScope(branchId, verticalId, courseId);
+    const header = this.cleanHeader(dto?.header);
     const orgId = await this.orgId();
     const title = String(dto?.title ?? '').trim().slice(0, 160) || 'Admission Form';
     const row = await this.db.one<any>(
-      `INSERT INTO admission_form (org_id, branch_id, vertical_id, course_id, title, form_key, created_by)
-       VALUES ($1::bigint,$2,$3,$4,$5,$6,$7::bigint)
-       RETURNING id, title, form_key, is_active, branch_id, vertical_id, course_id`,
-      [orgId, branchId, verticalId, courseId, title, this.newKey(), me.id]);
+      `INSERT INTO admission_form (org_id, branch_id, vertical_id, course_id, title, form_key, created_by, header)
+       VALUES ($1::bigint,$2,$3,$4,$5,$6,$7::bigint,$8::jsonb)
+       RETURNING id, title, form_key, is_active, branch_id, vertical_id, course_id, header`,
+      [orgId, branchId, verticalId, courseId, title, this.newKey(), me.id, JSON.stringify(header)]);
     return row;
   }
 
@@ -127,6 +188,13 @@ export class AdmissionService {
     const sets: string[] = []; const params: unknown[] = [];
     if (dto?.title !== undefined) { params.push(String(dto.title).trim().slice(0, 160) || 'Admission Form'); sets.push(`title=$${params.length}`); }
     if (dto?.is_active !== undefined) { params.push(!!dto.is_active); sets.push(`is_active=$${params.length}`); }
+    if (dto?.header !== undefined) { params.push(JSON.stringify(this.cleanHeader(dto.header))); sets.push(`header=$${params.length}::jsonb`); }
+    if (dto?.course_id !== undefined) {
+      const f = await this.formInScope(id, scope);
+      const cid = dto.course_id ? Number(dto.course_id) : null;
+      await this.validateFormScope(f.branch_id ? Number(f.branch_id) : null, f.vertical_id ? Number(f.vertical_id) : null, cid);
+      params.push(cid); sets.push(`course_id=$${params.length}`);
+    }
     if (!sets.length) return { id };
     params.push(id);
     await this.db.query(`UPDATE admission_form SET ${sets.join(', ')}, updated_at=now() WHERE id=$${params.length}::bigint`, params);
@@ -151,14 +219,20 @@ export class AdmissionService {
   /** The public form descriptor + the option lists the applicant picks from. No auth. */
   async publicForm(formKey: string) {
     const f = await this.db.one<any>(
-      `SELECT id, title, is_active, branch_id, vertical_id, course_id FROM admission_form
+      `SELECT id, title, is_active, branch_id, vertical_id, course_id, header FROM admission_form
         WHERE form_key=$1 AND deleted_at IS NULL`, [String(formKey)]);
     if (!f || !f.is_active) throw new NotFoundException('This admission form is not available.');
     const branches = await this.db.query<any>(`SELECT id, name FROM branch WHERE deleted_at IS NULL AND is_active ORDER BY name`);
     const verticals = await this.db.query<any>(`SELECT id, name, branch_id FROM vertical WHERE deleted_at IS NULL ORDER BY name`);
-    const courses = await this.db.query<any>(`SELECT id, name FROM m_course WHERE is_active ORDER BY name`);
+    // 12 Nov 2026: the course field lists the courses of the form's (or the chosen) vertical only —
+    // a course is tied to one Branch › Vertical through m_course.meta (UAT-R2 #16)
+    const courses = await this.db.query<any>(
+      `SELECT id, name, meta->>'branch_id' AS branch_id, meta->>'vertical_id' AS vertical_id FROM m_course
+        WHERE is_active AND deleted_at IS NULL AND ($1::bigint IS NULL OR meta->>'vertical_id' = $1::text)
+        ORDER BY name`, [f.vertical_id ?? null]);
     return {
       title: f.title,
+      header: await this.resolveHeader(f),
       fixed: { branch_id: f.branch_id, vertical_id: f.vertical_id, course_id: f.course_id },
       options: { branches, verticals, courses },
     };
@@ -199,6 +273,8 @@ export class AdmissionService {
     if (!branchId) throw new BadRequestException('Please choose a branch.');
     if (!verticalId) throw new BadRequestException('Please choose a vertical.');
     await this.validateFormScope(branchId, verticalId, courseId);
+    // 12 Nov 2026 — Course name: a course of the vertical, or typed when it is not listed
+    const courseText = String(dto?.course_text ?? '').trim().slice(0, 160);
 
     // Build the whitelisted profile payload; normalise phones/aadhaar/pan the way the student create does.
     const data: Record<string, any> = {};
@@ -213,6 +289,8 @@ export class AdmissionService {
       data[k] = v;
     }
     this.validateIndia(data);
+    if (!courseId && !courseText) throw new BadRequestException('Please choose the course you are applying for.');
+    if (!courseId && courseText) data.course_text = courseText;
 
     const orgId = await this.orgId();
     const row = await this.db.one<{ id: string }>(

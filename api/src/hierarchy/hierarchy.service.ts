@@ -911,7 +911,10 @@ export class HierarchyService {
                      FROM lead l
                     WHERE l.deleted_at IS NULL
                       AND (l.source_id = s.id OR (s.campaign_id IS NULL AND s.master_source_id IS NOT NULL
-                           AND l.source_id IN (SELECT s2.id FROM source s2 WHERE s2.master_source_id = s.master_source_id)))
+                           AND l.source_id IN (SELECT s2.id FROM source s2 WHERE s2.master_source_id = s.master_source_id)
+                           AND (s.branch_id IS NULL OR l.branch_id = s.branch_id)
+                           AND (s.vertical_id IS NULL OR l.vertical_id = s.vertical_id)
+                           AND (s.pipeline_id IS NULL OR l.pipeline_id = s.pipeline_id)))
                  ) lc ON TRUE
                 WHERE (${where} OR s.campaign_id IS NULL) AND s.deleted_at IS NULL${HierarchyService.activeFilter('s', includeInactive)}`;
     const orgWide = (c: string) => `(${c} OR s.campaign_id IS NULL)`;
@@ -953,13 +956,12 @@ export class HierarchyService {
       orgId = Number(o.id);
     }
     if (!hasCampaign) {
-      // ONE Lead Source per name in the Lead Source Master (Oct 2026) — no org-wide duplicates
-      const dup = await this.db.one<{ id: string }>(
-        `SELECT id FROM source WHERE org_id = $1 AND campaign_id IS NULL AND deleted_at IS NULL
-            AND lower(name) = lower($2) LIMIT 1`, [orgId, dto.name.trim()]);
-      if (dup) throw new BadRequestException(`"${dto.name.trim()}" is already in the Lead Source Master`);
       // optional Branch › Vertical › Pipeline on a Lead Source Master entry (Oct 2026)
       ({ branchId, verticalId, pipelineId } = await this.resolveSourcePath(dto));
+      // Client 12 Nov 2026: a source name is unique PER Branch › Vertical › Pipeline, not per
+      // organisation — Vikaspuri and Janakpuri can each have their own "Meta". Both share the one
+      // canonical m_source row, so reports still add "Meta" up across branches.
+      await this.assertSourceNameFree(orgId, dto.name.trim(), branchId, verticalId, pipelineId);
     }
     const masterSourceId = await this.ensureMasterSource(orgId, dto.name.trim(), dto.master_source_id, actorId);
     const channel = dto.channel ?? 'manual';
@@ -1004,6 +1006,22 @@ export class HierarchyService {
     return { branchId, verticalId, pipelineId };
   }
 
+  /** A Lead Source Master name may repeat across Branch › Vertical › Pipeline paths, never within one. */
+  private async assertSourceNameFree(orgId: number, name: string, branchId: number | null, verticalId: number | null,
+                                     pipelineId: number | null, exceptId?: number) {
+    const dup = await this.db.one<{ id: string; branch_name: string | null }>(
+      `SELECT s.id, b.name AS branch_name FROM source s LEFT JOIN branch b ON b.id = s.branch_id
+        WHERE s.org_id = $1 AND s.campaign_id IS NULL AND s.deleted_at IS NULL AND lower(s.name) = lower($2)
+          AND s.branch_id IS NOT DISTINCT FROM $3::bigint AND s.vertical_id IS NOT DISTINCT FROM $4::bigint
+          AND s.pipeline_id IS NOT DISTINCT FROM $5::bigint AND ($6::bigint IS NULL OR s.id <> $6::bigint) LIMIT 1`,
+      [orgId, name, branchId, verticalId, pipelineId, exceptId ?? null]);
+    if (dup) {
+      const where = branchId == null ? 'for all branches'
+        : `for ${dup.branch_name ?? 'this branch'}${verticalId != null ? ' with the same vertical / pipeline' : ''}`;
+      throw new BadRequestException(`"${name}" is already in the Lead Source Master ${where}`);
+    }
+  }
+
   /**
    * Canonical Source catalogue helper (reconciliation, item 1b). Returns a valid `m_source` id:
    * the supplied one when given, else a find-or-create by (case-insensitive) name so the two
@@ -1042,41 +1060,59 @@ export class HierarchyService {
   async updateSource(id: number, dto: Record<string, unknown>, scope?: ResolvedScope, actorId?: number) {
     const reparent = dto.campaign_id !== undefined && dto.campaign_id !== null && String(dto.campaign_id) !== '';
     if (!reparent) {
+      const before = await this.db.one<{ campaign_id: string | null; master_source_id: string | null; name: string; org_id: string;
+                                          branch_id: string | null; vertical_id: string | null; pipeline_id: string | null }>(
+        `SELECT campaign_id, master_source_id, name, org_id, branch_id, vertical_id, pipeline_id
+           FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
+      const pathKeys = ['branch_id', 'vertical_id', 'pipeline_id'];
+      if (before && before.campaign_id == null && pathKeys.some((k) => dto[k] !== undefined)) {
+        const p = await this.resolveSourcePath(dto as any);
+        dto.branch_id = p.branchId; dto.vertical_id = p.verticalId; dto.pipeline_id = p.pipelineId;
+      } else for (const k of pathKeys) delete dto[k];   // a campaign copy keeps its campaign's path
+      if (before && before.campaign_id == null) {
+        const n = (v: unknown) => (v == null || v === '' ? null : Number(v));
+        const pick = (k: 'branch_id' | 'vertical_id' | 'pipeline_id') => (dto[k] !== undefined ? n(dto[k]) : n(before[k]));
+        const nm = dto.name !== undefined && String(dto.name).trim() ? String(dto.name).trim() : before.name;
+        await this.assertSourceNameFree(Number(before.org_id), nm, pick('branch_id'), pick('vertical_id'), pick('pipeline_id'), id);
+      }
       // Keep the canonical m_source link in sync when the name changes (item 1b): a rename of a
       // Lead Source find-or-creates its canonical catalogue row so the two source screens agree.
       if (dto.name !== undefined && String(dto.name).trim() && (dto.master_source_id === undefined || dto.master_source_id === null)) {
-        const row = await this.db.one<{ org_id: string; campaign_id: string | null; master_source_id: string | null }>(
-          `SELECT org_id, campaign_id, master_source_id FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
+        const row = await this.db.one<{ org_id: string; campaign_id: string | null; master_source_id: string | null; shared: boolean }>(
+          `SELECT org_id, campaign_id, master_source_id,
+                  EXISTS (SELECT 1 FROM source o WHERE o.master_source_id = s.master_source_id AND o.id <> s.id
+                             AND o.campaign_id IS NULL AND o.deleted_at IS NULL) AS shared
+             FROM source s WHERE id = $1 AND deleted_at IS NULL`, [id]);
         const newName = String(dto.name).trim();
         // Renaming an ORG-WIDE Lead Source renames its catalogue row IN PLACE (Oct 2026), so every
         // record already linked to it (walk-ins' "How did you hear", campaign picks) shows the new name.
+        // 12 Nov 2026: not when another branch's source shares that catalogue row (two "Meta"s) —
+        // then only this one moves to a new / existing catalogue name.
         const clash = row?.campaign_id == null && row?.master_source_id
-          ? await this.db.one<{ id: string }>(`SELECT id FROM m_source WHERE lower(name) = lower($1) AND id <> $2 AND deleted_at IS NULL LIMIT 1`,
-              [newName, Number(row.master_source_id)])
+          ? (row.shared ? { id: 'shared' }
+            : await this.db.one<{ id: string }>(`SELECT id FROM m_source WHERE lower(name) = lower($1) AND id <> $2 AND deleted_at IS NULL LIMIT 1`,
+              [newName, Number(row.master_source_id)]))
           : null;
         if (row && row.campaign_id == null && row.master_source_id && !clash) {
           await this.db.query(`UPDATE m_source SET name = $1, updated_at = now() WHERE id = $2`, [newName, Number(row.master_source_id)]);
           dto.master_source_id = Number(row.master_source_id);
         } else if (row) dto.master_source_id = await this.ensureMasterSource(Number(row.org_id), newName, null, actorId);
       }
-      const before = await this.db.one<{ campaign_id: string | null; master_source_id: string | null; name: string }>(
-        `SELECT campaign_id, master_source_id, name FROM source WHERE id = $1 AND deleted_at IS NULL`, [id]);
-      const pathKeys = ['branch_id', 'vertical_id', 'pipeline_id'];
-      if (before && before.campaign_id == null && pathKeys.some((k) => dto[k] !== undefined)) {
-        const p = await this.resolveSourcePath(dto as any);
-        dto.branch_id = p.branchId; dto.vertical_id = p.verticalId; dto.pipeline_id = p.pipelineId;
-      } else for (const k of pathKeys) delete dto[k];   // a campaign copy keeps its campaign's path
       const updated = await this.genericUpdate('source', id, dto,
         ['name', 'channel', 'master_source_id', 'config', 'cost_per_lead', 'is_active', ...pathKeys]);
       // ONE Lead Source (Oct 2026): an ORG-WIDE source's per-campaign copies (made when it was first
       // used under a campaign) follow its name, so the master and every campaign show the same name.
       if (before && before.campaign_id == null && dto.name !== undefined && String(dto.name).trim()
           && String(dto.name).trim() !== before.name) {
+        // only the copies on THIS source's path (12 Nov 2026: another branch may own a same-named source)
         await this.db.query(
           `UPDATE source SET name = $1, master_source_id = COALESCE($2::bigint, master_source_id), updated_at = now()
             WHERE campaign_id IS NOT NULL AND deleted_at IS NULL
-              AND (($3::bigint IS NOT NULL AND master_source_id = $3::bigint) OR lower(name) = lower($4))`,
-          [String(dto.name).trim(), dto.master_source_id ?? null, before.master_source_id, before.name]);
+              AND (($3::bigint IS NOT NULL AND master_source_id = $3::bigint) OR lower(name) = lower($4))
+              AND ($5::bigint IS NULL OR branch_id = $5::bigint) AND ($6::bigint IS NULL OR vertical_id = $6::bigint)
+              AND ($7::bigint IS NULL OR pipeline_id = $7::bigint)`,
+          [String(dto.name).trim(), dto.master_source_id ?? null, before.master_source_id, before.name,
+            before.branch_id, before.vertical_id, before.pipeline_id]);
       }
       return updated;
     }

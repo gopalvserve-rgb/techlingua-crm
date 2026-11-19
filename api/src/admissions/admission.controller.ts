@@ -25,6 +25,13 @@ export class AdmissionController {
   @Get('forms') @RequirePermission('admission.read')
   listForms(@CurrentScope() scope: ResolvedScope) { return this.svc.listForms(scope); }
 
+  /* 12 Nov 2026 — header logo upload + what a Branch › Vertical's header defaults to */
+  @Post('forms/logo/upload-url') @RequirePermission('admission.manage')
+  formLogoUploadUrl(@Body() b: any) { return this.svc.formLogoUploadUrl(b); }
+
+  @Get('forms/header-defaults') @RequirePermission('admission.manage')
+  headerDefaults(@Query('branch_id') branchId?: string, @Query('vertical_id') verticalId?: string) { return this.svc.headerDefaults(branchId, verticalId); }
+
   @Post('forms') @RequirePermission('admission.manage')
   createForm(@Body() b: any, @CurrentUser() me: Me, @CurrentScope() scope: ResolvedScope) { return this.svc.createForm(b, me, scope); }
 

@@ -17,6 +17,8 @@ function mkDb() {
   const calls: Call[] = [];
   const exec = (sql: string, params: unknown[] = []) => {
     calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+    // the Lead Source Master duplicate-name probe (12 Nov 2026) finds no clash
+    if (/lower\(s\.name\) = lower\(\$2\)/.test(sql)) return [];
     return [{ id: 1 }];
   };
   return {

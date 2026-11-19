@@ -1493,10 +1493,11 @@ export class LeadsService {
         WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL${ownerClause}`, pk,
     );
     const byStage = await this.db.query(
-      `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, st.pipeline_id, COUNT(l.id)::int AS ct
+      `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, st.pipeline_id, st.is_default,
+              (SELECT pp.name FROM pipeline pp WHERE pp.id = st.pipeline_id) AS pipeline_name, COUNT(l.id)::int AS ct
          FROM lead l JOIN pipeline_stage st ON st.id = l.stage_id
         WHERE (${w}) AND l.is_active AND l.deleted_at IS NULL
-        GROUP BY st.id, st.name, st.stage_type, st.sort_order, st.pipeline_id
+        GROUP BY st.id, st.name, st.stage_type, st.sort_order, st.pipeline_id, st.is_default
         ORDER BY st.sort_order`, p1.slice(),
     );
     const series = await this.db.query(

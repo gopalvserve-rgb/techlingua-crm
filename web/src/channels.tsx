@@ -232,7 +232,8 @@ function ConfigureModal({ spec, channel, onClose, onSaved }: {
   const pipelines = ref.pipelines.filter((p) => !target.vertical || Number(p.vertical_id) === target.vertical);
   const campaigns = ref.campaigns.filter((c) => !target.pipeline || Number(c.pipeline_id) === target.pipeline);
   // the campaign's sources + org-wide ones (Oct 2026) — the server gives the campaign its own copy
-  const sources = dedupeSources(ref.sources.filter((s: any) => !target.campaign || s.campaign_id == null || Number(s.campaign_id) === target.campaign));
+  const sources = dedupeSources(ref.sources.filter((s: any) => !target.campaign || s.campaign_id == null || Number(s.campaign_id) === target.campaign),
+    target.branch || target.vertical || target.pipeline ? { branch_id: target.branch, vertical_id: target.vertical, pipeline_id: target.pipeline } : null);
 
   const url = cur?.webhook_path ? `${origin()}${cur.webhook_path}` : '';
 

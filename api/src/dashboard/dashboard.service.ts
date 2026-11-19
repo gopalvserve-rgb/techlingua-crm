@@ -203,10 +203,11 @@ export class DashboardService {
     // them is edited without the other. (DEF-S5-03: two screens, two definitions, one
     // client who stopped believing either.)
     const byStage = await this.db.query(
-      `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, COUNT(l.id)::int AS ct
+      `SELECT st.id AS stage_id, st.name, st.stage_type, st.sort_order, st.is_default, st.pipeline_id,
+              (SELECT pp.name FROM pipeline pp WHERE pp.id = st.pipeline_id) AS pipeline_name, COUNT(l.id)::int AS ct
          FROM ${STAGE_COUNT_FROM}
         WHERE (${w2}) AND ${STAGE_COUNT_LIVE}${this.narrow(L, gf, p2)}${this.rangeAnd('l.created_at', ar, p2)}
-        GROUP BY st.id, st.name, st.stage_type, st.sort_order
+        GROUP BY st.id, st.name, st.stage_type, st.sort_order, st.is_default, st.pipeline_id
         ORDER BY st.sort_order`, p2,
     );
 

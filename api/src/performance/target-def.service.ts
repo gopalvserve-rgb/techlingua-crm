@@ -416,4 +416,23 @@ export class TargetDefService {
     await this.db.query(`UPDATE target_definition SET deleted_at = now(), deleted_by = $2::bigint WHERE id = $1::bigint`, [id, me.id]);
     return { id, ok: true };
   }
+  /**
+   * TARGET vs ACHIEVED per counsellor (12 Nov 2026, Counselor Performance). For each user, their
+   * own user-level target whose period contains `at` (the window start, or today), decorated with
+   * live actuals over THE TARGET'S period — so "10 admissions target, 4 done" always compares like
+   * with like, whatever range the screen is showing.
+   */
+  async userTargetsAt(userIds: number[], at: string) {
+    if (!userIds.length) return [];
+    const rows = await this.db.query<any>(
+      `SELECT DISTINCT ON (t.user_id) t.*, u.name AS user_name, p.name AS plan_name
+         FROM target_definition t
+         LEFT JOIN "user" u ON u.id = t.user_id
+         LEFT JOIN incentive_plan p ON p.id = t.incentive_plan_id
+        WHERE t.deleted_at IS NULL AND t.target_for = 'user' AND t.user_id = ANY($1::bigint[])
+          AND t.period_start <= $2::date AND t.period_end > $2::date
+        ORDER BY t.user_id, t.period_start DESC, t.id DESC`,
+      [userIds, at]);
+    return Promise.all(rows.map(async (r) => ({ ...(await this.decorate(r)), user_name: r.user_name })));
+  }
 }

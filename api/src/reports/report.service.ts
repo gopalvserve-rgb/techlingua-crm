@@ -21,6 +21,8 @@ export interface RunResult {
   /** WHOSE scope the rows were rendered in — echoed back so the UI can SAY it. */
   scope: { user_id: number; unrestricted: boolean; note: string };
   generated_at: string;
+  /** the saved chart setting (presentation only), echoed so every screen draws the same chart */
+  chart?: ReportConfig['chart'] | null;
 }
 
 /**
@@ -248,6 +250,10 @@ export class ReportService {
       date_from: toDateString(raw?.date_from) ?? undefined,
       date_to: toDateString(raw?.date_to) ?? undefined,
       limit: raw?.limit ? Number(raw.limit) : undefined,
+      // presentation only — a whitelisted chart type and an output column key, never SQL
+      chart: ['bar', 'line', 'pie'].includes(String(raw?.chart?.type))
+        ? { type: raw.chart.type, measure: raw?.chart?.measure ? String(raw.chart.measure).slice(0, 64) : undefined }
+        : undefined,
     };
   }
 
@@ -314,6 +320,7 @@ export class ReportService {
       rows,
       row_count: rows.length,
       grouped: q.grouped,
+      chart: q.grouped ? (config.chart ?? null) : null,
       truncated: rows.length >= Math.min(Number(config.limit) || 500, 50_000),
       scope: {
         user_id: me.id,

@@ -68,6 +68,9 @@ export interface ReportConfig {
   date_from?: string;
   date_to?: string;
   limit?: number;
+  /** Client 12 Nov 2026 — how a GROUPED report is charted. Presentation only: never reaches SQL.
+   *  `measure` is the output column key plotted (default `_count`). */
+  chart?: { type: 'bar' | 'line' | 'pie'; measure?: string };
 }
 
 export interface BuiltQuery {

@@ -283,6 +283,7 @@ a{color:inherit;text-decoration:none}
 .funnel .fl{width:96px;font-size:12px;color:var(--text-muted);flex:none;text-align:right}
 .funnel .ft{flex:1;min-width:40px;height:32px;border-radius:8px;display:flex;align-items:center;padding:0 12px;color:#fff;font-weight:700;font-size:12.5px}
 .funnel .fv{width:64px;flex:none;font-family:var(--font-mono);font-size:11.5px;font-weight:700;text-align:right}
+.funnel .fnote{margin:3px 0 0 108px;font-size:11px;color:var(--text-muted)}
 .hbars{display:flex;flex-direction:column;gap:13px}
 .hbar .top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px}.hbar .top b{font-family:var(--font-mono);font-weight:700}
 .hbar .track{height:8px;border-radius:20px;background:var(--surface-3);overflow:hidden}.hbar .fill{height:100%;border-radius:20px}
@@ -1248,3 +1249,37 @@ button.fchip{cursor:pointer}
 .nset-mod{background:var(--surface-2);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
 .nset-switches{display:flex;flex-wrap:wrap;gap:8px 18px;margin:6px 0 2px}
 .nset-switches label{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+
+/* ---- charts (charts.tsx) — client 12 Nov 2026. Categorical slots validated (dataviz validator)
+        against this app's surfaces: light #fff, dark #141826. ---- */
+.viz-root{--viz-1:#2a78d6;--viz-2:#eb6834;--viz-3:#1baf7a;--viz-4:#eda100;--viz-5:#e87ba4;--viz-6:#008300;--viz-other:#9aa0b4;position:relative}
+html[data-theme="dark"] .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-3:#199e70;--viz-4:#c98500;--viz-5:#d55181;--viz-6:#0ca30c;--viz-other:#5d6478}
+.viz-hbars{display:flex;flex-direction:column;gap:6px}
+.viz-hrow{display:flex;align-items:center;gap:10px;min-height:22px}
+.viz-hlabel{width:150px;flex:none;font-size:12px;color:var(--text-muted);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.viz-htrack{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+.viz-hbar{height:16px;background:var(--viz-1);border-radius:0 4px 4px 0;flex:none}
+.viz-hval{font-family:var(--font-mono);font-size:11.5px;color:var(--text);white-space:nowrap}
+.viz-more{font-size:11.5px;color:var(--text-muted);margin-left:160px}
+.viz-line svg{display:block;overflow:visible}
+.viz-grid{stroke:var(--border);stroke-width:1}
+.viz-axis{fill:var(--text-muted);font-size:10.5px;font-family:var(--font-mono)}
+.viz-val{fill:var(--text);font-size:11.5px;font-weight:700;font-family:var(--font-mono)}
+.viz-stroke{stroke:var(--viz-1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.viz-dot{fill:var(--viz-1);stroke:var(--surface-1);stroke-width:2}
+.viz-cross{stroke:var(--border-strong);stroke-width:1;stroke-dasharray:3 3}
+.viz-donut{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.viz-slice{stroke:var(--surface-1);stroke-width:2;cursor:default;transition:opacity .12s}
+.viz-center{fill:var(--text);font-size:15px;font-weight:700;font-family:var(--font-mono)}
+.viz-legend{display:flex;flex-direction:column;gap:5px;min-width:220px;flex:1}
+.viz-li{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:2px 4px;border-radius:6px}
+.viz-li.on{background:var(--surface-2)}
+.viz-sw{width:10px;height:10px;border-radius:3px;flex:none}
+.viz-ln{flex:1;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.viz-lv{font-family:var(--font-mono);font-size:11.5px;color:var(--text)}
+.viz-lp{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);width:38px;text-align:right}
+.viz-tip{position:absolute;pointer-events:none;background:var(--surface-1);border:1px solid var(--border-strong);border-radius:8px;padding:6px 9px;box-shadow:var(--shadow);z-index:5;white-space:nowrap}
+.viz-tip-fixed{top:4px;transform:translateX(-50%)}
+.viz-tip-t{font-size:11.5px;color:var(--text-muted)}
+.viz-tip-v{font-size:13px;font-weight:700;color:var(--text);font-family:var(--font-mono)}
+@media (max-width:640px){.viz-hlabel{width:96px}.viz-more{margin-left:106px}}

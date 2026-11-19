@@ -83,12 +83,22 @@ export const CASCADE: Array<{ src: NonNullable<FormField['src']>; parent: string
 ];
 
 /** A campaign's sources + the org-wide ones, without listing the same source twice: an org-wide
- *  source whose campaign copy already exists (same master source, or same name) is dropped. */
-export function dedupeSources<T extends { name: string }>(list: T[]): T[] {
+ *  source whose campaign copy already exists (same master source, or same name) is dropped.
+ *  12 Nov 2026: the same name may exist once per Branch › Vertical › Pipeline (Vikaspuri "Meta",
+ *  Janakpuri "Meta") — given the campaign's `path`, only the org-wide entries that fit it are kept,
+ *  and of two same-named ones the more specific wins. */
+export function dedupeSources<T extends { name: string }>(list: T[], path?: { branch_id?: unknown; vertical_id?: unknown; pipeline_id?: unknown } | null): T[] {
   const own = list.filter((s: any) => s.campaign_id != null);
-  return list.filter((s: any) => s.campaign_id != null || !own.some((o: any) =>
-    (s.master_source_id != null && Number(o.master_source_id) === Number(s.master_source_id))
-    || String(o.name).trim().toLowerCase() === String(s.name).trim().toLowerCase()));
+  const depth = (s: any) => Number(s.branch_id != null) + Number(s.vertical_id != null) + Number(s.pipeline_id != null);
+  const key = (s: any) => String(s.name).trim().toLowerCase();
+  const wide = list.filter((s: any) => s.campaign_id == null && (!path || sourceFitsPath(s, path)));
+  return list.filter((s: any) => {
+    if (s.campaign_id != null) return true;
+    if (!wide.includes(s)) return false;
+    if (own.some((o: any) => (s.master_source_id != null && Number(o.master_source_id) === Number(s.master_source_id)) || key(o) === key(s))) return false;
+    // without a path both branches' "Meta" stay (shown with their branch); with one, the most specific wins
+    return !path || !wide.some((o: any) => o !== s && key(o) === key(s) && (depth(o) > depth(s) || (depth(o) === depth(s) && Number(o.id) < Number(s.id))));
+  });
 }
 
 /** Campaign form "Lead Source" options: one entry per source of the Lead Source Master (by its
@@ -1439,7 +1449,7 @@ export function AddModal({ formKey, onClose, onSaved, onSavedRow, edit, prefill 
       if (pid != null) list = list.filter((o) => Number((o as any)[cc.fk]) === Number(pid)
         || (cc.src === 'sources' && (o as any).campaign_id == null && sourceFitsPath(o, camp as any)));
       else if (cc.strict && cascadeParent(cc.parent)) list = [];
-      if (cc.src === 'sources' && pid != null) list = dedupeSources(list);
+      if (cc.src === 'sources' && pid != null) list = dedupeSources(list, camp as any);
     }
     // UAT-R2 #16 — a Course belongs to ONE Branch → ONE Vertical (update #7 stored
     // meta.branch_id / meta.vertical_id). On any form that carries a Branch and/or Vertical

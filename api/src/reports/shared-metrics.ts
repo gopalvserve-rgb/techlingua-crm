@@ -35,6 +35,39 @@
 export const STAGE_COUNT_FROM = `lead l JOIN pipeline_stage st ON st.id = l.stage_id`;
 export const STAGE_COUNT_LIVE = `l.is_active AND l.deleted_at IS NULL`;
 
+/**
+ * ONE ENTRY STEP (client 12 Nov 2026 — "clarify New Lead and New Enquiry"). Every pipeline has a
+ * default stage new leads land in, and each pipeline may name it differently ("New Enquiry" in
+ * BCL, "New Lead" in INSTA). They are the SAME funnel step, so the dashboard funnel and the
+ * Funnel Analytics report both show them as one bar, with the per-pipeline names alongside.
+ */
+export function mergeEntryStages<T extends { name: string; is_default?: boolean | null; sort_order: number; count: number; pipeline_name?: string | null }>(
+  rows: T[],
+): Array<T & { parts?: Array<{ name: string; pipeline_name?: string | null; count: number }> }> {
+  const entry = rows.filter((r) => r.is_default);
+  const rest = rows.filter((r) => !r.is_default);
+  // other stages: one bar per name across pipelines (same as before)
+  const byName = new Map<string, T>();
+  for (const r of rest) {
+    const cur = byName.get(r.name);
+    byName.set(r.name, cur ? { ...cur, count: cur.count + r.count, sort_order: Math.min(cur.sort_order, r.sort_order) } : { ...r });
+  }
+  const out: Array<T & { parts?: Array<{ name: string; pipeline_name?: string | null; count: number }> }> = [...byName.values()];
+  if (entry.length) {
+    const names = [...new Set(entry.map((r) => r.name))];
+    out.push({
+      ...entry[0],
+      name: names.join(' / '),
+      count: entry.reduce((a, r) => a + r.count, 0),
+      sort_order: Math.min(...entry.map((r) => r.sort_order)),
+      parts: names.length > 1 ? names.map((n) => ({ name: n, count: entry.filter((r) => r.name === n).reduce((a, r) => a + r.count, 0),
+        pipeline_name: [...new Set(entry.filter((r) => r.name === n).map((r) => r.pipeline_name).filter(Boolean))].join(', ') || null })) : undefined,
+    });
+  }
+  // the entry step first, then by stage order
+  return out.sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default) || a.sort_order - b.sort_order);
+}
+
 /* ---------------------------------------------------------------- booked revenue */
 
 /**

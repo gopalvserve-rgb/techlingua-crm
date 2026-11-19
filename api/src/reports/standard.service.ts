@@ -7,7 +7,7 @@ import { entityByKey } from './entities';
 import { Me, ReportService } from './report.service';
 import {
   ENROLMENT_COUNTS_AS_SOLD, SLA_ELAPSED_COLUMN, SLA_FIRST_RESPONSE_METRIC,
-  STAGE_COUNT_FROM, STAGE_COUNT_LIVE,
+  STAGE_COUNT_FROM, STAGE_COUNT_LIVE, mergeEntryStages,
   leadWonConversionPct,
 } from './shared-metrics';
 import { toDateString, assertDateRange } from '../common/date.util';
@@ -67,17 +67,21 @@ export class StandardReportService {
       `SELECT st.name,
               min(st.sort_order)::int AS sort_order,
               max(st.stage_type)      AS stage_type,
+              st.is_default,
+              string_agg(DISTINCT pp.name, ', ') AS pipeline_name,
               count(l.id)::int        AS ct
-         FROM ${STAGE_COUNT_FROM}
+         FROM ${STAGE_COUNT_FROM} LEFT JOIN pipeline pp ON pp.id = st.pipeline_id
         WHERE (${w}) AND ${STAGE_COUNT_LIVE}
           AND ($1::date IS NULL OR l.created_at >= $1::date)
           AND ($2::date IS NULL OR l.created_at <  $2::date)
-        GROUP BY st.name
+        GROUP BY st.name, st.is_default
         ORDER BY min(st.sort_order)`,
       params,
     );
 
-    const stages = rows.map((r) => ({ name: r.name, stage_type: r.stage_type, sort_order: Number(r.sort_order), count: Number(r.ct) }));
+    // 12 Nov 2026: every pipeline's entry stage ("New Enquiry", "New Lead") is ONE funnel step
+    const stages = mergeEntryStages(rows.map((r) => ({ name: r.name, stage_type: r.stage_type, sort_order: Number(r.sort_order),
+      is_default: !!r.is_default, pipeline_name: r.pipeline_name ?? null, count: Number(r.ct) })));
     const entered = stages.reduce((a, s) => a + s.count, 0);
     const first = stages[0]?.count ?? 0;
 

@@ -118,6 +118,8 @@ const LEADS: ReportEntity = {
     { key: 'score', label: 'Score', sql: 'l.score', type: 'number', deps: ['lead.score'], groupable: false, aggregate: 'avg' },
     { key: 'is_duplicate', label: 'Duplicate', sql: 'l.is_duplicate', type: 'bool', deps: ['lead.is_duplicate'] },
     { key: 'created_at', label: 'Created on', sql: 'l.created_at', type: 'datetime', deps: ['lead.created_at'], groupable: false },
+    { key: 'created_month', label: 'Created month', sql: `to_char(l.created_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM')`, type: 'text', deps: ['lead.created_at'] },
+    { key: 'created_day', label: 'Created day', sql: `to_char(l.created_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD')`, type: 'text', deps: ['lead.created_at'] },
     { key: 'last_activity_at', label: 'Last activity', sql: 'l.last_activity_at', type: 'datetime', deps: ['lead.last_activity_at'], groupable: false },
     { key: 'next_follow_up_at', label: 'Next follow-up', sql: 'l.next_follow_up_at', type: 'datetime', deps: ['lead.next_follow_up_at'], groupable: false },
   ],
@@ -214,6 +216,7 @@ const ENROLMENTS: ReportEntity = {
       deps: ['enrolment.net_fee_minor', 'fee_receipt.amount_minor', 'fee_receipt.enrolment_id', 'fee_receipt.deleted_at'] },
     { key: 'start_date', label: 'Start date', sql: 'e.start_date', type: 'date', deps: ['enrolment.start_date'], groupable: false },
     { key: 'created_at', label: 'Closed on', sql: 'e.created_at', type: 'datetime', deps: ['enrolment.created_at'], groupable: false },
+    { key: 'closed_month', label: 'Closed month', sql: `to_char(e.created_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM')`, type: 'text', deps: ['enrolment.created_at'] },
   ],
 };
 
@@ -256,6 +259,7 @@ const RECEIPTS: ReportEntity = {
     { key: 'counsellor', label: 'Counsellor (credited)', sql: 'cn.name', type: 'text', deps: ['user.name'] },
     { key: 'note', label: 'Note', sql: 'fr.note', type: 'text', deps: ['fee_receipt.note'], groupable: false },
     { key: 'received_at', label: 'Received on', sql: 'fr.received_at', type: 'datetime', deps: ['fee_receipt.received_at'], groupable: false },
+    { key: 'received_month', label: 'Received month', sql: `to_char(fr.received_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM')`, type: 'text', deps: ['fee_receipt.received_at'] },
   ],
 };
 
@@ -360,7 +364,363 @@ const USERS: ReportEntity = {
   ],
 };
 
-export const REPORT_ENTITIES: ReportEntity[] = [LEADS, FOLLOW_UPS, ENROLMENTS, RECEIPTS, CAMPAIGNS, USERS];
+/* ---------------------------------------------------------------------------
+ * Client 12 Nov 2026 — "complete Analytics & Reports on priority": the Report Builder
+ * now also reports Calls, Students, Fee dues, Invoices, Refunds, Attendance, Batches and
+ * Walk-ins. Each entity's scope map is THE SAME map its own screen uses (calls.service,
+ * student/transfer.service, dues.service, invoice.service, finance-dashboard, attendance,
+ * capture), so a report never shows a row the screen would hide.
+ * ------------------------------------------------------------------------- */
+
+const IST_TODAY = `(now() AT TIME ZONE 'Asia/Kolkata')::date`;
+
+const CALLS: ReportEntity = {
+  key: 'calls',
+  label: 'Calls',
+  blurb: 'Every call logged by the counsellor phone app: who, which lead, direction, connected or missed, talk time.',
+  permission: 'calls.read',
+  from: `call_event ce
+     LEFT JOIN lead l          ON l.id = ce.lead_id
+     LEFT JOIN "user" cu       ON cu.id = ce.user_id
+     LEFT JOIN branch br       ON br.id = l.branch_id
+     LEFT JOIN vertical vt     ON vt.id = l.vertical_id
+     LEFT JOIN campaign cm     ON cm.id = l.campaign_id
+     LEFT JOIN m_call_disposition dp ON dp.id = ce.disposition_id`,
+  // a "dial requested" row is the app asking the phone to dial — not a call; a live-dup row is
+  // a live event the phone's call log superseded (calls.service hides it the same way)
+  where: [`ce.event <> 'dial_requested'`, `ce.src IS DISTINCT FROM 'live-dup'`],
+  scopeCols: {
+    owner: 'ce.user_id', team: 'l.team_id', branch: 'l.branch_id',
+    vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id',
+  },
+  dateFields: ['call_start_at', 'created_at'],
+  defaultDateField: 'call_start_at',
+  defaultColumns: ['counsellor', 'lead_name', 'phone', 'direction', 'outcome', 'talk_minutes', 'call_start_at'],
+  columns: [
+    { key: 'id', label: 'Call ID', sql: 'ce.id', type: 'number', deps: ['call_event.id'], groupable: false },
+    { key: 'counsellor', label: 'Counsellor', sql: 'cu.name', type: 'text', deps: ['user.name'] },
+    { key: 'lead_name', label: 'Lead', sql: 'l.full_name', type: 'text', deps: ['lead.full_name'], groupable: false },
+    { key: 'phone', label: 'Number', sql: 'ce.phone_number', type: 'text', deps: ['call_event.phone_number'], groupable: false },
+    { key: 'direction', label: 'Direction', type: 'text', deps: ['call_event.direction'],
+      sql: `CASE ce.direction WHEN 'in' THEN 'Incoming' WHEN 'out' THEN 'Outgoing' WHEN 'missed' THEN 'Missed' ELSE 'Other' END` },
+    { key: 'outcome', label: 'Outcome', type: 'text', deps: ['call_event.duration_s', 'call_event.direction'],
+      sql: `CASE WHEN COALESCE(ce.duration_s, 0) > 0 THEN 'Connected' WHEN ce.direction = 'missed' THEN 'Missed' ELSE 'Not connected' END` },
+    { key: 'connected', label: 'Connected', sql: '(COALESCE(ce.duration_s, 0) > 0)', type: 'bool', deps: ['call_event.duration_s'] },
+    { key: 'talk_seconds', label: 'Talk time (sec)', sql: 'COALESCE(ce.duration_s, 0)', type: 'number', deps: ['call_event.duration_s'], groupable: false, aggregate: 'sum' },
+    { key: 'talk_minutes', label: 'Talk time (min)', sql: 'round(COALESCE(ce.duration_s, 0) / 60.0, 1)', type: 'number', deps: ['call_event.duration_s'], groupable: false, aggregate: 'sum' },
+    { key: 'disposition', label: 'Disposition', sql: 'dp.name', type: 'text', deps: ['m_call_disposition.name'] },
+    { key: 'sim', label: 'SIM', sql: 'ce.sim_label', type: 'text', deps: ['call_event.sim_label'] },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'campaign', label: 'Campaign', sql: 'cm.name', type: 'text', deps: ['campaign.name'] },
+    { key: 'has_recording', label: 'Recorded', sql: '(ce.recording_id IS NOT NULL)', type: 'bool', deps: ['call_event.recording_id'] },
+    { key: 'note', label: 'Note', sql: 'ce.note', type: 'text', deps: ['call_event.note'], groupable: false },
+    { key: 'call_start_at', label: 'Call time', sql: 'ce.call_start_at', type: 'datetime', deps: ['call_event.call_start_at'], groupable: false },
+    { key: 'call_day', label: 'Call day', sql: `to_char(ce.call_start_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD')`, type: 'text', deps: ['call_event.call_start_at'] },
+    { key: 'call_month', label: 'Call month', sql: `to_char(ce.call_start_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM')`, type: 'text', deps: ['call_event.call_start_at'] },
+    { key: 'call_hour', label: 'Hour of day', sql: `to_char(ce.call_start_at AT TIME ZONE 'Asia/Kolkata', 'HH24')`, type: 'text', deps: ['call_event.call_start_at'] },
+    { key: 'created_at', label: 'Synced at', sql: 'ce.created_at', type: 'datetime', deps: ['call_event.created_at'], groupable: false },
+  ],
+};
+
+const STUDENTS: ReportEntity = {
+  key: 'students',
+  label: 'Students',
+  blurb: 'The student register: course, batch, status, counsellor, training mode, contact.',
+  permission: 'student.read',
+  from: `student s
+     LEFT JOIN branch br      ON br.id = s.branch_id
+     LEFT JOIN vertical vt    ON vt.id = s.vertical_id
+     LEFT JOIN m_course cr    ON cr.id = s.course_id
+     LEFT JOIN batch bt       ON bt.id = s.batch_id
+     LEFT JOIN "user" ow      ON ow.id = s.owner_id`,
+  where: ['s.deleted_at IS NULL'],
+  scopeCols: {
+    owner: 's.owner_id', team: 's.team_id', branch: 's.branch_id', vertical: 's.vertical_id',
+    pipeline: 's.pipeline_id', campaign: 's.campaign_id',
+  },
+  dateFields: ['created_at', 'admission_date'],
+  defaultDateField: 'created_at',
+  defaultColumns: ['student_no', 'full_name', 'phone', 'course', 'batch', 'status', 'counsellor', 'created_at'],
+  columns: [
+    { key: 'id', label: 'ID', sql: 's.id', type: 'number', deps: ['student.id'], groupable: false },
+    { key: 'student_no', label: 'Student no.', sql: 's.student_no', type: 'text', deps: ['student.student_no'], groupable: false },
+    { key: 'enrollment_no', label: 'Enrolment no.', sql: 's.enrollment_no', type: 'text', deps: ['student.enrollment_no'], groupable: false },
+    { key: 'full_name', label: 'Name', sql: 's.full_name', type: 'text', deps: ['student.full_name'], groupable: false },
+    { key: 'phone', label: 'Mobile', sql: 's.phone', type: 'text', deps: ['student.phone'], groupable: false },
+    { key: 'email', label: 'Email', sql: 's.email', type: 'text', deps: ['student.email'], groupable: false },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'course', label: 'Course', sql: 'cr.name', type: 'text', deps: ['m_course.name'] },
+    { key: 'batch', label: 'Batch', sql: 'bt.name', type: 'text', deps: ['batch.name'] },
+    { key: 'counsellor', label: 'Counsellor', sql: 'ow.name', type: 'text', deps: ['user.name'] },
+    { key: 'status', label: 'Status', sql: 's.status', type: 'text', deps: ['student.status'] },
+    { key: 'training_mode', label: 'Training mode', sql: 's.training_mode', type: 'text', deps: ['student.training_mode'] },
+    { key: 'gender', label: 'Gender', sql: 's.gender', type: 'text', deps: ['student.gender'] },
+    { key: 'qualification', label: 'Qualification', sql: 's.qualification', type: 'text', deps: ['student.qualification'] },
+    { key: 'admission_date', label: 'Admission date', sql: 's.admission_date', type: 'date', deps: ['student.admission_date'], groupable: false },
+    { key: 'created_at', label: 'Created on', sql: 's.created_at', type: 'datetime', deps: ['student.created_at'], groupable: false },
+    { key: 'created_month', label: 'Created month', sql: `to_char(s.created_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM')`, type: 'text', deps: ['student.created_at'] },
+  ],
+};
+
+const FEE_DUES: ReportEntity = {
+  key: 'fee_dues',
+  label: 'Fee dues (instalments)',
+  blurb: 'Every instalment of an active payment plan: due date, amount, paid, outstanding and how overdue it is.',
+  permission: 'fee_dues.read',
+  from: `installment i
+     JOIN payment_plan pp     ON pp.id = i.plan_id
+     JOIN enrolment e         ON e.id = i.enrolment_id
+     LEFT JOIN lead l         ON l.id = e.lead_id
+     LEFT JOIN student sp     ON sp.id = e.student_profile_id
+     LEFT JOIN branch br      ON br.id = e.branch_id
+     LEFT JOIN vertical vt    ON vt.id = e.vertical_id
+     LEFT JOIN m_course cr    ON cr.id = e.course_id
+     LEFT JOIN "user" cn      ON cn.id = e.counsellor_id`,
+  // the same population as Finance › Fee Dues (dues.service.ts): active plans of active enrolments
+  where: [`pp.status = 'active'`, 'pp.deleted_at IS NULL', 'e.deleted_at IS NULL', `e.status = 'active'`, `i.status <> 'waived'`],
+  scopeCols: {
+    owner: 'e.counsellor_id', team: 'e.team_id', branch: 'e.branch_id',
+    vertical: 'e.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
+  },
+  dateFields: ['due_date'],
+  defaultDateField: 'due_date',
+  defaultColumns: ['student', 'enrolment_no', 'course', 'label', 'due_date', 'amount', 'paid', 'outstanding', 'ageing'],
+  columns: [
+    { key: 'id', label: 'ID', sql: 'i.id', type: 'number', deps: ['installment.id'], groupable: false },
+    { key: 'student', label: 'Student', sql: 'COALESCE(l.full_name, sp.full_name)', type: 'text', deps: ['lead.full_name', 'student.full_name'], groupable: false },
+    { key: 'phone', label: 'Mobile', sql: 'COALESCE(l.phone, sp.phone)', type: 'text', deps: ['lead.phone', 'student.phone'], groupable: false },
+    { key: 'enrolment_no', label: 'Enrolment no.', sql: 'e.enrolment_no', type: 'text', deps: ['enrolment.enrolment_no'], groupable: false },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'course', label: 'Course', sql: 'cr.name', type: 'text', deps: ['m_course.name'] },
+    { key: 'counsellor', label: 'Counsellor', sql: 'cn.name', type: 'text', deps: ['user.name'] },
+    { key: 'label', label: 'Instalment', sql: `COALESCE(i.label, 'Instalment ' || i.seq_no)`, type: 'text', deps: ['installment.label', 'installment.seq_no'], groupable: false },
+    { key: 'status', label: 'Status', sql: 'i.status', type: 'text', deps: ['installment.status'] },
+    { key: 'due_date', label: 'Due date', sql: 'i.due_date', type: 'date', deps: ['installment.due_date'], groupable: false },
+    { key: 'due_month', label: 'Due month', sql: `to_char(i.due_date, 'YYYY-MM')`, type: 'text', deps: ['installment.due_date'] },
+    { key: 'amount', label: 'Amount', sql: 'i.amount_minor', type: 'money', deps: ['installment.amount_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'paid', label: 'Paid', sql: 'COALESCE(i.paid_minor, 0)', type: 'money', deps: ['installment.paid_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'outstanding', label: 'Outstanding', sql: 'GREATEST(i.amount_minor - COALESCE(i.paid_minor, 0), 0)', type: 'money', deps: ['installment.amount_minor', 'installment.paid_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'days_overdue', label: 'Days overdue', type: 'number', groupable: false, aggregate: 'avg', deps: ['installment.due_date', 'installment.amount_minor', 'installment.paid_minor'],
+      sql: `CASE WHEN i.amount_minor - COALESCE(i.paid_minor, 0) > 0 AND i.due_date < ${IST_TODAY} THEN ${IST_TODAY} - i.due_date ELSE 0 END` },
+    // DUES AGEING — the bucket a collections manager works from
+    { key: 'ageing', label: 'Ageing', type: 'text', deps: ['installment.due_date', 'installment.amount_minor', 'installment.paid_minor'],
+      sql: `CASE WHEN i.amount_minor - COALESCE(i.paid_minor, 0) <= 0 THEN 'Paid'
+                 WHEN i.due_date >= ${IST_TODAY} THEN '0 · Not due yet'
+                 WHEN ${IST_TODAY} - i.due_date <= 30 THEN '1 · 1–30 days overdue'
+                 WHEN ${IST_TODAY} - i.due_date <= 60 THEN '2 · 31–60 days overdue'
+                 WHEN ${IST_TODAY} - i.due_date <= 90 THEN '3 · 61–90 days overdue'
+                 ELSE '4 · 90+ days overdue' END` },
+    { key: 'is_overdue', label: 'Overdue', type: 'bool', deps: ['installment.due_date', 'installment.amount_minor', 'installment.paid_minor'],
+      sql: `(i.amount_minor - COALESCE(i.paid_minor, 0) > 0 AND i.due_date < ${IST_TODAY})` },
+  ],
+};
+
+const INVOICES: ReportEntity = {
+  key: 'invoices',
+  label: 'GST invoices',
+  blurb: 'Tax invoices: number, buyer, taxable value, CGST / SGST / IGST, total and status.',
+  permission: 'invoice.read',
+  from: `gst_invoice gi
+     LEFT JOIN branch br      ON br.id = gi.branch_id
+     LEFT JOIN vertical vt    ON vt.id = gi.vertical_id
+     LEFT JOIN "user" cn      ON cn.id = gi.counsellor_id`,
+  where: ['gi.deleted_at IS NULL'],
+  scopeCols: {
+    owner: 'gi.counsellor_id', team: 'gi.team_id', branch: 'gi.branch_id',
+    vertical: 'gi.vertical_id', pipeline: 'gi.pipeline_id', campaign: 'gi.campaign_id',
+  },
+  dateFields: ['invoice_date', 'issued_at', 'created_at'],
+  defaultDateField: 'invoice_date',
+  defaultColumns: ['invoice_no', 'invoice_date', 'buyer_name', 'taxable', 'gst', 'total', 'status'],
+  columns: [
+    { key: 'id', label: 'ID', sql: 'gi.id', type: 'number', deps: ['gst_invoice.id'], groupable: false },
+    { key: 'invoice_no', label: 'Invoice no.', sql: 'gi.invoice_no', type: 'text', deps: ['gst_invoice.invoice_no'], groupable: false },
+    { key: 'invoice_date', label: 'Invoice date', sql: 'gi.invoice_date', type: 'date', deps: ['gst_invoice.invoice_date'], groupable: false },
+    { key: 'invoice_month', label: 'Invoice month', sql: `to_char(gi.invoice_date, 'YYYY-MM')`, type: 'text', deps: ['gst_invoice.invoice_date'] },
+    { key: 'status', label: 'Status', sql: 'gi.status', type: 'text', deps: ['gst_invoice.status'] },
+    { key: 'buyer_name', label: 'Buyer', sql: 'gi.buyer_name', type: 'text', deps: ['gst_invoice.buyer_name'], groupable: false },
+    { key: 'buyer_phone', label: 'Buyer mobile', sql: 'gi.buyer_phone', type: 'text', deps: ['gst_invoice.buyer_phone'], groupable: false },
+    { key: 'buyer_gstin', label: 'Buyer GSTIN', sql: 'gi.buyer_gstin', type: 'text', deps: ['gst_invoice.buyer_gstin'], groupable: false },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'counsellor', label: 'Counsellor', sql: 'cn.name', type: 'text', deps: ['user.name'] },
+    { key: 'supply_type', label: 'Supply type', sql: 'gi.supply_type', type: 'text', deps: ['gst_invoice.supply_type'] },
+    { key: 'taxable', label: 'Taxable value', sql: 'gi.taxable_minor', type: 'money', deps: ['gst_invoice.taxable_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'discount', label: 'Discount', sql: 'gi.discount_minor', type: 'money', deps: ['gst_invoice.discount_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'cgst', label: 'CGST', sql: 'gi.cgst_minor', type: 'money', deps: ['gst_invoice.cgst_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'sgst', label: 'SGST', sql: 'gi.sgst_minor', type: 'money', deps: ['gst_invoice.sgst_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'igst', label: 'IGST', sql: 'gi.igst_minor', type: 'money', deps: ['gst_invoice.igst_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'gst', label: 'Total GST', sql: '(COALESCE(gi.cgst_minor,0) + COALESCE(gi.sgst_minor,0) + COALESCE(gi.igst_minor,0))', type: 'money',
+      deps: ['gst_invoice.cgst_minor', 'gst_invoice.sgst_minor', 'gst_invoice.igst_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'total', label: 'Invoice total', sql: 'gi.total_minor', type: 'money', deps: ['gst_invoice.total_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'issued_at', label: 'Issued at', sql: 'gi.issued_at', type: 'datetime', deps: ['gst_invoice.issued_at'], groupable: false },
+    { key: 'paid_at', label: 'Paid at', sql: 'gi.paid_at', type: 'datetime', deps: ['gst_invoice.paid_at'], groupable: false },
+    { key: 'created_at', label: 'Created on', sql: 'gi.created_at', type: 'datetime', deps: ['gst_invoice.created_at'], groupable: false },
+  ],
+};
+
+const REFUNDS: ReportEntity = {
+  key: 'refunds',
+  label: 'Refunds',
+  blurb: 'Refund requests: amount, reason, who asked, who approved, status and when it was paid out.',
+  permission: 'refund.read',
+  from: `refund rf
+     LEFT JOIN enrolment e    ON e.id = rf.enrolment_id
+     LEFT JOIN lead l         ON l.id = rf.lead_id
+     LEFT JOIN branch br      ON br.id = rf.branch_id
+     LEFT JOIN vertical vt    ON vt.id = rf.vertical_id
+     LEFT JOIN "user" rq      ON rq.id = rf.requested_by
+     LEFT JOIN "user" ap      ON ap.id = rf.approver_id`,
+  where: ['rf.deleted_at IS NULL'],
+  scopeCols: {
+    owner: 'e.counsellor_id', team: 'e.team_id', branch: 'rf.branch_id',
+    vertical: 'rf.vertical_id', pipeline: 'e.pipeline_id', campaign: 'e.campaign_id',
+  },
+  dateFields: ['requested_at', 'refunded_at'],
+  defaultDateField: 'requested_at',
+  defaultColumns: ['refund_no', 'student', 'amount', 'reason', 'status', 'requested_by', 'requested_at'],
+  columns: [
+    { key: 'id', label: 'ID', sql: 'rf.id', type: 'number', deps: ['refund.id'], groupable: false },
+    { key: 'refund_no', label: 'Refund no.', sql: 'rf.refund_no', type: 'text', deps: ['refund.refund_no'], groupable: false },
+    { key: 'student', label: 'Student / lead', sql: 'l.full_name', type: 'text', deps: ['lead.full_name'], groupable: false },
+    { key: 'enrolment_no', label: 'Enrolment no.', sql: 'e.enrolment_no', type: 'text', deps: ['enrolment.enrolment_no'], groupable: false },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'amount', label: 'Amount', sql: 'rf.amount_minor', type: 'money', deps: ['refund.amount_minor'], groupable: false, aggregate: 'sum' },
+    { key: 'reason', label: 'Reason', sql: 'rf.reason', type: 'text', deps: ['refund.reason'], groupable: false },
+    { key: 'mode', label: 'Mode', sql: 'rf.mode', type: 'text', deps: ['refund.mode'] },
+    { key: 'status', label: 'Status', sql: 'rf.status', type: 'text', deps: ['refund.status'] },
+    { key: 'requested_by', label: 'Requested by', sql: 'rq.name', type: 'text', deps: ['user.name'] },
+    { key: 'approver', label: 'Approver', sql: 'ap.name', type: 'text', deps: ['user.name'] },
+    { key: 'requested_at', label: 'Requested on', sql: 'rf.requested_at', type: 'datetime', deps: ['refund.requested_at'], groupable: false },
+    { key: 'decided_at', label: 'Decided on', sql: 'rf.decided_at', type: 'datetime', deps: ['refund.decided_at'], groupable: false },
+    { key: 'refunded_at', label: 'Paid out on', sql: 'rf.refunded_at', type: 'datetime', deps: ['refund.refunded_at'], groupable: false },
+  ],
+};
+
+const ATTENDANCE: ReportEntity = {
+  key: 'attendance',
+  label: 'Attendance',
+  blurb: 'Class attendance by student, batch and day: present, absent, late, leave.',
+  permission: 'attendance.read',
+  from: `attendance a
+     LEFT JOIN student s      ON s.id = a.student_id
+     LEFT JOIN batch bt       ON bt.id = a.batch_id
+     LEFT JOIN m_course cr    ON cr.id = bt.course_id
+     LEFT JOIN "user" tr      ON tr.id = bt.trainer_id
+     LEFT JOIN "user" mk      ON mk.id = a.marked_by
+     LEFT JOIN branch br      ON br.id = a.branch_id
+     LEFT JOIN vertical vt    ON vt.id = a.vertical_id`,
+  where: ['a.deleted_at IS NULL'],
+  // the Attendance screen's own map (attendance.service ATT_SCOPE_COLS)
+  scopeCols: { branch: 'a.branch_id', vertical: 'a.vertical_id', owner: 'a.marked_by' },
+  dateFields: ['session_date'],
+  defaultDateField: 'session_date',
+  defaultColumns: ['session_date', 'student', 'batch', 'status', 'mode', 'marked_by'],
+  columns: [
+    { key: 'id', label: 'ID', sql: 'a.id', type: 'number', deps: ['attendance.id'], groupable: false },
+    { key: 'session_date', label: 'Session date', sql: 'a.session_date', type: 'date', deps: ['attendance.session_date'], groupable: false },
+    { key: 'session_month', label: 'Session month', sql: `to_char(a.session_date, 'YYYY-MM')`, type: 'text', deps: ['attendance.session_date'] },
+    { key: 'student', label: 'Student', sql: 's.full_name', type: 'text', deps: ['student.full_name'] },
+    { key: 'student_no', label: 'Student no.', sql: 's.student_no', type: 'text', deps: ['student.student_no'], groupable: false },
+    { key: 'batch', label: 'Batch', sql: 'bt.name', type: 'text', deps: ['batch.name'] },
+    { key: 'course', label: 'Course', sql: 'cr.name', type: 'text', deps: ['m_course.name'] },
+    { key: 'trainer', label: 'Trainer', sql: 'tr.name', type: 'text', deps: ['user.name'] },
+    { key: 'status', label: 'Status', sql: 'a.status', type: 'text', deps: ['attendance.status'] },
+    { key: 'present', label: 'Present', sql: `(a.status IN ('present', 'late'))`, type: 'bool', deps: ['attendance.status'] },
+    { key: 'mode', label: 'Mode', sql: 'a.mode', type: 'text', deps: ['attendance.mode'] },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'marked_by', label: 'Marked by', sql: 'mk.name', type: 'text', deps: ['user.name'] },
+    { key: 'remarks', label: 'Remarks', sql: 'a.remarks', type: 'text', deps: ['attendance.remarks'], groupable: false },
+  ],
+};
+
+const BATCHES: ReportEntity = {
+  key: 'batches',
+  label: 'Batches',
+  blurb: 'Batches with trainer, schedule, capacity, enrolled students and fill rate.',
+  permission: 'batch.read',
+  from: `batch bt
+     LEFT JOIN branch br      ON br.id = bt.branch_id
+     LEFT JOIN vertical vt    ON vt.id = bt.vertical_id
+     LEFT JOIN m_course cr    ON cr.id = bt.course_id
+     LEFT JOIN "user" tr      ON tr.id = bt.trainer_id`,
+  where: ['bt.deleted_at IS NULL'],
+  scopeCols: { branch: 'bt.branch_id', vertical: 'bt.vertical_id' },
+  dateFields: ['start_date', 'end_date', 'created_at'],
+  defaultDateField: 'start_date',
+  defaultColumns: ['batch_code', 'name', 'course', 'trainer', 'start_date', 'capacity', 'students', 'fill_pct', 'status'],
+  columns: [
+    { key: 'id', label: 'ID', sql: 'bt.id', type: 'number', deps: ['batch.id'], groupable: false },
+    { key: 'batch_code', label: 'Batch code', sql: 'bt.batch_code', type: 'text', deps: ['batch.batch_code'], groupable: false },
+    { key: 'name', label: 'Batch', sql: 'bt.name', type: 'text', deps: ['batch.name'] },
+    { key: 'course', label: 'Course', sql: 'cr.name', type: 'text', deps: ['m_course.name'] },
+    { key: 'trainer', label: 'Trainer', sql: 'tr.name', type: 'text', deps: ['user.name'] },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'status', label: 'Status', sql: 'bt.status', type: 'text', deps: ['batch.status'] },
+    { key: 'delivery_mode', label: 'Delivery mode', sql: 'bt.delivery_mode', type: 'text', deps: ['batch.delivery_mode'] },
+    { key: 'schedule', label: 'Schedule', sql: 'bt.schedule', type: 'text', deps: ['batch.schedule'], groupable: false },
+    { key: 'capacity', label: 'Capacity', sql: 'COALESCE(bt.capacity, 0)', type: 'number', deps: ['batch.capacity'], groupable: false, aggregate: 'sum' },
+    { key: 'students', label: 'Students', type: 'number', groupable: false, aggregate: 'sum',
+      sql: '(SELECT count(*) FROM student bs WHERE bs.batch_id = bt.id AND bs.deleted_at IS NULL)',
+      deps: ['student.batch_id', 'student.deleted_at'] },
+    { key: 'fill_pct', label: 'Fill %', type: 'number', groupable: false, filterable: false, aggregate: 'avg',
+      sql: 'round(100.0 * (SELECT count(*) FROM student bs2 WHERE bs2.batch_id = bt.id AND bs2.deleted_at IS NULL) / NULLIF(bt.capacity, 0), 1)',
+      deps: ['student.batch_id', 'student.deleted_at', 'batch.capacity'] },
+    { key: 'start_date', label: 'Start date', sql: 'bt.start_date', type: 'date', deps: ['batch.start_date'], groupable: false },
+    { key: 'end_date', label: 'End date', sql: 'bt.end_date', type: 'date', deps: ['batch.end_date'], groupable: false },
+    { key: 'created_at', label: 'Created on', sql: 'bt.created_at', type: 'datetime', deps: ['batch.created_at'], groupable: false },
+  ],
+};
+
+const WALK_INS: ReportEntity = {
+  key: 'walk_ins',
+  label: 'Walk-ins',
+  blurb: 'Visitors at the centre: purpose, counsellor, course, wait time and whether they became a lead.',
+  permission: 'walkin.read',
+  from: `walk_in w
+     LEFT JOIN lead wl        ON wl.id = w.lead_id
+     LEFT JOIN campaign cmp   ON cmp.id = w.campaign_id
+     LEFT JOIN branch br      ON br.id = w.branch_id
+     LEFT JOIN vertical vt    ON vt.id = w.vertical_id
+     LEFT JOIN m_course cr    ON cr.id = w.course_id
+     LEFT JOIN "user" cn      ON cn.id = w.counsellor_id
+     LEFT JOIN m_source ms    ON ms.id = w.heard_about_source_id`,
+  where: ['w.deleted_at IS NULL'],
+  // the Walk-ins screen's own map (capture.service WALKIN_SCOPE_COLS)
+  scopeCols: {
+    owner: 'COALESCE(wl.owner_id, w.counsellor_id)', team: 'wl.team_id',
+    branch: 'w.branch_id', vertical: 'w.vertical_id',
+    pipeline: 'COALESCE(cmp.pipeline_id, wl.pipeline_id)', campaign: 'COALESCE(w.campaign_id, wl.campaign_id)',
+  },
+  dateFields: ['visited_at'],
+  defaultDateField: 'visited_at',
+  defaultColumns: ['visitor_name', 'phone', 'purpose', 'course', 'counsellor', 'status', 'visited_at'],
+  columns: [
+    { key: 'id', label: 'ID', sql: 'w.id', type: 'number', deps: ['walk_in.id'], groupable: false },
+    { key: 'visitor_name', label: 'Visitor', sql: 'w.visitor_name', type: 'text', deps: ['walk_in.visitor_name'], groupable: false },
+    { key: 'phone', label: 'Mobile', sql: 'w.phone', type: 'text', deps: ['walk_in.phone'], groupable: false },
+    { key: 'purpose', label: 'Purpose', sql: 'w.purpose', type: 'text', deps: ['walk_in.purpose'] },
+    { key: 'course', label: 'Course', sql: 'cr.name', type: 'text', deps: ['m_course.name'] },
+    { key: 'counsellor', label: 'Counsellor', sql: 'cn.name', type: 'text', deps: ['user.name'] },
+    { key: 'heard_about', label: 'How they heard', sql: 'ms.name', type: 'text', deps: ['m_source.name'] },
+    { key: 'status', label: 'Status', sql: 'w.status', type: 'text', deps: ['walk_in.status'] },
+    { key: 'became_lead', label: 'Became a lead', sql: '(w.lead_id IS NOT NULL)', type: 'bool', deps: ['walk_in.lead_id'] },
+    { key: 'branch', label: 'Branch', sql: 'br.name', type: 'text', deps: ['branch.name'] },
+    { key: 'vertical', label: 'Vertical', sql: 'vt.name', type: 'text', deps: ['vertical.name'] },
+    { key: 'wait_minutes', label: 'Wait (min)', sql: 'COALESCE(w.wait_minutes, 0)', type: 'number', deps: ['walk_in.wait_minutes'], groupable: false, aggregate: 'avg' },
+    { key: 'visited_at', label: 'Visited at', sql: 'w.visited_at', type: 'datetime', deps: ['walk_in.visited_at'], groupable: false },
+    { key: 'visit_month', label: 'Visit month', sql: `to_char(w.visited_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM')`, type: 'text', deps: ['walk_in.visited_at'] },
+  ],
+};
+
+export const REPORT_ENTITIES: ReportEntity[] = [LEADS, FOLLOW_UPS, ENROLMENTS, RECEIPTS, CAMPAIGNS, USERS,
+  CALLS, STUDENTS, FEE_DUES, INVOICES, REFUNDS, ATTENDANCE, BATCHES, WALK_INS];
 
 export const entityByKey = (key: string): ReportEntity | undefined =>
   REPORT_ENTITIES.find((e) => e.key === key);

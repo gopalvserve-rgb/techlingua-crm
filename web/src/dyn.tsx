@@ -307,7 +307,7 @@ const statusBadge = (active: boolean): Cell => ({ b: [active ? 'Active' : 'Inact
 
 interface Summary {
   kpis: { total: number; today: number; mtd: number; won: number; won_today: number; hot: number; warm: number; cold: number; walkins: number };
-  by_stage: Array<{ stage_id: number; name: string; stage_type: string; sort_order: number; pipeline_id: number; ct: number }>;
+  by_stage: Array<{ stage_id: number; name: string; stage_type: string; sort_order: number; pipeline_id: number; ct: number; is_default?: boolean; pipeline_name?: string | null }>;
   series: Array<{ day: string; leads: number; won: number }>;
   follow_ups: { due_today: number; overdue: number; pending: number; done_today: number; done_week: number; my_open: number };
 }
@@ -318,17 +318,25 @@ const FUNNEL_COLORS = [
   'linear-gradient(90deg,var(--success),#2bb583)', 'linear-gradient(90deg,var(--danger),#d13d75)',
 ];
 
-function funnelRows(byStage: Summary['by_stage']) {
-  // aggregate stages by name (same default stage names across pipelines)
-  const agg = new Map<string, { ct: number; sort: number }>();
+export function funnelRows(byStage: Summary['by_stage']) {
+  // aggregate stages by name (same default stage names across pipelines). Client 12 Nov 2026 —
+  // "New Lead" (INSTA) and "New Enquiry" (BCL) are each pipeline's ENTRY stage: one bar, with
+  // the per-pipeline split beside it, so the funnel no longer shows the same step twice.
+  const agg = new Map<string, { label: string; ct: number; sort: number; entry: boolean; parts: Map<string, number> }>();
   byStage.forEach((s) => {
-    const cur = agg.get(s.name) ?? { ct: 0, sort: s.sort_order };
-    agg.set(s.name, { ct: cur.ct + s.ct, sort: Math.min(cur.sort, s.sort_order) });
+    const key = s.is_default ? '\u0000entry' : s.name;
+    const cur = agg.get(key) ?? { label: s.name, ct: 0, sort: s.sort_order, entry: !!s.is_default, parts: new Map<string, number>() };
+    cur.ct += s.ct; cur.sort = Math.min(cur.sort, s.sort_order);
+    cur.parts.set(s.name, (cur.parts.get(s.name) ?? 0) + s.ct);
+    agg.set(key, cur);
   });
-  const rows = [...agg.entries()].sort((a, b) => a[1].sort - b[1].sort);
-  const max = Math.max(1, ...rows.map(([, v]) => v.ct));
-  return rows.map(([name, v], i) => ({
-    label: name, val: String(v.ct), sub: '', pct: Math.round((v.ct / max) * 100), color: FUNNEL_COLORS[i % FUNNEL_COLORS.length],
+  const rows = [...agg.values()].sort((a, b) => Number(b.entry) - Number(a.entry) || a.sort - b.sort);
+  const max = Math.max(1, ...rows.map((v) => v.ct));
+  return rows.map((v, i) => ({
+    label: v.entry && v.parts.size > 1 ? [...v.parts.keys()].join(' / ') : v.label,
+    val: String(v.ct),
+    sub: v.entry && v.parts.size > 1 ? [...v.parts.entries()].map(([n, c]) => `${n} ${c}`).join(' · ') : '',
+    pct: Math.round((v.ct / max) * 100), color: FUNNEL_COLORS[i % FUNNEL_COLORS.length],
   }));
 }
 

@@ -66,7 +66,8 @@ function GenerateModal({ onClose, onGenerated }: { onClose: () => void; onGenera
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   // the campaign's sources + org-wide ones (Oct 2026) — the server gives the campaign its own copy
-  const sources = dedupeSources(ref.sources.filter((s: any) => !campaign || s.campaign_id == null || Number(s.campaign_id) === campaign));
+  const camp = campaign ? (ref.campaigns as any[]).find((c: any) => Number(c.id) === campaign) : null;
+  const sources = dedupeSources(ref.sources.filter((s: any) => !campaign || s.campaign_id == null || Number(s.campaign_id) === campaign), camp);
 
   const save = async () => {
     setErr(''); setBusy(true);
