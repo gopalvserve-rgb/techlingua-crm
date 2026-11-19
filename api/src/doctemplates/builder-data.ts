@@ -89,7 +89,7 @@ export async function loadDocData(db: Db, type: DocType, refId: number): Promise
         course_fee: rs(q.subtotal_minor), discount: rs(q.discount_minor), tax: rs(q.tax_minor), total: rs(q.total_minor), total_words: amountInWordsINR(Number(q.total_minor)),
       }, s(q.quote_no), s(q.full_name), {
         lines: items.map((i: any) => ({ description: s(i.description || i.course_name), qty: s(i.qty), rate: rs(i.unit_price_minor),
-          discount: rs(i.discount_minor), tax: `${s(i.tax_pct)}%`, amount: rs(i.total_minor) })),
+          discount: rs(i.discount_minor), tax: `${Number(i.tax_pct ?? 0)}%`, amount: rs(i.total_minor) })),
       });
       return { data, ctx: { branch_id: num(q.branch_id), vertical_id: num(q.vertical_id), course_id: num(items[0]?.course_id) } };
     }

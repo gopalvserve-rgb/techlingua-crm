@@ -130,14 +130,18 @@ function renderSheet(cfg: DocConfig, data: DocData): PdfPage[] {
     const cs = t.columns.filter((c) => c.visible);
     if (!t.visible || !rows.length || !cs.length) continue;
     groupTitle(t.title);
-    const cw = W / cs.length;
+    // the first (description) column gets a double share when there are several columns
+    const shares = cs.map((_, i) => (i === 0 && cs.length > 2 ? 2 : 1));
+    const unit = W / shares.reduce((a, b) => a + b, 0);
+    const xs = shares.map((_, i) => M + shares.slice(0, i).reduce((a, b) => a + b, 0) * unit);
+    const ws = shares.map((sh) => sh * unit);
     ensure(lead * 2);
     p.rect(M, y - fs, W, lead + 2, SOFT);
-    cs.forEach((c, i) => p.text(PdfPage.clip(c.label, cw - 6, fs - 0.5, 'Helvetica-Bold'), M + i * cw + 3, y, { size: fs - 0.5, font: 'Helvetica-Bold' }));
+    cs.forEach((c, i) => p.text(PdfPage.clip(c.label, ws[i] - 6, fs - 0.5, 'Helvetica-Bold'), xs[i] + 3, y, { size: fs - 0.5, font: 'Helvetica-Bold' }));
     y += lead + 2;
     for (const r of rows) {
       ensure(lead + 2);
-      cs.forEach((c, i) => p.text(PdfPage.clip(String(r[c.key] ?? ''), cw - 6, fs), M + i * cw + 3, y, { size: fs }));
+      cs.forEach((c, i) => p.text(PdfPage.clip(String(r[c.key] ?? ''), ws[i] - 6, fs), xs[i] + 3, y, { size: fs }));
       if (cfg.design.borders) p.line(M, y + 4, M + W, y + 4, { color: RULE });
       y += lead + 2;
     }
@@ -235,7 +239,7 @@ function renderCertificate(cfg: DocConfig, data: DocData): PdfPage[] {
   }
   // detail line (visible fields of the certificate / course groups)
   const det = cfg.groups.filter((g) => g.visible && g.key !== 'student').flatMap((g) => pairs(g, data)).map(([k, v]) => `${k}: ${v}`);
-  if (det.length) { y += 6; for (const ln of wrap(det.join('    '), PW - M * 4, 9)) { p.text(ln, 0, y, { size: 9, color: MUTED, align: 'center', width: PW }); y += 13; } }
+  if (det.length) { y += 6; for (const ln of wrap(det.join('  ·  '), PW - M * 4, 9)) { p.text(ln, 0, y, { size: 9, color: MUTED, align: 'center', width: PW }); y += 13; } }
   if (cfg.partner.show && (cfg.partner.name || cfg.partner.text)) {
     y += 4; p.text(`In association with ${cfg.partner.name}`.trim(), 0, y, { size: 9, font: 'Helvetica-Bold', align: 'center', width: PW }); y += 12;
     if (cfg.partner.text) for (const ln of wrap(cfg.partner.text, PW - M * 5, 8)) { p.text(ln, 0, y, { size: 8, color: MUTED, align: 'center', width: PW }); y += 11; }
@@ -286,7 +290,7 @@ function renderCard(cfg: DocConfig, data: DocData): PdfPage[] {
   p.text(PdfPage.clip(cfg.branding.title, PW - tx - M, 5.5), tx, 24, { size: 5.5, color: fg });
   let y = H + 8;
   const photoOn = cfg.groups.some((g) => g.visible && g.fields.some((x) => x.key === 'photo' && x.visible));
-  const pw = land ? 50 : 56; const ph = land ? 62 : 68;
+  const pw = land ? 50 : 50; const ph = land ? 62 : 60;
   const px = land ? M : (PW - pw) / 2;
   if (photoOn) {
     if (!(data.photo && p.image(data.photo, px, y, pw, ph))) {
@@ -296,25 +300,29 @@ function renderCard(cfg: DocConfig, data: DocData): PdfPage[] {
     }
   }
   let fx = M; let fw = PW - M * 2;
-  if (land && photoOn) { fx = M + pw + 8; fw = PW - fx - M; } else if (photoOn) y += ph + 6;
+  if (land && photoOn) { fx = M + pw + 8; fw = PW - fx - M; } else if (photoOn) y += ph + fs + 8;
   const all = cfg.groups.filter((g) => g.visible).flatMap((g) => pairs(g, data));
   const nameIdx = all.findIndex(([k]) => /name/i.test(k));
   if (nameIdx >= 0) {
     p.text(PdfPage.clip(all[nameIdx][1], fw, fs + 2.5, 'Helvetica-Bold'), fx, y, { size: fs + 2.5, font: 'Helvetica-Bold', color: INK, align: land ? 'left' : 'center', width: fw });
     y += fs + 6; all.splice(nameIdx, 1);
   }
-  const qr = cfg.footer.show_qr && data.verify_url ? (land ? 40 : 44) : 0;
-  const bottomReserve = qr + (cfg.footer.show_barcode && data.barcode ? 22 : 0) + 6;
+  const qr = cfg.footer.show_qr && data.verify_url ? (land ? 40 : 42) : 0;
+  const barH = cfg.footer.show_barcode && data.barcode ? 18 : 0;
+  const qrTop = PH - M - barH - qr;
+  const sigY = PH - M - (barH ? barH + 8 : 8);
+  // fields run down the card; beside the QR they narrow instead of stopping, and they end above the signature
   for (const [k, v] of all) {
-    if (y > PH - M - bottomReserve) break;
+    if (y > sigY - 18) break;
+    const w = qr && y + 2 > qrTop ? fw - qr - 6 : fw;
     p.text(PdfPage.clip(k, fw * 0.38, fs - 1), fx, y, { size: fs - 1, color: MUTED });
-    p.text(PdfPage.clip(v, fw * 0.6, fs, 'Helvetica-Bold'), fx + fw * 0.4, y, { size: fs, font: 'Helvetica-Bold', color: INK });
-    y += fs + 3.5;
+    p.text(PdfPage.clip(v, w - fw * 0.4 - 2, fs, 'Helvetica-Bold'), fx + fw * 0.4, y, { size: fs, font: 'Helvetica-Bold', color: INK });
+    y += fs + 3;
   }
   const sig = cfg.footer.signatories[0];
-  if (qr) drawQr(p, data.verify_url as string, PW - M - qr, PH - M - qr - (cfg.footer.show_barcode && data.barcode ? 18 : 0), qr);
+  if (qr) drawQr(p, data.verify_url as string, PW - M - qr, qrTop, qr);
   if (sig) {
-    const sy = PH - M - (cfg.footer.show_barcode && data.barcode ? 26 : 8);
+    const sy = sigY;
     const img = jpeg(sig.image); if (img) p.image(img, M, sy - 20, 54, 16);
     p.line(M, sy, M + 60, sy, { color: INK, width: 0.4 });
     p.text(PdfPage.clip(sig.label, 70, 5), M, sy + 6, { size: 5, color: MUTED });
