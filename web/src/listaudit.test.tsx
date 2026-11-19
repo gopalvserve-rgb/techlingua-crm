@@ -138,8 +138,10 @@ const LISTS: Array<{ name: string; file: string; req: Ctrl[] }> = [
   // A FIXED catalog of standard events — you configure each event's channels, you never
   // create or delete an event — so it carries every control EXCEPT bulk-delete (declared).
   { name: 'NotificationEvents', file: 'notifevents.tsx', req: NO_BULK },
-  { name: 'AttemptsTab', file: 'crosssell.tsx', req: DERIVED },
-  { name: 'CrossSell', file: 'crosssell.tsx', req: DERIVED },
+  // Cross-Sell (client 12 Nov 2026): the two working lists — opportunities (records, with a
+  // column chooser) and recommendations (computed) — each carry filters, export and refresh.
+  { name: 'OpportunitiesTab', file: 'crosssell.tsx', req: ['multiFilter', 'export', 'refresh', 'colChooser'] },
+  { name: 'RecommendationsTab', file: 'crosssell.tsx', req: DERIVED },
 ];
 
 describe('list-audit — every registered list screen renders the full treatment', () => {

@@ -217,7 +217,7 @@ const APP_FULL: ModuleItem[] = [
     { id: 'placements', label: 'Placement Support', spec: { dyn: 'placements',
       sub: 'Post job openings for students — employer, role, location, salary and who is eligible — and track applicants from applied to selected.' } },
     { id: 'crosssell', label: 'Cross-Sell', spec: { dyn: 'crossSell',
-      sub: 'Suggests a next course for students and won leads. Create a follow-up or a new lead from a suggestion, or dismiss it.' } },
+      sub: 'Identify and grow opportunities to offer additional courses to existing students and customers.' } },
   ] },
 
   /* ---------------- Learning & Assessment ---------------- */

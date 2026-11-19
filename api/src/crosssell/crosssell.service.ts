@@ -176,7 +176,7 @@ export class CrossSellService {
 
   async listRules() {
     return this.db.query<any>(
-      `SELECT r.id, r.source_course_id, r.target_course_id, r.is_active, r.note,
+      `SELECT r.id, r.source_course_id, r.target_course_id, r.is_active, r.note, r.sale_type, r.weight,
               sc.name AS source_course_name, tc.name AS target_course_name,
               r.created_at, r.updated_at
          FROM cross_sell_rule r
@@ -202,11 +202,15 @@ export class CrossSellService {
     await this.assertCourse(source, 'Current course');
     await this.assertCourse(target, 'Suggested course');
     const orgId = await this.orgId();
+    // 12 Nov 2026: what kind of sale the pairing is, and how strong a match (feeds the match %)
+    const saleType = ['cross_sell', 'upsell', 'downsell', 'cross_vertical'].includes(String(dto?.sale_type)) ? String(dto.sale_type) : 'cross_sell';
+    const weight = dto?.weight != null && dto.weight !== '' ? Math.round(Number(dto.weight)) : 85;
+    if (!Number.isFinite(weight) || weight < 1 || weight > 100) throw new BadRequestException('Match strength must be between 1 and 100.');
     try {
       const r = await this.db.one<{ id: string }>(
-        `INSERT INTO cross_sell_rule (org_id, source_course_id, target_course_id, note, created_by)
-         VALUES ($1::bigint, $2::bigint, $3::bigint, $4, $5::bigint) RETURNING id`,
-        [orgId, source, target, dto?.note ?? null, me.id],
+        `INSERT INTO cross_sell_rule (org_id, source_course_id, target_course_id, note, created_by, sale_type, weight)
+         VALUES ($1::bigint, $2::bigint, $3::bigint, $4, $5::bigint, $6, $7) RETURNING id`,
+        [orgId, source, target, dto?.note ?? null, me.id, saleType, weight],
       );
       return { id: Number(r!.id), ok: true };
     } catch (e: any) {
@@ -228,6 +232,15 @@ export class CrossSellService {
       set('target_course_id', t);
     }
     if (dto?.note !== undefined) set('note', dto.note || null);
+    if (dto?.sale_type !== undefined) {
+      if (!['cross_sell', 'upsell', 'downsell', 'cross_vertical'].includes(String(dto.sale_type))) throw new BadRequestException('Unknown sale type.');
+      set('sale_type', String(dto.sale_type));
+    }
+    if (dto?.weight !== undefined) {
+      const w = Math.round(Number(dto.weight));
+      if (!Number.isFinite(w) || w < 1 || w > 100) throw new BadRequestException('Match strength must be between 1 and 100.');
+      set('weight', w);
+    }
     if (dto?.is_active !== undefined) set('is_active', dto.is_active === true || dto.is_active === '1' || dto.is_active === 1);
     if (!sets.length) return { id, ok: true };
     params.push(id);

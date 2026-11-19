@@ -296,6 +296,8 @@ export class TemplateService {
       if (!arr.length) return;
       params.push(arr); where.push(`${col} = ANY($${params.length}::bigint[])`);
     };
+    // cross-sell campaigns (12 Nov 2026) send to an exact contact list — still inside the caller's scope
+    if (dto?.lead_ids) inList('l.id', dto.lead_ids);
     if (dto?.campaign_ids) inList('l.campaign_id', dto.campaign_ids);
     if (dto?.source_ids) inList('l.source_id', dto.source_ids);
     if (dto?.stage_ids) inList('l.stage_id', dto.stage_ids);
