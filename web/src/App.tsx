@@ -8,6 +8,7 @@ import { GlobalScopeProvider } from './scope';
 import { ParentReportView } from './learning';
 import { PublicAdmissionForm } from './admissions';
 import { PublicCertificateVerify } from './assessments';
+import { PublicDocVerify } from './docbuilder';
 import { isModuleHidden } from './specs';
 
 /** Public, login-free parent report-card view (tokenised share link). */
@@ -22,6 +23,12 @@ function ParentReportRoute() {
 function CertVerifyRoute() {
   const { code } = useParams();
   return <PublicCertificateVerify code={code ?? ''} />;
+}
+
+/** Public, login-free verification of a builder document's QR code (client 12 Nov 2026). */
+function DocVerifyRoute() {
+  const { code } = useParams();
+  return <PublicDocVerify code={code ?? ''} />;
 }
 
 /** Public, login-free self-serve online admission form (per-branch/vertical keyed link). */
@@ -43,6 +50,7 @@ export default function App() {
         <Route path="/parent/report/:token" element={<ParentReportRoute />} />
         <Route path="/admit/:formKey" element={<AdmissionFormRoute />} />
         <Route path="/verify/certificate/:code" element={<CertVerifyRoute />} />
+        <Route path="/verify/:code" element={<DocVerifyRoute />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -56,6 +64,7 @@ export default function App() {
           <Route path="/parent/report/:token" element={<ParentReportRoute />} />
           <Route path="/admit/:formKey" element={<AdmissionFormRoute />} />
           <Route path="/verify/certificate/:code" element={<CertVerifyRoute />} />
+        <Route path="/verify/:code" element={<DocVerifyRoute />} />
           <Route path="/m/:mod/:sub" element={<Shell />} />
           <Route path="*" element={<Navigate to="/m/dash/overview" replace />} />
         </Routes>

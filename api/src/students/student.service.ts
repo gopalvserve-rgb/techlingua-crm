@@ -1189,7 +1189,8 @@ export class StudentService {
   async idCard(id: number, scope: ResolvedScope, verticalId?: number | null): Promise<{ buffer: Buffer; filename: string; r2_key: string | null }> {
     const { doc, lh, orgId, refId, docNo } = await this.idCardData(id, scope, verticalId);
     lh.tpl = this.docTemplates ? await this.docTemplates.overridesFor('student_id') : null;
-    const buffer = studentIdCardPdf(doc, lh);
+    // 12 Nov 2026 — a published Student ID builder template wins over the built-in card
+    const buffer = (await this.docTemplates?.builderPdf?.('student_id', id)) ?? studentIdCardPdf(doc, lh);
     let key: string | null = null;
     try { key = (await this.pdfAssets?.persist('student_id_card', refId, docNo, buffer, orgId)) ?? null; } catch { /* R2 off — stream anyway */ }
     return { buffer, filename: `id-card-${String(docNo ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`, r2_key: key };

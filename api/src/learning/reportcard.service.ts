@@ -6,6 +6,7 @@ import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { assertDateRange } from '../common/date.util';
 import { Letterhead, reportCardPdf, ReportCardDoc } from '../pdf/documents';
 import { PdfAssetService } from '../storage/pdf-asset.service';
+import { DocTemplateService } from '../doctemplates/doc-template.service';
 
 /**
  * REPORT CARD — a per-student, per-term academic-progress SNAPSHOT computed from Batch-1 data:
@@ -40,7 +41,9 @@ export function weightedOverall(parts: { attendance?: number | null; tests?: num
 
 @Injectable()
 export class ReportCardService {
-  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService, private readonly pdfAssets?: PdfAssetService) {}
+  constructor(private readonly db: DatabaseService, private readonly resolver: ScopeResolverService, private readonly pdfAssets?: PdfAssetService,
+              /** 12 Nov 2026 — the document builder (a published Report Card template wins). Optional. */
+              private readonly docTemplates?: DocTemplateService) {}
 
   private async orgId(): Promise<number> {
     const r = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);
@@ -241,7 +244,8 @@ export class ReportCardService {
 
   async pdf(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string }> {
     const rc = await this.get(id, scope);
-    const out = { buffer: reportCardPdf(this.toDoc(rc), this.letterheadOf(rc)),
+    const built = await this.docTemplates?.builderPdf?.('report_card', id);
+    const out = { buffer: built ?? reportCardPdf(this.toDoc(rc), this.letterheadOf(rc)),
       filename: `report-card-${String(rc.student_no ?? rc.student_id)}-${String(rc.term).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
     await this.pdfAssets?.persist('reportcard', id, `${String(rc.student_no ?? rc.student_id)}-${String(rc.term)}`, out.buffer);
     return out;

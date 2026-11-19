@@ -11,6 +11,7 @@ import { Letterhead, quotationPdf } from '../pdf/documents';
 import { requireDateString } from '../common/date.util';
 import { FinanceSettingsService } from '../finance/finance-settings.service';
 import { PdfAssetService } from '../storage/pdf-asset.service';
+import { DocTemplateService } from '../doctemplates/doc-template.service';
 
 /**
  * QUOTATIONS — fee proposals with line items, discounts, tax SHOWN, a validity date,
@@ -76,6 +77,8 @@ export class QuotationService {
     private readonly messaging?: MessagingService,
     private readonly finance?: FinanceSettingsService,
     private readonly pdfAssets?: PdfAssetService,
+    /** 12 Nov 2026 — the document builder (a published Quotation template wins). Optional. */
+    private readonly docTemplates?: DocTemplateService,
   ) {}
 
   /**
@@ -262,8 +265,9 @@ export class QuotationService {
 
   async pdf(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string }> {
     const q = await this.get(id, scope);
+    const built = await this.docTemplates?.builderPdf?.('quotation', id);
     const out = {
-      buffer: quotationPdf(q as any, this.letterheadOf(q)),
+      buffer: built ?? quotationPdf(q as any, this.letterheadOf(q)),
       filename: `${String(q.quote_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`,
     };
     await this.pdfAssets?.persist('quotation', id, q.quote_no ? String(q.quote_no) : null, out.buffer);

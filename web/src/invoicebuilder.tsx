@@ -53,21 +53,21 @@ const STATUS_BADGE: Record<string, [string, string]> = {
 
 /* ------------------------------------------------------------ small widgets */
 
-function Row({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+export function Row({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <div className="fld" style={{ marginBottom: 10 }}>
       <label>{label}</label>{children}{hint && <span className="fhint">{hint}</span>}
     </div>
   );
 }
-function Toggle({ on, onChange, label, disabled }: { on: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
+export function Toggle({ on, onChange, label, disabled }: { on: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
   return (
     <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, margin: '4px 0' }}>
       <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />{label}
     </label>
   );
 }
-function ColorIn({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
+export function ColorIn({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
       <input type="color" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={{ width: 38, height: 28, padding: 0, border: '1px solid var(--line)' }} />
@@ -77,7 +77,7 @@ function ColorIn({ value, onChange, disabled }: { value: string; onChange: (v: s
 }
 
 /** PNG / JPG / SVG → a JPEG data URL (white background, ≤ 700 px) the PDF writer can embed. */
-async function toJpeg(file: File, maxW = 700): Promise<string> {
+export async function toJpeg(file: File, maxW = 700): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
@@ -92,7 +92,7 @@ async function toJpeg(file: File, maxW = 700): Promise<string> {
     return out;
   } finally { URL.revokeObjectURL(url); }
 }
-function ImageIn({ label, value, onChange, disabled, testid }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean; testid: string }) {
+export function ImageIn({ label, value, onChange, disabled, testid }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean; testid: string }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <Row label={label} hint="PNG, JPG or SVG — converted for the PDF automatically.">
@@ -109,7 +109,7 @@ function ImageIn({ label, value, onChange, disabled, testid }: { label: string; 
 
 /** A drag-and-drop ordered list (with ↑ ↓ for keyboard users) of rows that can be shown/hidden
  *  and relabelled. */
-function DnDList<T extends { key: string; visible: boolean }>({ items, onChange, render, disabled, testid }: {
+export function DnDList<T extends { key: string; visible: boolean }>({ items, onChange, render, disabled, testid }: {
   items: T[]; onChange: (next: T[]) => void; render: (it: T, set: (patch: Partial<T>) => void) => ReactNode; disabled?: boolean; testid: string;
 }) {
   const drag = useRef<number | null>(null);

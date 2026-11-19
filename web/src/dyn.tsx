@@ -80,6 +80,7 @@ import {
 import { CONVERSION_LABEL_LEAD_WON } from './metrics';
 import { SupportTickets } from './support';
 import { CrossSell } from './crosssell';
+import { TemplateManagement } from './docbuilder';
 import { FinanceSettings } from './financesettings';
 import { DiscountMaster } from './discountmaster';
 import { AttendanceScreen, TestsScreen, AssignmentsScreen, BatchRosterModal } from './academics';
@@ -8500,7 +8501,7 @@ export function BatchMessageModal({ batch, batchIds, onClose, onDone }:
 const TPL_ID_TYPES = new Set(['student_id', 'employee_id']);
 const TPL_DOC_TYPES = new Set(['fee_invoice', 'fee_receipt', 'quotation', 'certificate', 'marksheet']);
 
-function TemplateEditModal({ tpl, onClose, onSaved }: { tpl: any; onClose: () => void; onSaved: () => void }) {
+export function TemplateEditModal({ tpl, onClose, onSaved }: { tpl: any; onClose: () => void; onSaved: () => void }) {
   const s0 = (tpl?.settings ?? {}) as any;
   const [headerTitle, setHeaderTitle] = useState<string>(String(s0.header_title ?? ''));
   const [showLogo, setShowLogo] = useState<boolean>(s0.show_logo !== false);
@@ -8564,41 +8565,6 @@ function TemplateEditModal({ tpl, onClose, onSaved }: { tpl: any; onClose: () =>
   );
 }
 
-function TemplateSetup() {
-  const { data, loading, reload } = useFetch<any[]>('/document-templates', []);
-  const [edit, setEdit] = useState<any | null>(null);
-  const rows = data ?? [];
-  return (
-    <>
-      <div className="card tbl-fill">
-        <div className="card-head"><h3><Ic k="doc" />Document & ID Templates</h3></div>
-        <div className="tbl-scroll">
-          <table className="tbl">
-            <thead><tr><th>Template</th><th>Header / title</th><th>Logo</th><th>Last updated</th><th>Actions</th></tr></thead>
-            <tbody>
-              {loading && rows.length === 0 ? <tr><td className="empty" colSpan={5}>Loading…</td></tr>
-                : rows.length === 0 ? <tr><td className="empty" colSpan={5}>No templates</td></tr>
-                : rows.map((t) => (
-                  <tr key={t.type}>
-                    <td><b>{t.name}</b> <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.type}</span></td>
-                    <td>{(t.settings?.header_title) || '—'}</td>
-                    <td>{t.settings?.show_logo === false ? 'Off' : 'On'}</td>
-                    <td>{t.updated_at ? fmtFull(t.updated_at) : '—'}</td>
-                    <td>
-                      <button className="btn sm" data-testid={`tpl-edit-${t.type}`} onClick={() => setEdit(t)}><Ic k="edit" />Edit</button>
-                      {t.type === 'fee_invoice' && <a className="btn sm primary" style={{ marginLeft: 6 }} href={`${location.pathname.replace(/\/[^/]+$/, '')}/invoicebuilder`} data-testid="tpl-open-builder"><Ic k="grid" />Open builder</a>}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      {edit && <TemplateEditModal tpl={edit} onClose={() => setEdit(null)} onSaved={reload} />}
-    </>
-  );
-}
-
 export const DYN: Record<string, () => JSX.Element> = {
   dashOverview: DashOverview,
   quickContact: QuickContact,
@@ -8645,7 +8611,8 @@ export const DYN: Record<string, () => JSX.Element> = {
   notifSettings: NotificationSettings,
   bulkWhatsApp: BulkWhatsApp,
   settings: Settings,
-  templateSetup: TemplateSetup,
+  // client 12 Nov 2026 — Template Management by module, with a builder for every document
+  templateSetup: TemplateManagement,
   invoiceTemplateBuilder: InvoiceTemplateBuilder,
   financeSettings: FinanceSettings,
   discountMaster: DiscountMaster,

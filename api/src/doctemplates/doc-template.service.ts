@@ -1,5 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { DocBuilderService } from './doc-builder.service';
+import { DocType } from './builder-catalog';
 
 /**
  * DOCUMENT TEMPLATE SETUP (dev/143 item 5, migration 116) — Administration › Template Setup.
@@ -37,7 +39,19 @@ export interface DocTemplateOverrides {
 
 @Injectable()
 export class DocTemplateService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService, @Optional() private readonly builder?: DocBuilderService) {}
+
+  /**
+   * 12 Nov 2026 — the document builder. The generators (receipt, quotation, ID cards, certificate,
+   * report card) ask here first: a PUBLISHED builder template for the record's branch / vertical /
+   * course → its PDF; none → null and the generator prints its built-in layout as before. Never
+   * throws: a builder problem must not stop a receipt from printing.
+   */
+  async builderPdf(type: DocType, refId: number): Promise<Buffer | null> {
+    if (!this.builder) return null;
+    try { return (await this.builder.renderRecord(type, refId))?.buffer ?? null; }
+    catch (e) { console.error('[doc-builder] fell back to the built-in layout', type, refId, (e as Error)?.message); return null; }
+  }
 
   private async orgId(): Promise<number> {
     const o = await this.db.one<{ id: string }>(`SELECT id FROM organisation ORDER BY id LIMIT 1`);

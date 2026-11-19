@@ -113,6 +113,9 @@ export class EmployeeService {
     if (!lh.tpl || !lh.tpl.header_title || !String(lh.tpl.header_title).trim()) {
       lh.tpl = { ...(lh.tpl ?? {}), header_title: 'Employee Identity Card' };
     }
+    // 12 Nov 2026 — a published Employee ID builder template wins over the built-in card
+    const built = await this.docTemplates?.builderPdf?.('employee_id', id);
+    if (built) return { buffer: built, filename: `employee-id-${String(e.employee_code ?? id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
     const buffer = studentIdCardPdf({
       student_name: e.name,
       student_no: e.employee_code,

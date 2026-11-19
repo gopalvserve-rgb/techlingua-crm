@@ -501,7 +501,7 @@ const APP_FULL: ModuleItem[] = [
       sub: 'Staff alerts for every event — bell, pop-up, sound, desktop, email and WhatsApp; who receives each one, its priority, when it goes and how it escalates up the reporting hierarchy.' } },
     // dev/143 item 5 — Template Setup (document/ID formats). Reachable from Administration › Settings area.
     { id: 'templates', label: 'Template Setup', spec: { dyn: 'templateSetup',
-      sub: 'Header, logo, footer and terms for every document — fee invoice, receipt, student and employee ID cards, quotation, certificate and marksheet.' } },
+      sub: 'Template Management — every document by module (Finance, Students, Academics, HR, Certificates) with its own builder, branch / vertical / course-wise templates, approval, versions and QR verification.' } },
     // client 5 Nov 2026 — Fee Invoice Template Builder (versions, per-branch defaults, live PDF preview)
     { id: 'invoicebuilder', label: 'Fee Invoice Builder', spec: { dyn: 'invoiceTemplateBuilder',
       sub: 'Design the fee invoice: branding, fields, fee table columns, totals, payment details, footer and terms — drag to arrange, live A4 preview, publish versions, per-branch templates.' } },

@@ -1308,3 +1308,21 @@ html[data-theme="dark"] .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-3:#199e7
 @media (max-width:1100px){.cs-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.cs-grid{grid-template-columns:1fr}}
 @media (max-width:760px){.cs-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cs-strip{grid-template-columns:repeat(2,minmax(0,1fr))}
   .cs-step,.cs-step:first-child{clip-path:none;border-radius:8px}.cs-mini{grid-template-columns:1fr}}
+
+/* ---- Template Management + document builder (client 12 Nov 2026) ---- */
+.tm-doc{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.tm-doc-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.db-shell{max-width:min(1500px,98vw);width:98vw;height:94vh;display:flex;flex-direction:column}
+.db-body{flex:1;display:grid;grid-template-columns:230px minmax(320px,420px) 1fr;gap:0;min-height:0}
+.db-steps{border-right:1px solid var(--border);overflow:auto;padding:8px}
+.db-step{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;border:0;background:none;padding:8px;border-radius:8px;cursor:pointer;font:inherit;color:var(--text)}
+.db-step.on{background:var(--primary-soft)}
+.db-n{font-family:var(--font-mono);font-size:11px;color:var(--primary);font-weight:700;margin-top:2px}
+.db-props{overflow:auto;padding:12px 14px;border-right:1px solid var(--border)}
+.db-preview{display:flex;flex-direction:column;min-height:0;background:var(--surface-2)}
+.db-prevbar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border)}
+.db-vars{display:flex;gap:4px;flex-wrap:wrap}
+.db-vars .chip{font-family:var(--font-mono);font-size:10.5px}
+.db-pubbox{margin-top:12px;padding:10px;border:1px dashed var(--border-strong);border-radius:10px}
+@media (max-width:1000px){.db-body{grid-template-columns:1fr;overflow:auto}.db-steps{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border)}
+  .db-step{min-width:190px}.db-preview{min-height:520px}}

@@ -280,6 +280,9 @@ export class FeeService {
    */
   async pdf(id: number, scope: ResolvedScope): Promise<{ buffer: Buffer; filename: string }> {
     const r = await this.get(id, scope);
+    // 12 Nov 2026 — a published Fee Receipt builder template for this branch / vertical / course wins
+    const built = await this.docTemplates?.builderPdf?.('fee_receipt', id);
+    if (built) return { buffer: built, filename: `${String(r.receipt_no).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf` };
     const lh: Letterhead = {
       org_name: r.org_name, org_gst: r.org_gst, vertical_name: r.vertical_name,
       branch_name: r.branch_name, branch_address: r.branch_address,
