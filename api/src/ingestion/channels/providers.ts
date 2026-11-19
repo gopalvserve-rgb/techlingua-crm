@@ -428,7 +428,33 @@ const ALIASES: Record<string, string> = {
   budget: 'budget', budgetrange: 'budget',
   note: 'note', message: 'note', comments: 'note', comment: 'note', query: 'note', remarks: 'note',
   tags: 'tags', tag: 'tags',
+  // 19 Nov 2026 — website / marketplace forms that prefix every field (IndiaMART-style SENDER_NAME,
+  // SENDER_MOBILE, SENDER_EMAIL, QUERY_MESSAGE …) and the usual "_no" / "_id" spellings
+  sendername: 'full_name', senderfullname: 'full_name', visitorname: 'full_name', applicantname: 'full_name', username: 'full_name',
+  sendermobile: 'phone', senderphone: 'phone', mobileno: 'phone', phoneno: 'phone', contactno: 'phone', mobilenum: 'phone',
+  yourphone: 'phone', yourmobile: 'phone', mob: 'phone', cell: 'phone', cellphone: 'phone',
+  sendermobilealt: 'alt_phone', senderphonealt: 'alt_phone',
+  senderemail: 'email', emailid: 'email', mailid: 'email', youremail: 'email', senderemailalt: '_ignore',
+  querymessage: 'note', yourmessage: 'note', enquiry: 'note', inquiry: 'note', description: 'note', subject: 'note',
+  // (city / state / product stay "other fields" — kept on the lead note — as before)
 };
+
+/**
+ * A last, conservative pass for keys no alias knows (19 Nov 2026 — a website form posted
+ * SENDER_NAME and every lead failed "Name is required"): a key that clearly SAYS name / mobile /
+ * phone / email / message fills that field when it is still empty. Company, course, product,
+ * campaign, form, page and source names never count as the person's name.
+ */
+function guessTarget(nk: string): string | null {
+  if (!nk) return null;
+  if (/^(ad|adset|adgroup)(name|id)$/.test(nk)) return null;
+  if (/(company|organi[sz]ation|firm|business|course|product|campaign|form|page|source|platform|city|state|country|father|mother|parent|guardian|reference|referr)/.test(nk)) return null;
+  if (/e?mail/.test(nk)) return 'email';
+  if (/(mobile|phone|whatsapp|contactno|cellno)/.test(nk)) return /(alt|alternate|secondary|other)/.test(nk) ? 'alt_phone' : 'phone';
+  if (/name$/.test(nk) || /^name/.test(nk)) return /(first|given)/.test(nk) ? '_first' : /(last|sur|family)/.test(nk) ? '_last' : 'full_name';
+  if (/(message|query|enquiry|inquiry|comment|remark|requirement)/.test(nk)) return 'note';
+  return null;
+}
 
 /** Resolve one incoming key to a CRM field (explicit map wins, then aliases). */
 export function resolveTarget(rawKey: string, fieldMap: Record<string, string> = {}): string | null {
@@ -465,6 +491,17 @@ export function pairsToPayload(
     if ((out as Record<string, unknown>)[t] == null) (out as Record<string, unknown>)[t] = v;
   }
 
+  // second pass: fill still-empty core fields from keys that clearly name them (explicit maps and
+  // aliases above always win; an admin "— ignore —" mapping is never overridden)
+  for (const [k, rawV] of pairs) {
+    if (rawV == null || resolveTarget(k, fieldMap)) continue;
+    const v = Array.isArray(rawV) ? rawV.filter((x) => x != null).join(', ') : String(rawV);
+    if (!String(v).trim()) continue;
+    const g = guessTarget(norm(k));
+    if (g === '_first') { if (!first) first = v; continue; }
+    if (g === '_last') { if (!last) last = v; continue; }
+    if (g && (out as Record<string, unknown>)[g] == null) (out as Record<string, unknown>)[g] = v;
+  }
   if (!out.full_name && (first || last)) out.full_name = [first, last].filter(Boolean).join(' ').trim();
   if (Object.keys(custom).length) out.custom_fields = custom;
   return out;
