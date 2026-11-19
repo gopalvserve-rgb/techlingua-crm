@@ -88,7 +88,9 @@ export class DocBuilderService {
     const audit = await this.db.query<any>(
       `SELECT a.action, a.note, a.created_at, u.name AS actor_name FROM doc_builder_audit a LEFT JOIN "user" u ON u.id = a.actor_id
         WHERE a.template_id = $1 ORDER BY a.created_at DESC, a.id DESC LIMIT 100`, [id]);
-    return { ...r, config: sanitizeDocConfig(r.doc_type, r.config), versions, audit };
+    const num = (v: unknown) => (v == null ? null : Number(v));
+    return { ...r, id: Number(r.id), branch_id: num(r.branch_id), vertical_id: num(r.vertical_id), course_id: num(r.course_id),
+      published_version_id: num(r.published_version_id), config: sanitizeDocConfig(r.doc_type, r.config), versions, audit };
   }
 
   private async validateScope(branchId: number | null, verticalId: number | null, courseId: number | null) {
