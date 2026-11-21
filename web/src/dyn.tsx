@@ -99,6 +99,7 @@ import { EmployeeDirectoryScreen, StaffAttendanceScreen, LeavesScreen } from './
 import { QuestionBankScreen, QuestionCategoriesScreen, AssessmentTestsScreen, AssessmentTemplatesScreen, AssessmentEvaluationScreen, AssessmentResultsScreen, GradeSchemesScreen, AssessmentCertificatesScreen } from './assessments';
 import { AiIntelligence, DashAiInsights } from './ai';
 import { TrainingVideosScreen, ReleaseNotesScreen } from './supportextras';
+import { FeedbackPage } from './feedback';
 import { FranchisesScreen, RoyaltyPlansScreen, FranchiseDashboardScreen, RoyaltyStatementScreen,
   RoyaltyInvoicesScreen, OutstandingRoyaltiesScreen, AgreementsScreen, FranchiseOnboardingScreen, TerritoryScreen, FranchiseReportsScreen,
   FranchiseTargetsScreen, FranchiseComplianceScreen, FranchisePartnerPortalScreen } from './franchise';
@@ -8687,6 +8688,7 @@ export const DYN: Record<string, () => JSX.Element> = {
   waAccount: WhatsAppAccount,
   supportTickets: SupportTickets,
   crossSell: CrossSell,
+  feedbackPage: FeedbackPage,
   aiIntelligence: AiIntelligence,
   // client 12 Nov 2026 — Communication Intelligence screens (callintel.tsx)
   callIntelOverview: CallIntelOverview,

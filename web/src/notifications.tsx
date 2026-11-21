@@ -75,7 +75,7 @@ export const ago = (iso: string) => {
 };
 
 /** The bell in the topbar: unread badge + the dropdown panel. */
-export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => void }) {
+export function NotificationBell({ onOpenLead, onOpenFeedback }: { onOpenLead?: (id: number) => void; onOpenFeedback?: (id: number) => void }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<Notif[]>([]);
   const [unread, setUnread] = useState(0);
@@ -111,12 +111,15 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
               if (ms) setTimeout(() => dismiss(n.id), ms);
             }
             if (m.sound) playChime(prio);
-            if (m.desktop) desktopNotify(n, () => { if (n.link_type === 'lead' && n.link_id && onOpenLead) onOpenLead(Number(n.link_id)); });
+            if (m.desktop) desktopNotify(n, () => {
+              if (n.link_type === 'lead' && n.link_id && onOpenLead) onOpenLead(Number(n.link_id));
+              if (n.link_type === 'feedback' && n.link_id && onOpenFeedback) onOpenFeedback(Number(n.link_id));
+            });
           }
         }
       }
     } catch { /* the bell must never break the shell */ }
-  }, [dismiss, onOpenLead]);
+  }, [dismiss, onOpenLead, onOpenFeedback]);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -150,6 +153,7 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
       setUnread((u) => Math.max(0, u - 1));
     }
     if (n.link_type === 'lead' && n.link_id && onOpenLead) { onOpenLead(Number(n.link_id)); setOpen(false); }
+    if (n.link_type === 'feedback' && n.link_id && onOpenFeedback) { onOpenFeedback(Number(n.link_id)); setOpen(false); }
   };
 
   const readAll = async () => {
@@ -165,6 +169,7 @@ export function NotificationBell({ onOpenLead }: { onOpenLead?: (id: number) => 
     dismiss(p.id);
     try { await api.patch(`/notifications/${p.id}/read`); setUnread((u) => Math.max(0, u - 1)); } catch { /* non-fatal */ }
     if (p.link_type === 'lead' && p.link_id && onOpenLead) onOpenLead(Number(p.link_id));
+    if (p.link_type === 'feedback' && p.link_id && onOpenFeedback) onOpenFeedback(Number(p.link_id));
   };
 
   return (

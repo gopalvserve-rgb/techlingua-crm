@@ -517,6 +517,8 @@ const APP_FULL: ModuleItem[] = [
   { id: 'help', label: 'Help & Support', icon: 'help', subs: [
     { id: 'features', label: "What's New / Features", spec: { dyn: 'featuresPanel',
       sub: 'Recent updates and the full list of feature modules in the CRM. Click a module to open it. This is the destination of the top-bar Features shortcut.' } },
+    { id: 'feedback', label: 'Feedback', spec: { dyn: 'feedbackPage',
+      sub: 'Notes left with the Feedback button on any page — the page, screen size, screenshots and screen recordings with voice. Pending / Answered / Resolved, with a conversation per note. Everyone sees their own; the team (feedback.manage) sees and answers all.' } },
     { id: 'tickets', label: 'Support Tickets', spec: { dyn: 'supportTickets',
       sub: 'Raise and track internal support tickets — category, priority, assignee and due time, from open to closed.' } },
     { id: 'helpcenter', label: 'Help Center', spec: { dyn: 'knowledgeBase',

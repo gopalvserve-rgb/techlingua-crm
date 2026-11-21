@@ -7,6 +7,7 @@ import { Ic } from './icons';
 import { scopedApp, isMobileApp, isRouteAllowed, findScreen } from './specs';
 import { Blocks } from './renderer';
 import { DYN, ScreenCtx } from './dyn';
+import { FeedbackWidget } from './feedback';
 import { AddModal, CampaignModal, SPEC_FORMS, headerActions, resolveAdd, addLike } from './forms';
 import { LeadSheet, LeadNotesModal } from './leadsheet';
 import { RoleModal } from './rolemodal';
@@ -155,7 +156,7 @@ export function Shell() {
           {/* Sprint 3 — the real notification centre. Reminders, overdue escalations,
               SLA breaches and assignments all land here; Sprint 4's WhatsApp/SMS/Email
               channels fan out from the same server-side message. */}
-          <NotificationBell onOpenLead={(id) => nav(`/m/leads/all?lead=${id}`)} />
+          <NotificationBell onOpenLead={(id) => nav(`/m/leads/all?lead=${id}`)} onOpenFeedback={(id) => nav(`/m/help/feedback?fb=${id}`)} />
           {/* User (Super Admin) menu — the account dropdown. The light/dark theme
               toggle now lives HERE (client, Aug 2026), not as a standalone top-bar
               control; switching + localStorage persistence is unchanged. */}
@@ -194,6 +195,8 @@ export function Shell() {
         <Screen key={`${mod}.${sub}.${scopeKey}`} mod={mod} sub={sub} go={go} />
       </main>
       <Toaster />
+      {/* 22 Nov 2026 — "✎ Feedback" on every signed-in page: screenshots + screen recording with voice */}
+      <FeedbackWidget pageTitle={(() => { const s = findScreen(mod, sub); return s ? `${s.mod.label} › ${s.sub.label}` : undefined; })()} />
     </div>
   );
 }

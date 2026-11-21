@@ -34,7 +34,7 @@ export interface NotifyMessage {
   title: string;
   body?: string;
   /** deep link back into the app */
-  link?: { type: 'lead' | 'follow_up' | 'calendar'; id: number };
+  link?: { type: 'lead' | 'follow_up' | 'calendar' | 'feedback'; id: number };
   meta?: Record<string, unknown>;
 }
 

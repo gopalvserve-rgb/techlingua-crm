@@ -62,6 +62,7 @@ import { AssessmentsModule } from './assessments/assessments.module';
 import { NotificationEventsModule } from './notificationevents/notification-events.module';
 import { GovernanceModule } from './governance/governance.module';
 import { FranchiseModule } from './franchise/franchise.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './rbac/permissions.guard';
 import { RecordScopeGuard } from './rbac/record-scope.guard';
@@ -151,6 +152,9 @@ import { PgExceptionFilter } from './common/pg-exception.filter';
     // Phase 4 Batch 1 — Franchise & Royalty: franchise records + branch mapping, franchise
     // scope resolver, per-franchise dashboard rollup, royalty plans + royalty statement.
     FranchiseModule,
+    // 22 Nov 2026 — in-app feedback: the "✎ Feedback" button on every page (screenshots, screen
+    // recording with voice) + Help & Support › Feedback (Pending / Answered / Resolved, a thread per note).
+    FeedbackModule,
   ],
   providers: [
     // guard order matters: authenticate, authorise (permission), then record scope

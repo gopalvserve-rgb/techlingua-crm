@@ -42,6 +42,9 @@ export const PERMISSION_CATALOG: PermissionModule[] = [
   // 12 Nov 2026 (migration 137): the document builder — read, manage (edit / submit), approve
   // (publish / reject / default) and override (print one document with a different template).
   { module: 'doctemplate', label: 'Document Templates', actions: ['read', 'manage', 'approve', 'override'] },
+  // 22 Nov 2026 — in-app feedback. Filing / own notes need no permission; 'manage' = the team that
+  // sees every note, answers and closes them (migration 140: Super Admin + Organization Admin).
+  { module: 'feedback', label: 'Feedback', actions: ['manage'] },
   // Developer / API access (migration 034). Admin-only, exactly like Settings —
   // an API key authenticates as an org-level caller, so minting and reading them
   // is Super/Org Admin only. 'read' = keys (masked) + docs + request log; 'manage'

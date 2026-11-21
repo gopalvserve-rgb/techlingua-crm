@@ -1331,3 +1331,108 @@ html[data-theme="dark"] .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-3:#199e7
 .doc-folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin:0 0 12px}
 .doc-folder{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-1);cursor:pointer}
 .doc-folder:hover{border-color:var(--primary)}
+
+/* ===========================================================================================
+   FEEDBACK (22 Nov 2026) - the Feedback button on every page, its panel, the recording pill,
+   and Help & Support > Feedback. Every class is prefixed fb- so nothing collides.
+   Above modals (200) so a problem inside a dialog can be reported; below row menus and toasts.
+   =========================================================================================== */
+.fb-launch{position:fixed;right:20px;bottom:20px;z-index:250;display:inline-flex;align-items:center;gap:7px;
+  padding:10px 16px;border-radius:999px;cursor:pointer;font:600 13px var(--font-body);
+  background:var(--primary);color:var(--primary-fg);border:0;box-shadow:0 6px 20px rgba(15,23,42,.32);
+  touch-action:none;user-select:none}
+.fb-launch svg{width:15px;height:15px}
+.fb-launch:hover{filter:brightness(1.08)}
+.fb-launch.is-open{background:var(--surface-2);color:var(--text);border:1px solid var(--border-strong)}
+.fb-launch.is-dragging{cursor:grabbing;opacity:.92}
+.fb-panel{position:fixed;right:20px;bottom:74px;z-index:250;width:min(380px,calc(100vw - 40px));
+  max-height:min(600px,calc(100vh - 120px));display:flex;flex-direction:column;overflow:hidden;
+  background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-lg);box-shadow:0 16px 44px rgba(15,23,42,.32)}
+.fb-panel__head{padding:12px 15px;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0}
+.fb-panel__title{font:700 13.5px var(--font-display)}
+.fb-panel__path{font-size:11px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* min-height:0 lets the body scroll instead of pushing Send out of the panel */
+.fb-panel__body{padding:12px 15px;display:grid;gap:10px;min-height:0;overflow-y:auto}
+.fb-kinds{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.fb-kind{padding:7px 9px;border-radius:var(--r-sm);cursor:pointer;font:600 11.5px var(--font-body);text-align:left;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
+.fb-kind.is-active{background:var(--primary-soft);border-color:var(--primary);color:var(--primary)}
+.fb-text{width:100%;resize:vertical;min-height:84px}
+.fb-hint{font-size:11.5px;color:var(--text-muted);line-height:1.45}
+.fb-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.fb-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer}
+.fb-send{width:100%;justify-content:center}
+.fb-shots{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.fb-shot{position:relative;aspect-ratio:1;border-radius:var(--r-sm);overflow:hidden;border:1px solid var(--border);background:var(--surface-2)}
+.fb-shot img{display:block;width:100%;height:100%;object-fit:cover}
+.fb-shot__name{display:grid;place-items:center;height:100%;padding:4px;font-size:10px;word-break:break-all;text-align:center}
+.fb-shot__x{position:absolute;top:3px;right:3px;width:18px;height:18px;display:grid;place-items:center;border:0;cursor:pointer;
+  border-radius:999px;background:rgba(15,23,42,.72);color:#fff;padding:0}
+.fb-shot__x svg{width:10px;height:10px}
+.fb-shot__x:hover{background:var(--danger)}
+.fb-shot--add{display:grid;place-items:center;cursor:pointer;color:var(--text-muted);border-style:dashed}
+.fb-shot--add svg{width:18px;height:18px}
+.fb-shot--add:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-soft)}
+.fb-error{padding:8px 11px;border-radius:var(--r-sm);font-size:12.5px;background:var(--danger-soft);
+  border:1px solid color-mix(in srgb,var(--danger) 40%,transparent);color:var(--danger)}
+.fb-sent{padding:12px;border-radius:var(--r-sm);text-align:center;background:var(--success-soft);
+  border:1px solid color-mix(in srgb,var(--success) 35%,transparent);color:var(--success)}
+.fb-sent__ref{font-size:15px;font-weight:700}
+.fb-sent p{margin:6px 0 0;font-size:12.5px;line-height:1.5;color:var(--text)}
+.fb-panel__prior{border-top:1px solid var(--border);overflow-y:auto;flex-shrink:0;max-height:34%}
+.fb-panel__priorhead{display:flex;align-items:center;justify-content:space-between;padding:9px 15px;font-size:11px;font-weight:700;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-2)}
+.fb-count{font-size:10.5px;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:var(--warning);text-transform:none;letter-spacing:0}
+.fb-list{list-style:none;margin:0;padding:0}
+.fb-item{display:grid;gap:2px;padding:9px 15px;border-top:1px solid var(--border)}
+.fb-item:first-child{border-top:0}
+.fb-item__msg{font-size:12.5px;line-height:1.45}
+.fb-item__meta{font-size:10.5px;color:var(--text-muted)}
+.fb-item__res{font-size:11.5px;color:var(--success)}
+.fb-item.is-resolved .fb-item__msg{text-decoration:line-through;color:var(--text-muted)}
+.fb-item.is-wont_fix .fb-item__msg{color:var(--text-muted)}
+/* the recording pill: floats above the button, follows the person from page to page */
+.fb-rec{position:fixed;z-index:251;display:flex;align-items:center;gap:10px;padding:7px 9px 7px 14px;max-width:calc(100vw - 24px);
+  background:var(--surface);border:1px solid color-mix(in srgb,var(--danger) 45%,var(--border));border-radius:999px;
+  box-shadow:0 10px 30px rgba(15,23,42,.3);font-size:13px}
+.fb-rec__dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--danger);flex-shrink:0}
+.fb-rec .fb-rec__dot{animation:fb-rec-pulse 1.2s ease-in-out infinite}
+@keyframes fb-rec-pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.fb-rec .fb-rec__dot{animation:none}}
+.fb-rec__time{font-weight:700}
+.fb-rec__label{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fb-rec__x{border:0;background:none;color:var(--text-muted);cursor:pointer;padding:2px 4px;display:grid;place-items:center}
+.fb-rec__x svg{width:13px;height:13px}
+.fb-recbox{display:flex;flex-direction:column;gap:6px;padding:8px;border:1px dashed var(--border-strong);border-radius:var(--r-sm)}
+.fb-recbox__video{width:100%;max-height:180px;border-radius:var(--r-sm);background:#000}
+/* the Feedback page */
+.fb-pill{margin-left:6px;font-size:11px;padding:0 7px;border-radius:999px;background:color-mix(in srgb,currentColor 16%,transparent)}
+.fb-cell{all:unset;cursor:pointer;display:grid;gap:2px;max-width:46ch}
+.fb-cell:hover .fb-line{color:var(--primary)}
+.fb-line{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:600}
+.fb-quote{margin:0 0 10px;padding:10px 14px;border-left:3px solid var(--primary);border-radius:0 var(--r-sm) var(--r-sm) 0;
+  background:var(--surface-2);font-size:13.5px;line-height:1.55;white-space:pre-wrap}
+.fb-meta{display:flex;flex-wrap:wrap;gap:4px 16px;margin-bottom:6px}
+.fb-section{margin-top:14px}
+.fb-label{display:block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px}
+.fb-thumbs{display:flex;flex-wrap:wrap;gap:8px}
+.fb-thumb{display:block;width:96px;height:96px;flex-shrink:0;border-radius:var(--r-sm);overflow:hidden;border:1px solid var(--border);background:var(--surface-2)}
+.fb-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+a.fb-thumb:hover{border-color:var(--primary)}
+.fb-thumb--loading{background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%);background-size:200% 100%;animation:fb-shimmer 1.2s linear infinite}
+@keyframes fb-shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+.fb-thumb--blocked{display:grid;place-items:center;text-align:center;font-size:10.5px;color:var(--text-muted);padding:4px;word-break:break-all}
+.fb-videobox{display:grid;gap:4px;margin-bottom:8px}
+.fb-video{display:block;width:100%;max-height:420px;min-height:120px;border-radius:var(--r-sm);background:#000}
+.fb-note{font-size:12.5px;color:var(--text-muted)}
+.fbmsg{padding:9px 12px;border-radius:var(--r-md);background:var(--surface-2);border:1px solid var(--border);margin:0 40px 8px 0}
+.fbmsg--us{margin:0 0 8px 40px;background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 30%,transparent)}
+.fbmsg__who{font-size:12px;font-weight:700;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.fbmsg__when{margin-left:auto;font-weight:400;font-size:10.5px;color:var(--text-muted)}
+.fbmsg__body{font-size:13px;line-height:1.5;white-space:pre-wrap;margin-top:3px}
+.fb-outcome{display:flex;gap:10px;padding:10px 12px;border-radius:var(--r-sm);font-size:12.5px;background:var(--success-soft);
+  border:1px solid color-mix(in srgb,var(--success) 35%,transparent)}
+.fb-outcome svg{width:15px;height:15px;color:var(--success);flex-shrink:0}
+@media (max-width:640px){.fb-launch__text{display:none}.fb-launch{padding:12px}}
+@media (max-width:520px){.fb-rec__label{display:none}}
+@media print{.fb-launch,.fb-panel,.fb-rec{display:none!important}}
