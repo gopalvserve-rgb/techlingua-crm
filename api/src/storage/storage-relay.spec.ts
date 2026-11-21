@@ -52,3 +52,29 @@ describe('storage relay', () => {
     await expect(s.relayPut(url, Buffer.from('x'), 'image/png')).rejects.toThrow(/expired/);
   });
 });
+
+describe('POST /storage/relay — reading the file', () => {
+  const { Readable } = require('stream');
+  const { readRawBody, StorageController } = require('./storage.controller');
+  const req = (chunks: Buffer[]) => { const r = Readable.from(chunks); (r as any).destroy = jest.fn(); return r; };
+
+  it('reads the whole body as sent by the browser, in chunks', async () => {
+    const body = await readRawBody(req([Buffer.from('ab'), Buffer.from('cd')]));
+    expect(body.toString()).toBe('abcd');
+  });
+
+  it('refuses a file over the limit', async () => {
+    await expect(readRawBody(req([Buffer.alloc(6), Buffer.alloc(6)]), 10)).rejects.toThrow(/too large/);
+  });
+
+  it('hands the bytes, the link and the content type to the storage relay', async () => {
+    const seen: any[] = [];
+    const ctl = new StorageController({ relayPut: async (...a: any[]) => { seen.push(a); } } as any);
+    const out = await ctl.relay(req([Buffer.from('png')]) as any, 'https://signed', 'image/png');
+    expect(out).toEqual({ ok: true, size: 3 });
+    expect(seen[0][0]).toBe('https://signed');
+    expect(seen[0][1].toString()).toBe('png');
+    expect(seen[0][2]).toBe('image/png');
+    await expect(ctl.relay(req([]) as any, undefined, 'image/png')).rejects.toThrow(/No upload link/);
+  });
+});
