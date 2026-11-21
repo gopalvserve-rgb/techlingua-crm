@@ -19,7 +19,7 @@ const NOTE = (over: any = {}) => ({
 });
 let notes: any[] = [];
 const post = vi.fn(async (p: string, _b?: unknown) => (p === '/feedback' ? { id: 77, reference: 'FB-2026-077' } : NOTE()));
-const patch = vi.fn(async () => NOTE());
+const patch = vi.fn(async (_p: string, _b?: unknown) => NOTE());
 const gets: string[] = [];
 vi.mock('./api', () => ({
   getToken: () => 't',
