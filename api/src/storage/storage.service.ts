@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
   S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand,
@@ -36,6 +36,7 @@ export class StorageService {
   private client: S3Client | null = null;
   private bucket = '';
   private publicBase = '';
+  private host = '';                          // <account>.r2.cloudflarestorage.com
 
   constructor(private readonly configs: ChannelConfigService) {}
 
@@ -65,6 +66,7 @@ export class StorageService {
     if (this.client && this.cachedFor === (cfg!.id ?? null) && this.bucket === bucket) {
       return { client: this.client, bucket: this.bucket, publicBase: this.publicBase };
     }
+    this.host = `${accountId}.r2.cloudflarestorage.com`;
     this.client = new S3Client({
       region: 'auto',
       endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
@@ -180,6 +182,34 @@ export class StorageService {
     const { client, bucket } = await this.resolve();
     const cmd = new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType || 'application/octet-stream' });
     return getSignedUrl(client, cmd, { expiresIn: Math.max(30, Math.min(expiresSeconds, 3600)) });
+  }
+
+  /**
+   * Relay a browser upload to a presigned PUT URL (22 Nov 2026). The R2 bucket has no CORS rule,
+   * so the browser's preflight is refused (403) and every direct browser -> R2 upload failed —
+   * the admission-form logo, vertical logo / QR, study material, question media, submissions,
+   * franchise and placement files. The browser now sends the bytes to the API and the SAME
+   * presigned PUT is made from here. Only a signed URL for THIS bucket's endpoint is accepted, so
+   * the relay can't be pointed anywhere else; the URL's own signature — issued by a
+   * permission-checked upload-url route, valid 5 minutes — is what authorises the write.
+   */
+  async relayPut(url: string, bytes: Buffer, contentType: string): Promise<void> {
+    const { bucket } = await this.resolve();
+    let u: URL;
+    try { u = new URL(String(url ?? '')); } catch { throw new BadRequestException('Not an upload link.'); }
+    if (u.protocol !== 'https:' || u.hostname !== this.host || !u.pathname.startsWith(`/${bucket}/`)
+        || !u.searchParams.get('X-Amz-Signature')) {
+      throw new BadRequestException('Not an upload link for this CRM\'s storage.');
+    }
+    if (!bytes?.length) throw new BadRequestException('No file was sent.');
+    const res = await fetch(u.toString(), {
+      method: 'PUT', body: bytes, headers: { 'Content-Type': contentType || 'application/octet-stream' },
+    });
+    if (!res.ok) {
+      throw new BadRequestException(res.status === 403
+        ? 'The upload link has expired or does not match the file. Try again.'
+        : `The file could not be stored (storage said ${res.status}).`);
+    }
   }
 
   /** Public CDN URL for a genuinely public asset. Empty when no public domain is configured. */

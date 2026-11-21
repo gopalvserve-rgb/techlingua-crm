@@ -12,7 +12,7 @@
  * Eligibility is decided by the API; the UI simply lists what it returns.
  */
 import { useMemo, useState } from 'react';
-import { api } from './api';
+import { api, putToStorage } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
@@ -49,7 +49,7 @@ async function uploadToR2(base: string, file: File): Promise<string> {
   const { url, r2_key } = await api.post<{ url: string; r2_key: string }>(`${base}/upload-url`, {
     file_name: file.name, content_type: file.type || 'application/octet-stream',
   });
-  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  const res = await putToStorage(url, file, file.type || 'application/octet-stream');
   if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   return r2_key;
 }

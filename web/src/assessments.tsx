@@ -14,7 +14,7 @@
  * India-first, scope-aware. RBAC question.* / question_category.*.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, getToken } from './api';
+import { api, getToken, putToStorage } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
@@ -72,7 +72,7 @@ async function uploadToR2(file: File): Promise<string> {
   const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/questions/upload-url', {
     kind: 'question', file_name: file.name, content_type: file.type || 'application/octet-stream',
   });
-  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  const res = await putToStorage(url, file, file.type || 'application/octet-stream');
   if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   return r2_key;
 }
@@ -1184,7 +1184,7 @@ function AssignmentSubmitInline({ testId, studentId, onDone }: { testId: number;
     setBusy(true);
     try {
       const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/submissions/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
-      const put = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+      const put = await putToStorage(url, file, file.type || 'application/octet-stream');
       if (!put.ok) throw new Error(`Upload failed (${put.status})`);
       await api.post(`/assessments/${testId}/submissions`, { student_id: studentId, file_r2_key: r2_key, original_filename: file.name, mime: file.type || null, size_bytes: file.size });
       toast('Submission uploaded'); onDone();

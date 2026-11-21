@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { StorageService } from './storage.service';
 import { PdfAssetService } from './pdf-asset.service';
+import { StorageController } from './storage.controller';
 import { ChannelConfigService } from '../messaging/channel-config.service';
 
 /**
@@ -13,6 +14,7 @@ import { ChannelConfigService } from '../messaging/channel-config.service';
  */
 @Global()
 @Module({
+  controllers: [StorageController],
   providers: [StorageService, PdfAssetService, ChannelConfigService],
   exports: [StorageService, PdfAssetService],
 })

@@ -8,7 +8,7 @@
  * caller here (route-reachability guard).
  */
 import { useMemo, useState } from 'react';
-import { api, getToken } from './api';
+import { api, getToken, putToStorage } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
@@ -75,7 +75,7 @@ const MAT_WF = ['draft', 'pending_approval', 'published', 'changes_requested', '
 /** Upload straight to R2 via presigned PUT; returns the r2_key. */
 async function materialUpload(file: File): Promise<string> {
   const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/learning/materials/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
-  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  const res = await putToStorage(url, file, file.type || 'application/octet-stream');
   if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   return r2_key;
 }

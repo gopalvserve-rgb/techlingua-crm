@@ -7,7 +7,7 @@
  */
 import { useRef, useState } from 'react';
 import { Ic } from './icons';
-import { getToken, api } from './api';
+import { getToken, api, putToStorage } from './api';
 import { toast, useFetch } from './refdata';
 import { askConfirm } from './askdialog';
 
@@ -109,7 +109,7 @@ async function uploadToR2(base: string, file: File): Promise<{ r2_key: string; f
   const { url, r2_key } = await api.post<{ url: string; r2_key: string }>(`${base}/upload-url`, {
     file_name: file.name, content_type: file.type || 'application/octet-stream',
   });
-  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+  const res = await putToStorage(url, file, file.type || 'application/octet-stream');
   if (!res.ok) throw new Error('Upload to storage failed');
   return { r2_key, file };
 }

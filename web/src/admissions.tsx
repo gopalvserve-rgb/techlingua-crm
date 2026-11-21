@@ -11,7 +11,7 @@
  *    to the public keyed endpoint and lands a PENDING admission.
  */
 import { useMemo, useState } from 'react';
-import { api } from './api';
+import { api, putToStorage } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, TableCard } from './renderer';
@@ -363,8 +363,11 @@ async function uploadFormLogo(file: File): Promise<string> {
   if (!/^image\/(png|jpe?g|webp|svg\+xml)$/.test(file.type)) throw new Error('The logo must be a JPG, PNG, WEBP or SVG image.');
   if (file.size > 2 * 1024 * 1024) throw new Error('The logo must be under 2 MB.');
   const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/admissions/forms/logo/upload-url', { file_name: file.name, content_type: file.type });
-  const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
-  if (!res.ok) throw new Error('Logo upload failed');
+  const res = await putToStorage(url, file, file.type);
+  if (!res.ok) {
+    const msg = await res.json().then((d) => d?.message).catch(() => null);
+    throw new Error(msg ? `Logo upload failed: ${msg}` : 'Logo upload failed');
+  }
   return r2_key;
 }
 

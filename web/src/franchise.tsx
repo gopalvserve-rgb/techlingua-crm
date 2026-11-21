@@ -9,7 +9,7 @@
  * royalty invoicing/payment tracking, franchise-level targets.
  */
 import { useState, useEffect } from 'react';
-import { api } from './api';
+import { api, putToStorage } from './api';
 import { useAuth } from './auth';
 import { Ic } from './icons';
 import { Cell, Kpis, TableCard } from './renderer';
@@ -855,7 +855,7 @@ function AgreementModal({ initial, franchises, onClose, onSaved }: { initial?: a
     if (!file) return;
     try {
       const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/franchise-agreements/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
-      const res = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } });
+      const res = await putToStorage(url, file, file.type || 'application/octet-stream');
       if (!res.ok) throw new Error('Upload failed');
       setFileKey(r2_key); setFileName(file.name); toast('Document uploaded');
     } catch (e) { toast((e as Error).message, true); }
@@ -1294,7 +1294,7 @@ export function FranchiseComplianceScreen() {
   const upload = async (itemId: number, file: File) => {
     try {
       const { url, r2_key } = await api.post<{ url: string; r2_key: string }>('/franchise-compliance/upload-url', { file_name: file.name, content_type: file.type || 'application/octet-stream' });
-      await fetch(url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+      await putToStorage(url, file, file.type || 'application/octet-stream');
       await api.post(`/franchises/${chosen}/compliance/items/${itemId}`, { status: items.find((i: any) => i.id === itemId)?.status ?? 'pending', evidence_key: r2_key, evidence_name: file.name });
       toast('Evidence uploaded'); reload();
     } catch (e) { toast((e as Error).message, true); }
