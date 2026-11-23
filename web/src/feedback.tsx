@@ -902,7 +902,7 @@ function ScopeListModal({ team, onClose }: { team: boolean; onClose: () => void 
 
   return (
     <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="add-modal" style={{ maxWidth: 1180 }} data-testid="fb-scope-modal">
+      <div className="add-modal add-modal--xl" data-testid="fb-scope-modal">
         <div className="ah">
           <h3><Ic k="doc" />Scope list — what the agreed documents leave out</h3>
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
