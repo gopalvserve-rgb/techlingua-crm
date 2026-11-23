@@ -192,7 +192,7 @@ const APP_FULL: ModuleItem[] = [
     { id: 'templates', label: 'Message Templates', spec: { dyn: 'templates',
       sub: 'WhatsApp, SMS and email templates with merge fields (name, course, branch…) and a live preview.' } },
     { id: 'smstpl', label: 'SMS Templates', spec: { dyn: 'smsTemplates',
-      sub: 'DLT-registered SMS templates for each branch and vertical. A matching template is sent automatically to every new lead.' } },
+      sub: 'DLT-registered SMS templates for each branch and vertical. Each one is sent for its event (new lead, lead assigned, enrolment, login OTP …) when it is switched on and the event has SMS on in Notification Events. Edit the text, DLT ids, event and what fills each marker at any time.' } },
     { id: 'notifevents', label: 'Notification Events', spec: { dyn: 'notificationEvents',
       sub: 'Choose which events send an SMS, email or WhatsApp message, and which template each one uses. Opt-outs and business hours are always respected.' } },
   ] },
