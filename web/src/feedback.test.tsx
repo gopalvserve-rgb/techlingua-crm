@@ -19,6 +19,7 @@ const NOTE = (over: any = {}) => ({
   ...over,
 });
 let notes: any[] = [];
+let scopeItems: any[] = [];
 const post = vi.fn(async (p: string, _b?: unknown) => (p === '/feedback' ? { id: 77, reference: 'FB-2026-077' } : NOTE()));
 const patch = vi.fn(async (_p: string, _b?: unknown) => NOTE());
 const gets: string[] = [];
@@ -29,6 +30,7 @@ vi.mock('./api', () => ({
     get: (p: string) => {
       gets.push(p);
       if (p === '/feedback/summary') return Promise.resolve({ pending: notes.filter((n) => n.status === 'OPEN').length, answered: notes.filter((n) => n.status === 'ANSWERED').length, resolved: 0, wont_fix: 0 });
+      if (p === '/feedback/scope') return Promise.resolve(scopeItems);
       if (/^\/feedback\/files\/\d+$/.test(p)) return Promise.resolve({ url: 'https://r2.example/signed' });
       if (/^\/feedback\/\d+$/.test(p)) return Promise.resolve(notes.find((n) => `/feedback/${n.id}` === p));
       if (p.startsWith('/feedback')) return Promise.resolve(notes);

@@ -11,7 +11,7 @@ interface Me { id: number; name: string }
  * accepting an answer need no permission — everyone who can sign in may do those, and the
  * service decides against the note itself (gating them on a permission would lock out exactly
  * the people the thread exists to talk to). Changing a note's status is the team's
- * (feedback.manage).
+ * (feedback.manage), and so is keeping the scope list.
  *
  * Files are sent as the raw bytes (Content-Type application/octet-stream), with the file's
  * name and type in the query string: a 50 MB recording is not inflated by base64 on the way.
@@ -28,6 +28,20 @@ export class FeedbackController {
 
   @Get('summary')
   summary(@CurrentUser() me: Me) { return this.svc.summary(me); }
+
+  /**
+   * The scope list (23 Nov 2026): what the agreed scope documents leave out, and where they say so.
+   * Everyone reads it — the Feedback panel warns "out of scope — we can't take this" while a note
+   * is typed; the team keeps it up to date.
+   */
+  @Get('scope')
+  scope(@CurrentUser() me: Me) { return this.svc.scopeList(me); }
+
+  @Post('scope') @RequirePermission('feedback.manage')
+  addScope(@CurrentUser() me: Me, @Body() dto: any) { return this.svc.createScope(me, dto); }
+
+  @Patch('scope/:sid') @RequirePermission('feedback.manage')
+  editScope(@CurrentUser() me: Me, @Param('sid', ParseIntPipe) sid: number, @Body() dto: any) { return this.svc.updateScope(me, sid, dto); }
 
   @Get('files/:fileId')
   fileUrl(@CurrentUser() me: Me, @Param('fileId', ParseIntPipe) fileId: number) { return this.svc.fileUrl(me, fileId); }

@@ -9,6 +9,9 @@
  *    per note. The status always says whose turn it is: the team replies -> Answered; the
  *    reporter replies -> back to Pending; the reporter accepts -> Resolved. The team (holders of
  *    feedback.manage) sees every note; everyone else sees their own.
+ *  · Out of scope (23 Nov 2026) — a note that asks for something the agreed scope documents leave
+ *    out (the Scope list) is told "Out of scope — we can't take this … refer to the scope document"
+ *    while it is typed, and is saved under the Out of scope tab; the team can mark any note so.
  */
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
@@ -23,17 +26,20 @@ import { downloadObjectsCsv } from './listtools';
 import {
   MAX_BYTES, MAX_SECONDS, canRecord, clock, discardRecording, draft, startRecording, stopRecording, useRecorder,
 } from './feedbackrec';
+import { NEW_REQUEST_NOTICE, matchScope, scopeRef, type ScopeItem } from './feedbackscope';
 
 /* ------------------------------------------------------------------ types + client calls */
 
 export type FbKind = 'ISSUE' | 'SUGGESTION' | 'QUESTION' | 'PRAISE';
-export type FbStatus = 'OPEN' | 'ACKNOWLEDGED' | 'ANSWERED' | 'RESOLVED' | 'WONT_FIX';
+export type FbStatus = 'OPEN' | 'ACKNOWLEDGED' | 'ANSWERED' | 'RESOLVED' | 'WONT_FIX' | 'OUT_OF_SCOPE';
 export interface FbFile { id: number; kind: 'image' | 'video'; file_name: string; mime: string; size_bytes: number }
 export interface FbMessage { id: number; body: string; is_answer: boolean; created_at: string; author: { id: number; name: string; role: string | null } }
 export interface FbNote {
   id: number; reference: string; page_path: string; page_title: string | null; message: string;
   kind: FbKind; status: FbStatus; created_by: number; viewport: string | null; user_agent: string | null;
   resolution: string | null; resolved_at: string | null; created_at: string;
+  /** Out of scope: the scope-list item it fell under (null = a new request), and whether it was set by itself when filed. */
+  scope_item_id?: number | null; scope_auto?: boolean;
   author: { id: number; name: string; role: string | null; branch: string | null };
   resolver: { id: number; name: string } | null;
   messages: FbMessage[]; screenshots: FbFile[]; recordings: FbFile[];
@@ -63,6 +69,12 @@ export const fbApi = {
   reply: (id: number, body: string, answer?: boolean) => api.post<FbNote>(`/feedback/${id}/replies`, { body, answer: !!answer }),
   accept: (id: number) => api.post<FbNote>(`/feedback/${id}/accept`, {}),
   resolve: (id: number, status: FbStatus, resolution?: string) => api.patch<FbNote>(`/feedback/${id}`, { status, resolution }),
+  /** Out of scope — against an item on the scope list, or (null) a new request no agreed document mentions. */
+  outOfScope: (id: number, scopeItemId: number | null, note?: string) =>
+    api.patch<FbNote>(`/feedback/${id}`, { status: 'OUT_OF_SCOPE', scope_item_id: scopeItemId, resolution: note }),
+  scope: () => api.get<ScopeItem[]>('/feedback/scope'),
+  addScope: (body: Partial<ScopeItem>) => api.post<ScopeItem>('/feedback/scope', body),
+  editScope: (id: number, body: Partial<ScopeItem>) => api.patch<ScopeItem>(`/feedback/scope/${id}`, body),
 };
 
 /* ------------------------------------------------------------------ words */
@@ -75,15 +87,16 @@ const KINDS: Array<{ value: FbKind; label: string }> = [
 ];
 export const KIND_LABEL: Record<string, string> = { ISSUE: 'Something is wrong', SUGGESTION: 'Could be better', QUESTION: 'A question', PRAISE: 'Works well' };
 const KIND_BADGE: Record<string, string> = { ISSUE: 'b-rose', SUGGESTION: 'b-amber', QUESTION: 'b-cyan', PRAISE: 'b-green' };
-export const STATUS_LABEL: Record<string, string> = { OPEN: 'Pending', ACKNOWLEDGED: 'Acknowledged', ANSWERED: 'Answered', RESOLVED: 'Resolved', WONT_FIX: "Won't fix" };
-const STATUS_BADGE: Record<string, string> = { OPEN: 'b-amber', ACKNOWLEDGED: 'b-indigo', ANSWERED: 'b-cyan', RESOLVED: 'b-green', WONT_FIX: 'b-gray' };
-const isClosed = (s: string) => s === 'RESOLVED' || s === 'WONT_FIX';
+export const STATUS_LABEL: Record<string, string> = { OPEN: 'Pending', ACKNOWLEDGED: 'Acknowledged', ANSWERED: 'Answered', RESOLVED: 'Resolved', WONT_FIX: "Won't fix", OUT_OF_SCOPE: 'Out of scope' };
+const STATUS_BADGE: Record<string, string> = { OPEN: 'b-amber', ACKNOWLEDGED: 'b-indigo', ANSWERED: 'b-cyan', RESOLVED: 'b-green', WONT_FIX: 'b-gray', OUT_OF_SCOPE: 'b-rose' };
+const isClosed = (s: string) => s === 'RESOLVED' || s === 'WONT_FIX' || s === 'OUT_OF_SCOPE';
 
-/** The three tabs, in the order a note travels. */
+/** The tabs, in the order a note travels — and the notes the agreed scope documents leave out. */
 const TABS = [
   { key: 'PENDING', label: 'Pending', statuses: ['OPEN', 'ACKNOWLEDGED'] },
   { key: 'ANSWERED', label: 'Answered', statuses: ['ANSWERED'] },
   { key: 'RESOLVED', label: 'Resolved', statuses: ['RESOLVED', 'WONT_FIX'] },
+  { key: 'OUT_OF_SCOPE', label: 'Out of scope', statuses: ['OUT_OF_SCOPE'] },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 const tabOf = (status: string): TabKey => TABS.find((t) => (t.statuses as readonly string[]).includes(status))?.key ?? 'PENDING';
@@ -175,7 +188,8 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
   const [voice, setVoice] = useState(true);
   const [recordable, setRecordable] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [sent, setSent] = useState<string | null>(null);
+  // the saved note's reference — and, when the agreed scope leaves it out, what the scope document says
+  const [sent, setSent] = useState<{ ref: string; outOfScope: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [shots, setShotsState] = useState<Array<{ file: File; url: string }>>(draft.shots);
@@ -200,6 +214,18 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
   }, [rec.status]);
   const recording = rec.status === 'done' ? rec : null;
   const tooBig = !!recording && recording.blob.size > MAX_BYTES;
+
+  // 23 Nov 2026 — out of scope: the scope list is read when the panel opens, and the note is checked
+  // against it as it is typed, so "we can't take this — refer to the scope document" shows BEFORE it
+  // is sent. The API checks again when it is saved (its answer is the one that counts).
+  const [scope, setScope] = useState<ScopeItem[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    fbApi.scope().then((r) => { if (alive) setScope(Array.isArray(r) ? r : []); }).catch(() => { /* the API still checks on save */ });
+    return () => { alive = false; };
+  }, [open]);
+  const scopeHit = useMemo(() => matchScope(scope, message, recording?.startPath ?? pathname), [scope, message, recording, pathname]);
 
   const addShots = (files: FileList | File[] | null) => {
     if (!files) return;
@@ -270,7 +296,7 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
         discardRecording();
       }
       if (failed.length) setError(`The note was saved, but ${failed.join(' and ')} would not upload.`);
-      setSent(row.reference);
+      setSent({ ref: row.reference, outOfScope: row.status === 'OUT_OF_SCOPE' ? (row.resolution ?? '') : null });
       setMessage(''); setKind('ISSUE'); setShots([]);
       setPriorTick((t) => t + 1);
       // the Feedback page, if it is open behind the panel, shows the new note straight away
@@ -317,10 +343,18 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
 
           {sent ? (
             <div className="fb-panel__body">
-              <div className="fb-sent" data-testid="fb-sent">
-                <div className="fb-sent__ref mono">{sent}</div>
-                <p>Sent to the team with the page and your screen size. You'll find it, and the team's answer, in Help &amp; Support › Feedback.</p>
-              </div>
+              {sent.outOfScope != null ? (
+                <div className="fb-sent fb-sent--out" data-testid="fb-sent">
+                  <div className="fb-sent__ref mono">{sent.ref}</div>
+                  <p data-testid="fb-sent-scope">{sent.outOfScope}</p>
+                  <p className="fb-hint">Recorded under Help &amp; Support › Feedback › Out of scope. If it is really a problem with a screen you already use, reply on the note there and the team will look at it again.</p>
+                </div>
+              ) : (
+                <div className="fb-sent" data-testid="fb-sent">
+                  <div className="fb-sent__ref mono">{sent.ref}</div>
+                  <p>Sent to the team with the page and your screen size. You'll find it, and the team's answer, in Help &amp; Support › Feedback.</p>
+                </div>
+              )}
               {error && <div className="fb-error">{error}</div>}
               <button className="btn sm" onClick={() => { setSent(null); setError(null); }}>Add another</button>
             </div>
@@ -332,10 +366,22 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
                     className={`fb-kind${kind === k.value ? ' is-active' : ''}`} onClick={() => setKind(k.value)}>{k.label}</button>
                 ))}
               </div>
+              {kind === 'SUGGESTION' && (
+                <div className="fb-hint" data-testid="fb-new-hint">Asking for something new? Only what the agreed scope documents cover can be taken — anything else is closed as out of scope.</div>
+              )}
 
               <textarea className="ainp fb-text" rows={4} value={message} autoFocus data-testid="fb-message"
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="What did you expect to see, and what did you see instead?" />
+
+              {scopeHit && (
+                <div className="fb-scope" role="alert" data-testid="fb-scope">
+                  <div className="fb-scope__head"><Ic k="ban" /><b>Out of scope — we can't take this.</b></div>
+                  <div>“{scopeHit.item.title}” is not available in this project{scopeHit.by === 'page' ? ' (this screen belongs to it)' : ''}.</div>
+                  <div className="fb-scope__ref">Please refer to the scope document: {scopeRef(scopeHit.item)}.</div>
+                  <div className="fb-hint">If you send it, it is recorded as out of scope. If it is really a problem with a screen you already use, send it and reply on the note — the team will look again.</div>
+                </div>
+              )}
 
               {recordable && (
                 <div className="fb-recbox">
@@ -401,7 +447,7 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
             <div className="fb-panel__foot">
               {error && <div className="fb-error" data-testid="fb-error">{error}</div>}
               <button className="btn primary fb-send" disabled={!canSend} onClick={send} data-testid="fb-send">
-                <Ic k="send" />{sending ? (shots.length || recording ? 'Saving and uploading…' : 'Saving…') : 'Send to the team'}
+                <Ic k="send" />{sending ? (shots.length || recording ? 'Saving and uploading…' : 'Saving…') : scopeHit ? 'Send anyway' : 'Send to the team'}
               </button>
             </div>
           )}
@@ -503,6 +549,10 @@ function FeedbackDetail({ id, team, meId, onClose, onChanged }: { id: number; te
   const [resolution, setResolution] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // the team marking it Out of scope: which item on the scope list ('' = a new request in no agreed document)
+  const [scoping, setScoping] = useState(false);
+  const [scopeSel, setScopeSel] = useState('');
+  const scopeList = useFetch<ScopeItem[]>(team && scoping ? '/feedback/scope' : null, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -574,10 +624,17 @@ function FeedbackDetail({ id, team, meId, onClose, onChanged }: { id: number; te
           )}
 
           {closed && n.resolution && (
-            <div className="fb-section">
-              <div className="fb-label">Outcome</div>
-              <div className="fb-outcome"><Ic k="check" /><div>{n.resolver ? <b>{n.resolver.name}: </b> : null}{n.resolution}</div></div>
-            </div>
+            n.status === 'OUT_OF_SCOPE' ? (
+              <div className="fb-section">
+                <div className="fb-label">Out of scope{n.scope_auto ? ' — set by itself when it was sent' : ''}</div>
+                <div className="fb-outcome fb-outcome--out" data-testid="fb-scope-outcome"><Ic k="ban" /><div>{n.resolver ? <b>{n.resolver.name}: </b> : null}{n.resolution}</div></div>
+              </div>
+            ) : (
+              <div className="fb-section">
+                <div className="fb-label">Outcome</div>
+                <div className="fb-outcome"><Ic k="check" /><div>{n.resolver ? <b>{n.resolver.name}: </b> : null}{n.resolution}</div></div>
+              </div>
+            )
           )}
 
           {(mine || team) && (
@@ -593,7 +650,11 @@ function FeedbackDetail({ id, team, meId, onClose, onChanged }: { id: number; te
               )}
               <div className="fb-row" style={{ marginTop: 8 }}>
                 <span className="fb-hint">
-                  {n.status === 'WONT_FIX' ? "Marked won't fix — a reply doesn't change that."
+                  {n.status === 'OUT_OF_SCOPE' ? (n.scope_auto
+                    ? (mine ? 'Closed by itself as out of scope. If it is really a problem with a screen you already use, reply and the team will look again.'
+                      : 'Closed by itself as out of scope. A reply from the reporter puts it back in Pending.')
+                    : "Out of scope — a reply doesn't change that.")
+                    : n.status === 'WONT_FIX' ? "Marked won't fix — a reply doesn't change that."
                     : n.status === 'ANSWERED' ? 'Waiting on the person who reported it.'
                       : closed ? (mine ? 'Resolved. Replying puts it back with the team.' : 'Resolved.')
                         : 'Waiting on the team.'}
@@ -614,6 +675,25 @@ function FeedbackDetail({ id, team, meId, onClose, onChanged }: { id: number; te
             </div>
           )}
 
+          {team && !closed && scoping && (
+            <div className="fb-section fb-scopepick" data-testid="fb-scopepick">
+              <label className="fb-label" htmlFor={`fb-scope-${n.id}`}>Out of scope — which part of the scope documents leaves it out?</label>
+              <select id={`fb-scope-${n.id}`} className="ainp" value={scopeSel} onChange={(e) => setScopeSel(e.target.value)} data-testid="fb-scope-item">
+                <option value="">New request — not in any agreed scope document</option>
+                {(scopeList.data ?? []).filter((s) => s.is_active || String(s.id) === scopeSel).map((s) => <option key={s.id} value={String(s.id)}>{s.title}</option>)}
+              </select>
+              <div className="fb-scope fb-scope--preview">
+                <div className="fb-scope__head"><Ic k="ban" /><b>What {mine ? 'the note' : n.author.name} will read</b></div>
+                <div>{(() => {
+                  const it = (scopeList.data ?? []).find((s) => String(s.id) === scopeSel);
+                  const base = it ? (it.notice ?? '') : NEW_REQUEST_NOTICE;
+                  return resolution.trim() ? `${base} Note from the team: ${resolution.trim()}` : base;
+                })()}</div>
+                <div className="fb-hint">The outcome note above, if any, is added after the scope document's words.</div>
+              </div>
+            </div>
+          )}
+
           {err && <div className="fb-error" style={{ marginTop: 10 }} data-testid="fb-detail-error">{err}</div>}
         </div>
         <div className="af">
@@ -627,6 +707,19 @@ function FeedbackDetail({ id, team, meId, onClose, onChanged }: { id: number; te
               onClick={() => act(() => fbApi.resolve(n.id, 'ACKNOWLEDGED'), 'Acknowledged')}><Ic k="eye" />Acknowledge</button>
           )}
           {team && !closed && (
+            scoping ? (
+              <>
+                <button className="btn fb-btn-out" disabled={busy} data-testid="fb-scope-confirm"
+                  onClick={() => act(() => fbApi.outOfScope(n.id, scopeSel ? Number(scopeSel) : null, resolution.trim() || undefined), 'Marked out of scope', true)}>
+                  <Ic k="ban" />Mark out of scope</button>
+                <button className="btn" disabled={busy} onClick={() => setScoping(false)}>Back</button>
+              </>
+            ) : (
+              <button className="btn" disabled={busy} data-testid="fb-scope" onClick={() => { setScoping(true); setErr(null); }}
+                title="Not in the agreed scope documents: the reporter is told so, with the document reference"><Ic k="ban" />Out of scope</button>
+            )
+          )}
+          {team && !closed && !scoping && (
             <>
               <button className="btn" disabled={busy} data-testid="fb-wontfix"
                 onClick={() => act(() => fbApi.resolve(n.id, 'WONT_FIX', resolution.trim() || undefined), "Marked won't fix", true)}><Ic k="ban" />Won't fix</button>
@@ -655,8 +748,9 @@ export function FeedbackPage() {
   const screen = useContext(ScreenCtx);
   const [tick, setTick] = useState(0);
   const list = useFetch<FbNote[]>('/feedback', [tick]);
-  const sum = useFetch<{ pending: number; answered: number; resolved: number; wont_fix: number }>('/feedback/summary', [tick]);
+  const sum = useFetch<{ pending: number; answered: number; resolved: number; wont_fix: number; out_of_scope?: number }>('/feedback/summary', [tick]);
   const [tab, setTab] = useState<TabKey>('PENDING');
+  const [showScope, setShowScope] = useState(false);
   const [kind, setKind] = useState('');
   const [q, setQ] = useState('');
   const fbParam = () => Number(new URLSearchParams(screen?.search ?? '').get('fb')) || null;
@@ -710,14 +804,15 @@ export function FeedbackPage() {
         <Ic k="pencil" />
         <div>
           {team
-            ? <>Every note left on any page, by anyone, with the screen it came from. <b>Pending</b> is the to-do list: a reporter's reply puts a note back here by itself.</>
-            : <>The notes you've left and what has been done about them. To add one, use the <b>Feedback</b> button at the bottom-right of any page — attach screenshots or record your screen with your voice.</>}
+            ? <>Every note left on any page, by anyone, with the screen it came from. <b>Pending</b> is the to-do list: a reporter's reply puts a note back here by itself. A note that asks for something on the <b>Scope list</b> is closed as <b>Out of scope</b> by itself, with the scope document's reference.</>
+            : <>The notes you've left and what has been done about them. To add one, use the <b>Feedback</b> button at the bottom-right of any page — attach screenshots or record your screen with your voice. What the agreed scope leaves out is on the <b>Scope list</b>.</>}
         </div>
       </div>
-      <Kpis items={[
+      <Kpis cols={5} items={[
         { lab: 'Pending', val: String(s?.pending ?? inTab('PENDING')), ic: 'clock' },
         { lab: 'Answered — waiting on the reporter', val: String(s?.answered ?? inTab('ANSWERED')), ic: 'chat' },
         { lab: 'Resolved', val: String(s ? s.resolved + s.wont_fix : inTab('RESOLVED')), ic: 'check' },
+        { lab: 'Out of scope', val: String(s?.out_of_scope ?? inTab('OUT_OF_SCOPE')), ic: 'ban' },
         { lab: 'With a screenshot or recording', val: String(withFiles), ic: 'eye' },
       ]} />
 
@@ -734,6 +829,8 @@ export function FeedbackPage() {
           <option value="">All kinds</option>
           {Object.entries(KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
+        <button className="btn" onClick={() => setShowScope(true)} data-testid="fb-scope-list"
+          title="What the agreed scope documents leave out — a note asking for one of these is out of scope"><Ic k="doc" />Scope list</button>
         <button className="btn" onClick={() => setTick((t) => t + 1)} title="Refresh"><Ic k="refresh" /></button>
         <button className="btn" disabled={!items.length} onClick={() => downloadObjectsCsv(`feedback-${new Date().toISOString().slice(0, 10)}.csv`,
           items.map((f) => ({
@@ -750,12 +847,130 @@ export function FeedbackPage() {
           : q || kind ? 'Nothing matches that.'
             : !all.length ? 'Nothing reported yet. The Feedback button sits at the bottom-right of every page.'
               : tab === 'PENDING' ? 'Nothing pending — every note has been answered.'
-                : tab === 'ANSWERED' ? 'Nothing waiting on a reporter.' : 'Nothing resolved yet.'} />
+                : tab === 'ANSWERED' ? 'Nothing waiting on a reporter.'
+                  : tab === 'OUT_OF_SCOPE' ? 'Nothing out of scope.' : 'Nothing resolved yet.'} />
 
       {openId != null && (
         <FeedbackDetail key={openId} id={openId} team={team} meId={meId}
           onClose={() => setOpenId(null)} onChanged={() => setTick((t) => t + 1)} />
       )}
+      {showScope && <ScopeListModal team={team} onClose={() => setShowScope(false)} />}
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ the scope list */
+
+const linesOf = (v: string) => v.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+
+/**
+ * What the agreed scope documents leave out, each with where the document says so. Everyone can
+ * read it; the team (feedback.manage) adds, edits and switches items off. A note that names one of
+ * these (its words) or is left on one of its screens is told "out of scope — we can't take this".
+ */
+function ScopeListModal({ team, onClose }: { team: boolean; onClose: () => void }) {
+  const [tick, setTick] = useState(0);
+  const { data, loading } = useFetch<ScopeItem[]>('/feedback/scope', [tick]);
+  const [edit, setEdit] = useState<Partial<ScopeItem> & { phrasesText?: string; pathsText?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (edit) setEdit(null); else onClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, edit]);
+  const items = data ?? [];
+
+  const save = async () => {
+    if (!edit) return;
+    setBusy(true); setErr(null);
+    const body: Partial<ScopeItem> = {
+      title: edit.title ?? '', reference: edit.reference ?? '', doc_says: edit.doc_says ?? null,
+      phrases: linesOf(edit.phrasesText ?? ''), page_paths: linesOf(edit.pathsText ?? ''), is_active: edit.is_active !== false,
+    };
+    try {
+      if (edit.id) await fbApi.editScope(edit.id, body); else await fbApi.addScope(body);
+      toast(edit.id ? 'Scope list updated' : 'Added to the scope list');
+      setEdit(null); setTick((t) => t + 1);
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  const toggle = async (it: ScopeItem) => {
+    setBusy(true); setErr(null);
+    try { await fbApi.editScope(it.id, { is_active: !it.is_active }); toast(it.is_active ? 'Switched off' : 'Switched on'); setTick((t) => t + 1); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="add-modal" style={{ maxWidth: 920 }} data-testid="fb-scope-modal">
+        <div className="ah">
+          <h3><Ic k="doc" />Scope list — what the agreed documents leave out</h3>
+          <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
+        </div>
+        <div className="abody">
+          <div className="notice" style={{ marginBottom: 12 }}>
+            <Ic k="ban" />
+            <div>A feedback note that asks for one of these is told <b>“Out of scope — we can't take this”</b>, with the document and section below, and is kept under the <b>Out of scope</b> tab. Bugs and changes on screens that are already in the system are not on this list.{team ? ' A note is matched by the words listed (whole words) or by being left on one of the screens listed.' : ''}</div>
+          </div>
+          {edit ? (
+            <div className="fb-scopeform" data-testid="fb-scope-form">
+              <label className="fb-label" htmlFor="sc-title">What is out of scope</label>
+              <input id="sc-title" className="ainp" value={edit.title ?? ''} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="e.g. Tally export of collections" />
+              <label className="fb-label" htmlFor="sc-ref">Where the scope document says so</label>
+              <input id="sc-ref" className="ainp" value={edit.reference ?? ''} onChange={(e) => setEdit({ ...edit, reference: e.target.value })} placeholder="e.g. Client Requirements Discovery Document, §6 Finance › Collection reports" />
+              <label className="fb-label" htmlFor="sc-says">What it says there (optional)</label>
+              <input id="sc-says" className="ainp" value={edit.doc_says ?? ''} onChange={(e) => setEdit({ ...edit, doc_says: e.target.value })} placeholder={'e.g. answered "Not required"'} />
+              <label className="fb-label" htmlFor="sc-words">Words in a note that mean it — one per line</label>
+              <textarea id="sc-words" className="ainp" rows={4} value={edit.phrasesText ?? ''} onChange={(e) => setEdit({ ...edit, phrasesText: e.target.value })} placeholder={'tally export\ntally sync'} />
+              <div className="fb-hint">Whole words only. Keep them specific — a loose word (like “transfer”) would turn away bugs on screens you already have.</div>
+              <label className="fb-label" htmlFor="sc-paths">Its screens (optional) — one per line</label>
+              <textarea id="sc-paths" className="ainp" rows={2} value={edit.pathsText ?? ''} onChange={(e) => setEdit({ ...edit, pathsText: e.target.value })} placeholder="/m/hr/hiring" />
+              <label className="fb-check"><input type="checkbox" checked={edit.is_active !== false} onChange={() => setEdit({ ...edit, is_active: edit.is_active === false })} /> Switched on</label>
+              {(edit.title ?? '').trim() && (edit.reference ?? '').trim() && (
+                <div className="fb-scope fb-scope--preview">
+                  <div className="fb-scope__head"><Ic k="ban" /><b>The reporter will read</b></div>
+                  <div>Out of scope — we can't take this. “{edit.title?.trim()}” is not available in this project. Please refer to the scope document: {scopeRef({ reference: edit.reference?.trim() ?? '', doc_says: edit.doc_says?.trim() || null })}.</div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <TableCard icon="doc" title={`Out of scope · ${items.filter((i) => i.is_active).length}`}
+              cols={team ? ['What', 'Where the scope document says so', 'Matched by', 'On', ''] : ['What', 'Where the scope document says so']}
+              rows={items.map((it): Cell[] => {
+                const base: Cell[] = [
+                  { node: <b style={{ opacity: it.is_active ? 1 : 0.55 }}>{it.title}</b>, sort: it.title },
+                  { node: <span className="sub">{scopeRef(it)}</span>, sort: it.reference },
+                ];
+                if (!team) return base;
+                return [...base,
+                  { node: <span className="sub">{[...it.phrases.slice(0, 6), ...it.page_paths].join(' · ')}{it.phrases.length > 6 ? ` · +${it.phrases.length - 6} more` : ''}</span> },
+                  { b: [it.is_active ? 'On' : 'Off', it.is_active ? 'b-green' : 'b-gray'] },
+                  { node: (
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn sm" disabled={busy} data-testid={`fb-scope-edit-${it.id}`}
+                        onClick={() => { setErr(null); setEdit({ ...it, phrasesText: it.phrases.join('\n'), pathsText: it.page_paths.join('\n') }); }}><Ic k="pencil" />Edit</button>
+                      <button className="btn sm" disabled={busy} data-testid={`fb-scope-toggle-${it.id}`} onClick={() => toggle(it)}>{it.is_active ? 'Switch off' : 'Switch on'}</button>
+                    </span>
+                  ) },
+                ];
+              })}
+              empty={loading ? 'Loading…' : 'Nothing on the scope list.'} />
+          )}
+          {err && <div className="fb-error" style={{ marginTop: 10 }} data-testid="fb-scope-error">{err}</div>}
+        </div>
+        <div className="af">
+          {edit ? (
+            <>
+              <button className="btn primary" disabled={busy} onClick={save} data-testid="fb-scope-save"><Ic k="save" />{edit.id ? 'Save changes' : 'Add to the scope list'}</button>
+              <button className="btn" disabled={busy} onClick={() => { setEdit(null); setErr(null); }}>Back</button>
+            </>
+          ) : team ? (
+            <button className="btn primary" onClick={() => { setErr(null); setEdit({ is_active: true, phrasesText: '', pathsText: '' }); }} data-testid="fb-scope-add"><Ic k="plus" />Add an item</button>
+          ) : null}
+          <span style={{ flex: 1 }} />
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
   );
 }

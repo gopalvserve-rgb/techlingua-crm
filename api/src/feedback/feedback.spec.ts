@@ -21,7 +21,7 @@ function mk(notes: Record<number, any> = {}, opts: { files?: number } = {}) {
     if (/FROM organisation/.test(sql)) return { id: '1' };
     if (/FROM user_assignment WHERE user_id/.test(sql)) return { branch_id: '40' };
     if (/nextval\('feedback_reference_seq'\)/.test(sql)) return { n: '7' };
-    if (/INSERT INTO feedback \(/.test(sql)) return { id: '99', reference: p[1], page_path: p[2], status: 'OPEN', created_by: p[6], viewport: p[8] };
+    if (/INSERT INTO feedback \(/.test(sql)) return { id: '99', reference: p[1], page_path: p[2], status: p[10] ?? 'OPEN', created_by: p[6], viewport: p[8] };
     if (/count\(\*\) AS n FROM feedback_attachment/.test(sql)) return { n: String(opts.files ?? 0) };
     if (/INSERT INTO feedback_attachment/.test(sql)) return { id: '5', kind: p[1], file_name: p[2], mime: p[3], size_bytes: String(p[4]) };
     return null;
@@ -115,7 +115,7 @@ describe('closing it', () => {
     await expect(svc.resolve({ id: ASHA }, 10, { status: 'RESOLVED' })).rejects.toThrow(/Only the team/);
     await svc.resolve({ id: TEAM }, 10, { status: 'WONT_FIX', resolution: 'Out of scope' });
     const up = calls.find((c) => /UPDATE feedback SET status = \$2, resolution/.test(c.sql))!;
-    expect(up.p).toEqual([10, 'WONT_FIX', 'Out of scope', TEAM]);
+    expect(up.p).toEqual([10, 'WONT_FIX', 'Out of scope', TEAM, null]);
     expect(up.sql).toMatch(/resolved_at = now\(\)/);
   });
 
