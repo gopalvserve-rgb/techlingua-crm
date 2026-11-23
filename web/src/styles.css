@@ -1436,3 +1436,11 @@ a.fb-thumb:hover{border-color:var(--primary)}
 @media (max-width:640px){.fb-launch__text{display:none}.fb-launch{padding:12px}}
 @media (max-width:520px){.fb-rec__label{display:none}}
 @media print{.fb-launch,.fb-panel,.fb-rec{display:none!important}}
+
+/* 23 Nov 2026 — Send never scrolls out of view; an unsent note shows on the button */
+.fb-panel__foot{flex-shrink:0;display:grid;gap:8px;padding:10px 15px 12px;border-top:1px solid var(--border);background:var(--surface)}
+.fb-prior{margin:4px -15px -12px;border-top:1px solid var(--border)}
+.fb-ready{padding:7px 10px;border-radius:var(--r-sm);font-size:12.5px;background:var(--amber-soft);border:1px solid color-mix(in srgb,var(--warning) 40%,transparent)}
+.fb-launch{position:fixed}
+.fb-launch.is-unsent{background:var(--warning);color:#1b1300}
+.fb-launch__dot{position:absolute;top:-3px;right:-3px;width:12px;height:12px;border-radius:50%;background:var(--danger);border:2px solid var(--surface)}

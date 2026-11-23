@@ -178,7 +178,9 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
   const [sent, setSent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [shots, setShots] = useState<Array<{ file: File; url: string }>>([]);
+  const [shots, setShotsState] = useState<Array<{ file: File; url: string }>>(draft.shots);
+  const setShots = (u: Array<{ file: File; url: string }> | ((p: Array<{ file: File; url: string }>) => Array<{ file: File; url: string }>)) =>
+    setShotsState((prev) => { const next = typeof u === 'function' ? u(prev) : u; draft.shots = next; return next; });
   const [prior, setPrior] = useState<FbNote[] | null>(null);
   const [priorTick, setPriorTick] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -221,10 +223,19 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
+  // a page change closes the panel but keeps the unsent note (words, screenshots, recording)
+  useEffect(() => { setOpen(false); setSent(null); setError(null); }, [pathname]);
+
+  // 23 Nov 2026 — two notes were lost: the person recorded, the panel came back with the preview,
+  // and the Send button sat below the fold, so they closed it thinking it was saved. Now Send is
+  // always visible, an unsent note says so on the button, and leaving the CRM warns first.
+  const unsent = !sent && (message.trim().length > 0 || shots.length > 0 || !!recording || rec.status === 'recording');
   useEffect(() => {
-    setOpen(false); setSent(null); setError(null);
-    setShots((prev) => { prev.forEach((s) => URL.revokeObjectURL(s.url)); return []; });
-  }, [pathname]);
+    if (!unsent) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [unsent]);
 
   // most screenshots arrive on the clipboard, not as a saved file
   useEffect(() => {
@@ -242,7 +253,7 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
     try {
       const row = await fbApi.file({
         page_path: recording?.startPath ?? pathname,   // a recording is about the page it started on
-        page_title: pageTitle,
+        page_title: recording ? (recording.startTitle ?? undefined) : pageTitle,
         message: message.trim().length >= 3 ? message.trim() : 'Screen recording — see the video',
         kind,
         viewport: `${window.innerWidth}x${window.innerHeight}`,
@@ -262,6 +273,8 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
       setSent(row.reference);
       setMessage(''); setKind('ISSUE'); setShots([]);
       setPriorTick((t) => t + 1);
+      // the Feedback page, if it is open behind the panel, shows the new note straight away
+      window.dispatchEvent(new CustomEvent('tl:feedback-sent', { detail: { id: row.id } }));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'That note could not be saved.');
     } finally { setSending(false); }
@@ -273,7 +286,7 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
   return (
     <>
       <button type="button" data-testid="fb-launch"
-        className={`fb-launch${open ? ' is-open' : ''}${dragging ? ' is-dragging' : ''}`}
+        className={`fb-launch${open ? ' is-open' : ''}${dragging ? ' is-dragging' : ''}${!open && unsent ? ' is-unsent' : ''}`}
         style={{ right: dock.right, bottom: dock.bottom }}
         onPointerDown={onPointerDown}
         onClick={() => { if (!consumedByDrag()) setOpen((v) => !v); }}
@@ -281,7 +294,8 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
         aria-label="Leave feedback on this page — drag to move"
         title="Leave feedback on this page (drag to move)">
         <Ic k={open ? 'x' : 'pencil'} />
-        <span className="fb-launch__text">{open ? 'Close' : 'Feedback'}</span>
+        <span className="fb-launch__text">{open ? 'Close' : unsent ? 'Feedback · not sent yet' : 'Feedback'}</span>
+        {!open && unsent ? <span className="fb-launch__dot" aria-label="A note is waiting to be sent" /> : null}
       </button>
 
       {rec.status === 'recording' && (
@@ -327,6 +341,7 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
                 <div className="fb-recbox">
                   {recording ? (
                     <>
+                      <div className="fb-ready" data-testid="fb-ready"><b>Recording ready.</b> It is not saved yet — press <b>Send to the team</b> below.</div>
                       <video className="fb-recbox__video" src={recording.url} controls preload="metadata" />
                       <div className="fb-row">
                         <span className="sub">Screen recording · {clock(recording.seconds)} · {mb(recording.blob.size)}{recording.voice ? ' · with your voice' : ''}</span>
@@ -341,7 +356,7 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
                           disabled={rec.status === 'asking' || rec.status === 'recording'}
                           onClick={async () => {
                             // out of the way once it records, so the page can be shown
-                            if (await startRecording({ voice, path: pathname }) === 'recording') setOpen(false);
+                            if (await startRecording({ voice, path: pathname, title: pageTitle }) === 'recording') setOpen(false);
                           }}>
                           <span className="fb-rec__dot" aria-hidden /> {rec.status === 'asking' ? 'Choose what to share…' : 'Record the screen'}
                         </button>
@@ -379,34 +394,44 @@ export function FeedbackWidget({ pageTitle }: { pageTitle?: string }) {
                 style={{ display: 'none' }} data-testid="fb-file"
                 onChange={(e) => { addShots(e.target.files); e.target.value = ''; }} />
 
+              {!!prior?.length && <PriorNotes prior={prior} openCount={openCount} />}
+            </div>
+          )}
+          {!sent && (
+            <div className="fb-panel__foot">
               {error && <div className="fb-error" data-testid="fb-error">{error}</div>}
-
               <button className="btn primary fb-send" disabled={!canSend} onClick={send} data-testid="fb-send">
                 <Ic k="send" />{sending ? (shots.length || recording ? 'Saving and uploading…' : 'Saving…') : 'Send to the team'}
               </button>
             </div>
           )}
-
-          {!!prior?.length && (
-            <div className="fb-panel__prior">
-              <div className="fb-panel__priorhead">
-                Already reported here
-                {openCount > 0 && <span className="fb-count">{openCount} pending</span>}
-              </div>
-              <ul className="fb-list">
-                {prior.slice(0, 6).map((f) => (
-                  <li key={f.id} className={`fb-item is-${f.status.toLowerCase()}`}>
-                    <span className="fb-item__msg">{f.message}</span>
-                    <span className="fb-item__meta mono">{f.reference} · {STATUS_LABEL[f.status] ?? f.status}</span>
-                    {f.resolution && <span className="fb-item__res">{f.resolution}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
+          {sent && !!prior?.length && (
+            <div className="fb-panel__prior"><PriorNotes prior={prior} openCount={openCount} /></div>
           )}
         </div>
       )}
     </>
+  );
+}
+
+/** Earlier notes on this page, so nobody reports the same thing twice. */
+function PriorNotes({ prior, openCount }: { prior: FbNote[]; openCount: number }) {
+  return (
+    <div className="fb-prior">
+      <div className="fb-panel__priorhead">
+        Already reported here
+        {openCount > 0 && <span className="fb-count">{openCount} pending</span>}
+      </div>
+      <ul className="fb-list">
+        {prior.slice(0, 6).map((f) => (
+          <li key={f.id} className={`fb-item is-${f.status.toLowerCase()}`}>
+            <span className="fb-item__msg">{f.message}</span>
+            <span className="fb-item__meta mono">{f.reference} · {STATUS_LABEL[f.status] ?? f.status}</span>
+            {f.resolution && <span className="fb-item__res">{f.resolution}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -636,6 +661,12 @@ export function FeedbackPage() {
   const [q, setQ] = useState('');
   const fbParam = () => Number(new URLSearchParams(screen?.search ?? '').get('fb')) || null;
   const [openId, setOpenId] = useState<number | null>(fbParam);
+  // a note sent from the Feedback button while this page is open shows up at once
+  useEffect(() => {
+    const onSent = () => setTick((t) => t + 1);
+    window.addEventListener('tl:feedback-sent', onSent);
+    return () => window.removeEventListener('tl:feedback-sent', onSent);
+  }, []);
   // a notification click (`?fb=<id>`) opens that note
   useEffect(() => { const id = fbParam(); if (id) setOpenId(id); }, [screen?.search]);
 

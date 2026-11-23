@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
+import { draft } from './feedbackrec';
 import { FeedbackPage, FeedbackWidget, browserOf } from './feedback';
 
 /** 22 Nov 2026 — the Feedback button on every page and Help & Support › Feedback. */
@@ -41,7 +42,7 @@ const fetchMock = vi.fn(async (_u: string, _i?: any) => ({ ok: true, text: async
 (globalThis as any).URL.createObjectURL = () => 'blob:x';
 (globalThis as any).URL.revokeObjectURL = () => {};
 
-beforeEach(() => { cleanup(); post.mockClear(); patch.mockClear(); fetchMock.mockClear(); gets.length = 0; can.mockImplementation(() => false); meId = 2; notes = [NOTE()]; });
+beforeEach(() => { cleanup(); draft.message = ''; draft.kind = 'ISSUE'; draft.shots = []; post.mockClear(); patch.mockClear(); fetchMock.mockClear(); gets.length = 0; can.mockImplementation(() => false); meId = 2; notes = [NOTE()]; });
 
 describe('the Feedback button', () => {
   it('files a note pinned to the page — kind, words, window size, browser — then uploads the screenshot as raw bytes', async () => {
@@ -76,6 +77,22 @@ describe('the Feedback button', () => {
     expect(gets).toContain('/feedback?page_path=%2Fm%2Fleads%2Fall');
   });
 
+  it('an unsent note survives a page change — words and screenshots — and the button says it is not sent yet (23 Nov 2026)', async () => {
+    function GoElsewhere() { const nav = useNavigate(); return <button onClick={() => nav('/m/dash/overview')}>elsewhere</button>; }
+    render(<MemoryRouter initialEntries={['/m/leads/all']}><GoElsewhere /><FeedbackWidget pageTitle="Marketing › Leads" /></MemoryRouter>);
+    fireEvent.click(screen.getByTestId('fb-launch'));
+    fireEvent.change(screen.getByTestId('fb-message'), { target: { value: 'Half-written note' } });
+    const png = new File([new Uint8Array([1])], 'keep.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('fb-file'), { target: { files: [png] } });
+    fireEvent.click(screen.getByText('elsewhere'));
+    expect(screen.queryByTestId('fb-panel')).toBeNull();
+    expect(screen.getByTestId('fb-launch').textContent).toContain('not sent yet');
+    fireEvent.click(screen.getByTestId('fb-launch'));
+    expect((screen.getByTestId('fb-message') as HTMLTextAreaElement).value).toBe('Half-written note');
+    expect(screen.getByAltText('Screenshot 1')).toBeTruthy();
+    expect(screen.getByTestId('fb-send')).toBeTruthy();
+  });
+
   it('says who the browser is, briefly', () => {
     expect(browserOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36')).toBe('Chrome on Windows');
     expect(browserOf('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1')).toBe('Safari on iPhone / iPad');
@@ -98,6 +115,15 @@ describe('Help & Support › Feedback', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feedback/10/replies', { body: 'Still empty on page 2', answer: false }));
     fireEvent.click(screen.getByTestId('fb-accept'));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feedback/10/accept', {}));
+  });
+
+  it('a note sent from the button shows on the open Feedback page at once', async () => {
+    notes = [];
+    render(<FeedbackPage />);
+    expect(await screen.findByText(/Nothing reported yet/)).toBeTruthy();
+    notes = [NOTE()];
+    act(() => { window.dispatchEvent(new CustomEvent('tl:feedback-sent', { detail: { id: 10 } })); });
+    expect(await screen.findByTestId('fb-row-10')).toBeTruthy();
   });
 
   it('the team answers, acknowledges, resolves with an outcome note — and opens a note from ?fb=', async () => {

@@ -23,16 +23,20 @@ export const MAX_BYTES = 50 * 1024 * 1024;
 export type RecorderState =
   | { status: 'idle' }
   | { status: 'asking' }
-  | { status: 'recording'; startedAt: number; voice: boolean; startPath: string }
-  | { status: 'done'; blob: Blob; url: string; seconds: number; voice: boolean; startPath: string }
+  | { status: 'recording'; startedAt: number; voice: boolean; startPath: string; startTitle?: string }
+  | { status: 'done'; blob: Blob; url: string; seconds: number; voice: boolean; startPath: string; startTitle?: string }
   | { status: 'error'; reason: 'unsupported' | 'empty' | 'failed' };
 
 let state: RecorderState = { status: 'idle' };
 const listeners = new Set<() => void>();
 const set = (next: RecorderState) => { state = next; listeners.forEach((l) => l()); };
 
-/** The note's words, kept beside the recording so changing page loses neither. */
-export const draft = { message: '', kind: 'ISSUE' as string };
+/**
+ * The unsent note — words, kind and screenshots — kept here beside the recording, so changing page
+ * (which re-renders the widget) loses none of it. 23 Nov 2026: screenshots used to be cleared on a
+ * page change, so anything pasted before recording and clicking through pages was silently dropped.
+ */
+export const draft = { message: '', kind: 'ISSUE' as string, shots: [] as Array<{ file: File; url: string }> };
 
 let recorder: MediaRecorder | null = null;
 let streams: MediaStream[] = [];
@@ -61,12 +65,12 @@ function release() {
 }
 
 /** Starts, and says how it ended up: 'recording', or 'idle' when they chose not to share. */
-export async function startRecording(opts: { voice: boolean; path: string }): Promise<RecorderState['status']> {
+export async function startRecording(opts: { voice: boolean; path: string; title?: string }): Promise<RecorderState['status']> {
   await begin(opts);
   return state.status;
 }
 
-async function begin(opts: { voice: boolean; path: string }) {
+async function begin(opts: { voice: boolean; path: string; title?: string }) {
   if (!canRecord()) { set({ status: 'error', reason: 'unsupported' }); return; }
   if (state.status === 'recording' || state.status === 'asking') return;
   discardRecording();
@@ -122,14 +126,14 @@ async function begin(opts: { voice: boolean; path: string }) {
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
       release();
       if (!blob.size) { set({ status: 'error', reason: 'empty' }); return; }
-      set({ status: 'done', blob, url: URL.createObjectURL(blob), seconds, voice: !!mic, startPath: opts.path });
+      set({ status: 'done', blob, url: URL.createObjectURL(blob), seconds, voice: !!mic, startPath: opts.path, startTitle: opts.title });
     };
     // "Stop sharing" in the browser's own bar ends the recording too
     display.getVideoTracks()[0]?.addEventListener('ended', () => stopRecording());
     recorder = rec;
     rec.start(1000);
     timer = setTimeout(() => stopRecording(), MAX_SECONDS * 1000);
-    set({ status: 'recording', startedAt, voice: !!mic, startPath: opts.path });
+    set({ status: 'recording', startedAt, voice: !!mic, startPath: opts.path, startTitle: opts.title });
   } catch (e) {
     release();
     const name = (e as DOMException)?.name;
