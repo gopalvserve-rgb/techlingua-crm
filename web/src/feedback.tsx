@@ -902,7 +902,7 @@ function ScopeListModal({ team, onClose }: { team: boolean; onClose: () => void 
 
   return (
     <div className="add-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="add-modal" style={{ maxWidth: 920 }} data-testid="fb-scope-modal">
+      <div className="add-modal" style={{ maxWidth: 1180 }} data-testid="fb-scope-modal">
         <div className="ah">
           <h3><Ic k="doc" />Scope list — what the agreed documents leave out</h3>
           <button className="ax" onClick={onClose} aria-label="Close"><Ic k="x" /></button>
@@ -943,7 +943,10 @@ function ScopeListModal({ team, onClose }: { team: boolean; onClose: () => void 
                 ];
                 if (!team) return base;
                 return [...base,
-                  { node: <span className="sub">{[...it.phrases.slice(0, 6), ...it.page_paths].join(' · ')}{it.phrases.length > 6 ? ` · +${it.phrases.length - 6} more` : ''}</span> },
+                  { node: <span className="sub" title={[...it.phrases, ...it.page_paths].join('\n')}>
+                    {it.phrases.slice(0, 3).join(' · ')}{it.phrases.length > 3 ? ` · +${it.phrases.length - 3} more` : ''}
+                    {it.page_paths.length ? ` · ${it.page_paths.length} screen${it.page_paths.length > 1 ? 's' : ''}` : ''}
+                  </span> },
                   { b: [it.is_active ? 'On' : 'Off', it.is_active ? 'b-green' : 'b-gray'] },
                   { node: (
                     <span style={{ display: 'flex', gap: 6 }}>
