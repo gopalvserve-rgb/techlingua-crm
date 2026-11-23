@@ -19,7 +19,8 @@ import { missingRequirements } from '../messaging/providers';
  */
 export interface SmsProvider {
   readonly name: string;
-  send(toE164: string, message: string): Promise<void>;
+  /** opts: the DLT header + template id, when the text comes from a registered template */
+  send(toE164: string, message: string, opts?: { sender?: string | null; dlt_template_id?: string | null }): Promise<void>;
 }
 
 export const SMS_NOT_CONFIGURED_MSG = 'SMS gateway not configured — add the SMS API in Administration › Settings › Channels';
@@ -58,8 +59,8 @@ const PROVIDERS: Record<string, ProviderFactory> = {
  * nothing that worked before stops working.
  */
 class ChannelConfigSmsProvider implements SmsProvider {
-  constructor(readonly name: string, private readonly send_: (to: string, msg: string) => Promise<void>) {}
-  async send(to: string, message: string): Promise<void> { await this.send_(to, message); }
+  constructor(readonly name: string, private readonly send_: (to: string, msg: string, opts?: { sender?: string | null; dlt_template_id?: string | null }) => Promise<void>) {}
+  async send(to: string, message: string, opts?: { sender?: string | null; dlt_template_id?: string | null }): Promise<void> { await this.send_(to, message, opts); }
 }
 
 @Injectable()
@@ -83,10 +84,13 @@ export class SmsService {
     if (this.configs && this.messaging) {
       const cfg = await this.configs.resolve('sms', null);
       if (cfg && missingRequirements(cfg.provider, cfg.config, Object.keys(cfg.secrets)).length === 0) {
-        return new ChannelConfigSmsProvider(cfg.provider, async (to, message) => {
+        return new ChannelConfigSmsProvider(cfg.provider, async (to, message, opts) => {
           // an OTP goes through the SAME send log as everything else, so "did the OTP go
           // out?" is answerable on a screen instead of in the server logs.
-          const out = await this.messaging!.sendNow({ channel: 'sms', to, body: message, guarded: false });
+          const out = await this.messaging!.sendNow({
+            channel: 'sms', to, body: message, guarded: false,
+            sms_sender_id: opts?.sender ?? null, sms_dlt_template_id: opts?.dlt_template_id ?? null,
+          });
           if (out.status !== 'sent') throw new Error(out.reason || 'SMS gateway rejected the message');
         });
       }

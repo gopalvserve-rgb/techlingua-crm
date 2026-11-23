@@ -12,7 +12,54 @@
  * reported, exactly like the {{merge}} engine, so the UI can warn before a send.
  */
 
-export const DLT_MARKER = /\{#var#\}/g;
+/**
+ * Every DLT variable marker, not only {#var#}: the portal also registers {#cbn#} (call-back
+ * number), {#num#} (numeric), {#url#}, {#urlott#}, {#email#} and {#alphanumeric#}. They are all
+ * POSITIONAL — the mapping's Nth entry fills the Nth marker of any kind. (23 Nov 2026: the
+ * client's 23 approved templates use {#cbn#} and {#num#}; matching only {#var#} left them in
+ * the text, and DLT rejects that.)
+ */
+export const DLT_MARKER = /\{#(?:var|cbn|num|url|urlott|email|alphanumeric)#\}/gi;
+
+/** The kinds of marker in a body, in order — e.g. ['var', 'var', 'var', 'cbn']. */
+export function markerKinds(body: string): string[] {
+  return (String(body ?? '').match(DLT_MARKER) ?? []).map((m) => m.slice(2, -2).toLowerCase());
+}
+
+/**
+ * The fields a marker can be filled from — what the SMS Templates screen offers in each
+ * marker's dropdown. Event-specific values (date, time, discount …) come from the event that
+ * sends the SMS; the rest come from the lead / student, their counsellor and their vertical.
+ */
+export const SMS_VARIABLES: Array<{ key: string; label: string; sample: string }> = [
+  { key: 'name', label: 'Lead / student name', sample: 'Riya Sharma' },
+  { key: 'first_name', label: 'First name', sample: 'Riya' },
+  { key: 'course', label: 'Course', sample: 'German A1' },
+  { key: 'counsellor', label: 'Assigned counsellor', sample: 'Asha' },
+  { key: 'counsellor_phone', label: "Counsellor's phone", sample: '+91 98110 00000' },
+  { key: 'callback', label: 'Call-back number (vertical phone)', sample: '+918506067041' },
+  { key: 'institute', label: 'Institute name (vertical)', sample: 'British College of Language' },
+  { key: 'branch', label: 'Branch', sample: 'Vikaspuri' },
+  { key: 'date', label: 'Date (from the event)', sample: '25 Nov 2026' },
+  { key: 'time', label: 'Time (from the event)', sample: '11:00 AM' },
+  { key: 'discount', label: 'Discount (offer)', sample: '20%' },
+  { key: 'last_date', label: 'Last date (offer / due date)', sample: '30 Nov 2026' },
+  { key: 'amount', label: 'Amount', sample: '₹5,000' },
+  { key: 'otp', label: 'OTP code', sample: '482913' },
+  { key: 'otp_minutes', label: 'OTP valid for (minutes)', sample: '5' },
+  { key: 'phone', label: 'Lead phone', sample: '+919811111111' },
+];
+export const SAMPLE_VARS: Record<string, string> = Object.fromEntries(SMS_VARIABLES.map((v) => [v.key, v.sample]));
+
+/** What a template may be sent for, besides the notification events. */
+export const EXTRA_TRIGGERS = [
+  { key: 'manual', name: 'Manual / campaign only (never sent automatically)' },
+  { key: 'login_otp', name: 'Login OTP' },
+];
+/** 'lead_created' is the old name of the new-lead trigger; both mean the same. */
+export function triggerAliases(trigger: string): string[] {
+  return trigger === 'lead_created' || trigger === 'new_lead_created' ? ['lead_created', 'new_lead_created'] : [trigger];
+}
 
 export interface DltRenderResult {
   text: string;

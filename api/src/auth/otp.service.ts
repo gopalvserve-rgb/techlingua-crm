@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import { DatabaseService } from '../database/database.service';
 import { normalizePhone } from '../common/phone.util';
 import { SMS_NOT_CONFIGURED_MSG, SmsService } from './sms.provider';
+import { normaliseMapping, resolveDltBody } from '../smstemplates/sms-template.engine';
 
 /**
  * OTP login (client update #1 — mobile-first auth).
@@ -94,7 +95,18 @@ export class OtpService {
     }
 
     const code = String(Math.floor(100000 + Math.random() * 900000)); // 6 digits
-    await provider.send(phone, `${code} is your Tech Lingua CRM login code. Valid for 5 minutes.`);
+    // 23 Nov 2026 — the client's DLT "Login OTP" template (Communication › SMS Templates, event
+    // Login OTP), when one is active: the gateway rejects an OTP worded any other way.
+    const tpl = await this.db.one<{ header: string; body: string; var_mapping: unknown; dlt_template_id: string | null }>(
+      `SELECT header, body, var_mapping, dlt_template_id FROM sms_template
+        WHERE trigger_event = 'login_otp' AND is_active AND deleted_at IS NULL ORDER BY branch_id NULLS FIRST, id LIMIT 1`,
+    ).catch(() => null);
+    if (tpl?.body && tpl.header) {
+      const text = resolveDltBody(tpl.body, normaliseMapping(tpl.var_mapping), { name: (user as { name?: string }).name || 'User', otp: code, otp_minutes: String(OTP_TTL_MS / 60000) }).text;
+      await provider.send(phone, text, { sender: tpl.header, dlt_template_id: tpl.dlt_template_id });
+    } else {
+      await provider.send(phone, `${code} is your Tech Lingua CRM login code. Valid for 5 minutes.`);
+    }
     const hash = await bcrypt.hash(code, 10);
     await this.db.query(
       `INSERT INTO auth_otp (user_id, phone, code_hash, expires_at)

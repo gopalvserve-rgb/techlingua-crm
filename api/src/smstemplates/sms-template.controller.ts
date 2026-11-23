@@ -25,6 +25,13 @@ export class SmsTemplateController {
     });
   }
 
+  /** What a template can be sent for (every event) and what can fill each marker. */
+  @Get('meta')
+  @RequirePermission('template.read')
+  meta() {
+    return this.svc.meta();
+  }
+
   @Post()
   @RequirePermission('template.create')
   create(@Body() dto: any, @CurrentUser() me: Me) {

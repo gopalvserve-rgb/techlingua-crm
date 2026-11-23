@@ -1692,8 +1692,37 @@ export interface SmsTemplateRow {
   vertical_id: number | null; vertical_name?: string | null;
   dlt_template_id: string | null; entity_id: string | null;
   var_mapping: string[] | string | null; unicode: boolean | null;
-  trigger_event: string; is_active: boolean;
+  trigger_event: string; is_active: boolean; trigger_name?: string | null;
 }
+
+/**
+ * 23 Nov 2026 — the DLT markers are positional and of several kinds ({#var#}, {#cbn#} call-back
+ * number, {#num#} number …). Each one is filled from a field the admin picks — the SMS Templates
+ * screen is the single, editable place for this.
+ */
+export const DLT_MARKER_RE = /\{#(?:var|cbn|num|url|urlott|email|alphanumeric)#\}/gi;
+const markerKindsOf = (body: string) => (body.match(DLT_MARKER_RE) ?? []).map((m) => m.slice(2, -2).toLowerCase());
+type SmsMeta = { triggers: Array<{ key: string; name: string; category: string; wired: boolean }>; variables: Array<{ key: string; label: string }> };
+/** Used until (or if) GET /sms-templates/meta answers. */
+const SMS_META_FALLBACK: SmsMeta = {
+  triggers: [
+    { key: 'new_lead_created', name: 'New Lead Created', category: 'Leads', wired: true },
+    { key: 'manual', name: 'Manual / campaign only (never sent automatically)', category: 'Other', wired: false },
+    { key: 'login_otp', name: 'Login OTP', category: 'Other', wired: true },
+  ],
+  variables: [
+    { key: 'name', label: 'Lead / student name' }, { key: 'first_name', label: 'First name' }, { key: 'course', label: 'Course' },
+    { key: 'counsellor', label: 'Assigned counsellor' }, { key: 'counsellor_phone', label: "Counsellor's phone" },
+    { key: 'callback', label: 'Call-back number (vertical phone)' }, { key: 'institute', label: 'Institute name (vertical)' },
+    { key: 'branch', label: 'Branch' }, { key: 'date', label: 'Date (from the event)' }, { key: 'time', label: 'Time (from the event)' },
+    { key: 'discount', label: 'Discount (offer)' }, { key: 'last_date', label: 'Last date (offer / due date)' },
+    { key: 'amount', label: 'Amount' }, { key: 'otp', label: 'OTP code' }, { key: 'otp_minutes', label: 'OTP valid for (minutes)' },
+    { key: 'phone', label: 'Lead phone' },
+  ],
+};
+const defaultFieldFor = (kind: string, i: number) => (kind === 'cbn' ? 'callback' : kind === 'num' ? 'callback' : i === 0 ? 'name' : i === 1 ? 'course' : 'name');
+const asList = (m: string[] | string | null | undefined) =>
+  Array.isArray(m) ? m : typeof m === 'string' ? (m.trim().startsWith('[') ? (() => { try { return JSON.parse(m) as string[]; } catch { return []; } })() : m.split(',').map((x) => x.trim()).filter(Boolean)) : [];
 
 /**
  * The Add/Edit SMS Template form, exactly the model in the client's screenshot:
@@ -1712,10 +1741,10 @@ export function SmsTemplateModal({ initial, onClose, onSaved }: {
   const [verticalId, setVerticalId] = useState<string>(initial?.vertical_id ? String(initial.vertical_id) : '');
   const [dlt, setDlt] = useState(initial?.dlt_template_id ?? '');
   const [entityId, setEntityId] = useState(initial?.entity_id ?? '');
-  const [mapping, setMapping] = useState(
-    Array.isArray(initial?.var_mapping) ? initial!.var_mapping.join(', ')
-      : typeof initial?.var_mapping === 'string' ? initial!.var_mapping : 'name, course',
-  );
+  const [mapping, setMapping] = useState<string[]>(() => (initial ? asList(initial.var_mapping) : ['name', 'course']));
+  const [trigger, setTrigger] = useState(initial?.trigger_event === 'lead_created' ? 'new_lead_created' : (initial?.trigger_event ?? 'new_lead_created'));
+  const metaRes = useFetch<SmsMeta>('/sms-templates/meta');
+  const meta: SmsMeta = metaRes.data && Array.isArray(metaRes.data.triggers) && metaRes.data.triggers.length ? metaRes.data : SMS_META_FALLBACK;
   const [active, setActive] = useState(initial?.is_active !== false);
   const [preview, setPreview] = useState<{ url: string; resolved_text: string; missing: string[]; configured: boolean; note: string; unicode: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1726,7 +1755,11 @@ export function SmsTemplateModal({ initial, onClose, onSaved }: {
     ? ref.verticals.filter((v) => String((v as { branch_id?: number }).branch_id ?? '') === branchId)
     : ref.verticals;
 
-  const markers = (body.match(/\{#var#\}/g) ?? []).length;
+  const kinds = markerKindsOf(body);
+  const markers = kinds.length;
+  // one field per marker, in order: keep what was chosen, fill new markers with a sensible default
+  const fields = kinds.map((k, i) => mapping[i] || defaultFieldFor(k, i));
+  const setField = (i: number, v: string) => setMapping(() => { const next = [...fields]; next[i] = v; return next; });
 
   const payload = () => ({
     header, name, body,
@@ -1734,8 +1767,8 @@ export function SmsTemplateModal({ initial, onClose, onSaved }: {
     vertical_id: verticalId ? Number(verticalId) : null,
     dlt_template_id: dlt || null,
     entity_id: entityId || null,
-    var_mapping: mapping.split(',').map((s) => s.trim()).filter(Boolean),
-    trigger_event: 'lead_created',
+    var_mapping: markers ? fields : mapping,
+    trigger_event: trigger,
     is_active: active,
   });
 
@@ -1745,12 +1778,12 @@ export function SmsTemplateModal({ initial, onClose, onSaved }: {
     const t = setTimeout(() => {
       api.post<typeof preview>('/sms-templates/preview', {
         body, header, dlt_template_id: dlt,
-        var_mapping: mapping.split(',').map((s) => s.trim()).filter(Boolean),
+        var_mapping: markers ? fields : mapping,
       }).then(setPreview).catch(() => setPreview(null));
     }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, header, dlt, mapping]);
+  }, [body, header, dlt, fields.join('|')]);
 
   const save = async () => {
     setErr(''); setBusy(true);
@@ -1796,15 +1829,28 @@ export function SmsTemplateModal({ initial, onClose, onSaved }: {
                 <option value="">All verticals</option>
                 {verticals.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
-              <div className="fhint">Which lead this template applies to — its Branch + Vertical are matched on new-lead auto-send.</div>
+              <div className="fhint">Which leads / students this template is for — the most specific Branch + Vertical match is used.</div>
+            </div>
+            <div className="fld" style={{ gridColumn: '1 / -1' }}>
+              <label htmlFor="s-trigger">Sent for <span className="star">*</span></label>
+              <select id="s-trigger" className="ainp" value={trigger} onChange={(e) => setTrigger(e.target.value)} data-testid="sms-trigger">
+                {[...new Set(meta.triggers.map((t) => t.category))].map((cat) => (
+                  <optgroup key={cat} label={cat}>
+                    {meta.triggers.filter((t) => t.category === cat).map((t) => (
+                      <option key={t.key} value={t.key}>{t.name}{t.key !== 'manual' && !t.wired ? ' — not sent automatically yet' : ''}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <div className="fhint">The event that sends this SMS. The event must also have SMS switched on in Notification Events.</div>
             </div>
             <div className="fld" style={{ gridColumn: '1 / -1' }}>
               <label htmlFor="s-body">Template body (DLT-approved) <span className="star">*</span></label>
               <textarea id="s-body" className="ainp" rows={3} value={body} onChange={(e) => setBody(e.target.value)}
                 placeholder="Dear {#var#}, thank you for your interest in {#var#}. - BCL" />
               <div className="fhint">
-                Paste the EXACT text approved on the DLT portal. Use {'{#var#}'} for each variable, in order.
-                This template has <b>{markers}</b> {'{#var#}'} marker{markers === 1 ? '' : 's'}.
+                Paste the EXACT text approved on the DLT portal, with its markers ({'{#var#}'}, {'{#cbn#}'}, {'{#num#}'} …).
+                This template has <b>{markers}</b> marker{markers === 1 ? '' : 's'} — choose what fills each one below.
               </div>
             </div>
             <div className="fld">
@@ -1818,12 +1864,22 @@ export function SmsTemplateModal({ initial, onClose, onSaved }: {
               <input id="s-entity" className="ainp mono" value={entityId} onChange={(e) => setEntityId(e.target.value)}
                 placeholder="leave blank to use the Nimbus default" />
             </div>
-            <div className="fld">
-              <label htmlFor="s-map">Variable order</label>
-              <input id="s-map" className="ainp" value={mapping} onChange={(e) => setMapping(e.target.value)}
-                placeholder="name, course" />
-              <div className="fhint">Comma-separated lead fields, in {'{#var#}'} order. Default: name, course.</div>
-            </div>
+            {markers > 0 && (
+              <div className="fld" style={{ gridColumn: '1 / -1' }}>
+                <label>What fills each marker</label>
+                <div className="sms-vars">
+                  {kinds.map((k, i) => (
+                    <div key={i} className="sms-var">
+                      <span className="mono sub">{i + 1}. {'{#'}{k}{'#}'}</span>
+                      <select className="ainp" aria-label={`Marker ${i + 1}`} value={fields[i]} onChange={(e) => setField(i, e.target.value)} data-testid={`sms-var-${i}`}>
+                        {meta.variables.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
+                        {!meta.variables.some((v) => v.key === fields[i]) && <option value={fields[i]}>{fields[i]}</option>}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="fld">
               <label htmlFor="s-active">Status</label>
               <select id="s-active" className="ainp" value={active ? '1' : '0'} onChange={(e) => setActive(e.target.value === '1')}>
@@ -1836,7 +1892,7 @@ export function SmsTemplateModal({ initial, onClose, onSaved }: {
           {preview && (
             <div className="card" style={{ marginTop: 12 }}>
               <div className="sub" style={{ marginBottom: 6 }}>
-                Sample resolved text (name=Test Lead, course=Sample Course):
+                How it reads with sample values:
               </div>
               <div style={{ marginBottom: 8 }}>{preview.resolved_text || <span className="sub">—</span>}</div>
               {preview.missing?.length ? (
@@ -1919,6 +1975,17 @@ export function SmsTemplates() {
     await api.del(`/sms-templates/${t.id}`);
     toast('SMS template deleted'); reload();
   };
+  const toggle = async (t: SmsTemplateRow) => {
+    try {
+      await api.patch(`/sms-templates/${t.id}`, {
+        header: t.header, name: t.name, body: t.body, branch_id: t.branch_id, vertical_id: t.vertical_id,
+        dlt_template_id: t.dlt_template_id, entity_id: t.entity_id, var_mapping: asList(t.var_mapping), unicode: t.unicode,
+        trigger_event: t.trigger_event, is_active: !t.is_active,
+      });
+      toast(t.is_active ? `"${t.name}" switched off` : `"${t.name}" switched on — it now sends for its event`);
+      reload();
+    } catch (e) { toast((e as Error).message, true); }
+  };
 
   return (
     <>
@@ -1929,17 +1996,19 @@ export function SmsTemplates() {
       </div>
       <TableCard
         title="SMS templates (DLT)" icon="doc"
-        cols={['Header', 'Template name', 'Branch', 'Vertical', 'DLT Template ID', 'Status', '']}
-        empty="No SMS templates yet — add one per Branch+Vertical for the new-lead auto-send."
+        cols={['Header', 'Template name', 'Sent for', 'Branch', 'Vertical', 'DLT Template ID', 'Status', '']}
+        empty="No SMS templates yet — add the DLT-approved templates, one per event and Branch + Vertical."
         rows={rows.map((t): Cell[] => [
           { node: <b className="mono">{t.header}</b> },
           { node: <div><b>{t.name}</b><div className="sub" style={{ maxWidth: 320, whiteSpace: 'normal' }}>{t.body}</div></div> },
+          { node: <span>{t.trigger_name ?? t.trigger_event}<div className="sub">{markerKindsOf(t.body).length} marker(s)</div></span>, sort: t.trigger_name ?? t.trigger_event },
           t.branch_name ?? 'All',
           t.vertical_name ?? 'All',
           t.dlt_template_id ? { node: <span className="mono sub">{t.dlt_template_id}</span> } : { b: ['Not set', 'b-amber'] },
           t.is_active ? { b: ['Active', 'b-green'] } : { b: ['Inactive', 'b-gray'] },
           {
             node: <RowBtns items={[
+              [t.is_active ? 'ban' : 'check', t.is_active ? 'Switch off' : 'Switch on', () => void toggle(t)],
               ['wa', 'Send test', () => setTest(t)],
               ['pencil', 'Edit', () => setModal({ open: true, row: t })],
               ['trash', 'Delete', () => void del(t)],

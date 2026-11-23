@@ -31,7 +31,7 @@ function makeDb(opts: { templates?: any[]; leads?: Record<number, any> } = {}) {
       const s = norm(sql);
       if (/FROM sms_template WHERE org_id = \$1/.test(s)) {
         const [, trigger, branch, vertical] = params as any[];
-        return templates.filter((t) => !t.deleted_at && t.is_active && t.trigger_event === trigger
+        return templates.filter((t) => !t.deleted_at && t.is_active && (Array.isArray(trigger) ? trigger : [trigger]).includes(t.trigger_event)
           && (t.branch_id === branch || t.branch_id == null)
           && (t.vertical_id === vertical || t.vertical_id == null));
       }

@@ -1444,3 +1444,7 @@ a.fb-thumb:hover{border-color:var(--primary)}
 .fb-launch{position:fixed}
 .fb-launch.is-unsent{background:var(--warning);color:#1b1300}
 .fb-launch__dot{position:absolute;top:-3px;right:-3px;width:12px;height:12px;border-radius:50%;background:var(--danger);border:2px solid var(--surface)}
+
+/* SMS Templates — one field per DLT marker (23 Nov 2026) */
+.sms-vars{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px}
+.sms-var{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center}

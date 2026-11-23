@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { SmsTemplateService } from '../smstemplates/sms-template.service';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { TemplateService } from '../templates/template.service';
 import { MessagingService } from '../messaging/messaging.service';
@@ -43,6 +44,8 @@ export class NotificationEventService {
     private readonly db: DatabaseService,
     private readonly templates: TemplateService,
     private readonly messaging: MessagingService,
+    // 23 Nov 2026 — the client's DLT-approved SMS templates (Communication › SMS Templates)
+    @Optional() private readonly dltSms?: SmsTemplateService,
   ) {}
 
   private async orgId(): Promise<number> {
@@ -71,7 +74,10 @@ export class NotificationEventService {
               COALESCE(c.email_enabled, e.default_email)       AS email_enabled,
               COALESCE(c.whatsapp_enabled, e.default_whatsapp) AS whatsapp_enabled,
               c.sms_template_id, c.email_template_id, c.whatsapp_template_id,
-              ts.name AS sms_template_name, te.name AS email_template_name, tw.name AS whatsapp_template_name
+              ts.name AS sms_template_name, te.name AS email_template_name, tw.name AS whatsapp_template_name,
+              (SELECT string_agg(st.name, ', ' ORDER BY st.name) FROM sms_template st
+                WHERE st.deleted_at IS NULL AND st.is_active
+                  AND st.trigger_event = ANY(CASE WHEN e.event_key = 'new_lead_created' THEN ARRAY['new_lead_created','lead_created'] ELSE ARRAY[e.event_key] END)) AS sms_dlt_templates
          FROM notification_event e
          LEFT JOIN notification_event_config c
            ON c.event_key = e.event_key AND c.org_id = $1 AND c.vertical_id IS NULL
@@ -211,6 +217,25 @@ export class NotificationEventService {
       const enabled = (cfg as any)[`${channel}_enabled`];
       const templateId = (cfg as any)[`${channel}_template_id`];
       if (!enabled) continue;
+
+      // SMS: the DLT template for this event + the lead's Branch/Vertical comes first — the
+      // gateway only delivers DLT-registered text. A new lead shares the auto-send's key, so
+      // it never gets two. No DLT template -> the older mapped template below.
+      if (channel === 'sms' && this.dltSms) {
+        const key = eventKey === 'new_lead_created' ? `sms_creation:${leadId}` : `evt:${eventKey}:${channel}:${suffix}`;
+        try {
+          const r = await this.dltSms.sendForEvent(eventKey, leadId, { student_id: ctx.student_id ? Number(ctx.student_id) : null, vars: ctx.vars ?? null, dedupe_key: key, actor_id: ctx.actor_id ?? null });
+          if (r) {
+            results.push({ channel, ...r, dlt: true });
+            if (r.status === 'skipped' || r.status === 'duplicate') skipped++; else sent++;
+            continue;
+          }
+        } catch (e) {
+          results.push({ channel, status: 'error', error: (e as Error).message, dlt: true });
+          skipped++;
+          continue;
+        }
+      }
       if (!templateId) { results.push({ channel, status: 'no_template' }); continue; }
 
       const dedupeKey = `evt:${eventKey}:${channel}:${suffix}`;
