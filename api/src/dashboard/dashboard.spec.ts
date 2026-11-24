@@ -41,6 +41,11 @@ describe('viewOf — the dashboard follows the SCOPE, not the role name', () => 
     expect(viewOf(both)).toBe('branch');
   });
 
+  it('whole branch + verticals of another branch → the branch view (widest wins, FB-2026-003)', () => {
+    const mixed = scope({ filters: [{ kind: 'branch', branchId: 5 }, { kind: 'vertical', verticalId: 30, within: { kind: 'branch', id: 7 } }] });
+    expect(viewOf(mixed)).toBe('branch');
+  });
+
   it('a user with NO grant degrades to the counsellor view (never to admin)', () => {
     expect(viewOf(scope({ allowed: false }))).toBe('counsellor');
   });

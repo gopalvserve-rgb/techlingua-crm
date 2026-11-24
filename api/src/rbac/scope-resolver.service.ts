@@ -15,6 +15,8 @@ import {
  *     scope level is missing on the assignment we fall back to the nearest defined
  *     ANCESTOR (pipeline -> vertical -> branch). An assignment with no unit at all
  *     grants org-wide access at that scope (single-tenant: org == everything).
+ *     The other way round, an assignment that names a unit BELOW the grant's level narrows
+ *     it to that unit (branch grant + "Vertical access: BCL VKP" = BCL VKP only — FB-2026-003).
  *  4. 'own'  -> rows owned by the user.  'team' -> rows of the assignment's team,
  *     or all teams the user leads/belongs to if the assignment has no team.
  *  5. Field scope: most-permissive union. Any grant with NULL field_scope => all
@@ -84,8 +86,36 @@ export class ScopeResolverService {
     };
   }
 
-  /** Map one (recordScope × assignment) to a filter. Returns 'all' when unrestricted. */
+  /**
+   * Map one (recordScope × assignment) to a filter. Returns 'all' when unrestricted.
+   *
+   * FB-2026-003 — a unit-level grant is NARROWED by the assignment: a grant at branch level on an
+   * assignment that also names a vertical (or a pipeline / campaign) covers that unit only. "Branch
+   * access: Vikaspuri · Vertical access: BCL VKP, INSTA VKP" means those two verticals — not every
+   * vertical in Vikaspuri (the client: "in the branch of Vikaspuri he should access only as much as
+   * he is added to"). An assignment that names only the branch still gets the whole branch.
+   */
   private toFilter(scope: RecordScope, a: Assignment, data: UserGrantData): ScopeFilter | 'all' | null {
+    const f = this.toFilterAtLevel(scope, a, data);
+    if (f === 'all' || f === null) return f;
+    const level = f.kind;
+    if (level !== 'branch' && level !== 'vertical' && level !== 'pipeline') return f;
+    const id = level === 'branch' ? f.branchId! : level === 'vertical' ? f.verticalId! : f.pipelineId!;
+    const within = { kind: level, id };
+    // the units named on the assignment BELOW the grant's level — the most specific one is the
+    // filter; the ones in between are kept so an entity without that column falls back one level
+    // at a time (campaign → pipeline → vertical → the grant's own unit), never further.
+    const vert = level === 'branch' && a.verticalId != null ? a.verticalId : undefined;
+    const pipe = level !== 'pipeline' && a.pipelineId != null ? a.pipelineId : undefined;
+    if (a.campaignId != null) {
+      return { kind: 'campaign', campaignId: a.campaignId, ...(pipe != null ? { pipelineId: pipe } : {}), ...(vert != null ? { verticalId: vert } : {}), within };
+    }
+    if (pipe != null) return { kind: 'pipeline', pipelineId: pipe, ...(vert != null ? { verticalId: vert } : {}), within };
+    if (vert != null) return { kind: 'vertical', verticalId: vert, within };
+    return f;
+  }
+
+  private toFilterAtLevel(scope: RecordScope, a: Assignment, data: UserGrantData): ScopeFilter | 'all' | null {
     switch (scope) {
       case 'all':
         return 'all';
@@ -98,17 +128,32 @@ export class ScopeResolverService {
       }
       case 'campaign':
         if (a.campaignId != null) return { kind: 'campaign', campaignId: a.campaignId };
-        return this.toFilter('pipeline', a, data);
+        return this.toFilterAtLevel('pipeline', a, data);
       case 'pipeline':
         if (a.pipelineId != null) return { kind: 'pipeline', pipelineId: a.pipelineId };
-        return this.toFilter('vertical', a, data);
+        return this.toFilterAtLevel('vertical', a, data);
       case 'vertical':
         if (a.verticalId != null) return { kind: 'vertical', verticalId: a.verticalId };
-        return this.toFilter('branch', a, data);
+        return this.toFilterAtLevel('branch', a, data);
       case 'branch':
         if (a.branchId != null) return { kind: 'branch', branchId: a.branchId };
         return 'all'; // no unit on the assignment -> org-wide
     }
+  }
+
+  private static hasCol(kind: ScopeFilter['kind'], cols: ScopeColumnMap): boolean {
+    return !!(kind === 'campaign' ? cols.campaign : kind === 'pipeline' ? cols.pipeline : kind === 'vertical' ? cols.vertical
+      : kind === 'branch' ? cols.branch : kind === 'own' ? cols.owner : cols.team);
+  }
+
+  /** For a narrowed filter: the closest unit above it (on the same assignment) that the entity has a column for. */
+  static fallback(f: ScopeFilter, cols: ScopeColumnMap): { col: string; id: number } | null {
+    if (f.kind === 'campaign' && f.pipelineId != null && cols.pipeline) return { col: cols.pipeline, id: f.pipelineId };
+    if ((f.kind === 'campaign' || f.kind === 'pipeline') && f.verticalId != null && cols.vertical) return { col: cols.vertical, id: f.verticalId };
+    const w = f.within;
+    if (!w) return null;
+    const col = w.kind === 'branch' ? cols.branch : w.kind === 'vertical' ? cols.vertical : cols.pipeline;
+    return col ? { col, id: w.id } : null;
   }
 
   private dedupe(filters: ScopeFilter[]): ScopeFilter[] {
@@ -137,6 +182,13 @@ export class ScopeResolverService {
     } else {
       const parts: string[] = [];
       for (const f of scope.filters) {
+        // FB-2026-003 — a narrowed filter on an entity without that unit's column: the next unit up
+        // that the entity has (pipeline → vertical → the grant's own unit). Never wider than before.
+        if (f.within && !ScopeResolverService.hasCol(f.kind, cols)) {
+          const up = ScopeResolverService.fallback(f, cols);
+          if (up) { params.push(up.id); parts.push(`${up.col} = $${params.length}`); }
+          continue;
+        }
         switch (f.kind) {
           case 'own':
             if (cols.owner) { params.push(f.userId); parts.push(`${cols.owner} = $${params.length}`); }

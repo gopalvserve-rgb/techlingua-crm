@@ -77,6 +77,71 @@ describe('ScopeResolverService.resolve', () => {
     expect(r.filters).toEqual([{ kind: 'branch', branchId: 5 }]);
   });
 
+  describe('FB-2026-003 — an assignment that names a vertical narrows a branch-level grant to it', () => {
+    // Priyanka (Branch Manager, grants at branch level): Janakpuri and Najafgarh whole, Vikaspuri with
+    // only BCL VKP (30) and INSTA VKP (31) ticked. Vikaspuri (7) also has TechnoPaat — not hers.
+    const priyanka = data(
+      [asg(1, { branchId: 5 }), asg(1, { branchId: 6 }), asg(1, { branchId: 7, verticalId: 30 }), asg(1, { branchId: 7, verticalId: 31 })],
+      [rp(1, 'lead.read', 'branch')],
+    );
+
+    it('whole branches stay whole; the ticked verticals replace their branch', () => {
+      const r = svc.resolve(priyanka, 'lead.read');
+      expect(r.all).toBe(false);
+      expect(r.filters).toEqual([
+        { kind: 'branch', branchId: 5 },
+        { kind: 'branch', branchId: 6 },
+        { kind: 'vertical', verticalId: 30, within: { kind: 'branch', id: 7 } },
+        { kind: 'vertical', verticalId: 31, within: { kind: 'branch', id: 7 } },
+      ]);
+      expect(r.filters).not.toContainEqual({ kind: 'branch', branchId: 7 });
+    });
+
+    it('SQL: a lead table filters by vertical — the branch-wide clause for Vikaspuri is gone', () => {
+      const params: unknown[] = [];
+      const sql = svc.buildScopeWhere(svc.resolve(priyanka, 'lead.read'),
+        { owner: 'l.owner_id', branch: 'l.branch_id', vertical: 'l.vertical_id' }, params);
+      expect(sql).toBe('(l.branch_id = $1 OR l.branch_id = $2 OR l.vertical_id = $3 OR l.vertical_id = $4)');
+      expect(params).toEqual([5, 6, 30, 31]);
+    });
+
+    it('SQL: an entity with no vertical column (stock, the branch row) still gets the branch — never less than before', () => {
+      const params: unknown[] = [];
+      const sql = svc.buildScopeWhere(svc.resolve(priyanka, 'lead.read'), { branch: 's.branch_id' }, params);
+      expect(sql).toBe('(s.branch_id = $1 OR s.branch_id = $2 OR s.branch_id = $3 OR s.branch_id = $4)');
+      expect(params).toEqual([5, 6, 7, 7]);
+    });
+
+    it('an assignment naming only the branch keeps the whole branch (no change)', () => {
+      expect(svc.resolve(data([asg(1, { branchId: 7 })], [rp(1, 'lead.read', 'branch')]), 'lead.read').filters)
+        .toEqual([{ kind: 'branch', branchId: 7 }]);
+    });
+
+    it('own-scoped and vertical-scoped grants are unchanged', () => {
+      const a = [asg(1, { branchId: 7, verticalId: 30 })];
+      expect(svc.resolve(data(a, [rp(1, 'lead.read', 'own')]), 'lead.read').filters).toEqual([{ kind: 'own', userId: 42 }]);
+      expect(svc.resolve(data(a, [rp(1, 'lead.read', 'vertical')]), 'lead.read').filters).toEqual([{ kind: 'vertical', verticalId: 30 }]);
+    });
+
+    it('a pipeline (or campaign) named under the grant narrows further, falling back one level at a time', () => {
+      const r = svc.resolve(data([asg(1, { branchId: 7, verticalId: 30, pipelineId: 9 })], [rp(1, 'lead.read', 'branch')]), 'lead.read');
+      expect(r.filters).toEqual([{ kind: 'pipeline', pipelineId: 9, verticalId: 30, within: { kind: 'branch', id: 7 } }]);
+      const p1: unknown[] = [];
+      expect(svc.buildScopeWhere(r, { branch: 'x.branch_id', vertical: 'x.vertical_id' }, p1)).toBe('(x.vertical_id = $1)');
+      expect(p1).toEqual([30]);
+      const p2: unknown[] = [];
+      expect(svc.buildScopeWhere(r, { branch: 'x.branch_id' }, p2)).toBe('(x.branch_id = $1)');
+      expect(p2).toEqual([7]);
+      const p3: unknown[] = [];
+      expect(svc.buildScopeWhere(r, {}, p3)).toBe('1=0');
+    });
+
+    it('a vertical-level grant on an assignment with a pipeline narrows to the pipeline', () => {
+      const r = svc.resolve(data([asg(1, { branchId: 7, verticalId: 30, pipelineId: 9 })], [rp(1, 'lead.read', 'vertical')]), 'lead.read');
+      expect(r.filters).toEqual([{ kind: 'pipeline', pipelineId: 9, within: { kind: 'vertical', id: 30 } }]);
+    });
+  });
+
   it('treats a scoped grant with no unit at all as org-wide (single tenant)', () => {
     const r = svc.resolve(data([asg(1)], [rp(1, 'lead.read', 'branch')]), 'lead.read');
     expect(r.all).toBe(true);

@@ -10,7 +10,7 @@
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { DYN, ScreenCtx } from './dyn';
+import { DYN, ScreenCtx, userScopeLabel } from './dyn';
 import { presetRange } from './daterange';
 
 vi.mock('./auth', () => ({
@@ -277,14 +277,34 @@ describe('#13(c) — the task-summary KPI tiles open the My Tasks list', () => {
     expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
   });
 
-  it('MANAGER: "Pending follow-ups" tile navigates to dash/mytasks', async () => {
+  it('MANAGER: "Pending follow-ups" tile opens the Follow-ups list filtered to Pending (FB-2026-002)', async () => {
+    // The tile counts every pending follow-up in the unit (any owner). It used to open My Tasks,
+    // which holds only the manager's own tasks — "1 pending" on the tile, "0" on the screen.
     ROUTES = { '/dashboard': BRANCH_MGR, '/follow-ups': [], '/leads': { total: 0, rows: [] } };
     draw('dashOverview');
     await screen.findByText('My branch');
-    const tile = screen.getByRole('button', { name: /Pending follow-ups: 5\. Open My Tasks list/ });
+    const tile = screen.getByRole('button', { name: /Pending follow-ups: 5\. Open the pending Follow-ups list/ });
     CTX.go.mockClear();
     fireEvent.click(tile);
-    expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+    expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { statuses: 'pending' });
+    expect(CTX.go).not.toHaveBeenCalledWith('dash', 'mytasks');
+  });
+
+  it('the Follow-ups list opened with ?statuses=pending asks the server for pending rows only (FB-2026-002)', async () => {
+    ROUTES = { '/follow-ups': [] };
+    paths.length = 0;
+    const C = DYN.followups;
+    render(<ScreenCtx.Provider value={{ ...CTX, search: '?statuses=pending' } as any}><C /></ScreenCtx.Provider>);
+    await waitFor(() => expect(paths.some((p) => p.startsWith('/follow-ups?') && /[?&]statuses=pending(&|$)/.test(p))).toBe(true));
+  });
+
+  it('an unknown status in the link is ignored, not sent to the server (FB-2026-002)', async () => {
+    ROUTES = { '/follow-ups': [] };
+    paths.length = 0;
+    const C = DYN.followups;
+    render(<ScreenCtx.Provider value={{ ...CTX, search: '?statuses=bogus' } as any}><C /></ScreenCtx.Provider>);
+    await waitFor(() => expect(paths.some((p) => p.startsWith('/follow-ups?'))).toBe(true));
+    expect(paths.filter((p) => p.startsWith('/follow-ups?')).some((p) => p.includes('statuses='))).toBe(false);
   });
 
   it('every meaningful counsellor tile is now a navigating button ("My leads" opens my Leads list)', async () => {
@@ -354,7 +374,7 @@ describe('card-links — every meaningful KPI card opens its filtered list (and 
     // into the unfiltered Leads list.
     clickBtn(/All-time Leads: 12\. /);   expect(CTX.go).toHaveBeenCalledWith('leads', 'all', {});
     clickBtn(/Conversions: 2\. /);       expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { won: 1 });
-    clickBtn(/Pending follow-ups: 5\. /);expect(CTX.go).toHaveBeenCalledWith('dash', 'mytasks');
+    clickBtn(/Pending follow-ups: 5\. /);expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { statuses: 'pending' });
     clickBtn(/SLA breaches: 2\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { sla_breached: 1 });
     clickBtn(/Walk-ins today: 2\. /);    expect(CTX.go).toHaveBeenCalledWith('dash', 'walkins');
     clickBtn(/Unassigned: 0\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { unassigned: 1 });
@@ -401,5 +421,27 @@ describe('card-links — every meaningful KPI card opens its filtered list (and 
     // the conversion RATE is informational — no list, so NOT clickable (no button carries '17%')
     expect(screen.queryByRole('button', { name: /17%/ })).toBeNull();
     expect(screen.getByText('17%')).toBeTruthy();
+  });
+});
+
+/** FB-2026-003 — the Users list Scope column shows ALL of a user's units, grouped by branch. */
+describe('userScopeLabel (Users list › Scope)', () => {
+  const ref = {
+    branches: [{ id: 6, name: 'Najafgarh' }, { id: 7, name: 'Vikaspuri' }],
+    verticals: [{ id: 30, name: 'BCL VKP' }, { id: 31, name: 'INSTA VKP' }],
+    pipelines: [{ id: 9, name: 'BCL_Pipline' }],
+  };
+  it('two verticals of one branch: both, not just the first', () => {
+    expect(userScopeLabel([{ branch_id: 7, vertical_id: 30 }, { branch_id: 7, vertical_id: 31 }], ref)).toBe('Vikaspuri · BCL VKP, INSTA VKP');
+  });
+  it('a whole branch and verticals of another', () => {
+    expect(userScopeLabel([{ branch_id: 6 }, { branch_id: 7, vertical_id: 30 }, { branch_id: 7, vertical_id: 31 }], ref))
+      .toBe('Najafgarh; Vikaspuri · BCL VKP, INSTA VKP');
+  });
+  it('org-wide, pipelines, and nothing', () => {
+    expect(userScopeLabel([{ branch_id: null, vertical_id: null }], ref)).toBe('Org-wide');
+    expect(userScopeLabel([{ branch_id: 7, vertical_id: 30, pipeline_id: 9 }], ref)).toBe('Vikaspuri · BCL VKP › BCL_Pipline');
+    expect(userScopeLabel([], ref)).toBeNull();
+    expect(userScopeLabel(undefined, ref)).toBeNull();
   });
 });

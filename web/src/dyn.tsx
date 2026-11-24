@@ -306,6 +306,32 @@ const dn = (name: string | null | undefined, deleted?: boolean) =>
 const nameOf = (list: Array<{ id: number; name: string }>, id: unknown) =>
   (id == null ? null : list.find((x) => Number(x.id) === Number(id))?.name ?? null);
 
+/**
+ * FB-2026-003 — the Users list "Scope" column, from ALL of a user's active assignments (it showed only
+ * the first: Arman, added to Vikaspuri with two verticals, read "Vikaspuri · BCL VKP"). Grouped by
+ * branch: "Najafgarh; Vikaspuri · BCL VKP, INSTA VKP". An assignment with no unit = Org-wide.
+ */
+export function userScopeLabel(
+  assignments: Array<{ branch_id?: unknown; vertical_id?: unknown; pipeline_id?: unknown; campaign_id?: unknown }> | undefined,
+  ref: { branches: Array<{ id: number; name: string }>; verticals: Array<{ id: number; name: string }>; pipelines: Array<{ id: number; name: string }> },
+): string | null {
+  if (!assignments?.length) return null;
+  if (assignments.some((a) => a.branch_id == null && a.vertical_id == null && a.pipeline_id == null && a.campaign_id == null)) return 'Org-wide';
+  const byBranch = new Map<string, { whole: boolean; parts: string[] }>();
+  for (const a of assignments) {
+    const b = nameOf(ref.branches, a.branch_id) ?? (a.branch_id == null ? '' : `Branch #${a.branch_id}`);
+    const g = byBranch.get(b) ?? { whole: false, parts: [] };
+    const v = nameOf(ref.verticals, a.vertical_id);
+    const p = nameOf(ref.pipelines, a.pipeline_id);
+    const part = [v, p].filter(Boolean).join(' › ');
+    if (!part) g.whole = true; else if (!g.parts.includes(part)) g.parts.push(part);
+    byBranch.set(b, g);
+  }
+  return [...byBranch.entries()]
+    .map(([b, g]) => (g.whole || !g.parts.length ? b : [b, g.parts.join(', ')].filter(Boolean).join(' · ')))
+    .filter(Boolean).join('; ') || null;
+}
+
 const statusBadge = (active: boolean): Cell => ({ b: [active ? 'Active' : 'Inactive', active ? 'b-green' : 'b-gray'] });
 
 interface Summary {
@@ -505,9 +531,11 @@ function DashOverview() {
       onClick: leadsTo({ won: 1 }), navLabel: `Conversions: ${k?.won ?? 0}. Open won Leads` },
     { lab: 'Pending follow-ups', val: String(fu?.pending ?? 0), ic: 'clock',
       delta: fu?.overdue ? `${fu.overdue} overdue` : undefined, tone: fu?.overdue ? 'down' as const : 'flat' as const,
-      // #13(c) — the manager's task-summary tile opens the My Tasks list (the follow-up module,
-      // §4i). My Tasks is the actionable task/follow-up list; Today's Follow-ups is due=today only.
-      onClick: () => go('dash', 'mytasks'), navLabel: `Pending follow-ups: ${fu?.pending ?? 0}. Open My Tasks list` },
+      // FB-2026-002 — the number counts EVERY pending follow-up in the unit (any owner), so it opens
+      // the Follow-ups list filtered to Pending — the same rows. It used to open My Tasks, which
+      // holds only the manager's own tasks: "1 pending" on the tile, "0" on the screen it opened.
+      onClick: () => go('leads', 'followups', { statuses: 'pending' }),
+      navLabel: `Pending follow-ups: ${fu?.pending ?? 0}. Open the pending Follow-ups list` },
     { lab: 'SLA breaches', val: String(data?.sla?.open_breaches ?? 0), ic: 'bolt',
       tone: (data?.sla?.open_breaches ?? 0) > 0 ? 'down' as const : 'flat' as const,
       onClick: leadsTo({ sla_breached: 1 }), navLabel: `SLA breaches: ${data?.sla?.open_breaches ?? 0}. Open breached Leads` },
@@ -2061,7 +2089,11 @@ function Followups() {
     return {
       branches: gScope.branches, verticals: gScope.verticals, pipelines: gScope.pipelines, campaigns: gScope.campaigns,
       owners: [] as number[], types: [] as number[], dispositions: [] as number[],
-      priorities: [] as string[], statuses: [] as string[],
+      // FB-2026-002 — a link may preset the Status filter (?statuses=pending, from the dashboard's
+      // "Pending follow-ups" tile); only the four known statuses are taken.
+      priorities: [] as string[],
+      statuses: (u.get('statuses') ?? '').split(',').map((x) => x.trim())
+        .filter((x) => ['pending', 'done', 'missed', 'cancelled'].includes(x)),
       from: u.get('from') || undefined as string | undefined, to: u.get('to') || undefined as string | undefined,
       followup: u.get('followup') || undefined as string | undefined,
       fu_from: u.get('fu_from') || undefined as string | undefined, fu_to: u.get('fu_to') || undefined as string | undefined,
@@ -3643,7 +3675,7 @@ function Users() {
         rows={rows.map((u) => {
           const d = details[Number(u.id)];
           const a = d?.assignments?.[0];
-          const scopeBits = a ? [nameOf(ref.branches, a.branch_id), nameOf(ref.verticals, a.vertical_id), nameOf(ref.pipelines, a.pipeline_id)].filter(Boolean) : [];
+          const scopeText = userScopeLabel(d?.assignments, ref);
           return [
             { node: (
               <div className="cell-u"><Avatar name={u.name} />
@@ -3651,7 +3683,7 @@ function Users() {
               </div>) } as Cell,
             u.role_names || (d ? '—' : '…'),
             u.report_to_name || '—',
-            scopeBits.length ? scopeBits.join(' · ') : a ? 'Org-wide' : '—',
+            scopeText ?? (a ? 'Org-wide' : '—'),
             '—',
             toggleCell({
               active: u.status !== 'disabled', name: u.name, entity: 'User', canToggle: canEdit,

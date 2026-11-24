@@ -86,7 +86,13 @@ export class SupportService {
         }
         case 'branch': params.push(f.branchId); parts.push(`t.branch_id = $${params.length}`); break;
         case 'vertical': params.push(f.verticalId); parts.push(`t.vertical_id = $${params.length}`); break;
-        case 'pipeline': case 'campaign': break; // a ticket has no pipeline/campaign
+        case 'pipeline': case 'campaign': {
+          // a ticket has no pipeline/campaign. A grant narrowed to one (FB-2026-003) falls back to
+          // the vertical / branch above it on the same assignment; an un-narrowed one adds nothing.
+          const up = ScopeResolverService.fallback(f, { branch: 't.branch_id', vertical: 't.vertical_id' });
+          if (up) { params.push(up.id); parts.push(`${up.col} = $${params.length}`); }
+          break;
+        }
       }
     }
     if (!parts.length) return '1=0';

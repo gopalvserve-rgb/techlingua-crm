@@ -37,8 +37,10 @@ export function viewOf(scope: ResolvedScope): DashboardView {
   if (!scope.allowed) return 'counsellor';
   if (scope.all) return 'admin';
   const kinds = new Set(scope.filters.map((f) => f.kind));
-  if (kinds.has('vertical')) return 'vertical';
+  // branch before vertical: widest wins (a manager with one whole branch and two verticals of
+  // another — FB-2026-003 narrowing — keeps the branch dashboard).
   if (kinds.has('branch')) return 'branch';
+  if (kinds.has('vertical')) return 'vertical';
   if (kinds.has('pipeline') || kinds.has('campaign')) return 'branch';  // unit managers, not individuals
   if (kinds.has('team')) return 'team';
   return 'counsellor';

@@ -39,6 +39,14 @@ export interface ScopeFilter {
   verticalId?: number;
   pipelineId?: number;
   campaignId?: number;
+  /**
+   * FB-2026-003 — set when a branch/vertical/pipeline-level grant was NARROWED to a more specific
+   * unit named on the assignment (a Branch Manager added to Vikaspuri with only two of its verticals
+   * gets those two verticals, not the whole branch). `within` is the unit the grant itself is at:
+   * an entity that has no column for the narrower unit (stock, the branch row itself) is filtered
+   * by `within` instead — exactly what it got before, never more.
+   */
+  within?: { kind: 'branch' | 'vertical' | 'pipeline'; id: number };
 }
 
 /** Result of resolving a permission for a user: allowed + the unioned record scope + field scope. */

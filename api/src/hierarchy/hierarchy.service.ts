@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { DatabaseService } from '../database/database.service';
 import { ScopeResolverService } from '../rbac/scope-resolver.service';
 import { ScopeEnforcerService } from '../rbac/scope-enforcer.service';
-import { ResolvedScope } from '../rbac/rbac.types';
+import { ResolvedScope, ScopeColumnMap } from '../rbac/rbac.types';
 import { validateDistributionConfig, validateDuplicacyConfig } from './campaign-config.validator';
 import { requireDateString } from '../common/date.util';
 import { StorageService } from '../storage/storage.service';
@@ -201,9 +201,43 @@ export class HierarchyService {
     return `${col} IN (${ph.join(',')})`;
   }
 
-  listBranches(scope: ResolvedScope, includeInactive = false, q?: string) {
+  /**
+   * FB-2026-003 — "the branch in which the user is added: he should not know about any other branch."
+   * The Branch / Vertical / Pipeline / Campaign lists (the top-bar pickers, every filter and form
+   * dropdown) show only the units the caller is ADDED to on Users › Edit user — the branch, or just
+   * the verticals ticked under it — on top of the role's read scope. Someone added org-wide (an
+   * assignment naming no unit, e.g. Super Admin) is not narrowed. A role whose read scope on these
+   * lists is "own"/"team" (a branch or pipeline has no owner, so that used to list NOTHING — the empty
+   * Pipeline picker) gets exactly the units they are added to.
+   * Without a userId (internal callers) the list is the read scope alone, as before.
+   */
+  private async listWhere(scope: ResolvedScope, cols: ScopeColumnMap, params: unknown[], userId?: number): Promise<string> {
+    if (!userId) return this.resolver.buildScopeWhere(scope, cols, params);
+    const ownOnly = scope.allowed && !scope.all && scope.filters.length > 0
+      && scope.filters.every((f) => f.kind === 'own' || f.kind === 'team');
+    const base = ownOnly ? '1=1' : this.resolver.buildScopeWhere(scope, cols, params);
+    if (base === '1=0') return base;
+    const rows = await this.db.query<any>(
+      `SELECT branch_id, vertical_id, pipeline_id, campaign_id FROM user_assignment WHERE user_id = $1 AND is_active`, [userId]);
+    const n = (v: unknown) => (v == null ? null : Number(v));
+    // the units, read as one branch-level grant per assignment: the resolver narrows each to the
+    // most specific unit named on it, and falls back a level for a list without that column.
+    const units = this.resolver.resolve({
+      userId,
+      assignments: (rows ?? []).map((r) => ({
+        roleId: 0, branchId: n(r.branch_id), verticalId: n(r.vertical_id), pipelineId: n(r.pipeline_id), campaignId: n(r.campaign_id), teamId: null,
+      })),
+      rolePermissions: [{ roleId: 0, permissionKey: 'units', recordScope: 'branch', fieldScope: null }],
+      teamIds: [],
+    }, 'units');
+    if (units.all) return base;
+    const u = this.resolver.buildScopeWhere(units, cols, params);
+    return base === '1=1' ? u : `(${base} AND ${u})`;
+  }
+
+  async listBranches(scope: ResolvedScope, includeInactive = false, q?: string, userId?: number) {
     const params: unknown[] = [];
-    const where = this.resolver.buildScopeWhere(scope, { branch: 'b.id' }, params);
+    const where = await this.listWhere(scope, { branch: 'b.id' }, params, userId);
     let sql = `SELECT b.*, s.name AS state_name, c.name AS city_name, hu.name AS head_name,
               (SELECT COUNT(*)::int FROM vertical v WHERE v.branch_id = b.id AND v.is_active AND v.deleted_at IS NULL) AS vertical_count
          FROM branch b LEFT JOIN state s ON s.id = b.state_id LEFT JOIN city c ON c.id = b.city_id
@@ -243,9 +277,9 @@ export class HierarchyService {
   // ---- verticals ----------------------------------------------------------
 
   // UAT-R3 #19 — Vertical list filters: by Branch (existing) + free-text search on name/code.
-  listVerticals(scope: ResolvedScope, branchId?: number, includeInactive = false, q?: string, opts?: HierIds) {
+  async listVerticals(scope: ResolvedScope, branchId?: number, includeInactive = false, q?: string, opts?: HierIds, userId?: number) {
     const params: unknown[] = [];
-    const where = this.resolver.buildScopeWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, params);
+    const where = await this.listWhere(scope, { branch: 'v.branch_id', vertical: 'v.id' }, params, userId);
     let sql = `SELECT v.*, b.name AS branch_name, hu.name AS head_name,
                       (SELECT COUNT(*)::int FROM pipeline p WHERE p.vertical_id = v.id AND p.is_active AND p.deleted_at IS NULL) AS pipeline_count
                  FROM vertical v JOIN branch b ON b.id = v.branch_id
@@ -390,11 +424,11 @@ export class HierarchyService {
   // ---- pipelines + stages -------------------------------------------------
 
   // UAT-R3 #19 — Pipeline list filters follow Branch \u2192 Vertical (+ search); vertical filter existed.
-  listPipelines(scope: ResolvedScope, verticalId?: number, includeInactive = false, branchId?: number, q?: string, opts?: HierIds) {
+  async listPipelines(scope: ResolvedScope, verticalId?: number, includeInactive = false, branchId?: number, q?: string, opts?: HierIds, userId?: number) {
     const params: unknown[] = [];
-    const where = this.resolver.buildScopeWhere(scope, {
+    const where = await this.listWhere(scope, {
       branch: 'p.branch_id', vertical: 'p.vertical_id', pipeline: 'p.id',
-    }, params);
+    }, params, userId);
     let sql = `SELECT p.*, v.name AS vertical_name, b.name AS branch_name, ou.name AS owner_name
                  FROM pipeline p JOIN vertical v ON v.id = p.vertical_id JOIN branch b ON b.id = p.branch_id
                       LEFT JOIN "user" ou ON ou.id = p.owner_user_id
@@ -703,11 +737,11 @@ export class HierarchyService {
   // ---- campaigns ----------------------------------------------------------
 
   // UAT-R3 #19 — Campaign list filters follow Branch \u2192 Vertical \u2192 Pipeline (+ search, status).
-  listCampaigns(scope: ResolvedScope, pipelineId?: number, includeInactive = false, branchId?: number, verticalId?: number, q?: string, opts?: HierIds) {
+  async listCampaigns(scope: ResolvedScope, pipelineId?: number, includeInactive = false, branchId?: number, verticalId?: number, q?: string, opts?: HierIds, userId?: number) {
     const params: unknown[] = [];
-    const where = this.resolver.buildScopeWhere(scope, {
+    const where = await this.listWhere(scope, {
       branch: 'c.branch_id', vertical: 'c.vertical_id', pipeline: 'c.pipeline_id', campaign: 'c.id',
-    }, params);
+    }, params, userId);
     let sql = `SELECT c.*, p.name AS pipeline_name, v.name AS vertical_name, b.name AS branch_name,
                  COALESCE((SELECT json_agg(cm.user_id ORDER BY cm.user_id)
                              FROM campaign_manager cm WHERE cm.campaign_id = c.id), '[]'::json) AS manager_user_ids,

@@ -19,8 +19,9 @@ export class HierarchyController {
 
   // ---- branches ----
   @Get('branches') @RequirePermission('branch.read')
-  listBranches(@CurrentScope() s: ResolvedScope, @Query('include_inactive') inc?: string, @Query('q') q?: string) {
-    return this.h.listBranches(s, inc === '1' || inc === 'true', q);
+  // FB-2026-003 — with the caller's id: the pick-lists show only the units they are added to.
+  listBranches(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query('include_inactive') inc?: string, @Query('q') q?: string) {
+    return this.h.listBranches(s, inc === '1' || inc === 'true', q, u?.id);
   }
 
   @Post('branches') @RequirePermission('branch.create')
@@ -31,8 +32,8 @@ export class HierarchyController {
 
   // ---- verticals ----
   @Get('verticals') @RequirePermission('vertical.read')
-  listVerticals(@CurrentScope() s: ResolvedScope, @Query() query: Record<string, string | string[]>, @Query('branch_id') branchId?: string, @Query('include_inactive') inc?: string, @Query('q') q?: string) {
-    return this.h.listVerticals(s, branchId ? Number(branchId) : undefined, inc === '1' || inc === 'true', q, { branchIds: nums(query.branch_ids) });
+  listVerticals(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query() query: Record<string, string | string[]>, @Query('branch_id') branchId?: string, @Query('include_inactive') inc?: string, @Query('q') q?: string) {
+    return this.h.listVerticals(s, branchId ? Number(branchId) : undefined, inc === '1' || inc === 'true', q, { branchIds: nums(query.branch_ids) }, u?.id);
   }
 
   @Post('verticals') @RequirePermission('vertical.create')
@@ -57,8 +58,8 @@ export class HierarchyController {
 
   // ---- pipelines & stages ----
   @Get('pipelines') @RequirePermission('pipeline.read')
-  listPipelines(@CurrentScope() s: ResolvedScope, @Query() query: Record<string, string | string[]>, @Query('vertical_id') verticalId?: string, @Query('include_inactive') inc?: string, @Query('branch_id') branchId?: string, @Query('q') q?: string) {
-    return this.h.listPipelines(s, verticalId ? Number(verticalId) : undefined, inc === '1' || inc === 'true', branchId ? Number(branchId) : undefined, q, { branchIds: nums(query.branch_ids), verticalIds: nums(query.vertical_ids) });
+  listPipelines(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query() query: Record<string, string | string[]>, @Query('vertical_id') verticalId?: string, @Query('include_inactive') inc?: string, @Query('branch_id') branchId?: string, @Query('q') q?: string) {
+    return this.h.listPipelines(s, verticalId ? Number(verticalId) : undefined, inc === '1' || inc === 'true', branchId ? Number(branchId) : undefined, q, { branchIds: nums(query.branch_ids), verticalIds: nums(query.vertical_ids) }, u?.id);
   }
 
   @Post('pipelines') @RequirePermission('pipeline.create')
@@ -95,8 +96,8 @@ export class HierarchyController {
 
   // ---- campaigns ----
   @Get('campaigns') @RequirePermission('campaign.read')
-  listCampaigns(@CurrentScope() s: ResolvedScope, @Query() query: Record<string, string | string[]>, @Query('pipeline_id') pipelineId?: string, @Query('include_inactive') inc?: string, @Query('branch_id') branchId?: string, @Query('vertical_id') verticalId?: string, @Query('q') q?: string) {
-    return this.h.listCampaigns(s, pipelineId ? Number(pipelineId) : undefined, inc === '1' || inc === 'true', branchId ? Number(branchId) : undefined, verticalId ? Number(verticalId) : undefined, q, { branchIds: nums(query.branch_ids), verticalIds: nums(query.vertical_ids), pipelineIds: nums(query.pipeline_ids) });
+  listCampaigns(@CurrentScope() s: ResolvedScope, @CurrentUser() u: U, @Query() query: Record<string, string | string[]>, @Query('pipeline_id') pipelineId?: string, @Query('include_inactive') inc?: string, @Query('branch_id') branchId?: string, @Query('vertical_id') verticalId?: string, @Query('q') q?: string) {
+    return this.h.listCampaigns(s, pipelineId ? Number(pipelineId) : undefined, inc === '1' || inc === 'true', branchId ? Number(branchId) : undefined, verticalId ? Number(verticalId) : undefined, q, { branchIds: nums(query.branch_ids), verticalIds: nums(query.vertical_ids), pipelineIds: nums(query.pipeline_ids) }, u?.id);
   }
 
   @Post('campaigns') @RequirePermission('campaign.create')
