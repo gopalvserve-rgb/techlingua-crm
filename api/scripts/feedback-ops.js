@@ -9,6 +9,13 @@
  *   node scripts/feedback-ops.js acknowledge FB-2026-004,FB-2026-005 [--dry-run]
  *   node scripts/feedback-ops.js close FB-2026-002,FB-2026-003 [--hours 24] [--dry-run]
  *   node scripts/feedback-ops.js out-of-scope FB-2026-006 <scope-item-id | new> [--note "..."] [--dry-run]
+ *   node scripts/feedback-ops.js file <notes.json> --as <reporter-user-id> [--dry-run]
+ *
+ * file (25 Nov 2026): points the client sent another way (a document, an email) become notes, filed
+ *   in the REPORTER's name — the client's own words, so their thread, their answers, their "That
+ *   answers it". notes.json: [{ "page_path": "/m/...", "page_title": "...", "kind": "ISSUE",
+ *   "message": "From your 15 Nov feedback document, point 2: ...", "images": ["shot.png"] }]
+ *   (images are read next to the JSON file). A note whose exact message is already filed is skipped.
  *
  * Everything is posted as the "Tech Lingua CRM Support" account (migration 143) — never as a person,
  * and it fails rather than falling back when that account is missing. Answers go through
@@ -25,7 +32,7 @@
  */
 const path = require('path');
 const fs = require('fs');
-const API = path.join(__dirname, '..');
+const API = process.env.API_DIR || path.join(__dirname, '..');
 require(path.join(API, 'node_modules/dotenv')).config({ path: path.join(API, '.env') });
 const { Pool } = require(path.join(API, 'node_modules/pg'));
 
@@ -55,8 +62,9 @@ async function main() {
   try {
     if (cmd === 'status') return await status(db);
     if (cmd === 'export') return await exportNotes(db, args[1], refsArg(args[2]));
+    if (cmd === 'file') return await fileNotes(db, args[1], Number(opt('--as', 0)));
     if (!['answer', 'acknowledge', 'close', 'out-of-scope'].includes(cmd)) {
-      throw new Error('usage: status | export <dir> [refs] | answer <file> | acknowledge <refs> | close <refs> [--hours 24] | out-of-scope <ref> <item-id|new> [--note ".."] — add --dry-run to see what would happen');
+      throw new Error('usage: status | export <dir> [refs] | answer <file> | acknowledge <refs> | close <refs> [--hours 24] | out-of-scope <ref> <item-id|new> [--note ".."] | file <notes.json> --as <user-id> — add --dry-run to see what would happen');
     }
 
     const me = await db.one(`SELECT id, name FROM "user" WHERE lower(email) = $1 AND deleted_at IS NULL`, [SUPPORT_EMAIL]);
@@ -144,6 +152,33 @@ async function status(db) {
     const last = r.last_at ? ` | last word: ${r.last_is_answer ? 'our answer' : r.last_by} ${hours(r.last_at)}h ago` : '';
     console.log(`${r.reference} | ${r.status} | ${r.kind} | ${r.page_path} | filed ${hours(r.created_at)}h ago by ${r.author} | ${r.files} file(s)${last}`);
     console.log(`    ${String(r.message).replace(/\s+/g, ' ').slice(0, 300)}`);
+  }
+}
+
+/** Points sent another way (a document) filed as notes in the reporter's own name, with their screenshots. */
+async function fileNotes(db, file, asId) {
+  if (!file || !asId) throw new Error('usage: file <notes.json> --as <reporter-user-id>');
+  const who = await db.one(`SELECT id, name FROM "user" WHERE id = $1 AND deleted_at IS NULL`, [asId]);
+  if (!who) throw new Error(`no user ${asId}`);
+  const notes = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(notes)) throw new Error('notes file must be a JSON array');
+  const { FeedbackService } = require(path.join(API, 'dist/feedback/feedback.service'));
+  const { ChannelConfigService } = require(path.join(API, 'dist/messaging/channel-config.service'));
+  const { StorageService } = require(path.join(API, 'dist/storage/storage.service'));
+  // no notifier: the "new feedback" alert would only tell the team about notes the team itself filed
+  const svc = new FeedbackService(db, new StorageService(new ChannelConfigService(db)));
+  const me = { id: Number(who.id) };
+  for (const n of notes) {
+    const message = String(n.message ?? '').trim();
+    const dup = await db.one(`SELECT reference FROM feedback WHERE created_by = $1 AND message = $2`, [me.id, message]);
+    if (dup) { console.log(`  already filed as ${dup.reference}: ${message.slice(0, 60)}`); continue; }
+    if (dry) { console.log(`  WOULD file (${n.page_path}, ${(n.images ?? []).length} image(s)) as ${who.name}: ${message.slice(0, 70)}`); continue; }
+    const row = await svc.create(me, { page_path: n.page_path, page_title: n.page_title ?? null, message, kind: n.kind ?? 'ISSUE' });
+    for (const img of n.images ?? []) {
+      const bytes = fs.readFileSync(path.join(path.dirname(file), img));
+      await svc.addAttachment(me, Number(row.id), 'image', bytes, { name: img });
+    }
+    console.log(`  ${row.reference} ${row.status} — ${(n.images ?? []).length} image(s) — ${message.slice(0, 60)}`);
   }
 }
 
