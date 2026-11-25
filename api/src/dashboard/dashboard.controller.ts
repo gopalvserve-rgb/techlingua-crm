@@ -27,7 +27,8 @@ export class DashboardController {
   /** Quick Stats with a CUSTOM DATE RANGE (?from=YYYY-MM-DD&to=YYYY-MM-DD). */
   @Get('quick-stats') @RequirePermission('lead.read')
   quickStats(@CurrentScope() s: ResolvedScope, @Query() q: Record<string, string>) {
-    return this.dashboard.quickStats(s, { from: q.from, to: q.to, ...scopeFilter(q) });
+    // FB-2026-016 — ?all=1: All time (the client asked for it next to Today / This Week / …).
+    return this.dashboard.quickStats(s, { from: q.from, to: q.to, all: q.all === '1' || q.all === 'true', ...scopeFilter(q) });
   }
 
   /** LIVE TEAM STATUS (dev/139) — in-scope agents with Online/Away/Offline + open leads +

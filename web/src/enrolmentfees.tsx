@@ -226,7 +226,9 @@ export function EnrolmentActions({ e, onChanged, onDetails, extra }: {
     { label: 'View Enrolment', icon: 'eye', onClick: () => setOpen('view') },
     !!onDetails && { label: 'Details (student profile)', icon: 'user', onClick: () => onDetails!() },
     { label: 'Fee Ledger', icon: 'rupee', onClick: () => setOpen('ledger') },
-    { label: 'Installments', icon: 'list', onClick: () => void installments() },
+    // FB-2026-013 (client 15 Nov, point 3) — "rename Installments to Collect Installment": it opens the
+    // instalment plan, where each instalment is collected.
+    { label: 'Collect Installment', icon: 'list', onClick: () => void installments() },
     // client 31 Oct (3, 4): set up or change the instalment plan right here, the same Fee setup
     // Fee Management opens (Sale Closure, Admissions & Enrolment, Master Directory)
     can('payment_plan.create') && e.status !== 'cancelled' && e.status !== 'rejected'

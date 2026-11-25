@@ -303,8 +303,9 @@ export class DashboardService {
    * custom date range). Separate endpoint so the range control doesn't refetch the
    * whole dashboard.
    */
-  async quickStats(scope: ResolvedScope, q: { from?: string; to?: string } & DashScopeFilter) {
-    const { from, to } = this.range(q.from, q.to);
+  async quickStats(scope: ResolvedScope, q: { from?: string; to?: string; all?: boolean } & DashScopeFilter) {
+    // FB-2026-016 — All time: every date counts (bounds no row can fall outside).
+    const { from, to } = q.all ? { from: '1900-01-01', to: '2999-12-31' } : this.range(q.from, q.to);
     const gf: DashScopeFilter = q;
     const L = { branch: 'l.branch_id', vertical: 'l.vertical_id', pipeline: 'l.pipeline_id', campaign: 'l.campaign_id' };
     const p: unknown[] = [];
@@ -340,7 +341,7 @@ export class DashboardService {
     const leads = Number((row as any)?.leads ?? 0);
     const won = Number((row as any)?.won ?? 0);
     return {
-      range: { from, to },
+      range: q.all ? { from: null, to: null } : { from, to },
       view: viewOf(scope),
       ...row, ...fu,
       // OBS-S16-05: one definition, imported — and one decimal, like every other

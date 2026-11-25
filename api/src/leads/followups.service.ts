@@ -31,6 +31,9 @@ export interface FollowUpFilters {
   priorities?: string[]; statuses?: string[];
   /** Shared date-range control — filters by the task's DUE date (scheduled_at). */
   from?: string; to?: string;
+  /** FB-2026-016 — COMPLETED date (completed_at) window: Quick Stats › "Follow-ups done" opens the
+   *  follow-ups done in its range — the same rows its number counts. */
+  done_from?: string; done_to?: string;
   /** Follow-up date filter (client #3) — a preset window on the DUE date (scheduled_at, IST),
    *  plus an optional custom range (fu_from/fu_to) used when followup='custom'. */
   followup?: FollowupPreset;
@@ -218,6 +221,11 @@ export class FollowUpsService {
     const dr = assertDateRange(f.from, f.to);
     if (dr.from) { params.push(dr.from); where.push(`f.scheduled_at::date >= $${params.length}::date`); }
     if (dr.to) { params.push(dr.to); where.push(`f.scheduled_at::date <= $${params.length}::date`); }
+    // FB-2026-016 — done between (completed_at), the predicate Quick Stats' "Follow-ups done" counts.
+    const dd = assertDateRange(f.done_from, f.done_to);
+    if (dd.from || dd.to) where.push(`f.status = 'done'`);
+    if (dd.from) { params.push(dd.from); where.push(`f.completed_at::date >= $${params.length}::date`); }
+    if (dd.to) { params.push(dd.to); where.push(`f.completed_at::date <= $${params.length}::date`); }
     // Follow-up date filter (client #3) — presets on the task's DUE date (scheduled_at), IST.
     // No Followup is meaningful only on the Leads list (a follow-up row IS a scheduled
     // follow-up), so here it selects nothing; Missed = a pending task now in the past.

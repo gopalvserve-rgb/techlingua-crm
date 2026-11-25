@@ -341,7 +341,9 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     // with its OWN fee. "+ Add level" adds rows; empty falls back to the single Standard Fee below.
     // Replaces the old single "Course Level" descriptor. Persisted via PUT /courses/:id/levels.
     F('Levels', 'levels', 0, 0, 'optional — each level carries its own fee; leave empty to use the single Standard Fee'),
-    F('Duration', 'text', 0, 0, 'free text — e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number', 0, 0, 'used when the course has no levels'), F('Standard Exam Fee', 'number', 0, 0, 'optional — added on top, never discounted; used when the course has no levels'), F('Eligibility Criteria', 'text'), { ...F('Training Mode', 'select', 0, 0, 'master'), mopts: 'trainings' },
+    F('Duration', 'text', 0, 0, 'free text — e.g. 6 Months, 1 Year, 8 Weeks'), F('Standard Fee', 'number', 0, 0, 'used when the course has no levels'), F('Standard Exam Fee', 'number', 0, 0, 'optional — added on top, never discounted; used when the course has no levels'), F('Eligibility Criteria', 'text'),
+    // FB-2026-012 (client 15 Nov, point 2): Training Mode removed from the course form — it is picked per
+    // student at Convert to Student / on the lead. A course's old meta.mode is kept (edit preserves meta).
     // Course descriptors (client feedback #13, Aug 2026) — Level / Type / Description. dev/100 (client):
     // Delivery Mode dropped from the course UI (meta.delivery_mode kept in DB, hidden); ERP forms carry
     // NO Campaign/Pipeline (CRM-only) — the course walks Branch > Vertical only.
@@ -748,7 +750,6 @@ async function saveCourseUnder(vals: Vals, name: string, code: string, t: { bran
     name,
     code,
     meta: {
-      mode: vals['Training Mode'] || undefined,
       duration: vals['Duration'] || undefined,
       fee: vals['Standard Fee'] || undefined,
       // EXAM FEE (dev/140 item 3) — single exam fee for a course WITHOUT levels; added on top, never discounted.

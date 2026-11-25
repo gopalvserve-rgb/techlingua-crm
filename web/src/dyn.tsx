@@ -1044,17 +1044,19 @@ const FU_BUCKETS: Array<{ key: string; lab: string; ic: string }> = [
 function QuickStats() {
   const { refreshTick, go } = useScreen();
   const { params: sp, key: scopeKey } = useScope();
-  // both bounds always defined here (This Month by default); the quick-stats endpoint expects a range.
+  // This Month by default. FB-2026-016 (client 15 Nov, point 11): "Date range need to add All time
+  // option also" — All time sends ?all=1 (no from/to); the cards then link with no date filter.
   const [range, setRange] = useState<{ from?: string; to?: string }>(() => presetRange('month'));
   const from = range.from ?? '';
   const to = range.to ?? '';
-  const stats = useFetch<any>(withScope(`/dashboard/quick-stats?from=${from}&to=${to}`, sp), [from, to, refreshTick, scopeKey]);
+  const allTime = !from && !to;
+  const stats = useFetch<any>(withScope(allTime ? '/dashboard/quick-stats?all=1' : `/dashboard/quick-stats?from=${from}&to=${to}`, sp), [from, to, refreshTick, scopeKey]);
   const s = stats.data;
 
   return (
     <>
       <div className="filters" style={{ marginBottom: 12, alignItems: 'center' }}>
-        <DateRange value={range} onChange={setRange} allowAllTime={false} idPrefix="qs" />
+        <DateRange value={range} onChange={setRange} idPrefix="qs" />
       </div>
 
       <Kpis cols={4} items={[
@@ -1080,15 +1082,16 @@ function QuickStats() {
         { lab: 'Duplicates', val: String(s?.duplicates ?? 0), ic: 'users',
           onClick: () => go('leads', 'all', { duplicate: 1, created_from: range.from, created_to: range.to }),
           navLabel: `Duplicates: ${s?.duplicates ?? 0}. Open duplicate leads created in this range` },
-        // Follow-ups cards open the Follow-ups list. Done -> the Missed/completed view isn't a
-        // list filter, so both land on the Follow-ups list (which now carries date + multi-select
-        // filters, client UAT Aug 2026); scheduled seeds the "Next 7 Days" window.
+        // FB-2026-016 (client 15 Nov, point 11) — each follow-up card opens EXACTLY the rows it counts,
+        // for the date range picked here. "Done" = status Done, completed in the range (it used to open
+        // every follow-up DUE in the range, any status); "Scheduled" = due in the range, any status (it
+        // used to open "Next 7 Days", whatever range was picked). All time: no date filter.
         { lab: 'Follow-ups done', val: String(s?.followups_done ?? 0), ic: 'check',
-          onClick: () => go('leads', 'followups', { fu_from: range.from, fu_to: range.to }),
-          navLabel: `Follow-ups done: ${s?.followups_done ?? 0}. Open the Follow-ups list` },
+          onClick: () => go('leads', 'followups', { statuses: 'done', done_from: range.from, done_to: range.to }),
+          navLabel: `Follow-ups done: ${s?.followups_done ?? 0}. Open the follow-ups done in this range` },
         { lab: 'Follow-ups scheduled', val: String(s?.followups_scheduled ?? 0), ic: 'cal',
-          onClick: () => go('leads', 'followups', { followup: 'next7' }),
-          navLabel: `Follow-ups scheduled: ${s?.followups_scheduled ?? 0}. Open upcoming Follow-ups` },
+          onClick: () => go('leads', 'followups', { from: range.from, to: range.to }),
+          navLabel: `Follow-ups scheduled: ${s?.followups_scheduled ?? 0}. Open the follow-ups due in this range` },
       ]} />
 
       <TargetBars />
@@ -2095,6 +2098,8 @@ function Followups() {
       statuses: (u.get('statuses') ?? '').split(',').map((x) => x.trim())
         .filter((x) => ['pending', 'done', 'missed', 'cancelled'].includes(x)),
       from: u.get('from') || undefined as string | undefined, to: u.get('to') || undefined as string | undefined,
+      // FB-2026-016 — completed-date window from Quick Stats › Follow-ups done
+      done_from: u.get('done_from') || undefined as string | undefined, done_to: u.get('done_to') || undefined as string | undefined,
       followup: u.get('followup') || undefined as string | undefined,
       fu_from: u.get('fu_from') || undefined as string | undefined, fu_to: u.get('fu_to') || undefined as string | undefined,
     };
@@ -2122,6 +2127,8 @@ function Followups() {
   if (f.statuses.length) q.set('statuses', f.statuses.join(','));
   if (f.from) q.set('from', f.from);
   if (f.to) q.set('to', f.to);
+  if (f.done_from) q.set('done_from', f.done_from);
+  if (f.done_to) q.set('done_to', f.done_to);
   if (f.followup) q.set('followup', f.followup);
   if (f.fu_from) q.set('fu_from', f.fu_from);
   if (f.fu_to) q.set('fu_to', f.fu_to);
@@ -2180,6 +2187,20 @@ function Followups() {
           variant="buttons"
           onChange={(v) => setF((x) => ({ ...x, followup: v.followup, fu_from: v.fu_from, fu_to: v.fu_to }))}
           idPrefix="fu-preset" />
+        {/* FB-2026-016 — a date window a dashboard card opened this list with (due date / done date) has
+            no control of its own here, so it is shown as a chip you can clear. */}
+        {(f.from || f.to) && (
+          <button type="button" className="fchip on" data-testid="fu-due-chip" title="Clear this date filter"
+            onClick={() => setF((x) => ({ ...x, from: undefined, to: undefined }))}>
+            Due {f.from ? fmtDMYIST(f.from) : '…'} – {f.to ? fmtDMYIST(f.to) : '…'} ✕
+          </button>
+        )}
+        {(f.done_from || f.done_to) && (
+          <button type="button" className="fchip on" data-testid="fu-done-chip" title="Clear this date filter"
+            onClick={() => setF((x) => ({ ...x, done_from: undefined, done_to: undefined }))}>
+            Done {f.done_from ? fmtDMYIST(f.done_from) : '…'} – {f.done_to ? fmtDMYIST(f.done_to) : '…'} ✕
+          </button>
+        )}
       </div>
       <TableCard fill title="Follow-ups" more={<ListActions onExport={() => downloadObjectsCsv('follow-ups.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Lead', 'Type', 'Priority', 'Lead Counsellor', 'Due', 'Status', 'Disposition', 'Actions']}
         rows={rows.map((r) => [...r.row, rowActions({
@@ -3234,7 +3255,7 @@ const courseEditSpec = (edit: any): EditSpec => ({
     'Course Name': edit.name ?? '', 'Course Code': edit.code ?? '',
     // client 10 Nov 2026 — Custom names (what Facebook forms / imports send for this course)
     'Custom Names': Array.isArray((edit.meta as any)?.aliases) ? (edit.meta as any).aliases.join(', ') : String((edit.meta as any)?.aliases ?? ''),
-    'Training Mode': (edit.meta as any)?.mode ?? '', 'Duration': (edit.meta as any)?.duration ?? '',
+    'Duration': (edit.meta as any)?.duration ?? '',
     'Standard Fee': (edit.meta as any)?.fee ?? '',
     'Standard Exam Fee': (edit.meta as any)?.exam_fee ?? '',
     'Eligibility Criteria': (edit.meta as any)?.eligibility ?? '',
@@ -3257,7 +3278,7 @@ const courseEditSpec = (edit: any): EditSpec => ({
       code: need(vals['Course Code'], 'Course code is required'),
       meta: {
         ...(edit.meta as any ?? {}),
-        mode: vals['Training Mode'] || undefined,
+        // FB-2026-012: Training Mode is no longer on the course form; the spread above keeps any old value.
         duration: vals['Duration'] || undefined,
         fee: vals['Standard Fee'] || undefined,
         exam_fee: vals['Standard Exam Fee'] || undefined,  // dev/140 item 3 — single-course exam fee
@@ -3334,7 +3355,7 @@ function Courses() {
         <IncInactiveChip on={inc} set={setInc} />
       </div>
       <BulkBar count={_bdSel.count} entityLabel="Course" onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Type', 'Level', 'Mode', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
+      <TableCard fill title="Course master" select={_bdSel.tableSelect} more={<ListActions onExport={() => downloadObjectsCsv('courses.csv', list.data ?? [])} onRefresh={() => list.reload()} />} cols={['Code', 'Course', 'Vertical', 'Type', 'Level', 'Duration', 'Fee', 'Branches', 'Status', 'Actions']}
         rowClass={(i) => (rows[i].is_active === false ? 'row-inactive' : undefined)}
         rows={rows.map((c) => [
           { mono: String(c.code ?? '—') } as Cell,
@@ -3351,7 +3372,6 @@ function Courses() {
           String(nameOf(ref.verticals, (c.meta as any)?.vertical_id) ?? (c.meta as any)?.vertical ?? '—'),
           String((c.meta as any)?.course_type ?? '—'),
           String((c.meta as any)?.level ?? '—'),
-          String((c.meta as any)?.mode ?? '—'),
           String((c.meta as any)?.duration ?? '—'),
           String((c.meta as any)?.fee ?? '—'),
           String(nameOf(ref.branches, (c.meta as any)?.branch_id) ?? '—'),
@@ -3376,7 +3396,6 @@ function Courses() {
               ['Vertical', nameOf(ref.verticals, (view.meta as any)?.vertical_id) ?? '—'],
               ['Course type', String((view.meta as any)?.course_type ?? '—')],
               ['Course level', String((view.meta as any)?.level ?? '—')],
-              ['Training mode', String((view.meta as any)?.mode ?? '—')],
               ['Duration', String((view.meta as any)?.duration ?? '—')],
               ['Standard fee', String((view.meta as any)?.fee ?? '—')],
               ['Description', String((view.meta as any)?.description ?? '—')],

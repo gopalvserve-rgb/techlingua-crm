@@ -291,6 +291,7 @@ export class FollowUpsController {
       owner_ids: nums(q.owner_ids), type_ids: nums(q.type_ids), disposition_ids: nums(q.disposition_ids),
       priorities: strs(q.priorities), statuses: strs(q.statuses),
       from: first(q.from) || undefined, to: first(q.to) || undefined,
+      done_from: first(q.done_from) || undefined, done_to: first(q.done_to) || undefined,   // FB-2026-016
       // Follow-up date filter (client #3) — preset window on the DUE date + optional custom range.
       followup: (first(q.followup) as any) || undefined, fu_from: first(q.fu_from) || undefined, fu_to: first(q.fu_to) || undefined,
       // Today's Follow-ups KPI card → its filtered list (client Aug 2026).

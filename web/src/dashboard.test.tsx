@@ -11,6 +11,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { DYN, ScreenCtx, userScopeLabel } from './dyn';
+import { EnrolmentActions } from './enrolmentfees';
+import { SPEC_FORMS } from './forms';
 import { presetRange } from './daterange';
 
 vi.mock('./auth', () => ({
@@ -415,8 +417,10 @@ describe('card-links — every meaningful KPI card opens its filtered list (and 
     // client UAT (Aug 2026): Conversions -> won Leads, Lost -> lost Leads, Follow-ups -> the Follow-ups list
     clickBtn(/Conversions: 2\. /); expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { won: 1, created_from: '2026-07-01', created_to: '2026-07-14' });
     clickBtn(/Lost: 1\. /);        expect(CTX.go).toHaveBeenCalledWith('leads', 'all', { lost: 1, created_from: '2026-07-01', created_to: '2026-07-14' });
-    clickBtn(/Follow-ups done: 5\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { fu_from: '2026-07-01', fu_to: '2026-07-14' });
-    clickBtn(/Follow-ups scheduled: 9\. /); expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { followup: 'next7' });
+    // FB-2026-016 — done = status Done completed in the range; scheduled = due in the range (was: due
+    // in the range any status / "Next 7 Days" whatever the range).
+    clickBtn(/Follow-ups done: 5\. /);      expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { statuses: 'done', done_from: '2026-07-01', done_to: '2026-07-14' });
+    clickBtn(/Follow-ups scheduled: 9\. /); expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { from: '2026-07-01', to: '2026-07-14' });
 
     // the conversion RATE is informational — no list, so NOT clickable (no button carries '17%')
     expect(screen.queryByRole('button', { name: /17%/ })).toBeNull();
@@ -443,5 +447,55 @@ describe('userScopeLabel (Users list › Scope)', () => {
     expect(userScopeLabel([{ branch_id: 7, vertical_id: 30, pipeline_id: 9 }], ref)).toBe('Vikaspuri · BCL VKP › BCL_Pipline');
     expect(userScopeLabel([], ref)).toBeNull();
     expect(userScopeLabel(undefined, ref)).toBeNull();
+  });
+});
+
+/** Client feedback document of 15 Nov 2026 — FB-2026-012, -013, -016. */
+describe('15 Nov document — points 2, 3 and 11', () => {
+  it('FB-2026-012 (point 2): the course form has no Training Mode field', () => {
+    for (const key of ['students.courses', 'admin.courseconfig']) {
+      const labels = SPEC_FORMS[key].fields.map((f: any) => f.label);
+      expect(labels).not.toContain('Training Mode');
+      expect(labels).toContain('Duration');   // the rest of the form is still there
+    }
+  });
+
+  it('FB-2026-013 (point 3): the enrolment menu says "Collect Installment"', async () => {
+    render(<EnrolmentActions e={{ id: 5, status: 'active', balance_minor: 100 }} onChanged={() => undefined} />);
+    fireEvent.click(screen.getByTitle('Enrolment actions'));
+    expect(await screen.findByRole('menuitem', { name: /Collect Installment/ })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: /^Installments$/ })).toBeNull();
+  });
+
+  it('FB-2026-016 (point 11): Quick Stats has All time, and asks the server for all time', async () => {
+    ROUTES = { '/dashboard/quick-stats': { followups_done: 4, followups_scheduled: 9 } };
+    paths.length = 0;
+    draw('quickStats');
+    fireEvent.click(await screen.findByRole('button', { name: 'All time' }));
+    await waitFor(() => expect(paths).toContain('/dashboard/quick-stats?all=1'));
+  });
+
+  it('FB-2026-016: "Follow-ups done" opens the follow-ups DONE in the picked range; "scheduled" those DUE in it', async () => {
+    ROUTES = { '/dashboard/quick-stats': { followups_done: 4, followups_scheduled: 9 } };
+    draw('quickStats');
+    const month = presetRange('month');
+    CTX.go.mockClear();
+    fireEvent.click(await screen.findByRole('button', { name: /Follow-ups done: 4\./ }));
+    expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { statuses: 'done', done_from: month.from, done_to: month.to });
+    CTX.go.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /Follow-ups scheduled: 9\./ }));
+    expect(CTX.go).toHaveBeenCalledWith('leads', 'followups', { from: month.from, to: month.to });
+  });
+
+  it('FB-2026-016: the Follow-ups list applies and SHOWS the done window it was opened with', async () => {
+    ROUTES = { '/follow-ups': [] };
+    paths.length = 0;
+    const C = DYN.followups;
+    render(<ScreenCtx.Provider value={{ ...CTX, search: '?statuses=done&done_from=2026-11-01&done_to=2026-11-25' } as any}><C /></ScreenCtx.Provider>);
+    await waitFor(() => expect(paths.some((p) => p.startsWith('/follow-ups?') && p.includes('done_from=2026-11-01') && p.includes('done_to=2026-11-25') && p.includes('statuses=done'))).toBe(true));
+    const chip = screen.getByTestId('fu-done-chip');
+    expect(chip.textContent).toContain('01-11-2026');
+    fireEvent.click(chip);   // clearing it drops the window
+    await waitFor(() => expect(screen.queryByTestId('fu-done-chip')).toBeNull());
   });
 });
