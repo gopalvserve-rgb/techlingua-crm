@@ -81,6 +81,8 @@ export class HierarchyService {
     if ('gstin' in dto) out.gstin = HierarchyService.normGstin(dto.gstin as string | null);
     if ('email' in dto) out.email = HierarchyService.normEmail(dto.email as string | null);
     if ('phone' in dto) out.phone = HierarchyService.normPhone(dto.phone as string | null);
+    // FB-2026-004 — the number SMS "Call-back number" gives leads; Phone stays the support number.
+    if ('callback_phone' in dto) out.callback_phone = HierarchyService.normPhone(dto.callback_phone as string | null);
     if ('billing_address' in dto) out.billing_address = HierarchyService.text(dto.billing_address as string | null, 2000);
     if ('display_name' in dto) out.display_name = HierarchyService.text(dto.display_name as string | null, 200);
     if ('bank_name' in dto) out.bank_name = HierarchyService.text(dto.bank_name as string | null, 160);
@@ -356,7 +358,7 @@ export class HierarchyService {
       ['name', 'code', 'smtp_config', 'gateway_config', 'head_user_id', 'description', 'is_active',
         'gstin', 'billing_address', 'phone', 'email', 'display_name',
         'bank_name', 'bank_account_no', 'bank_ifsc', 'bank_branch', 'bank_account_holder',
-        'banks', 'upi_id']);
+        'banks', 'upi_id', 'callback_phone']);
   }
 
   /* ---- vertical logo (R2, presigned) — mirrors the student photo flow (dev/77) ---- */

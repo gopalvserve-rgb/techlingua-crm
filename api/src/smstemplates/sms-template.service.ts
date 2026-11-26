@@ -164,7 +164,11 @@ export class SmsTemplateService {
   async varsForLead(leadId: number, extra?: Record<string, unknown> | null, studentId?: number | null): Promise<{ lead: any; vars: Record<string, unknown> } | null> {
     const l = await this.db.one<any>(
       `SELECT l.id, l.full_name, l.phone, l.whatsapp_phone, l.branch_id, l.vertical_id,
-              COALESCE(c.name, l.course_text) AS course, u.name AS counsellor, u.phone AS counsellor_phone,
+              COALESCE(c.name, l.course_text) AS course, u.name AS counsellor,
+              -- FB-2026-004: the counsellor's CONTACT number, else the login mobile; the vertical's
+              -- CALL-BACK number, else its phone (the support number)
+              COALESCE(NULLIF(u.contact_phone, ''), u.phone) AS counsellor_phone,
+              NULLIF(v.callback_phone, '') AS vertical_callback,
               v.phone AS vertical_phone, COALESCE(NULLIF(v.display_name, ''), v.name) AS institute,
               b.name AS branch_name, b.contact_number AS branch_phone
          FROM lead l
@@ -185,7 +189,7 @@ export class SmsTemplateService {
     const vars: Record<string, unknown> = {
       name, first_name: String(name ?? '').trim().split(/\s+/)[0] || null, course,
       counsellor: l.counsellor, counsellor_phone: l.counsellor_phone,
-      callback: l.vertical_phone || l.branch_phone || l.counsellor_phone || null,
+      callback: l.vertical_callback || l.vertical_phone || l.branch_phone || l.counsellor_phone || null,
       institute: l.institute, branch: l.branch_name, phone, whatsapp: l.whatsapp_phone ?? phone,
     };
     for (const [k, v] of Object.entries(extra ?? {})) if (v !== undefined && v !== null && String(v).trim() !== '') vars[k] = v;

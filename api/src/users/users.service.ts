@@ -63,6 +63,8 @@ export interface CreateUserDto {
   phone: string;
   /** optional; unique when present */
   email?: string;
+  /** FB-2026-004 — the number leads see in SMS ("Counsellor's phone"); empty = the login mobile. */
+  contact_phone?: string | null;
   password?: string;
   assignments?: Array<{
     role_id: number; branch_id?: number | null; vertical_id?: number | null;
@@ -77,6 +79,15 @@ export interface CreateUserDto {
 
 @Injectable()
 export class UsersService {
+  /** FB-2026-004 — a contact number for leads: optional, 6-15 digits, stored as typed (trimmed). */
+  static contactPhone(v: unknown): string | null {
+    const t = String(v ?? '').trim();
+    if (!t) return null;
+    const digits = t.replace(/[^0-9]/g, '');
+    if (digits.length < 6 || digits.length > 15) throw new BadRequestException('Enter a valid contact number (6–15 digits).');
+    return t.slice(0, 24);
+  }
+
   constructor(
     private readonly db: DatabaseService,
     private readonly resolver: ScopeResolverService,
@@ -103,7 +114,7 @@ export class UsersService {
     const scopeWhere = `((${where}) OR u.id = $${params.length})`;
     const filterSql = buildUserFilters(filters, params);
     return this.db.query(
-      `SELECT DISTINCT u.id, u.name, u.email, u.phone, u.status, u.lead_assignment_enabled, u.created_at,
+      `SELECT DISTINCT u.id, u.name, u.email, u.phone, u.contact_phone, u.status, u.lead_assignment_enabled, u.created_at,
               (SELECT COALESCE(string_agg(DISTINCT r.name, ', '), '')
                  FROM user_assignment ra JOIN role r ON r.id = ra.role_id
                 WHERE ra.user_id = u.id AND ra.is_active) AS role_names,
@@ -130,7 +141,7 @@ export class UsersService {
 
   async get(id: number) {
     const user = await this.db.one(
-      `SELECT u.id, u.name, u.email, u.phone, u.status, u.mfa_enabled, u.lead_assignment_enabled, u.created_at,
+      `SELECT u.id, u.name, u.email, u.phone, u.contact_phone, u.status, u.mfa_enabled, u.lead_assignment_enabled, u.created_at,
               u.report_to_id, m.name AS report_to_name
          FROM "user" u LEFT JOIN "user" m ON m.id = u.report_to_id
         WHERE u.id = $1 AND u.deleted_at IS NULL`, [id],
@@ -192,6 +203,8 @@ export class UsersService {
         [org, dto.name.trim(), email, phone, hash, status, dto.report_to_id ?? null, actorId],
       );
       const userId = u.rows[0].id;
+      const cp = UsersService.contactPhone(dto.contact_phone);
+      if (cp) await c.query(`UPDATE "user" SET contact_phone = $2 WHERE id = $1`, [userId, cp]);
       for (const a of dto.assignments ?? []) {
         await c.query(
           `INSERT INTO user_assignment (user_id, role_id, branch_id, vertical_id, pipeline_id, campaign_id, team_id, created_by)
@@ -240,6 +253,7 @@ export class UsersService {
       set('status', dto.status);
     }
     if (dto.password) set('password_hash', await bcrypt.hash(dto.password, 10));
+    if (dto.contact_phone !== undefined) set('contact_phone', UsersService.contactPhone(dto.contact_phone));
     // "Reports To": nullable; a non-null target must be an ACTIVE user. Guard against a
     // user reporting to themselves.
     if (dto.report_to_id !== undefined) {

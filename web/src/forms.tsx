@@ -399,7 +399,9 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Display Name', 'text', 0, 0, 'brand / legal name shown on invoices & receipts'),
     F('GST Number', 'text', 0, 0, '15-char GSTIN of this vertical (seller)'),
     F('Billing Address', 'textarea', 0, 0, 'printed on the vertical’s GST invoices & receipts'),
-    F('Phone', 'tel', 0, 0, 'vertical contact number'),
+    F('Phone', 'tel', 0, 0, 'vertical contact / support number — printed on invoices & receipts'),
+    // FB-2026-004 — the number SMS "Call-back number" gives leads who have not joined yet
+    F('Call-back Number for Leads', 'tel', 0, 0, 'optional — used in SMS; empty = the Phone above'),
     F('Email', 'email', 0, 0, 'vertical contact email'),
     // dev/132 ITEM B — bank accounts are now MULTIPLE (add-more rows with a required/active
     // checkbox) + UPI + QR, managed by the VerticalBanksEditor on the EDIT form. The single
@@ -408,6 +410,8 @@ export const SPEC_FORMS: Record<string, { title: string; fields: FormField[] }> 
     F('Status', 'select', 0, ['Active', 'Inactive'])] },
   'admin.users': { title: 'Add User', fields: [
     F('Full Name', 'text', 1, 0, 'Employee master'), F('Mobile Number', 'tel', 1, 0, 'login identifier'), F('Email ID', 'email', 0, 0, 'optional'), F('Password / Login Method', 'password', 1, 0, 'encrypted / SSO'),
+    // FB-2026-004 — the number leads see in SMS ("Counsellor's contact number"); empty = the login mobile
+    F('Contact Number for Leads', 'tel', 0, 0, 'optional — used in SMS; empty = the login mobile'),
     F('System Role', 'roleselect', 1, 0, 'drives permissions'), F('Branch Access', 'multipick', 0, 0, 'select branch(es)', 'branches'),
     F('Vertical Access', 'multipick', 0, 0, 'optional', 'verticals'),
     // Client (Aug 2026) — a USER's reporting manager (distinct from the task-level Report To).
@@ -666,6 +670,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       gstin: vals['GST Number'] ? String(vals['GST Number']).trim().toUpperCase() : undefined,
       billing_address: vals['Billing Address'] || undefined,
       phone: vals['Phone'] || undefined,
+      callback_phone: vals['Call-back Number for Leads'] || undefined,
       email: vals['Email'] || undefined,
       upi_id: vals['UPI ID'] || undefined,
       is_active: vals['Status'] !== 'Inactive',
@@ -703,6 +708,7 @@ export const SAVERS: Record<string, (vals: Vals, ids: Ids, extra?: SaveExtra) =>
       name: need(vals['Full Name'], 'Name is required'),
       phone: need(vals['Mobile Number'], 'Mobile Number is required'),
       email: vals['Email ID'] || undefined,
+      contact_phone: vals['Contact Number for Leads'] || undefined,
       password: need(vals['Password / Login Method'], 'Password is required'),
       // MULTI-BRANCH: one user_assignment per selected branch (blank branches = one org-wide row).
       assignments: ids['System Role'] ? buildUserAssignments(ids['System Role'], parseIdCsv(vals['Branch Access']), parseVertCsv(vals['Vertical Access'])) : [],

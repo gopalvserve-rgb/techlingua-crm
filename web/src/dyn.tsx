@@ -2758,6 +2758,7 @@ function Verticals() {
               // dev/88 — billing / document identity + bank details.
               'Display Name': edit.display_name ?? '', 'GST Number': edit.gstin ?? '',
               'Billing Address': edit.billing_address ?? '', 'Phone': edit.phone ?? '', 'Email': edit.email ?? '',
+              'Call-back Number for Leads': edit.callback_phone ?? '',
               'UPI ID': edit.upi_id ?? '',
               'Status': edit.is_active === false ? 'Inactive' : 'Active',
             },
@@ -2791,6 +2792,7 @@ function Verticals() {
                 gstin: vals['GST Number'] ? String(vals['GST Number']).trim().toUpperCase() : null,
                 billing_address: vals['Billing Address'] || null,
                 phone: vals['Phone'] || null,
+                callback_phone: vals['Call-back Number for Leads'] || null,
                 email: vals['Email'] || null,
                 // dev/132 ITEM B — the multi-bank editor + UPI value (payRef) is the source of truth.
                 banks: payRef.current.banks,
@@ -3834,6 +3836,7 @@ function Users() {
               // Email ID / System Role / Branch + Vertical Access are editable and prefilled.
               initialVals: {
                 'Full Name': edit.name ?? '', 'Email ID': edit.email ?? '', 'Mobile Number': edit.phone ?? '',
+                'Contact Number for Leads': edit.contact_phone ?? '',
                 'System Role': edit.role_names ?? '',
                 'Branch Access': branchCsv,
                 'Vertical Access': vertCsv,
@@ -3852,6 +3855,7 @@ function Users() {
                   name: need(vals['Full Name'], 'Name is required'),
                   email: vals['Email ID'] || null,
                   phone: vals['Mobile Number'] || null,
+                  contact_phone: vals['Contact Number for Leads'] || null,
                   ...(vals['Password / Login Method'] ? { password: vals['Password / Login Method'] } : {}),
                   // Reconcile: send the FULL desired set. The API deactivates old assignments and
                   // re-inserts these, so ticking/un-ticking a branch adds/removes it; `extra`

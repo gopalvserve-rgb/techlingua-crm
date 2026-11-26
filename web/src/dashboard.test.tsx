@@ -562,3 +562,18 @@ describe('Leads screen — summary cards and a Filters button', () => {
     expect(screen.getByTestId('fm-owner')).toBeTruthy();
   });
 });
+
+/** FB-2026-004 (client, 23 Nov) — separate numbers for SMS: a user's contact number, a vertical's call-back number. */
+describe('SMS numbers on the Users and Verticals forms (FB-2026-004)', () => {
+  it('Add User has an optional "Contact Number for Leads" next to the login mobile', () => {
+    const f = SPEC_FORMS['admin.users'].fields.find((x: any) => x.label === 'Contact Number for Leads') as any;
+    expect(f).toBeTruthy();
+    expect(f.req).toBeFalsy();
+  });
+  it('the Vertical form has an optional "Call-back Number for Leads"; Phone stays the support number', () => {
+    const key = Object.keys(SPEC_FORMS).find((k) => SPEC_FORMS[k].fields.some((x: any) => x.label === 'Vertical Name'))!;
+    const labels = SPEC_FORMS[key].fields.map((x: any) => x.label);
+    expect(labels).toContain('Call-back Number for Leads');
+    expect(labels).toContain('Phone');
+  });
+});
