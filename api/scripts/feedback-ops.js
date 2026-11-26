@@ -47,7 +47,12 @@ const { Pool } = require(path.join(API, 'node_modules/pg'));
 const SUPPORT_EMAIL = 'crm-support@techlingua.invalid';
 const OPS_DIR = path.join(process.env.HOME || '/home/techlingua', 'feedback-ops');
 const STATE = path.join(OPS_DIR, 'state.json');
-const readState = () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return { questions: [] }; } };
+// a missing state file = nothing remembered yet; a BROKEN one stops the run (it holds the notes where we
+// asked the client a question — reading it as empty would close them)
+const readState = () => {
+  if (!fs.existsSync(STATE)) return { questions: [] };
+  try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch (e) { throw new Error(`${STATE} is not valid JSON — fix it before closing anything (${e.message})`); }
+};
 const writeState = (st) => { fs.mkdirSync(OPS_DIR, { recursive: true }); fs.writeFileSync(STATE, JSON.stringify(st, null, 2)); };
 const CLOSE_NOTE = 'Resolved: the fix described in the answer is live, and there was no follow-up within a day. '
   + 'If anything still isn\'t right, reply on this note and it opens again.';
