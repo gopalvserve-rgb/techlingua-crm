@@ -6,7 +6,7 @@
  * email across the lead.search scope. A lead inside the user's own scope opens normally; any
  * other lead opens a READ-ONLY summary (owner, stage, last activity) — no edit, no calling.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './api';
 import { Ic } from './icons';
 import { toast } from './refdata';
@@ -19,8 +19,12 @@ interface Hit {
 
 const dt = (v?: string | null) => (v ? new Date(v).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '—');
 
-export function LeadSearchModal({ onClose, onOpen }: { onClose: () => void; onOpen: (id: number) => void }) {
-  const [q, setQ] = useState('');
+export function LeadSearchModal({ onClose, onOpen, initialQuery }: {
+  onClose: () => void; onOpen: (id: number) => void;
+  /** FB-2026-015 — opened from the Leads search box: search for what was typed there straight away. */
+  initialQuery?: string;
+}) {
+  const [q, setQ] = useState(initialQuery ?? '');
   const [hits, setHits] = useState<Hit[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [peek, setPeek] = useState<any>(null);
@@ -32,6 +36,8 @@ export function LeadSearchModal({ onClose, onOpen }: { onClose: () => void; onOp
     catch (e) { toast((e as Error).message, true); }
     finally { setBusy(false); }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if ((initialQuery ?? '').trim().length >= 3) void run(); }, []);
   const view = async (h: Hit) => {
     if (h.in_scope) { onOpen(Number(h.id)); onClose(); return; }
     try { setPeek(await api.get<any>(`/leads/${h.id}/peek`)); }
