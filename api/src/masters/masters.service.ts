@@ -122,7 +122,37 @@ export class MastersService {
         JSON.stringify(dto.meta ?? {}), dto.parent_id ?? null, dto.is_active ?? null, actorId],
     );
     if (type === 'course') await this.relinkLeadCourses();
+    if (type === 'level') await this.addLevelToCourses(rows[0]);
     return rows[0];
+  }
+
+  /**
+   * FB-2026-014 (client's 15 Nov document, point 4) — "if we create any level from master by selecting
+   * course then level should be shown in course management in same course." A Level saved here with
+   * course(s) picked (meta.course_ids, or the older single meta.course_id) is ADDED to each of those
+   * courses' Levels (course_level), with the master's fee and duration. Additive only: a course that
+   * already has that level keeps its own row and fee (it may have been priced per course), and taking
+   * a course off the master never removes a level an enrolment may use. Inactive levels add nothing.
+   */
+  async addLevelToCourses(row: any): Promise<number> {
+    if (!row || row.is_active === false) return 0;
+    const meta = (typeof row.meta === 'string' ? JSON.parse(row.meta) : row.meta) ?? {};
+    const ids = [...new Set([...(Array.isArray(meta.course_ids) ? meta.course_ids : []), meta.course_id]
+      .map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    const name = String(row.name ?? '').trim();
+    if (!ids.length || !name) return 0;
+    const fee = Number(meta.fee);
+    const feeMinor = Number.isFinite(fee) && fee > 0 ? Math.round(fee * 100) : 0;
+    const added = await this.db.query(
+      `INSERT INTO course_level (org_id, course_id, code, fee_minor, duration, ordering)
+       SELECT c.org_id, c.id, $2, $3, $4,
+              COALESCE((SELECT MAX(cl.ordering) + 1 FROM course_level cl WHERE cl.course_id = c.id), 0)
+         FROM m_course c
+        WHERE c.id = ANY($1::bigint[]) AND c.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM course_level cl WHERE cl.course_id = c.id AND lower(cl.code) = lower($2))
+       RETURNING id`,
+      [ids, name.slice(0, 64), feeMinor, meta.duration ? String(meta.duration) : null]);
+    return added.length;
   }
 
   /**
@@ -151,6 +181,7 @@ export class MastersService {
     );
     if (!rows.length) throw new NotFoundException(`${type} #${id} not found`);
     if (type === 'course') await this.relinkLeadCourses();
+    if (type === 'level') await this.addLevelToCourses(rows[0]);
     return rows[0];
   }
 
