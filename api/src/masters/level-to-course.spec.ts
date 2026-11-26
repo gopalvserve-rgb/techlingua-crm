@@ -33,7 +33,7 @@ describe('a Level saved in Masters with courses picked appears in those courses 
     const saved = { name: 'French A1', is_active: true, meta: { course_ids: [55], fee: 10000 } };
     const { db, levelInserts } = fakeDb(saved);
     await new MastersService(db).create('level', { name: 'French A1', meta: saved.meta } as any, 1);
-    expect(levelInserts()[0].sql).toContain('NOT EXISTS (SELECT 1 FROM course_level cl WHERE cl.course_id = c.id AND lower(cl.code) = lower($2))');
+    expect(levelInserts()[0].sql).toContain('NOT EXISTS (SELECT 1 FROM course_level cl WHERE cl.course_id = c.id AND lower(cl.code) = lower($2::varchar))');
     expect(levelInserts()[0].sql).not.toMatch(/UPDATE course_level|DELETE FROM course_level/);
   });
 

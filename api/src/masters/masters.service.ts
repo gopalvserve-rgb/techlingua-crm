@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { rematchLeadCourses } from '../courses/course-match';
 
@@ -57,6 +57,7 @@ export interface MasterDto {
 
 @Injectable()
 export class MastersService {
+  private readonly log = new Logger('Masters');
   constructor(private readonly db: DatabaseService) {}
 
   types() {
@@ -122,7 +123,7 @@ export class MastersService {
         JSON.stringify(dto.meta ?? {}), dto.parent_id ?? null, dto.is_active ?? null, actorId],
     );
     if (type === 'course') await this.relinkLeadCourses();
-    if (type === 'level') await this.addLevelToCourses(rows[0]);
+    if (type === 'level') await this.addLevelToCoursesSafely(rows[0]);
     return rows[0];
   }
 
@@ -134,6 +135,11 @@ export class MastersService {
    * already has that level keeps its own row and fee (it may have been priced per course), and taking
    * a course off the master never removes a level an enrolment may use. Inactive levels add nothing.
    */
+  /** The level itself is already saved — a failure adding it to a course must not turn the save into an error. */
+  private async addLevelToCoursesSafely(row: any) {
+    try { await this.addLevelToCourses(row); } catch (e) { this.log.warn(`level ${row?.id} not added to its courses: ${(e as Error).message}`); }
+  }
+
   async addLevelToCourses(row: any): Promise<number> {
     if (!row || row.is_active === false) return 0;
     const meta = (typeof row.meta === 'string' ? JSON.parse(row.meta) : row.meta) ?? {};
@@ -145,11 +151,11 @@ export class MastersService {
     const feeMinor = Number.isFinite(fee) && fee > 0 ? Math.round(fee * 100) : 0;
     const added = await this.db.query(
       `INSERT INTO course_level (org_id, course_id, code, fee_minor, duration, ordering)
-       SELECT c.org_id, c.id, $2, $3, $4,
+       SELECT c.org_id, c.id, $2::varchar, $3::bigint, $4::text,
               COALESCE((SELECT MAX(cl.ordering) + 1 FROM course_level cl WHERE cl.course_id = c.id), 0)
          FROM m_course c
         WHERE c.id = ANY($1::bigint[]) AND c.deleted_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM course_level cl WHERE cl.course_id = c.id AND lower(cl.code) = lower($2))
+          AND NOT EXISTS (SELECT 1 FROM course_level cl WHERE cl.course_id = c.id AND lower(cl.code) = lower($2::varchar))
        RETURNING id`,
       [ids, name.slice(0, 64), feeMinor, meta.duration ? String(meta.duration) : null]);
     return added.length;
@@ -181,7 +187,7 @@ export class MastersService {
     );
     if (!rows.length) throw new NotFoundException(`${type} #${id} not found`);
     if (type === 'course') await this.relinkLeadCourses();
-    if (type === 'level') await this.addLevelToCourses(rows[0]);
+    if (type === 'level') await this.addLevelToCoursesSafely(rows[0]);
     return rows[0];
   }
 
