@@ -10,6 +10,14 @@
  *   node scripts/feedback-ops.js close FB-2026-002,FB-2026-003 [--hours 24] [--dry-run]
  *   node scripts/feedback-ops.js out-of-scope FB-2026-006 <scope-item-id | new> [--note "..."] [--dry-run]
  *   node scripts/feedback-ops.js file <notes.json> --as <reporter-user-id> [--dry-run]
+ *   node scripts/feedback-ops.js reply-round            (cron, 15:00 + 19:00 IST — see below)
+ *
+ * reply-round (26 Nov 2026 — "reply to the client daily at 3 PM, automatically"): runs from the
+ *   server's crontab, no person or PC needed. (1) Closes every Answered note whose last word is our
+ *   answer, at least 20 h old, EXCEPT the ones where our answer was a question (state.json
+ *   "questions" — set by `answer` when an entry has "question": true). (2) Posts every
+ *   ~/feedback-ops/outbox/answers-*.json (the work round puts its verified answers there) and moves
+ *   each file to ~/feedback-ops/sent/. Writes what it did to stdout (the cron appends it to a log).
  *
  * file (25 Nov 2026): points the client sent another way (a document, an email) become notes, filed
  *   in the REPORTER's name — the client's own words, so their thread, their answers, their "That
@@ -37,6 +45,10 @@ require(path.join(API, 'node_modules/dotenv')).config({ path: path.join(API, '.e
 const { Pool } = require(path.join(API, 'node_modules/pg'));
 
 const SUPPORT_EMAIL = 'crm-support@techlingua.invalid';
+const OPS_DIR = path.join(process.env.HOME || '/home/techlingua', 'feedback-ops');
+const STATE = path.join(OPS_DIR, 'state.json');
+const readState = () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return { questions: [] }; } };
+const writeState = (st) => { fs.mkdirSync(OPS_DIR, { recursive: true }); fs.writeFileSync(STATE, JSON.stringify(st, null, 2)); };
 const CLOSE_NOTE = 'Resolved: the fix described in the answer is live, and there was no follow-up within a day. '
   + 'If anything still isn\'t right, reply on this note and it opens again.';
 
@@ -63,7 +75,7 @@ async function main() {
     if (cmd === 'status') return await status(db);
     if (cmd === 'export') return await exportNotes(db, args[1], refsArg(args[2]));
     if (cmd === 'file') return await fileNotes(db, args[1], Number(opt('--as', 0)));
-    if (!['answer', 'acknowledge', 'close', 'out-of-scope'].includes(cmd)) {
+    if (!['answer', 'acknowledge', 'close', 'out-of-scope', 'reply-round'].includes(cmd)) {
       throw new Error('usage: status | export <dir> [refs] | answer <file> | acknowledge <refs> | close <refs> [--hours 24] | out-of-scope <ref> <item-id|new> [--note ".."] | file <notes.json> --as <user-id> — add --dry-run to see what would happen');
     }
 
@@ -77,10 +89,13 @@ async function main() {
     const ctx = { id: Number(me.id) };
     const note = (ref) => db.one(`SELECT id, reference, status, created_by FROM feedback WHERE reference = $1`, [ref]);
 
-    if (cmd === 'answer') {
-      const answers = JSON.parse(fs.readFileSync(args[1], 'utf8'));
-      if (!Array.isArray(answers)) throw new Error('answers file must be a JSON array');
+    /** Post one answers file through the support account; remembers which answers were questions. */
+    const postAnswers = async (file) => {
+      const answers = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (!Array.isArray(answers)) throw new Error(`${file}: answers file must be a JSON array`);
+      const st = readState(); const qs = new Set(st.questions ?? []);
       for (const a of answers) {
+        if (!dry && a.reference) { if (a.question) qs.add(String(a.reference)); else qs.delete(String(a.reference)); }
         const body = String(a.body ?? '').trim();
         const n = await note(String(a.reference ?? ''));
         if (!n || body.length < 2) { console.log(`  ${a.reference}: no such note or empty answer, skipped`); continue; }
@@ -89,6 +104,42 @@ async function main() {
         if (dry) { console.log(`  ${n.reference}: WOULD answer (${n.status} → ANSWERED), ${body.length} chars`); continue; }
         const after = await svc.reply(ctx, Number(n.id), body, { answer: true });
         console.log(`  ${n.reference}: answered as ${me.name} · ${n.status} → ${after?.status ?? '?'}`);
+      }
+      if (!dry) writeState({ ...st, questions: [...qs] });
+    };
+
+    /** Close Answered notes whose last word is our (non-question) answer, at least minH hours old. */
+    const closeDue = async (refs, minH) => {
+      const questions = new Set(readState().questions ?? []);
+      for (const ref of refs) {
+        const n = await note(ref);
+        if (!n) { console.log(`  ${ref}: no such note`); continue; }
+        if (n.status !== 'ANSWERED') { console.log(`  ${ref}: is ${n.status}, not closed`); continue; }
+        if (questions.has(ref)) { console.log(`  ${ref}: our answer was a question — waiting for the client`); continue; }
+        const last = await db.one(
+          `SELECT author_id, is_answer, created_at FROM feedback_message WHERE feedback_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`, [n.id]);
+        if (!last || !last.is_answer) { console.log(`  ${ref}: the last word is not our answer, not closed`); continue; }
+        if (hours(last.created_at) < minH) { console.log(`  ${ref}: answered ${hours(last.created_at)}h ago (< ${minH}h), not closed yet`); continue; }
+        if (dry) { console.log(`  ${ref}: WOULD resolve (answered ${hours(last.created_at)}h ago)`); continue; }
+        await svc.resolve(ctx, Number(n.id), { status: 'RESOLVED', resolution: CLOSE_NOTE });
+        console.log(`  ${ref}: ANSWERED → RESOLVED (answered ${hours(last.created_at)}h ago)`);
+      }
+    };
+
+    if (cmd === 'answer') await postAnswers(args[1]);
+
+    if (cmd === 'reply-round') {
+      console.log(`== reply round ${new Date().toISOString()}`);
+      const answered = await db.query(`SELECT reference FROM feedback WHERE status = 'ANSWERED' ORDER BY id`);
+      await closeDue(answered.map((r) => r.reference), Number(opt('--hours', '20')));
+      const outbox = path.join(OPS_DIR, 'outbox'); const sent = path.join(OPS_DIR, 'sent');
+      fs.mkdirSync(outbox, { recursive: true }); fs.mkdirSync(sent, { recursive: true });
+      const files = fs.readdirSync(outbox).filter((f) => /^answers-[\w.-]+\.json$/.test(f)).sort();
+      if (!files.length) console.log('  outbox empty — nothing to post');
+      for (const f of files) {
+        console.log(`  posting ${f}`);
+        await postAnswers(path.join(outbox, f));
+        if (!dry) fs.renameSync(path.join(outbox, f), path.join(sent, f));
       }
     }
 
@@ -116,21 +167,7 @@ async function main() {
       console.log(`  ${ref}: ${n.status} → ${after?.status ?? '?'}`);
     }
 
-    if (cmd === 'close') {
-      const minH = Number(opt('--hours', '24'));
-      for (const ref of refsArg(args[1])) {
-        const n = await note(ref);
-        if (!n) { console.log(`  ${ref}: no such note`); continue; }
-        if (n.status !== 'ANSWERED') { console.log(`  ${ref}: is ${n.status}, not closed`); continue; }
-        const last = await db.one(
-          `SELECT author_id, is_answer, created_at FROM feedback_message WHERE feedback_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`, [n.id]);
-        if (!last || !last.is_answer) { console.log(`  ${ref}: the last word is not our answer, not closed`); continue; }
-        if (hours(last.created_at) < minH) { console.log(`  ${ref}: answered ${hours(last.created_at)}h ago (< ${minH}h), not closed yet`); continue; }
-        if (dry) { console.log(`  ${ref}: WOULD resolve (answered ${hours(last.created_at)}h ago)`); continue; }
-        await svc.resolve(ctx, Number(n.id), { status: 'RESOLVED', resolution: CLOSE_NOTE });
-        console.log(`  ${ref}: ANSWERED → RESOLVED (answered ${hours(last.created_at)}h ago)`);
-      }
-    }
+    if (cmd === 'close') await closeDue(refsArg(args[1]), Number(opt('--hours', '24')));
   } finally { await end(); }
 }
 
