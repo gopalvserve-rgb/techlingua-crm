@@ -39,7 +39,7 @@ import { useColumnVisibility, ColumnsButton } from './colprefs';
 import { StudentDocuments, StudentPhotoUpload, VerticalLogoUpload, VerticalQrUpload, VerticalBanksEditor } from './documents';
 import type { VertPayments } from './documents';
 import { ImpactList, ImpactReport, useDelete } from './deletemodal';
-import { APP, isModuleHidden } from './specs';
+import { APP, isModuleHidden, type KpiItem } from './specs';
 import { useScope } from './scope';
 import { DateRange, presetRange, matchPreset, fmtDMYIST, fmtDateTimeIST, istDay } from './daterange';
 import { ContactQuickActions } from './contactactions';
@@ -1635,6 +1635,13 @@ function LeadsAll() {
   // client 11 Nov 2026 — "search any lead" (lead.search, separate from the user's own lead scope)
   const canSearchAll = can('lead.search');
   const [searchAll, setSearchAll] = useState(false);
+  // FB-2026-015 (client 15 Nov, point 9) — "search permission given to a user is not working": the
+  // search box above searches only the user's OWN leads, and the separate "Search all leads" chip went
+  // unnoticed. With lead.search, what is typed in the box is also looked up across all leads, and the
+  // ones that are not the user's are offered right here (they open read-only).
+  const allQ = canSearchAll && f.q.trim().length >= 3 ? f.q.trim() : '';
+  const allHits = useFetch<any[]>(allQ ? `/leads/search-all?q=${encodeURIComponent(allQ)}` : null, [allQ]);
+  const notMine = allQ ? (allHits.data ?? []).filter((h: any) => !h.in_scope).length : 0;
   // Calling CRM (dev/139) — lightweight "Log disposition" control on a lead row.
   const [logLead, setLogLead] = useState<{ id: number; name?: string } | null>(null);
   const canConvert = can('student.create');
@@ -1694,8 +1701,45 @@ function LeadsAll() {
 
   const BANDS: Array<[string, string | undefined]> = [['All', undefined], ['Hot', 'hot'], ['Warm', 'warm'], ['Cold', 'cold']];
   const bandDot: Record<string, string> = { hot: 'var(--hot)', warm: 'var(--warm)', cold: 'var(--cold)' };
+  // FB-2026-010 (client, 25 Nov) — "in leads module add dashboard cards like the attached file, and the
+  // filter option should be openable whenever needed". Cards: the caller's whole lead scope; a card
+  // with a list behind it applies that filter here. The filter dropdowns fold behind a "Filters"
+  // button (remembered per browser; open on arrival when a link brought filters with it).
+  const lsum = useFetch<any>('/leads/summary', [refreshTick]);
+  const lk = lsum.data?.kpis ?? {};
+  const pct = (a: number, b: number) => (b > 0 ? `${((a / b) * 100).toFixed(2)}%` : '0%');
+  const leadCards: KpiItem[] = [
+    { lab: 'Total Leads', val: String(lk.total ?? 0), ic: 'leads',
+      onClick: () => setF(seedLeadFilters('')), navLabel: `Total leads: ${lk.total ?? 0}. Show all leads (clears the filters)` },
+    { lab: 'New Leads (today)', val: String(lk.today ?? 0), ic: 'users',
+      onClick: () => { const t = presetRange('today'); setF((x) => ({ ...x, from: t.from, to: t.to })); },
+      navLabel: `New leads today: ${lk.today ?? 0}. Show leads created today` },
+    { lab: 'Contacted', val: String(lk.contacted ?? 0), ic: 'calls' },
+    { lab: 'Qualified (meeting stage or later)', val: String(lk.qualified ?? 0), ic: 'target' },
+    { lab: 'Follow-ups due today', val: String(lk.followups_due_today ?? 0), ic: 'cal',
+      onClick: () => setF((x) => ({ ...x, followup: 'today', fu_from: undefined, fu_to: undefined })),
+      navLabel: `Leads with a follow-up due today: ${lk.followups_due_today ?? 0}. Show them` },
+    { lab: 'Overdue follow-ups', val: String(lk.followups_overdue ?? 0), ic: 'clock',
+      tone: Number(lk.followups_overdue ?? 0) > 0 ? 'down' : 'flat',
+      onClick: () => setF((x) => ({ ...x, followup: 'missed', fu_from: undefined, fu_to: undefined })),
+      navLabel: `Leads with an overdue follow-up: ${lk.followups_overdue ?? 0}. Show them` },
+    { lab: 'Converted', val: String(lk.won ?? 0), ic: 'check',
+      onClick: () => setF((x) => ({ ...x, won: true })), navLabel: `Converted leads: ${lk.won ?? 0}. Show them` },
+    { lab: 'Conversion rate', val: pct(Number(lk.won ?? 0), Number(lk.total ?? 0)), ic: 'analytics' },
+  ];
+  const activeFilters = [f.branches, f.verticals, f.pipelines, f.campaigns, f.sources, f.statuses, f.stages, f.owners, f.callDispositions]
+    .filter((a) => a.length).length + (f.from || f.to ? 1 : 0) + (f.followup ? 1 : 0);
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(() => {
+    try { const v = localStorage.getItem('tl_leads_filters'); if (v === 'open' || v === 'closed') return v === 'open'; } catch { /* jsdom */ }
+    return activeFilters > 0;
+  });
+  const toggleFilters = () => setFiltersOpen((o) => {
+    try { localStorage.setItem('tl_leads_filters', o ? 'closed' : 'open'); } catch { /* jsdom */ }
+    return !o;
+  });
   return (
     <>
+      <Kpis cols={4} items={leadCards} />
       {/* UAT-R2 #11 — SaaS-style quick band chips (drive the same temperature filter). */}
       <div className="qband">
         {BANDS.map(([lab, val]) => {
@@ -1720,6 +1764,12 @@ function LeadsAll() {
       </div>
       <div className="toolbar-surface">
       <div className="filters">
+        {/* FB-2026-010 — the filter dropdowns open only when needed. */}
+        <button type="button" className={`fchip${filtersOpen ? ' on' : ''}`} data-testid="leads-filters-toggle"
+          aria-expanded={filtersOpen} onClick={toggleFilters}>
+          <Ic k="filter" />Filters{activeFilters ? ` (${activeFilters})` : ''}
+        </button>
+        {filtersOpen && (<>
         {/* UAT-R2 #14/#26 — filters follow Branch › Vertical › Pipeline › Campaign › Source;
             each dropdown is filtered by its parent and every descendant filter resets when a
             parent changes, so a stale (now out-of-scope) filter can never stay applied. */}
@@ -1754,6 +1804,7 @@ function LeadsAll() {
         <FollowupFilter value={{ followup: f.followup, fu_from: f.fu_from, fu_to: f.fu_to }}
           onChange={(v) => setF((x) => ({ ...x, followup: v.followup, fu_from: v.fu_from, fu_to: v.fu_to }))}
           idPrefix="leads-fu" />
+        </>)}
         <div className="fchip"><Ic k="search" /><input style={{ background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'inherit', fontSize: 12 }} placeholder="Search name / phone / email…" value={f.q} onChange={(e) => setF((x) => ({ ...x, q: e.target.value }))} /></div>
         {/* Score BAND is multi-select via the Hot/Warm/Cold quick chips above (f.bands). */}
         {/* ...and SORTABLE. */}
@@ -1780,13 +1831,18 @@ function LeadsAll() {
           onClick={() => setF((x) => ({ ...x, dup: !x.dup }))}>
           <Ic k="refresh" />Duplicates
         </button>
-        {canSearchAll && (
+        {canSearchAll && (notMine > 0 ? (
+          <button className="fchip on" data-testid="search-all-notice" onClick={() => setSearchAll(true)}
+            title="These leads belong to someone else — they open read-only">
+            <Ic k="search" />{notMine}{notMine >= 25 ? '+' : ''} more lead{notMine === 1 ? '' : 's'} not yours match “{allQ}” — show
+          </button>
+        ) : (
           <button className="fchip" data-testid="search-all-leads" onClick={() => setSearchAll(true)}
             title="Find any lead by name, phone or email — even one that is not yours">
             <Ic k="search" />Search all leads
           </button>
-        )}
-        {searchAll && <LeadSearchModal onClose={() => setSearchAll(false)} onOpen={(id) => openLead(id)} />}
+        ))}
+        {searchAll && <LeadSearchModal initialQuery={allQ || undefined} onClose={() => setSearchAll(false)} onOpen={(id) => openLead(id)} />}
         {/* Red flag filter (client, Aug 2026) — leads currently red-flagged. */}
         <button className={`fchip${f.redflag ? ' on' : ''}`} data-testid="redflag-filter"
           onClick={() => setF((x) => ({ ...x, redflag: !x.redflag }))}

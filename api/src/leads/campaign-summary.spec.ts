@@ -13,6 +13,9 @@ function harness() {
     one: async (sql: string) => {
       sqls.push(sql);
       if (/revenue_minor/.test(sql)) return { revenue_minor: '750000' };
+      // the kpis SELECT first: since FB-2026-010 it also names followups_due_today, which the
+      // follow-up branch below would otherwise catch
+      if (/AS walkins/.test(sql)) return { total: 10, today: 1, mtd: 4, won: 3, won_today: 1, lost: 2, closed: 5, active: 5, hot: 1, warm: 1, cold: 1, walkins: 0 };
       if (/due_today/.test(sql)) return { due_today: 0, overdue: 0, pending: 0, done_today: 0, done_week: 0, my_open: 0 };
       return { total: 10, today: 1, mtd: 4, won: 3, won_today: 1, lost: 2, closed: 5, active: 5, hot: 1, warm: 1, cold: 1, walkins: 0 };
     },
@@ -31,6 +34,8 @@ describe('Campaign summary aggregation (dev/131)', () => {
     expect(kpiSql).toContain("st.stage_type = 'lost')::int AS lost");
     expect(kpiSql).toContain("st.stage_type IN ('won','lost'))::int AS closed");
     expect(kpiSql).toContain('AS active');
+    // FB-2026-010 — the Leads screen's cards
+    for (const col of ['AS contacted', 'AS qualified', 'AS followups_due_today', 'AS followups_overdue']) expect(kpiSql).toContain(col);
     const revSql = sqls.find((s) => /revenue_minor/.test(s))!;
     expect(revSql).toContain('fee_receipt fr JOIN enrolment e');
     expect(out.kpis.lost).toBe(2);

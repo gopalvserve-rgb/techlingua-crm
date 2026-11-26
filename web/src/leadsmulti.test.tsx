@@ -36,7 +36,12 @@ vi.mock('./api', () => ({
 }));
 
 const CTX = { go: vi.fn(), openLead: vi.fn(), openAdd: vi.fn(), refreshTick: 0, bump: vi.fn() } as any;
-const draw = () => render(<ScreenCtx.Provider value={CTX}>{(() => { const C = DYN.leadsAll; return <C />; })()}</ScreenCtx.Provider>);
+// FB-2026-010 — the filter dropdowns sit behind the "Filters" button now; open it first.
+const draw = () => {
+  const r = render(<ScreenCtx.Provider value={CTX}>{(() => { const C = DYN.leadsAll; return <C />; })()}</ScreenCtx.Provider>);
+  fireEvent.click(screen.getByTestId('leads-filters-toggle'));
+  return r;
+};
 
 // open a FilterMulti's dropdown and return its container
 const openFm = (testid: string) => {

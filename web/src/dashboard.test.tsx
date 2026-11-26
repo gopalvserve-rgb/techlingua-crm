@@ -499,3 +499,66 @@ describe('15 Nov document — points 2, 3 and 11', () => {
     await waitFor(() => expect(screen.queryByTestId('fu-done-chip')).toBeNull());
   });
 });
+
+/** FB-2026-015 (15 Nov document, point 9) — "search permission given to a user is not working". */
+describe('Leads search box with lead.search also reaches leads that are not yours', () => {
+  const HITS = [
+    { id: 460, full_name: 'Shivani Rao', in_scope: false, owner_name: 'Jeny Gabriel' },
+    { id: 461, full_name: 'Shivani K', in_scope: false, owner_name: 'Rupesh Rana' },
+    { id: 12, full_name: 'Shivani Own', in_scope: true, owner_name: 'Asha Rao' },
+  ];
+  it('typing a name shows "2 more leads not yours match" and opens them, searched already', async () => {
+    ROUTES = { '/leads/search-all': HITS, '/leads': { total: 0, rows: [] } };
+    paths.length = 0;
+    draw('leadsAll');
+    fireEvent.change(await screen.findByPlaceholderText('Search name / phone / email…'), { target: { value: 'Shivani' } });
+    const notice = await screen.findByTestId('search-all-notice');
+    expect(notice.textContent).toContain('2 more leads not yours match “Shivani”');
+    expect(paths).toContain('/leads/search-all?q=Shivani');
+    fireEvent.click(notice);
+    expect(await screen.findByTestId('lead-search-results')).toBeTruthy();   // the modal ran the search itself
+    expect((screen.getByTestId('lead-search-input') as HTMLInputElement).value).toBe('Shivani');
+  });
+  it('fewer than 3 characters: no extra lookup, the plain "Search all leads" chip stays', async () => {
+    ROUTES = { '/leads/search-all': HITS, '/leads': { total: 0, rows: [] } };
+    paths.length = 0;
+    draw('leadsAll');
+    fireEvent.change(await screen.findByPlaceholderText('Search name / phone / email…'), { target: { value: 'Sh' } });
+    expect(screen.getByTestId('search-all-leads')).toBeTruthy();
+    expect(paths.some((p) => p.startsWith('/leads/search-all'))).toBe(false);
+  });
+});
+
+/** FB-2026-010 (client, 25 Nov) — Leads summary cards + filters that open only when needed. */
+describe('Leads screen — summary cards and a Filters button', () => {
+  const SUM = { kpis: { total: 438, today: 6, contacted: 40, qualified: 12, followups_due_today: 3, followups_overdue: 2, won: 12 } };
+  it('shows the 8 cards, with the conversion rate worked out', async () => {
+    ROUTES = { '/leads/summary': SUM, '/leads': { total: 0, rows: [] } };
+    draw('leadsAll');
+    expect(await screen.findByText('Total Leads')).toBeTruthy();
+    for (const lab of ['New Leads (today)', 'Contacted', 'Qualified (meeting stage or later)', 'Follow-ups due today', 'Overdue follow-ups', 'Converted', 'Conversion rate']) {
+      expect(screen.getByText(lab)).toBeTruthy();
+    }
+    expect(await screen.findByText('438')).toBeTruthy();
+    expect(screen.getByText('2.74%')).toBeTruthy();   // 12 / 438
+  });
+  it('a card applies its filter to the list (overdue → followup=missed; converted → won=1)', async () => {
+    ROUTES = { '/leads/summary': SUM, '/leads': { total: 0, rows: [] } };
+    paths.length = 0;
+    draw('leadsAll');
+    fireEvent.click(await screen.findByRole('button', { name: /Leads with an overdue follow-up: 2\./ }));
+    await waitFor(() => expect(paths.some((p) => p.startsWith('/leads?') && p.includes('followup=missed'))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: /Converted leads: 12\./ }));
+    await waitFor(() => expect(paths.some((p) => p.startsWith('/leads?') && p.includes('won=1'))).toBe(true));
+  });
+  it('the filter dropdowns are folded away until "Filters" is clicked; search and sort stay visible', async () => {
+    ROUTES = { '/leads/summary': SUM, '/leads': { total: 0, rows: [] } };
+    draw('leadsAll');
+    await screen.findByText('Total Leads');
+    expect(screen.queryByTestId('fm-owner')).toBeNull();
+    expect(screen.getByPlaceholderText('Search name / phone / email…')).toBeTruthy();
+    expect(screen.getByLabelText('Sort leads')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('leads-filters-toggle'));
+    expect(screen.getByTestId('fm-owner')).toBeTruthy();
+  });
+});

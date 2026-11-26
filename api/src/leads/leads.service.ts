@@ -1485,7 +1485,20 @@ export class LeadsService {
               COUNT(*) FILTER (WHERE l.temperature = 'hot')::int AS hot,
               COUNT(*) FILTER (WHERE l.temperature = 'warm')::int AS warm,
               COUNT(*) FILTER (WHERE l.temperature = 'cold')::int AS cold,
-              COUNT(*) FILTER (WHERE ms.code = 'WALKIN')::int AS walkins
+              COUNT(*) FILTER (WHERE ms.code = 'WALKIN')::int AS walkins,
+              -- FB-2026-010 (client, 25 Nov) — the Leads screen's summary cards. CONTACTED = moved past the
+              -- pipeline's landing stage (not to Lost), or had a call with talk time. QUALIFIED = still open
+              -- and at least two stages in (Meeting Scheduled / Visited / Demo Done in the client's pipelines).
+              -- The follow-up cards count LEADS (not follow-ups), with the Leads list's own Today / Missed
+              -- follow-up windows, so a card's number is the number of rows its filter shows.
+              COUNT(*) FILTER (WHERE (st.id IS NOT NULL AND NOT COALESCE(st.is_default, false) AND st.stage_type <> 'lost')
+                                  OR EXISTS (SELECT 1 FROM call_event ce WHERE ce.lead_id = l.id AND ce.duration_s > 0))::int AS contacted,
+              COUNT(*) FILTER (WHERE st.stage_type = 'open'
+                                 AND (SELECT count(*) FROM pipeline_stage s2 WHERE s2.pipeline_id = st.pipeline_id AND s2.sort_order < st.sort_order) >= 2)::int AS qualified,
+              COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM follow_up fu WHERE fu.lead_id = l.id AND fu.status = 'pending' AND fu.is_active AND fu.deleted_at IS NULL
+                                   AND (fu.scheduled_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date))::int AS followups_due_today,
+              COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM follow_up fu WHERE fu.lead_id = l.id AND fu.status = 'pending' AND fu.is_active AND fu.deleted_at IS NULL
+                                   AND fu.scheduled_at < now()))::int AS followups_overdue
          FROM lead l
          LEFT JOIN pipeline_stage st ON st.id = l.stage_id
          LEFT JOIN source so ON so.id = l.source_id
