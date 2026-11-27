@@ -269,7 +269,7 @@ export function TableCard({ title, cols, rows, more, empty, onRowClick, icon = '
   const shownIdx = chooserOn ? cv.visibleIdx : cols.map((_, i) => i);
   const shownCols = shownIdx.map((i) => cols[i]);
   const colsBtn = chooserOn
-    ? <ColumnsButton cols={cols} ids={cv.ids} hidden={cv.hidden} onToggle={cv.toggle} onReset={cv.reset} />
+    ? <ColumnsButton cols={cols} ids={cv.ids} hidden={cv.hidden} onToggle={cv.toggle} onReset={cv.reset} order={cv.order} onMove={cv.move} />
     : null;
   const span = shownCols.length + (sel ? 1 : 0) + (showSerial ? 1 : 0);
   const scrollCls = (sticky || fill) ? 'tbl-scroll' : 'scroll-x';

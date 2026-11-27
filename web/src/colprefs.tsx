@@ -7,6 +7,11 @@
  * storing the set of HIDDEN column ids (so a column added later defaults to visible). The user
  * id is written by AuthProvider on login (tlc.uid); localStorage is per-user-per-machine, which
  * the client accepted. `TableCard` wires this generically, so it appears on every list.
+ *
+ * FB-2026-006 / client's 15 Nov document point 7 — "give the option to arrange the columns in any
+ * table": the same chooser now moves a column up / down (▲ ▼). The ORDER is remembered per user, per
+ * list under tlc.colorder.v1.<userId>.<listKey> (the full list of column ids). A column added to the
+ * screen later keeps its natural place; "Reset" restores the screen's own order and shows everything.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ic } from './icons';
@@ -15,6 +20,15 @@ function currentUid(): string {
   try { return localStorage.getItem('tlc.uid') || 'anon'; } catch { return 'anon'; }
 }
 function storageKey(listKey: string): string { return `tlc.cols.v1.${currentUid()}.${listKey}`; }
+function orderKey(listKey: string): string { return `tlc.colorder.v1.${currentUid()}.${listKey}`; }
+
+/** The saved order, cleaned: unknown ids dropped, columns it does not know inserted at their natural place. */
+export function mergeColumnOrder(ids: string[], saved: string[]): string[] {
+  const known = new Set(ids);
+  const out = saved.filter((id, i) => known.has(id) && saved.indexOf(id) === i);
+  ids.forEach((id, natural) => { if (!out.includes(id)) out.splice(Math.min(natural, out.length), 0, id); });
+  return out;
+}
 
 /** Stable per-column id derived from the header labels (blank/duplicate-safe). */
 export function colIds(cols: string[]): string[] {
@@ -30,24 +44,43 @@ export function colIds(cols: string[]): string[] {
 export function useColumnVisibility(listKey: string | undefined, cols: string[]) {
   const ids = useMemo(() => colIds(cols), [cols.join('')]);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+  const [saved, setSaved] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!listKey) { setHidden(new Set()); return; }
+    if (!listKey) { setHidden(new Set()); setSaved([]); return; }
     try {
       const raw = localStorage.getItem(storageKey(listKey));
       setHidden(raw ? new Set(JSON.parse(raw) as string[]) : new Set());
     } catch { setHidden(new Set()); }
+    try {
+      const raw = localStorage.getItem(orderKey(listKey));
+      const arr = raw ? JSON.parse(raw) : [];
+      setSaved(Array.isArray(arr) ? arr.map(String) : []);
+    } catch { setSaved([]); }
   }, [listKey]);
+
+  // FB-2026-006 — the user's column order (ids), merged with the screen's current columns
+  const order = useMemo(() => mergeColumnOrder(ids, saved), [ids, saved]);
 
   const persist = useCallback((next: Set<string>) => {
     if (!listKey) return;
     try { localStorage.setItem(storageKey(listKey), JSON.stringify([...next])); } catch { /* quota / private mode */ }
   }, [listKey]);
 
-  const visibleIdx = useMemo(
-    () => ids.map((_, i) => i).filter((i) => !hidden.has(ids[i])),
-    [ids, hidden],
-  );
+  const visibleIdx = useMemo(() => {
+    const at = new Map(ids.map((id, i) => [id, i]));
+    return order.map((id) => at.get(id)!).filter((i) => i != null && !hidden.has(ids[i]));
+  }, [ids, order, hidden]);
+
+  /** Move one column a place up (-1) or down (+1) in the user's order. */
+  const move = useCallback((id: string, dir: -1 | 1) => {
+    const cur = mergeColumnOrder(ids, saved);
+    const i = cur.indexOf(id); const j = i + dir;
+    if (i < 0 || j < 0 || j >= cur.length) return;
+    [cur[i], cur[j]] = [cur[j], cur[i]];
+    setSaved(cur);
+    if (listKey) { try { localStorage.setItem(orderKey(listKey), JSON.stringify(cur)); } catch { /* quota / private mode */ } }
+  }, [ids, saved, listKey]);
 
   const toggle = useCallback((id: string) => {
     setHidden((prev) => {
@@ -63,14 +96,20 @@ export function useColumnVisibility(listKey: string | undefined, cols: string[])
     });
   }, [ids, persist]);
 
-  const reset = useCallback(() => { setHidden(new Set()); persist(new Set()); }, [persist]);
+  const reset = useCallback(() => {
+    setHidden(new Set()); persist(new Set());
+    setSaved([]);
+    if (listKey) { try { localStorage.removeItem(orderKey(listKey)); } catch { /* private mode */ } }
+  }, [persist, listKey]);
 
-  return { ids, visibleIdx, hidden, toggle, reset };
+  return { ids, visibleIdx, hidden, toggle, reset, order, move };
 }
 
-export function ColumnsButton({ cols, ids, hidden, onToggle, onReset }: {
+export function ColumnsButton({ cols, ids, hidden, onToggle, onReset, order, onMove }: {
   cols: string[]; ids: string[]; hidden: Set<string>;
   onToggle: (id: string) => void; onReset: () => void;
+  /** FB-2026-006 — the user's column order (ids) and a mover; without them the list is the screen's order. */
+  order?: string[]; onMove?: (id: string, dir: -1 | 1) => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
@@ -99,9 +138,12 @@ export function ColumnsButton({ cols, ids, hidden, onToggle, onReset }: {
             overflow: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 11,
             boxShadow: '0 14px 38px rgba(0,0,0,.34)', padding: 7,
           }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', padding: '2px 6px 6px' }}>Show columns</div>
-          {cols.map((c, i) => {
-            const id = ids[i];
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', padding: '2px 6px 6px' }}>
+            {onMove ? 'Show & arrange columns' : 'Show columns'}
+          </div>
+          {(order ?? ids).map((id, pos, list) => {
+            const i = ids.indexOf(id);
+            const c = cols[i];
             const shown = !hidden.has(id);
             const isLast = shown && visibleCount <= 1;
             const label = (c != null && String(c).trim()) ? String(c) : `Column ${i + 1}`;
@@ -112,12 +154,20 @@ export function ColumnsButton({ cols, ids, hidden, onToggle, onReset }: {
                 <input type="checkbox" checked={shown} disabled={isLast}
                   aria-label={`Toggle column ${label}`}
                   onChange={() => onToggle(id)} />
-                <span>{label}</span>
+                <span style={{ flex: 1 }}>{label}</span>
+                {onMove && (
+                  <span style={{ display: 'inline-flex', gap: 2 }} onClick={(e) => e.preventDefault()}>
+                    <button type="button" className="ract" disabled={pos === 0} aria-label={`Move ${label} up`} title="Move up"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMove(id, -1); }}>▲</button>
+                    <button type="button" className="ract" disabled={pos === list.length - 1} aria-label={`Move ${label} down`} title="Move down"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMove(id, 1); }}>▼</button>
+                  </span>
+                )}
               </label>
             );
           })}
           <button className="btn" type="button" onClick={onReset} style={{ marginTop: 6, width: '100%', justifyContent: 'center' }}>
-            Show all
+            {onMove ? 'Reset (show all, original order)' : 'Show all'}
           </button>
         </div>
       )}
