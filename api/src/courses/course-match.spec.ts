@@ -56,3 +56,25 @@ describe('course matching', () => {
     expect(db.query.mock.calls.find((c) => String(c[0]).startsWith('UPDATE lead'))![0]).toMatch(/course_id IS NULL/);
   });
 });
+
+describe('FB-2026-005 — a form that sends only "french" finds "French Language"', () => {
+  const { buildCourseKeyMap, lookupCourse, shortCourseKey } = require('./course-match');
+  it('the short key drops a trailing generic word, nothing else', () => {
+    expect(shortCourseKey('French Language')).toBe('french');
+    expect(shortCourseKey('Spoken English Course')).toBe('spoken english');
+    expect(shortCourseKey('Data Analytics')).toBe('');
+  });
+  it('"french", "French", "french_language" all link to French Language', () => {
+    const map = buildCourseKeyMap([{ id: 55, name: 'French Language', code: 'FR', meta: {} }, { id: 58, name: 'Data Analytics', code: 'DA', meta: {} }], 1, 1);
+    for (const raw of ['french', 'French', 'french_language', 'FRENCH LANGUAGE']) expect(lookupCourse(map, raw)).toBe(55);
+    expect(lookupCourse(map, 'german')).toBeNull();
+  });
+  it('an ambiguous short key links nothing; an exact name or custom name still wins', () => {
+    const map = buildCourseKeyMap([
+      { id: 1, name: 'French Language', meta: {} }, { id: 2, name: 'French Course', meta: {} },
+      { id: 3, name: 'German Language', meta: {} }, { id: 4, name: 'German Express', meta: { aliases: ['german'] } },
+    ], 1, 1);
+    expect(lookupCourse(map, 'french')).toBeNull();
+    expect(lookupCourse(map, 'german')).toBe(4);
+  });
+});

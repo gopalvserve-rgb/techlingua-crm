@@ -31,6 +31,19 @@ export function normCourseKey(raw: unknown): string {
     .trim();
 }
 
+/**
+ * FB-2026-005 (client, 23 Nov) — "the course is not fetched from the form": a Facebook form answers
+ * "french" and the course is called "French Language" — 50 leads stayed unlinked. The SHORT key is the
+ * name without a trailing generic word (language, course, classes, training, program), "" when there
+ * is none. Used only when exactly one eligible course has that short key, and always weakest (an
+ * exact name, code or custom name wins).
+ */
+export function shortCourseKey(name: unknown): string {
+  const k = normCourseKey(name);
+  const s = k.replace(/\s+(languages?|courses?|class(?:es)?|training|programs?|programmes?)$/, '').trim();
+  return s && s !== k ? s : '';
+}
+
 /** meta.aliases may be an array or a comma / newline separated string. */
 export function courseAliases(meta: Record<string, unknown> | null | undefined): string[] {
   const a = meta?.aliases;
@@ -57,6 +70,13 @@ export function buildCourseKeyMap(rows: CourseRow[], branchId: number, verticalI
   const eligible = rows.map((r) => ({ r, rk: rank(r) })).filter((x) => x.rk >= 0).sort((a, b) => a.rk - b.rk);
   const map = new Map<string, number>();
   const put = (k: string, id: number) => { if (k) map.set(k, id); };
+  // FB-2026-005 — short keys first (weakest), and only the unambiguous ones
+  const shortIds = new Map<string, Set<number>>();
+  for (const { r } of eligible) {
+    const sk = shortCourseKey(r.name);
+    if (sk) shortIds.set(sk, (shortIds.get(sk) ?? new Set()).add(Number(r.id)));
+  }
+  for (const [sk, ids] of shortIds) if (ids.size === 1) put(sk, [...ids][0]);
   // weakest first: custom names, then codes, then names — so a better-scoped course overwrites an
   // unscoped one, and a literal name always resolves to its own course.
   for (const { r } of eligible) for (const a of courseAliases(r.meta)) put(normCourseKey(a), Number(r.id));
