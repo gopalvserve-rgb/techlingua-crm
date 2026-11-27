@@ -14,8 +14,8 @@
  *
  * reply-round (26 Nov 2026 — "reply to the client daily at 3 PM, automatically"): runs from the
  *   server's crontab, no person or PC needed. (1) Closes every Answered note whose last word is our
- *   answer, at least 20 h old, EXCEPT the ones where our answer was a question (state.json
- *   "questions" — set by `answer` when an entry has "question": true). (2) Posts every
+ *   answer, at least 20 h old, EXCEPT the ones where our answer was a question or a part-answer
+ *   (state.json "questions" — set by `answer` when an entry has "question": true or "keep_open": true). (2) Posts every
  *   ~/feedback-ops/outbox/answers-*.json (the work round puts its verified answers there) and moves
  *   each file to ~/feedback-ops/sent/. Writes what it did to stdout (the cron appends it to a log).
  *
@@ -100,7 +100,9 @@ async function main() {
       if (!Array.isArray(answers)) throw new Error(`${file}: answers file must be a JSON array`);
       const st = readState(); const qs = new Set(st.questions ?? []);
       for (const a of answers) {
-        if (!dry && a.reference) { if (a.question) qs.add(String(a.reference)); else qs.delete(String(a.reference)); }
+        // "question": we asked the client something; "keep_open": only part of the note is done yet —
+        // either way the reply round must not close it
+        if (!dry && a.reference) { if (a.question || a.keep_open) qs.add(String(a.reference)); else qs.delete(String(a.reference)); }
         const body = String(a.body ?? '').trim();
         const n = await note(String(a.reference ?? ''));
         if (!n || body.length < 2) { console.log(`  ${a.reference}: no such note or empty answer, skipped`); continue; }
