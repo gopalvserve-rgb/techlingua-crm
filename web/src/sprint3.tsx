@@ -560,8 +560,11 @@ export function Sla() {
         { lab: 'Met on time', val: String(k?.met_on_time ?? 0), ic: 'target' },
       ]} />
 
+      {/* FB-2026-006 (client, 24 Nov) — serial number + check box on this table too: a list key makes it a
+          full list (# column, row checkboxes, Columns chooser with arranging). */}
       <TableCard
         title="SLA breaches — manager view"
+        listKey="sla-breaches"
         icon="clock"
         cols={['Lead', 'Lead Counsellor', 'Policy', 'Stage', 'Target', 'Overdue by', 'Score']}
         rows={rows.map((b) => [

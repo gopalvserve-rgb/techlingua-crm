@@ -228,7 +228,7 @@ function PrioSelect({ id, value, onChanged, disabled }: { id: number; value?: st
 }
 
 function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: 'notes') => void, openNotes?: (id: number) => void,
-  onFlag?: (l: any) => void): Cell[] {
+  onFlag?: (l: any) => void, onWaCloud?: (l: any) => void): Cell[] {
   const overdue = l.next_follow_up_at && new Date(l.next_follow_up_at) < new Date();
   const calls = Number(l.call_count ?? 0);
   return [
@@ -251,7 +251,8 @@ function leadRow(l: any, openLead?: (id: number, mode?: 'view' | 'edit', tab?: '
         <span className="mono">{l.phone}</span>
         <ContactQuickActions phone={l.phone} whatsapp={l.whatsapp_phone}
           onNote={openNotes ? () => openNotes(Number(l.id)) : openLead ? () => openLead(Number(l.id), 'view', 'notes') : undefined}
-          onFlag={onFlag ? () => onFlag(l) : undefined} flagged={!!l.is_red_flagged} />
+          onFlag={onFlag ? () => onFlag(l) : undefined} flagged={!!l.is_red_flagged}
+          onWaCloud={onWaCloud ? () => onWaCloud(l) : undefined} />
       </div>), sort: String(l.phone ?? '') } as Cell,
     dn(l.branch_name, l.branch_deleted) || '—',
     // client 10 Nov 2026 (point 2) — no master course yet? show what Facebook / the import sent.
@@ -624,7 +625,9 @@ function DashOverview() {
         </div>
       )}
 
-      <TableCard title={personal ? 'My recent leads' : 'Recent leads'} more="View pipeline" cols={LEAD_COLS}
+      {/* FB-2026-008 (client, 24 Nov) — "put serial number and check box here": a list key makes this a
+          full list (# column, row checkboxes, Columns chooser with arranging). */}
+      <TableCard title={personal ? 'My recent leads' : 'Recent leads'} more="View pipeline" cols={LEAD_COLS} listKey="dash-recent-leads"
         rows={(recent.data?.rows ?? []).map((l) => leadRow(l, openLead, openNotes))}
         empty="No leads yet — add your first lead or connect a source"
         onRowClick={(i) => openLead(Number(recent.data!.rows[i].id))} />
@@ -1523,7 +1526,7 @@ function expandSourceIds(sources: any[], picked: number[]): number[] {
 }
 
 function LeadsAll() {
-  const { openLead, openNotes, refreshTick, bump, search } = useScreen();
+  const { openLead, openNotes, refreshTick, bump, search, go } = useScreen();
   const { can } = useAuth();
   // GLOBAL SCOPE seeds the hierarchy filters as a baseline; an explicit URL filter (a KPI card
   // link) still wins, and the user can narrow further with the in-panel chips. The component
@@ -1884,7 +1887,9 @@ function LeadsAll() {
             onToggleAll: toggleAllLoaded,
           }}
           rows={rows.map((l) => [...leadRow(l, openLead, openNotes,
-            canFlag ? (x) => setFlagLead({ id: Number(x.id), name: x.full_name, flagged: !!x.is_red_flagged }) : undefined), rowActions({
+            canFlag ? (x) => setFlagLead({ id: Number(x.id), name: x.full_name, flagged: !!x.is_red_flagged }) : undefined,
+            // FB-2026-006 (c) — WhatsApp Cloud API chat, next to WhatsApp Web
+            can('message.read') ? (x) => go('engage', 'inbox', { phone: String(x.whatsapp_phone || x.phone || '') }) : undefined), rowActions({
             onView: () => openLead(Number(l.id), 'view'),
             onEdit: canEditLead ? () => openLead(Number(l.id), 'edit') : undefined,
             onDelete: canDeleteLead ? () => del.openDelete(Number(l.id), l.full_name) : undefined,
@@ -4179,6 +4184,13 @@ function WaChat() {
     await loadThread(phone);
     setLoadingThread(false);
   };
+  // FB-2026-006 (c) — the lead row's "WhatsApp Cloud API chat" button links here with ?phone=…
+  const { search: chatSearch } = useScreen();
+  useEffect(() => {
+    const p = new URLSearchParams(typeof chatSearch === 'string' ? chatSearch : '').get('phone');
+    if (p && p.replace(/\D/g, '').length >= 8) void openConv(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatSearch]);
 
   const initials = (name: string, phone: string) => (name || phone || '?').trim().slice(0, 2).toUpperCase();
   const lead = thread?.lead ?? null;
@@ -6192,7 +6204,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
             <>
               {/* dev/109 — choosable columns (show/hide), persisted per user, per list. */}
               <div className="min-row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
-                <ColumnsButton cols={ENROL_COL_LABELS} ids={enrolCols.ids} hidden={enrolCols.hidden} onToggle={enrolCols.toggle} onReset={enrolCols.reset} />
+                <ColumnsButton cols={ENROL_COL_LABELS} ids={enrolCols.ids} hidden={enrolCols.hidden} onToggle={enrolCols.toggle} onReset={enrolCols.reset} order={enrolCols.order} onMove={enrolCols.move} />
               </div>
               <table className="minitbl"><thead><tr>{enrolCols.visibleIdx.map((ci) => <th key={ci}>{ENROL_COL_LABELS[ci]}</th>)}</tr></thead>
                 <tbody>{(enrolData.data.enrolments as any[]).map((e: any) => {
@@ -6441,7 +6453,7 @@ export function StudentDetailModal({ student, onClose, onChanged, onEdit, initia
                 {/* dev/109 — choosable columns (show/hide) incl. Roll No / Enrolment No / Level and
                     the enrolment's Total/Net/Due fee, Fee Plan & Status; persisted per user, per list. */}
                 <div className="min-row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
-                  <ColumnsButton cols={RECEIPT_COL_LABELS} ids={receiptCols.ids} hidden={receiptCols.hidden} onToggle={receiptCols.toggle} onReset={receiptCols.reset} />
+                  <ColumnsButton cols={RECEIPT_COL_LABELS} ids={receiptCols.ids} hidden={receiptCols.hidden} onToggle={receiptCols.toggle} onReset={receiptCols.reset} order={receiptCols.order} onMove={receiptCols.move} />
                 </div>
                 <table className="minitbl"><thead><tr>{receiptCols.visibleIdx.map((ci) => <th key={ci}>{RECEIPT_COL_LABELS[ci]}</th>)}</tr></thead>
                   <tbody>{fees.receipts.map((r: any) => {

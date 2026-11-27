@@ -39,9 +39,11 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch { return false; }
 }
 
-export function ContactQuickActions({ phone, whatsapp, onNote, onFlag, flagged, className }: {
+export function ContactQuickActions({ phone, whatsapp, onNote, onFlag, flagged, className, onWaCloud }: {
   phone?: string | null;
   whatsapp?: string | null;
+  /** FB-2026-006 — open this contact's chat in WhatsApp Live Chat (the CRM's Cloud API number). */
+  onWaCloud?: () => void;
   onNote?: () => void;
   /** client 10 Nov 2026 — red-flag action beside the number (shown red when already flagged) */
   onFlag?: () => void;
@@ -68,6 +70,11 @@ export function ContactQuickActions({ phone, whatsapp, onNote, onFlag, flagged, 
       {wa
         ? <a className="cqa-ic wa" title="WhatsApp" aria-label="WhatsApp" href={`https://wa.me/${wa}`}
             target="_blank" rel="noreferrer" onClick={stop}><Ic k="wa" /></a>
+        : null}
+      {wa && onWaCloud
+        ? <button type="button" className="cqa-ic wa" title="WhatsApp chat from the CRM number (Cloud API)"
+            aria-label="WhatsApp Cloud API chat" data-testid="cqa-wa-cloud"
+            onClick={(e) => { stop(e); onWaCloud(); }}><Ic k="chat" /></button>
         : null}
       {onNote
         ? <button type="button" className="cqa-ic" title="Add note" aria-label="Add note"

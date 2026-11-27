@@ -577,3 +577,35 @@ describe('SMS numbers on the Users and Verticals forms (FB-2026-004)', () => {
     expect(labels).toContain('Phone');
   });
 });
+
+/** FB-2026-008 (client, 24 Nov) — "put serial number and check box" on Dashboard › Overview › Recent leads. */
+describe('Recent leads on the dashboard is a full list (FB-2026-008)', () => {
+  it('has a # column, row checkboxes and the Columns chooser', async () => {
+    ROUTES = { '/dashboard': BRANCH_MGR, '/follow-ups': [], '/leads': { total: 1, rows: [{ id: 7, full_name: 'Nagesh', phone: '+919676314398', temperature: 'cold', score: 5, stage_type: 'open' }] } };
+    draw('dashOverview');
+    expect(await screen.findByText('Nagesh')).toBeTruthy();
+    expect(screen.getAllByRole('columnheader').some((h) => h.textContent === '#')).toBe(true);
+    expect(screen.getByLabelText('Select row 1')).toBeTruthy();
+    expect(screen.getAllByTestId('col-chooser').length).toBeGreaterThan(0);
+  });
+});
+
+/** FB-2026-006 (c) — a WhatsApp Cloud API button on the lead row, next to WhatsApp Web. */
+describe('lead row — WhatsApp Cloud API chat (FB-2026-006)', () => {
+  it('the button opens WhatsApp Live Chat for that lead\'s number', async () => {
+    ROUTES = { '/leads/summary': { kpis: {} }, '/leads': { total: 1, rows: [{ id: 9, full_name: 'Nagesh', phone: '+919676314398', whatsapp_phone: null, stage_type: 'open' }] } };
+    draw('leadsAll');
+    const btn = await screen.findByTestId('cqa-wa-cloud');
+    CTX.go.mockClear();
+    fireEvent.click(btn);
+    expect(CTX.go).toHaveBeenCalledWith('engage', 'inbox', { phone: '+919676314398' });
+    expect(CTX.openLead).not.toHaveBeenCalledWith(9);   // the row itself did not open
+  });
+  it('Live Chat opened with ?phone= loads that conversation', async () => {
+    ROUTES = { '/messages/wa/thread': { messages: [], lead: null }, '/messages/wa': { conversations: [], counts: { total: 0, unread: 0 }, agents: [], statuses: [], numbers: [] } };
+    paths.length = 0;
+    const C = DYN.waChat;
+    render(<ScreenCtx.Provider value={{ ...CTX, search: '?phone=%2B919676314398' } as any}><C /></ScreenCtx.Provider>);
+    await waitFor(() => expect(paths).toContain('/messages/wa/thread?phone=%2B919676314398'));
+  });
+});
