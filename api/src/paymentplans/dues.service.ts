@@ -41,6 +41,25 @@ const BUCKET_CASE = `CASE
     WHEN d.days_overdue <= 90 THEN 'b_61_90'
     ELSE 'b_90_plus' END`;
 
+/**
+ * FB-2026-025 (client, 27 Nov 2026) - "put the sorting option here too, like the Leads list;
+ * it will be the newest-first system". Fee Management had no sort control at all and came back
+ * ordered by how overdue each instalment was, which on screen reads as no order at all.
+ * A WHITELIST (never a passthrough) - the key is interpolated into the ORDER BY.
+ * The DEFAULT is `recent`, the newest enrolment first, as the client asked for.
+ */
+export const DUES_SORTS: Record<string, string> = {
+  recent: 'd.enrolment_date DESC NULLS LAST, d.enrolment_id DESC',
+  oldest: 'd.enrolment_date ASC NULLS LAST, d.enrolment_id ASC',
+  overdue: 'd.days_overdue DESC, d.outstanding_minor DESC',
+  due_date: 'd.due_date ASC NULLS LAST, d.enrolment_id DESC',
+  amount: 'd.outstanding_minor DESC, d.enrolment_id DESC',
+  amount_asc: 'd.outstanding_minor ASC, d.enrolment_id DESC',
+  student: 'lower(d.student_name) ASC, d.enrolment_id DESC',
+  enrolment: 'd.enrolment_no ASC',
+};
+export const DUES_SORT_DEFAULT = 'recent';
+
 @Injectable()
 export class DuesService {
   constructor(
@@ -155,7 +174,7 @@ export class DuesService {
     )`;
   }
 
-  async list(scope: ResolvedScope, f: { bucket?: string[]; branch_ids?: number[]; vertical_ids?: number[]; course_ids?: number[]; owner_ids?: number[]; trainer_ids?: number[]; course_status?: string[]; source?: string[]; q?: string; limit?: number } = {}) {
+  async list(scope: ResolvedScope, f: { bucket?: string[]; branch_ids?: number[]; vertical_ids?: number[]; course_ids?: number[]; owner_ids?: number[]; trainer_ids?: number[]; course_status?: string[]; source?: string[]; q?: string; limit?: number; sort?: string } = {}) {
     const params: unknown[] = [];
     const cte = this.duesCte(scope, params);
     const conds: string[] = [];
@@ -172,11 +191,13 @@ export class DuesService {
     if (f.q) { params.push(`%${f.q}%`); conds.push(`(d.enrolment_no ILIKE $${params.length} OR d.student_name ILIKE $${params.length})`); }
     const where = conds.length ? ` WHERE ${conds.join(' AND ')}` : '';
     params.push(Math.min(Number(f.limit ?? 300), 1000));
+    // FB-2026-025 - the chosen order decides WHICH rows the cap keeps, so it belongs on the server.
+    const orderBy = DUES_SORTS[String(f.sort ?? DUES_SORT_DEFAULT)] ?? DUES_SORTS[DUES_SORT_DEFAULT];
     return this.db.query<any>(
       `${cte}
        SELECT d.*, ${BUCKET_CASE} AS bucket, GREATEST(d.days_overdue, 0) AS overdue_days
          FROM due d${where}
-        ORDER BY d.days_overdue DESC, d.outstanding_minor DESC
+        ORDER BY ${orderBy}
         LIMIT $${params.length}`,
       params,
     );

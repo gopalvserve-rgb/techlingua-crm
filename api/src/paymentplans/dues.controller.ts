@@ -32,6 +32,7 @@ export class DuesController {
       trainer_ids: many(q?.trainer_ids ?? q?.trainer_id),
       course_status: manyStr(q?.course_status ?? q?.status),
       q: q?.q, limit: q?.limit ? Number(q.limit) : undefined,
+      sort: q?.sort ? String(q.sort) : undefined,
     });
   }
 

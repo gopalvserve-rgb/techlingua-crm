@@ -448,6 +448,10 @@ export function FeeDuesScreen() {
   const [ledgerFor, setLedgerFor] = useState<any>(null);               // Fee ledger / Reverse payment (4 Sep)
   const [auditFor, setAuditFor] = useState<any>(null);                 // Payment-terms + level history
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
+  // FB-2026-025 (client, 27 Nov 2026) - "put the sorting option here too, like the Leads list;
+  // it will be the newest-first system". Sorted on the SERVER (the row cap must keep the rows
+  // the chosen order puts first), newest enrolment first by default.
+  const [sort, setSort] = useState('recent');
   const after = () => setTick((t) => t + 1);
 
   const remind = async (r: any) => {
@@ -477,6 +481,7 @@ export function FeeDuesScreen() {
   if (fOwners.length) qs.set('owner_ids', fOwners.join(','));
   if (fTrainers.length) qs.set('trainer_ids', fTrainers.join(','));
   if (fStatus.length) qs.set('course_status', fStatus.join(','));
+  qs.set('sort', sort);
   const key = `${qs.toString()}~${tick}`;
   const list = useFetch<any[]>(`/fee-dues?${qs.toString()}`, [key]);
   const sQs = new URLSearchParams();
@@ -533,6 +538,20 @@ export function FeeDuesScreen() {
         <FilterMulti label="Trainer" icon="users" value={fTrainers} options={trainerOpts as any} onChange={setFTrainers} />
         <EnumMulti label="Status" icon="flag" value={fStatus} options={statusOpts} onChange={setFStatus} />
         <FilterMulti label="Owner" icon="users" value={fOwners} options={owners as any} onChange={setFOwners} />
+        {/* FB-2026-025 - the same Sort control the Leads list has. */}
+        <div className="fchip" data-testid="dues-sort-control">
+          <Ic k="analytics" />Sort
+          <select aria-label="Sort fee dues" value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="recent">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="overdue">Most overdue first</option>
+            <option value="due_date">Next due date</option>
+            <option value="amount">Due fee: high to low</option>
+            <option value="amount_asc">Due fee: low to high</option>
+            <option value="student">Student (A-Z)</option>
+            <option value="enrolment">Enrolment no.</option>
+          </select>
+        </div>
       </div>
       <TableCard fill title="Fee Management" icon="clock"
         more={<ListActions onExport={() => downloadObjectsCsv('fee-management.csv', rows.map((r) => ({
@@ -615,6 +634,16 @@ export function FeeDuesScreen() {
  *  due instalment, the total still due, and the worst ageing among them. */
 export function groupDuesByEnrolment(rs: any[]): any[] {
   const by = new Map<string, any>();
+  // FB-2026-025 - the ROW ORDER the server sent (the chosen Sort) is what the screen must show.
+  // Grouping used to emit the enrolments in next-due-date order whatever was asked for, which is
+  // what made the list look unordered. The earliest instalment is still the row shown per
+  // enrolment: that is what the pass below picks, independently of where the group sits.
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rs) {
+    const k = String(r.enrolment_id);
+    if (!seen.has(k)) { seen.add(k); order.push(k); }
+  }
   const sorted = [...rs].sort((a, b) => String(a.due_date ?? '').localeCompare(String(b.due_date ?? '')) || Number(a.seq_no) - Number(b.seq_no));
   for (const r of sorted) {
     const k = String(r.enrolment_id);
@@ -624,7 +653,7 @@ export function groupDuesByEnrolment(rs: any[]): any[] {
     g.outstanding_minor += Number(r.outstanding_minor ?? 0);
     if (Number(r.overdue_days ?? 0) > Number(g.overdue_days ?? 0)) { g.overdue_days = r.overdue_days; g.bucket = r.bucket; }
   }
-  return [...by.values()];
+  return order.map((k) => by.get(k)).filter(Boolean);
 }
 
 /** A dues row → the enrolment shape the shared fee ledger / audit modals read. */
