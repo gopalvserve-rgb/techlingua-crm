@@ -43,6 +43,14 @@ export { autoStatusFromStage } from './auto-status.util';
 import { autoStatusFromStage } from './auto-status.util';
 
 /**
+ * FB-2026-019 (client, 27 Nov 2026) - every phone a lead carries is searched, not just the
+ * primary one: Quick Contact offers an Alternate Mobile and a WhatsApp Number box, and
+ * "search any lead" (searchAll below) has always looked at all three, so the same number
+ * found a lead on one screen and nothing on the other.
+ */
+const LEAD_PHONE_COLS = ['l.phone', 'l.whatsapp_phone', 'l.alt_phone'];
+
+/**
  * Lead search clause (client update #2): `q` matches name (ILIKE), email (ILIKE)
  * and phone — digits-normalised CONTAINS, country-code agnostic (a fragment like
  * "7911 123456" or "07911123456" finds `+447911123456`). Pure SQL-fragment
@@ -55,13 +63,15 @@ export function buildLeadSearch(q: string, params: unknown[]): string {
   // OBS backlog (b): the email index is on lower(email) (migration 014); the
   // query must match it — lower(email) LIKE lower(...) hits idx_lead_email_trgm
   // (or the btree fallback) where a bare `email ILIKE` cannot use it.
-  const clauses = [`l.full_name ILIKE ${like}`, `lower(l.email) LIKE lower(${like})`, `l.phone LIKE ${like}`];
+  const clauses = [`l.full_name ILIKE ${like}`, `lower(l.email) LIKE lower(${like})`,
+    ...LEAD_PHONE_COLS.map((c) => `${c} LIKE ${like}`)];
   if (looksLikePhoneQuery(qt)) {
     // country-agnostic digit-contains: compare digits against digits, with the
     // 00/trunk-0 dialing prefixes of the QUERY stripped as extra variants
     for (const frag of phoneQueryFragments(qt)) {
       params.push(`%${frag}%`);
-      clauses.push(`regexp_replace(l.phone, '\\D', '', 'g') LIKE $${params.length}`);
+      const ph = `$${params.length}`;
+      clauses.push(...LEAD_PHONE_COLS.map((c) => `regexp_replace(${c}, '\\D', '', 'g') LIKE ${ph}`));
     }
   }
   return `(${clauses.join(' OR ')})`;

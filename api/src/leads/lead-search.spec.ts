@@ -11,10 +11,39 @@ describe('buildLeadSearch', () => {
     return { sql, params };
   };
 
-  it('text query -> name + email + phone LIKE on one param', () => {
+  it('text query -> name + email + every phone column LIKE on one param', () => {
     const { sql, params } = build('asha');
-    expect(sql).toBe('(l.full_name ILIKE $1 OR lower(l.email) LIKE lower($1) OR l.phone LIKE $1)');
+    expect(sql).toBe('(l.full_name ILIKE $1 OR lower(l.email) LIKE lower($1)'
+      + ' OR l.phone LIKE $1 OR l.whatsapp_phone LIKE $1 OR l.alt_phone LIKE $1)');
     expect(params).toEqual(['%asha%']);
+  });
+
+  // FB-2026-019 — Quick Contact has an Alternate Mobile + a WhatsApp Number box, and
+  // "search any lead" always searched all three columns; the list search must too.
+  it('a phone query searches the alternate and WhatsApp numbers as well', () => {
+    const { sql } = build('98111 00001');
+    for (const col of ['l.phone', 'l.whatsapp_phone', 'l.alt_phone']) {
+      expect(sql).toContain(`regexp_replace(${col}, '\\D', '', 'g') LIKE $2`);
+    }
+  });
+
+  // FB-2026-019 — the phone box always emits "+91<national>", but an imported / web-form
+  // lead can hold the bare 10 digits. The +91 query has to find it (and the other way round).
+  it('a +91 query also searches the bare 10-digit national number', () => {
+    const { params } = build('+91 98111 00001');
+    expect(params).toContain('%919811100001%');
+    expect(params).toContain('%9811100001%');
+  });
+
+  it('00 91 and a trunk-0 +91 query collapse to the same national digits', () => {
+    expect(build('0091 98111 00001').params).toContain('%9811100001%');
+    expect(build('09811100001').params).toContain('%9811100001%');
+  });
+
+  it('a non-Indian country code is NOT collapsed (a +44 number is not a +91 number)', () => {
+    const { params } = build('+44 7911 123456');
+    expect(params).toContain('%447911123456%');
+    expect(params).not.toContain('%7911123456%');
   });
 
   // OBS backlog (b): the email clause must be sargable against the

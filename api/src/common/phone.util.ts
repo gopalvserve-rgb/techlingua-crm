@@ -52,11 +52,20 @@ export function looksLikePhoneQuery(q: string): boolean {
  * Country-agnostic digit fragments to search stored phones with:
  * the raw digits plus variants without the 00/leading-0 dialing prefixes, so
  * "07911 123456" still finds `+447911123456` and "0044…" finds it too.
+ *
+ * FB-2026-019 (client, 27 Nov 2026) — and the other way round: a query that CARRIES the
+ * Indian country code must also find a row stored WITHOUT it. The phone box always emits
+ * `+91<national>`, while imported / web-form leads can hold a bare 10-digit national
+ * number, so "+91 98111 00001" found nothing. `+91` is the one dial code normalizePhone
+ * defaults to (rule 5), i.e. the only one this CRM already treats as the same number, so
+ * collapsing it cannot confuse two countries — a 12-digit `91…` fragment also searches
+ * its trailing 10 digits.
  */
 export function phoneQueryFragments(q: string): string[] {
   const d = phoneDigits(q);
   const out = new Set<string>([d]);
   if (d.startsWith('00')) out.add(d.slice(2));
   else if (d.startsWith('0')) out.add(d.slice(1));
+  for (const f of [...out]) if (f.length === 12 && f.startsWith('91')) out.add(f.slice(2));
   return [...out].filter((f) => f.length >= 4);
 }

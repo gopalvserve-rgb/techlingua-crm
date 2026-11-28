@@ -1212,6 +1212,16 @@ function AssessmentDashboardCards() {
 function QuickContact() {
   const { openLead, openNotes, openAdd } = useScreen();
   const ref = useRef_();
+  const { can } = useAuth();
+  // FB-2026-019 (client, 27 Nov 2026) - "it should be searched here too, in Quick Contact":
+  // Quick Contact searched only the user's OWN leads, so a lead the Leads screen found (through
+  // "search any lead", lead.search) came back as "no matching" here. Same behaviour on both
+  // screens now: with lead.search what was typed is looked up across all leads too, and the
+  // ones this search did not return are offered right here (they open read-only).
+  const canSearchAll = can('lead.search');
+  const [searchAll, setSearchAll] = useState(false);
+  const [allHits, setAllHits] = useState<any[] | null>(null);
+  const [lastQ, setLastQ] = useState('');
   const [scope, setScope] = useState<{ branch?: number; vertical?: number; pipeline?: number; campaign?: number }>({});
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -1239,6 +1249,12 @@ function QuickContact() {
     const q = (phone || altPhone || whatsapp || name).trim();
     // phone values carry "+<dial><national>" — search by digits, country-agnostic
     setBusy(true);
+    setLastQ(q);
+    setAllHits(null);
+    // FB-2026-019 - the wider "any lead" lookup runs alongside; it must never fail the search
+    if (canSearchAll && q.length >= 3) {
+      api.get<any[]>(`/leads/search-all?q=${encodeURIComponent(q)}`).then(setAllHits).catch(() => setAllHits(null));
+    }
     try {
       const params = new URLSearchParams();
       if (q) params.set('q', q);
@@ -1249,9 +1265,18 @@ function QuickContact() {
       params.set('limit', '20');
       const r = await api.get<{ total: number; rows: any[] }>(`/leads?${params.toString()}`);
       setResults(r.rows);
-      if (!r.rows.length) toast('No matching contacts — use Add Lead to create one');
+      if (!r.rows.length) {
+        toast(canSearchAll
+          ? 'No matching contact of yours — try "Search all leads" below, or Add Lead to create one'
+          : 'No matching contacts — use Add Lead to create one');
+      }
     } catch (e: any) { toast(e.message, true); } finally { setBusy(false); }
   };
+
+  // How many of the "any lead" hits this search did NOT return (someone else's lead, or one
+  // outside the Branch/Vertical scope picked above) - the number the chip offers to show.
+  const mine = new Set((results ?? []).map((l: any) => Number(l.id)));
+  const elsewhere = (allHits ?? []).filter((h: any) => !mine.has(Number(h.id))).length;
 
   const scopeSel = (label: string, value: number | undefined, list: Array<{ id: number; name: string }>, set: (v?: number) => void) => (
     <div className="fld" key={label}>
@@ -1336,8 +1361,25 @@ function QuickContact() {
             empty="No matching contacts — Add Lead to create one"
             more={<a onClick={() => openAdd('dash.quickcontact')} style={{ cursor: 'pointer', color: 'var(--primary)' }}>+ Add Lead</a>}
             onRowClick={(i) => openLead(Number(results[i].id))} />
+          {/* FB-2026-019 — leads this search could not return (someone else's, or outside the
+              Scope picked above) are offered here, exactly as on the Leads screen. */}
+          {canSearchAll && (elsewhere > 0 ? (
+            <button className="fchip on" data-testid="qc-search-all-notice" style={{ marginTop: 10 }}
+              onClick={() => setSearchAll(true)}
+              title="These leads are not in your own list — they open read-only">
+              <Ic k="search" />{elsewhere}{elsewhere >= 25 ? '+' : ''} more lead{elsewhere === 1 ? '' : 's'} match “{lastQ}” — show
+            </button>
+          ) : (
+            <button className="fchip" data-testid="qc-search-all" style={{ marginTop: 10 }}
+              onClick={() => setSearchAll(true)}
+              title="Find any lead by name, phone or email — even one that is not yours">
+              <Ic k="search" />Search all leads
+            </button>
+          ))}
         </div>
       )}
+      {searchAll && <LeadSearchModal initialQuery={lastQ.length >= 3 ? lastQ : undefined}
+        onClose={() => setSearchAll(false)} onOpen={(id) => openLead(id)} />}
     </>
   );
 }
