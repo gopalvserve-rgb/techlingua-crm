@@ -28,7 +28,7 @@ async function openPdfAuthed(path: string) {
 
 import { AddModal, MasterQuickAdd, CampaignModal, need, EditSpec, parseStageRows, reconcilePipelineStages, StageRow, buildUserAssignments, parseIdCsv, parseVertCsv, AssignmentRow, COURSE_TYPES, COURSE_LEVELS, DELIVERY_MODES, levelsPayload, TASK_ENTITY_OPTS, TASK_ENTITY_KEY, TASK_STATUS_KEY, TASK_STATUS_LABEL, courseAliasList } from './forms';
 import { PhoneInput } from './phonefield';
-import { AddMasterModal, MASTER_LABELS } from './mastermodal';
+import { AddMasterModal, MASTER_LABELS, MASTER_SCOPE_ALL, masterScopeLabel } from './mastermodal';
 import { StageTypeSelect, stageTypeClass, stageTypeLabel } from './stagetypes';
 import { RoleModal, CatalogModule, DEFAULT_LOCKED_ROLES, applyLevel, ModuleLevel } from './rolemodal';
 import {
@@ -4679,6 +4679,21 @@ function ErrorLogs() {
 // 'disposition' — the old list; every disposition now comes from Call Dispositions (Oct 2026)
 const MASTERS_ADMIN_HIDDEN = new Set(['source', 'disposition']);
 
+/**
+ * FB-2026-017 (client, 27 Nov 2026) - "there is a French Language in the course; now I don't know
+ * which branch it is, which is vertical ... I have to go to the edit and see it again and again.
+ * So here you show it: branch, vertical, then course." The masters list shows the hierarchy a row
+ * belongs to as columns, read from the master's own meta - a Course says Branch + Vertical, a
+ * Level says Branch + Vertical + Course.
+ */
+const MASTER_CTX_COLS: Record<string, Array<'branch' | 'vertical' | 'course'>> = {
+  course: ['branch', 'vertical'],
+  level: ['branch', 'vertical', 'course'],
+};
+const MASTER_CTX_LABEL: Record<'branch' | 'vertical' | 'course', string> = {
+  branch: 'Branch', vertical: 'Vertical', course: 'Course',
+};
+
 /** "Lead Statuses" → "Lead Status", "Cities" → "City", "Courses" → "Course" (stripping a bare
  *  trailing "s" gave "+ Add Lead Statuse"). */
 /** "Branch" → "Branches", "City" → "Cities", "Lead" → "Leads" (appending a bare "s" gave "branchs"). */
@@ -4719,7 +4734,16 @@ function MastersAdmin({ initialType = 'course', lockType = false }: { initialTyp
   const _bdIds = rows.map((r: any) => Number(r.id));
   const _bdSel = useTableSelect(_bdIds);
   const _bd = useBulkDelete(one, `/masters/${type}/bulk-delete/impact`, `/masters/${type}/bulk-delete`, () => { list.reload(); _bdSel.clear(); });
-  const cols = ['Name', 'Code', ...(hasParent ? ['Parent'] : []), 'Sort', 'Status', 'Actions'];
+  // FB-2026-017 - the Branch / Vertical / Course columns this master needs, and where their
+  // names come from. A Level's empty scope means EVERY one of them, not "unset".
+  const ctxCols = MASTER_CTX_COLS[type] ?? [];
+  const ctxOptions: Record<'branch' | 'vertical' | 'course', Array<{ id: number | string; name: string }>> = {
+    branch: ref.branches ?? [], vertical: ref.verticals ?? [], course: (ref.courses ?? []) as any,
+  };
+  const ctxText = (m: any, k: 'branch' | 'vertical' | 'course') =>
+    masterScopeLabel(m?.meta, k, ctxOptions[k], type === 'level' ? MASTER_SCOPE_ALL[k] : '—');
+  const cols = ['Name', 'Code', ...(hasParent ? ['Parent'] : []),
+    ...ctxCols.map((k) => MASTER_CTX_LABEL[k]), 'Sort', 'Status', 'Actions'];
   return (
     <>
       <div className="filters">
@@ -4733,7 +4757,7 @@ function MastersAdmin({ initialType = 'course', lockType = false }: { initialTyp
         <div className="fchip" style={{ marginLeft: 'auto' }}><Ic k="list" /><b>{rows.length}</b> values</div>
       </div>
       <BulkBar count={_bdSel.count} entityLabel={one} onClear={_bdSel.clear} onDelete={() => _bd.openBulk(_bdSel.selected)} />
-      <TableCard title={`${label} master`} icon="cfg" select={_bdSel.tableSelect}
+      <TableCard title={`${label} master`} icon="cfg" select={_bdSel.tableSelect} listKey={`masters.${type}`}
         more={<span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           <ListActions onExport={() => downloadObjectsCsv(`${type}.csv`, list.data ?? [])} onRefresh={() => list.reload()} />
           {can('master.create')
@@ -4748,6 +4772,7 @@ function MastersAdmin({ initialType = 'course', lockType = false }: { initialTyp
             { mono: String(m.code ?? '—') },
           ];
           if (hasParent) cells.push(String(m.parent_name ?? '—'));
+          for (const k of ctxCols) cells.push({ node: <span data-testid={`master-${k}`}>{ctxText(m, k)}</span>, sort: ctxText(m, k) });
           cells.push(
             { mono: String(m.sort_order ?? 0), dim: true },
             toggleCell({
@@ -4776,6 +4801,7 @@ function MastersAdmin({ initialType = 'course', lockType = false }: { initialTyp
               ['Name', view.name],
               ['Code', <span className="mono">{view.code ?? '—'}</span>],
               hasParent ? ['Parent', String(view.parent_name ?? '—')] : null,
+              ...ctxCols.map((k) => [MASTER_CTX_LABEL[k], ctxText(view, k)] as [string, string]),
               ['Sort order', String(view.sort_order ?? 0)],
               ['Status', renderCell(statusBadge(view.is_active !== false))],
               Object.keys((view.meta as any) ?? {}).length

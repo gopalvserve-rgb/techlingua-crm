@@ -29,6 +29,32 @@ export function levelScopeIds(meta: Record<string, unknown> | null | undefined, 
   return [...new Set(raw.map(Number).filter((n) => Number.isFinite(n) && n > 0))];
 }
 
+/** How a master row's Branch / Vertical / Course scope reads on the Masters list. */
+export const MASTER_SCOPE_ALL: Record<'branch' | 'vertical' | 'course', string> = {
+  branch: 'All branches', vertical: 'All verticals', course: 'All courses',
+};
+
+/**
+ * FB-2026-017 (client, 27 Nov 2026) - "I don't know which branch it is, which is vertical ... I
+ * have to go to the edit and see it again and again". The Branch / Vertical / Course a master
+ * row belongs to, as NAMES, so the Masters list can show it as a column. An empty scope reads
+ * as `emptyLabel`: on a Level that genuinely means every branch / vertical / course
+ * (levelScopeIds's own rule), on a Course it just means nothing was picked.
+ */
+export function masterScopeLabel(
+  meta: Record<string, unknown> | null | undefined,
+  kind: 'branch' | 'vertical' | 'course',
+  options: Array<{ id: number | string; name: string }>,
+  emptyLabel = '—',
+): string {
+  const ids = levelScopeIds(meta, kind);
+  if (!ids.length) return emptyLabel;
+  const names = ids
+    .map((id) => options.find((o) => Number(o.id) === id)?.name)
+    .filter((n): n is string => !!n);
+  return names.length ? names.join(', ') : emptyLabel;
+}
+
 /** "Data Science & AI" -> "DATA_SCIENCE_AI" — editable suggestion, never forced. */
 const suggestCode = (name: string) =>
   name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24);
